@@ -64,49 +64,53 @@ pub(crate) enum ContextWindowFallbackScope {
     GitHubCopilot,
 }
 
-const GENERIC_CONTEXT_WINDOW_FALLBACKS: &[(&str, u32)] = &[
-    ("codestral-latest", 256_000),
-    ("gemini-2.0-flash", 1_000_000),
-    ("glm-4-32b-0414-128k", 128_000),
-    ("glm-4.5", 128_000),
-    ("glm-4.6", 128_000),
-    ("glm-4.7", 128_000),
-    ("glm-4.7-flash", 128_000),
-    ("glm-5", 128_000),
-    ("gpt-4-turbo", 128_000),
-    ("gpt-4o", 128_000),
-    ("gpt-4o-mini", 128_000),
-    ("gpt-5.2", 128_000),
-    ("gpt-5.6", 1_050_000),
-    ("gpt-5.6-luna", 1_050_000),
-    ("gpt-5.6-sol", 1_050_000),
-    ("gpt-5.6-terra", 1_050_000),
-    ("kimi-k2.5", 128_000),
-    ("mistral-large-latest", 128_000),
-    ("o3", 200_000),
-    ("o3-mini", 200_000),
-    ("o4-mini", 200_000),
-    ("qwen3-coder-next", 128_000),
-    ("qwen3-coder-plus", 128_000),
-    ("qwen3.5-plus", 128_000),
-    ("qwen3.6-plus", 128_000),
-    ("qwen3-max-2026-01-23", 128_000),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextWindowFallback {
+    Exact(&'static str, u32),
+    Prefix(&'static str, u32),
+}
+
+impl ContextWindowFallback {
+    fn context_window_for(self, model_id: &str) -> Option<u32> {
+        match self {
+            Self::Exact(id, window) => (id == model_id).then_some(window),
+            Self::Prefix(prefix, window) => model_id.starts_with(prefix).then_some(window),
+        }
+    }
+}
+
+const GENERIC_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
+    ContextWindowFallback::Exact("gpt-5.6", 1_050_000),
+    ContextWindowFallback::Exact("gpt-5.6-luna", 1_050_000),
+    ContextWindowFallback::Exact("gpt-5.6-sol", 1_050_000),
+    ContextWindowFallback::Exact("gpt-5.6-terra", 1_050_000),
+    ContextWindowFallback::Prefix("codestral", 256_000),
+    ContextWindowFallback::Prefix("gemini-", 1_000_000),
+    ContextWindowFallback::Prefix("MiniMax-", 204_800),
+    ContextWindowFallback::Prefix("gpt-4", 128_000),
+    ContextWindowFallback::Prefix("gpt-5", 128_000),
+    ContextWindowFallback::Prefix("mistral-large", 128_000),
+    ContextWindowFallback::Prefix("kimi-", 128_000),
+    ContextWindowFallback::Prefix("glm-", 128_000),
+    ContextWindowFallback::Prefix("qwen3", 128_000),
+    ContextWindowFallback::Prefix("o3", 200_000),
+    ContextWindowFallback::Prefix("o4-mini", 200_000),
 ];
 
-const OPENAI_CODEX_CONTEXT_WINDOW_FALLBACKS: &[(&str, u32)] = &[
-    ("gpt-5.6", 372_000),
-    ("gpt-5.6-luna", 372_000),
-    ("gpt-5.6-sol", 372_000),
-    ("gpt-5.6-terra", 372_000),
+const OPENAI_CODEX_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
+    ContextWindowFallback::Exact("gpt-5.6", 372_000),
+    ContextWindowFallback::Exact("gpt-5.6-luna", 372_000),
+    ContextWindowFallback::Exact("gpt-5.6-sol", 372_000),
+    ContextWindowFallback::Exact("gpt-5.6-terra", 372_000),
 ];
 
-const GITHUB_COPILOT_CONTEXT_WINDOW_FALLBACKS: &[(&str, u32)] = &[
-    ("claude-fable-5", 1_000_000),
-    ("claude-opus-4.6", 1_000_000),
-    ("claude-opus-4.7", 1_000_000),
-    ("claude-opus-4.8", 1_000_000),
-    ("claude-sonnet-4.6", 1_000_000),
-    ("claude-sonnet-5", 1_000_000),
+const GITHUB_COPILOT_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
+    ContextWindowFallback::Exact("claude-fable-5", 1_000_000),
+    ContextWindowFallback::Exact("claude-opus-4.6", 1_000_000),
+    ContextWindowFallback::Exact("claude-opus-4.7", 1_000_000),
+    ContextWindowFallback::Exact("claude-opus-4.8", 1_000_000),
+    ContextWindowFallback::Exact("claude-sonnet-4.6", 1_000_000),
+    ContextWindowFallback::Exact("claude-sonnet-5", 1_000_000),
 ];
 
 pub(crate) fn context_window_fallback_for_model(
@@ -122,7 +126,7 @@ pub(crate) fn context_window_fallback_for_model(
     scoped
         .iter()
         .chain(GENERIC_CONTEXT_WINDOW_FALLBACKS.iter())
-        .find_map(|(id, window)| (*id == model_id).then_some(*window))
+        .find_map(|fallback| fallback.context_window_for(model_id))
 }
 
 /// Inner heuristic — kept private so callers go through the public wrappers.
@@ -385,6 +389,20 @@ mod tests {
             context_window_for_model("custom-openrouter::openai/gpt-5.2"),
             128_000
         );
+    }
+
+    #[test]
+    fn context_window_preserves_family_fallbacks() {
+        assert_eq!(context_window_for_model("codestral-2508"), 256_000);
+        assert_eq!(context_window_for_model("gemini-1.5-pro"), 1_000_000);
+        assert_eq!(context_window_for_model("gemini-2.5-pro"), 1_000_000);
+        assert_eq!(context_window_for_model("MiniMax-M2.1"), 204_800);
+        assert_eq!(context_window_for_model("gpt-4.1"), 128_000);
+        assert_eq!(context_window_for_model("gpt-5.3"), 128_000);
+        assert_eq!(context_window_for_model("mistral-large-2411"), 128_000);
+        assert_eq!(context_window_for_model("kimi-k2.6"), 128_000);
+        assert_eq!(context_window_for_model("glm-5-turbo"), 128_000);
+        assert_eq!(context_window_for_model("qwen3-next"), 128_000);
     }
 
     #[test]
