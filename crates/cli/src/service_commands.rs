@@ -434,10 +434,11 @@ WantedBy=default.target
 
 fn uninstall_linux_service() -> Result<()> {
     let mut removed = false;
+    let supervisor_path = process_service_supervisor_path()?;
 
-    if process_service_supervisor_path()?.exists() {
+    if supervisor_path.exists() {
         stop_process_service_if_installed()?;
-        fs::remove_file(process_service_supervisor_path()?)?;
+        fs::remove_file(supervisor_path)?;
         remove_file_if_exists(&process_service_pid_path()?)?;
         remove_file_if_exists(&process_service_child_pid_path()?)?;
         removed = true;
@@ -729,6 +730,7 @@ fn stop_process_service() -> Result<()> {
         wait_for_process_exit(pid);
         if pid_is_alive(pid) {
             let _ = signal_process(pid, "KILL");
+            wait_for_process_exit(pid);
         }
     }
 
