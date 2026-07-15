@@ -524,14 +524,17 @@ export function SessionHeader({
 	const shouldShowAgentPicker = !isCron && agentOptionsLoaded && (agentOptions.length > 1 || !hasCurrentAgentOption);
 
 	const shouldShowNodePicker = !isCron && (nodeOptions.length > 0 || Boolean(currentNodeId));
+	const selectableExternalAgents = externalAgentOptions.filter(
+		(agent) => agent.installed || agent.kind === currentExternalAgentKind,
+	);
 	const externalAgentSelectOptions: SelectOption[] = [
 		{ value: "", label: "Moltis agent" },
-		...externalAgentOptions.map((agent) => ({
+		...selectableExternalAgents.map((agent) => ({
 			value: agent.kind,
 			label: `${agent.name}${agent.installed ? "" : " (unavailable)"}`,
 		})),
 	];
-	const shouldShowExternalAgentPicker = !isCron && externalAgentOptions.length > 0;
+	const shouldShowExternalAgentPicker = !isCron && selectableExternalAgents.length > 0;
 	const externalAgentStatus = currentExternalAgentKind
 		? currentExternalAgent?.installed === false
 			? `${currentExternalAgentName} unavailable`

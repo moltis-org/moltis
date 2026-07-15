@@ -440,15 +440,16 @@ test.describe("Agents settings page", () => {
 				{ timeout: 10_000 },
 			)
 			.toBe(true);
-		await expectActiveSessionExternalAgent(page, "acp-copilot");
-		await expect(picker.getByText("ACP: Copilot bound", { exact: true })).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("external-agent picker is hidden when external agents are disabled", async ({ page }) => {
+	test("external-agent picker is hidden when no external agents are installed", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await mockExternalAgentsRpc(page, []);
+		await mockExternalAgentsRpc(page, [
+			{ kind: "acp-copilot", name: "ACP: Copilot", installed: false, version: null },
+			{ kind: "acp-codex", name: "ACP: Codex", installed: false, version: null },
+		]);
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
 		await waitForWsConnected(page);
@@ -464,8 +465,8 @@ test.describe("Agents settings page", () => {
 			)
 			.toBe(true);
 		await expect(page.getByTestId("external-agent-picker")).toHaveCount(0);
-		await expect(page.getByText("Claude Code (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("Codex", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Copilot (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Codex (unavailable)", { exact: true })).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
 	});

@@ -687,7 +687,7 @@ port = {port}                           # Port number (auto-generated for this i
 # Moltis acts as orchestrator; the CLI agent owns its own context window.
 
 [external_agents]
-# enabled = false                   # Enable external agent bridge
+# enabled = true                    # Auto-detect installed external agents for chat session selection
 
 # Per-agent configuration (key = agent kind)
 # [external_agents.agents.claude-code]
@@ -707,7 +707,8 @@ port = {port}                           # Port number (auto-generated for this i
 # binary = "/path/to/acp-agent"
 # args = []
 
-# Named ACP agents shown separately in the session header selector.
+# Named ACP agents are auto-detected by default when their binaries are on PATH.
+# Add entries only to override binary paths, args, env, working_dir, or timeout.
 # [external_agents.agents.acp-copilot]
 # binary = "copilot"
 # args = []

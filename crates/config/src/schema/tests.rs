@@ -1201,3 +1201,10 @@ mode = "sometimes"
     let result: Result<MoltisConfig, _> = toml::from_str(toml_str);
     assert!(result.is_err());
 }
+#[test]
+fn external_agents_default_to_enabled_for_detection() {
+    let config = MoltisConfig::default();
+
+    assert!(config.external_agents.enabled);
+    assert!(config.external_agents.agents.is_empty());
+}

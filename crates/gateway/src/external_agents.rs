@@ -1015,7 +1015,10 @@ mod tests {
         let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
         let agent_state = Arc::new(FakeAgentState::default());
         let service = fake_external_agents_with_config(
-            ExternalAgentsConfig::default(),
+            ExternalAgentsConfig {
+                enabled: false,
+                ..ExternalAgentsConfig::default()
+            },
             Arc::clone(&metadata),
             Arc::clone(&agent_state),
         );
@@ -1023,6 +1026,23 @@ mod tests {
         let agents = service.list().await.expect("list external agents");
 
         assert_eq!(agents, serde_json::json!([]));
+        assert_eq!(agent_state.starts.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn list_uses_default_enabled_external_agent_detection() {
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let agent_state = Arc::new(FakeAgentState::default());
+        let service = fake_external_agents_with_config(
+            ExternalAgentsConfig::default(),
+            Arc::clone(&metadata),
+            Arc::clone(&agent_state),
+        );
+
+        let agents = service.list().await.expect("list external agents");
+
+        assert_eq!(agents[0]["kind"], "codex");
+        assert_eq!(agents[0]["installed"], true);
         assert_eq!(agent_state.starts.load(Ordering::SeqCst), 0);
     }
 
@@ -1037,7 +1057,10 @@ mod tests {
             .await;
         let agent_state = Arc::new(FakeAgentState::default());
         let external_agents = fake_external_agents_with_config(
-            ExternalAgentsConfig::default(),
+            ExternalAgentsConfig {
+                enabled: false,
+                ..ExternalAgentsConfig::default()
+            },
             Arc::clone(&metadata),
             Arc::clone(&agent_state),
         );

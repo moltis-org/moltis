@@ -16,20 +16,31 @@ Supported agent kinds:
 | `acp-claude` | `claude` | Named ACP session shown as `ACP: Claude` in the session header. |
 | `acp-pi` | `pi` | Named ACP session shown as `ACP: Pi` in the session header. |
 
-## Enable external agents
+## Default ACP detection
 
-Enable the bridge in `moltis.toml` before adding any ACP entries:
+External agent discovery is enabled by default. On startup, Moltis checks for the built-in ACP agent commands on `$PATH`:
+
+| Selector label | Config key | Command checked |
+|----------------|------------|-----------------|
+| `ACP: Copilot` | `acp-copilot` | `copilot` |
+| `ACP: Codex` | `acp-codex` | `codex` |
+| `ACP: Claude` | `acp-claude` | `claude` |
+| `ACP: Pi` | `acp-pi` | `pi` |
+
+Installed ACP agents appear automatically in each chat session's external-agent selector. Missing commands are hidden from the selector, so a fresh install with no ACP agents available continues to show only the normal Moltis agent.
+
+If you want to disable all external agent discovery, set:
 
 ```toml
 [external_agents]
-enabled = true
+enabled = false
 ```
 
 After changing `moltis.toml`, restart Moltis so the gateway reloads the external agent registry.
 
 ## Add ACP agents
 
-Use the named ACP keys when you want the session header to clearly show which ACP-compatible agent is bound. Each entry can override the executable path, startup args, environment variables, working directory, timeout, and tmux behavior.
+Use the named ACP keys when you need to override the auto-detected defaults. Each entry can override the executable path, startup args, environment variables, working directory, timeout, and tmux behavior.
 
 ```toml
 [external_agents]
