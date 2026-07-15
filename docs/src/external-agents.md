@@ -2,7 +2,7 @@
 
 Moltis can bind a chat session to an external CLI coding agent. When a session is bound, `chat.send` persists the user turn in Moltis, sends the prompt and recent session context to the external process, streams the CLI output back to the web UI, and persists the assistant response.
 
-ACP, the Agent Client Protocol, is a JSON-RPC protocol for connecting editor or coding agents to a host application. Moltis can run ACP-compatible command-line agents as external agents, route their permission prompts through Moltis approvals, and show them in the session header selector as `ACP: <agent>`.
+ACP, the Agent Client Protocol, is a JSON-RPC protocol for connecting editor or coding agents to a host application. Moltis can run ACP-compatible command-line agents as external agents, route their permission prompts through Moltis approvals, and show them in the session header selector as `ACP: <agent>`. The canonical ACP agent catalog is https://agentclientprotocol.com/get-started/agents.
 
 Supported agent kinds:
 
@@ -12,11 +12,19 @@ Supported agent kinds:
 | `codex` | `codex app-server` | Persistent app-server process; Moltis reuses the Codex `threadId` across turns. |
 | `acp` | `acp` | Persistent ACP JSON-RPC stdio session configured by `[external_agents.agents.acp]`. |
 | `acp-copilot` | `copilot --acp` | Named ACP session shown as `ACP: Copilot` in the session header. |
-| `acp-codex` | `codex app-server` | Named stdio session shown as `ACP: Codex` in the session header. |
-| `acp-claude` | `claude` | Named ACP session shown as `ACP: Claude` in the session header. |
-| `acp-pi` | `pi --mode rpc` | Named RPC session shown as `ACP: Pi` in the session header. |
+| `acp-codex` | `codex-acp` | Codex via Zed's ACP adapter, shown as `ACP: Codex`. |
+| `acp-claude` | `claude-agent-acp` | Claude Agent SDK via https://github.com/agentclientprotocol/claude-agent-acp, shown as `ACP: Claude`. |
+| `acp-pi` | `pi-acp` | Pi via the `pi-acp` adapter, shown as `ACP: Pi`. |
 | `acp-opencode` | `opencode acp` | Named ACP session shown as `ACP: opencode` in the session header. |
 | `acp-gemini` | `gemini --experimental-acp` | Named ACP session shown as `ACP: Gemini` in the session header. |
+| `acp-augment` | `auggie --acp` | Augment/Auggie ACP mode. |
+| `acp-cursor` | `agent acp` | Cursor CLI ACP mode. |
+| `acp-kiro` | `kiro-cli acp` | Kiro CLI ACP mode. |
+| `acp-openclaw` | `openclaw acp` | OpenClaw ACP bridge. |
+| `acp-openhands` | `openhands acp` | OpenHands CLI ACP mode. |
+| `acp-kimi` | `kimi acp` | Kimi CLI ACP mode. |
+| `acp-stakpak` | `stakpak acp` | Stakpak ACP mode. |
+| `acp-fast-agent` | `fast-agent-acp` | fast-agent ACP server. |
 
 ## Default ACP detection
 
@@ -25,11 +33,19 @@ External agent discovery is enabled by default. On startup, Moltis checks for th
 | Selector label | Config key | Command checked |
 |----------------|------------|-----------------|
 | `ACP: Copilot` | `acp-copilot` | `copilot --acp` |
-| `ACP: Codex` | `acp-codex` | `codex app-server` |
-| `ACP: Claude` | `acp-claude` | `claude` |
-| `ACP: Pi` | `acp-pi` | `pi --mode rpc` |
+| `ACP: Codex` | `acp-codex` | `codex-acp` |
+| `ACP: Claude` | `acp-claude` | `claude-agent-acp` |
+| `ACP: Pi` | `acp-pi` | `pi-acp` |
 | `ACP: opencode` | `acp-opencode` | `opencode acp` |
 | `ACP: Gemini` | `acp-gemini` | `gemini --experimental-acp` |
+| `ACP: Augment` | `acp-augment` | `auggie --acp` |
+| `ACP: Cursor` | `acp-cursor` | `agent acp` |
+| `ACP: Kiro` | `acp-kiro` | `kiro-cli acp` |
+| `ACP: OpenClaw` | `acp-openclaw` | `openclaw acp` |
+| `ACP: OpenHands` | `acp-openhands` | `openhands acp` |
+| `ACP: Kimi` | `acp-kimi` | `kimi acp` |
+| `ACP: Stakpak` | `acp-stakpak` | `stakpak acp` |
+| `ACP: fast-agent` | `acp-fast-agent` | `fast-agent-acp` |
 
 Installed ACP agents appear automatically in each chat session's external-agent selector. Missing commands are hidden from the selector, so a fresh install with no ACP agents available continues to show only the normal Moltis agent.
 
@@ -57,16 +73,16 @@ binary = "copilot"                  # or an absolute path
 args = ["--acp"]
 
 [external_agents.agents.acp-codex]
-binary = "codex"
-args = ["app-server"]
+binary = "codex-acp"
+args = []
 
 [external_agents.agents.acp-claude]
-binary = "claude"
+binary = "claude-agent-acp"          # npm package: @agentclientprotocol/claude-agent-acp
 args = []
 
 [external_agents.agents.acp-pi]
-binary = "pi"
-args = ["--mode", "rpc"]
+binary = "pi-acp"
+args = []
 
 [external_agents.agents.acp-opencode]
 binary = "opencode"
@@ -75,7 +91,41 @@ args = ["acp"]
 [external_agents.agents.acp-gemini]
 binary = "gemini"
 args = ["--experimental-acp"]
+
+[external_agents.agents.acp-augment]
+binary = "auggie"
+args = ["--acp"]
+
+[external_agents.agents.acp-cursor]
+binary = "agent"
+args = ["acp"]
+
+[external_agents.agents.acp-kiro]
+binary = "kiro-cli"
+args = ["acp"]
+
+[external_agents.agents.acp-openclaw]
+binary = "openclaw"
+args = ["acp"]
+
+[external_agents.agents.acp-openhands]
+binary = "openhands"
+args = ["acp"]
+
+[external_agents.agents.acp-kimi]
+binary = "kimi"
+args = ["acp"]
+
+[external_agents.agents.acp-stakpak]
+binary = "stakpak"
+args = ["acp"]
+
+[external_agents.agents.acp-fast-agent]
+binary = "fast-agent-acp"
+args = []
 ```
+
+Claude ACP support is not provided by plain `claude`; Moltis detects the separate `claude-agent-acp` adapter binary. Install it from the upstream package/repository and ensure that binary is on the Moltis service `$PATH`, or set `binary = "/absolute/path/to/claude-agent-acp"`.
 
 For advanced/manual ACP servers that are not one of the named options, use the generic `acp` kind:
 

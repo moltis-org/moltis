@@ -360,15 +360,13 @@ binary = "copilot"
 args = ["--acp"]
 
 [external_agents.agents.acp-codex]
-binary = "codex"
-args = ["app-server"]
+binary = "codex-acp"
 
 [external_agents.agents.acp-claude]
-binary = "claude"
+binary = "claude-agent-acp"
 
 [external_agents.agents.acp-pi]
-binary = "pi"
-args = ["--mode", "rpc"]
+binary = "pi-acp"
 
 [external_agents.agents.acp-opencode]
 binary = "opencode"
@@ -377,6 +375,37 @@ args = ["acp"]
 [external_agents.agents.acp-gemini]
 binary = "gemini"
 args = ["--experimental-acp"]
+
+[external_agents.agents.acp-augment]
+binary = "auggie"
+args = ["--acp"]
+
+[external_agents.agents.acp-cursor]
+binary = "agent"
+args = ["acp"]
+
+[external_agents.agents.acp-kiro]
+binary = "kiro-cli"
+args = ["acp"]
+
+[external_agents.agents.acp-openclaw]
+binary = "openclaw"
+args = ["acp"]
+
+[external_agents.agents.acp-openhands]
+binary = "openhands"
+args = ["acp"]
+
+[external_agents.agents.acp-kimi]
+binary = "kimi"
+args = ["acp"]
+
+[external_agents.agents.acp-stakpak]
+binary = "stakpak"
+args = ["acp"]
+
+[external_agents.agents.acp-fast-agent]
+binary = "fast-agent-acp"
 "#;
     let result = validate_toml_str(toml);
     let warning = result

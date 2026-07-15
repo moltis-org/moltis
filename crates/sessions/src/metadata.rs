@@ -29,6 +29,14 @@ pub enum ExternalAgentKind {
     AcpPi,
     AcpOpencode,
     AcpGemini,
+    AcpAugment,
+    AcpCursor,
+    AcpKiro,
+    AcpOpenclaw,
+    AcpOpenhands,
+    AcpKimi,
+    AcpStakpak,
+    AcpFastAgent,
 }
 
 impl ExternalAgentKind {
@@ -44,6 +52,14 @@ impl ExternalAgentKind {
         Self::AcpPi,
         Self::AcpOpencode,
         Self::AcpGemini,
+        Self::AcpAugment,
+        Self::AcpCursor,
+        Self::AcpKiro,
+        Self::AcpOpenclaw,
+        Self::AcpOpenhands,
+        Self::AcpKimi,
+        Self::AcpStakpak,
+        Self::AcpFastAgent,
     ];
 
     #[must_use]
@@ -60,6 +76,14 @@ impl ExternalAgentKind {
             Self::AcpPi => "acp-pi",
             Self::AcpOpencode => "acp-opencode",
             Self::AcpGemini => "acp-gemini",
+            Self::AcpAugment => "acp-augment",
+            Self::AcpCursor => "acp-cursor",
+            Self::AcpKiro => "acp-kiro",
+            Self::AcpOpenclaw => "acp-openclaw",
+            Self::AcpOpenhands => "acp-openhands",
+            Self::AcpKimi => "acp-kimi",
+            Self::AcpStakpak => "acp-stakpak",
+            Self::AcpFastAgent => "acp-fast-agent",
         }
     }
 
@@ -77,6 +101,14 @@ impl ExternalAgentKind {
             Self::AcpPi => "ACP: Pi",
             Self::AcpOpencode => "ACP: opencode",
             Self::AcpGemini => "ACP: Gemini",
+            Self::AcpAugment => "ACP: Augment",
+            Self::AcpCursor => "ACP: Cursor",
+            Self::AcpKiro => "ACP: Kiro",
+            Self::AcpOpenclaw => "ACP: OpenClaw",
+            Self::AcpOpenhands => "ACP: OpenHands",
+            Self::AcpKimi => "ACP: Kimi",
+            Self::AcpStakpak => "ACP: Stakpak",
+            Self::AcpFastAgent => "ACP: fast-agent",
         }
     }
 
@@ -91,6 +123,14 @@ impl ExternalAgentKind {
                 | Self::AcpPi
                 | Self::AcpOpencode
                 | Self::AcpGemini
+                | Self::AcpAugment
+                | Self::AcpCursor
+                | Self::AcpKiro
+                | Self::AcpOpenclaw
+                | Self::AcpOpenhands
+                | Self::AcpKimi
+                | Self::AcpStakpak
+                | Self::AcpFastAgent
         )
     }
 }
@@ -117,6 +157,14 @@ impl std::str::FromStr for ExternalAgentKind {
             "acp-pi" => Ok(Self::AcpPi),
             "acp-opencode" => Ok(Self::AcpOpencode),
             "acp-gemini" => Ok(Self::AcpGemini),
+            "acp-augment" => Ok(Self::AcpAugment),
+            "acp-cursor" => Ok(Self::AcpCursor),
+            "acp-kiro" => Ok(Self::AcpKiro),
+            "acp-openclaw" => Ok(Self::AcpOpenclaw),
+            "acp-openhands" => Ok(Self::AcpOpenhands),
+            "acp-kimi" => Ok(Self::AcpKimi),
+            "acp-stakpak" => Ok(Self::AcpStakpak),
+            "acp-fast-agent" => Ok(Self::AcpFastAgent),
             other => Err(format!("unknown external agent kind: {other}")),
         }
     }

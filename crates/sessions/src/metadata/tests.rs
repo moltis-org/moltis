@@ -88,6 +88,26 @@ fn external_agent_kind_parses_named_acp_variants() {
             "ACP: opencode",
         ),
         ("acp-gemini", ExternalAgentKind::AcpGemini, "ACP: Gemini"),
+        ("acp-augment", ExternalAgentKind::AcpAugment, "ACP: Augment"),
+        ("acp-cursor", ExternalAgentKind::AcpCursor, "ACP: Cursor"),
+        ("acp-kiro", ExternalAgentKind::AcpKiro, "ACP: Kiro"),
+        (
+            "acp-openclaw",
+            ExternalAgentKind::AcpOpenclaw,
+            "ACP: OpenClaw",
+        ),
+        (
+            "acp-openhands",
+            ExternalAgentKind::AcpOpenhands,
+            "ACP: OpenHands",
+        ),
+        ("acp-kimi", ExternalAgentKind::AcpKimi, "ACP: Kimi"),
+        ("acp-stakpak", ExternalAgentKind::AcpStakpak, "ACP: Stakpak"),
+        (
+            "acp-fast-agent",
+            ExternalAgentKind::AcpFastAgent,
+            "ACP: fast-agent",
+        ),
     ] {
         assert_eq!(raw.parse::<ExternalAgentKind>(), Ok(kind));
         assert_eq!(kind.as_str(), raw);

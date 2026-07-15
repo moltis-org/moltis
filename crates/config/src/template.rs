@@ -707,6 +707,9 @@ port = {port}                           # Port number (auto-generated for this i
 # args = ["app-server"]
 
 # Generic manual ACP server for advanced/custom CLIs not listed below.
+# If Moltis is missing a named default for an ACP agent, check the official
+# catalog for the agent's current launch command and configure it here:
+# https://agentclientprotocol.com/get-started/agents
 # [external_agents.agents.acp]
 # binary = "/path/to/acp-agent"
 # args = ["--stdio"]
@@ -718,16 +721,19 @@ port = {port}                           # Port number (auto-generated for this i
 # args = ["--acp"]
 
 # [external_agents.agents.acp-codex]
-# binary = "codex"
-# args = ["app-server"]
+# binary = "codex-acp"              # Zed Codex ACP adapter
+# args = []
 
+# Claude ACP uses the adapter at https://github.com/agentclientprotocol/claude-agent-acp
+# Plain `claude` is not an ACP server; install @agentclientprotocol/claude-agent-acp
+# and ensure `claude-agent-acp` is on PATH or use an absolute binary path here.
 # [external_agents.agents.acp-claude]
-# binary = "claude"
+# binary = "claude-agent-acp"
 # args = []
 
 # [external_agents.agents.acp-pi]
-# binary = "pi"
-# args = ["--mode", "rpc"]
+# binary = "pi-acp"
+# args = []
 
 # [external_agents.agents.acp-opencode]
 # binary = "opencode"
@@ -736,6 +742,38 @@ port = {port}                           # Port number (auto-generated for this i
 # [external_agents.agents.acp-gemini]
 # binary = "gemini"
 # args = ["--experimental-acp"]
+
+# [external_agents.agents.acp-augment]
+# binary = "auggie"
+# args = ["--acp"]
+
+# [external_agents.agents.acp-cursor]
+# binary = "agent"
+# args = ["acp"]
+
+# [external_agents.agents.acp-kiro]
+# binary = "kiro-cli"
+# args = ["acp"]
+
+# [external_agents.agents.acp-openclaw]
+# binary = "openclaw"
+# args = ["acp"]
+
+# [external_agents.agents.acp-openhands]
+# binary = "openhands"
+# args = ["acp"]
+
+# [external_agents.agents.acp-kimi]
+# binary = "kimi"
+# args = ["acp"]
+
+# [external_agents.agents.acp-stakpak]
+# binary = "stakpak"
+# args = ["acp"]
+
+# [external_agents.agents.acp-fast-agent]
+# binary = "fast-agent-acp"
+# args = []
 
 # [external_agents.agents.opencode]
 # binary = "opencode"

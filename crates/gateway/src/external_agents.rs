@@ -128,20 +128,43 @@ impl GatewayExternalAgentService {
             (AgentTransportKind::AcpCopilot, "copilot", vec![
                 "--acp".to_string(),
             ]),
-            (AgentTransportKind::AcpCodex, "codex", vec![
-                "app-server".to_string(),
-            ]),
-            (AgentTransportKind::AcpClaude, "claude", Vec::new()),
-            (AgentTransportKind::AcpPi, "pi", vec![
-                "--mode".to_string(),
-                "rpc".to_string(),
-            ]),
+            (AgentTransportKind::AcpCodex, "codex-acp", Vec::new()),
+            (
+                AgentTransportKind::AcpClaude,
+                "claude-agent-acp",
+                Vec::new(),
+            ),
+            (AgentTransportKind::AcpPi, "pi-acp", Vec::new()),
             (AgentTransportKind::AcpOpencode, "opencode", vec![
                 "acp".to_string(),
             ]),
             (AgentTransportKind::AcpGemini, "gemini", vec![
                 "--experimental-acp".to_string(),
             ]),
+            (AgentTransportKind::AcpAugment, "auggie", vec![
+                "--acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpCursor, "agent", vec![
+                "acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpKiro, "kiro-cli", vec![
+                "acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpOpenclaw, "openclaw", vec![
+                "acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpOpenhands, "openhands", vec![
+                "acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpKimi, "kimi", vec!["acp".to_string()]),
+            (AgentTransportKind::AcpStakpak, "stakpak", vec![
+                "acp".to_string(),
+            ]),
+            (
+                AgentTransportKind::AcpFastAgent,
+                "fast-agent-acp",
+                Vec::new(),
+            ),
         ] {
             registry.register(Box::new(
                 AcpTransport::for_kind(kind, kind.display_name(), binary.to_string())

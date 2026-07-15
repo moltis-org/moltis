@@ -416,6 +416,14 @@ test.describe("Agents settings page", () => {
 			{ kind: "acp-pi", name: "ACP: Pi", installed: true, version: null },
 			{ kind: "acp-opencode", name: "ACP: opencode", installed: true, version: null },
 			{ kind: "acp-gemini", name: "ACP: Gemini", installed: true, version: null },
+			{ kind: "acp-augment", name: "ACP: Augment", installed: true, version: null },
+			{ kind: "acp-cursor", name: "ACP: Cursor", installed: true, version: null },
+			{ kind: "acp-kiro", name: "ACP: Kiro", installed: true, version: null },
+			{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: true, version: null },
+			{ kind: "acp-openhands", name: "ACP: OpenHands", installed: true, version: null },
+			{ kind: "acp-kimi", name: "ACP: Kimi", installed: true, version: null },
+			{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: true, version: null },
+			{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: true, version: null },
 		]);
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
@@ -431,6 +439,14 @@ test.describe("Agents settings page", () => {
 		await expect(page.getByText("ACP: Pi", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: opencode", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Gemini", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Augment", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Cursor", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Kiro", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: OpenClaw", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: OpenHands", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Kimi", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Stakpak", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: fast-agent", { exact: true })).toBeVisible();
 
 		await page.getByText("ACP: Copilot", { exact: true }).click();
 		await expect
@@ -455,6 +471,14 @@ test.describe("Agents settings page", () => {
 			{ kind: "acp-codex", name: "ACP: Codex", installed: false, version: null },
 			{ kind: "acp-opencode", name: "ACP: opencode", installed: false, version: null },
 			{ kind: "acp-gemini", name: "ACP: Gemini", installed: false, version: null },
+			{ kind: "acp-augment", name: "ACP: Augment", installed: false, version: null },
+			{ kind: "acp-cursor", name: "ACP: Cursor", installed: false, version: null },
+			{ kind: "acp-kiro", name: "ACP: Kiro", installed: false, version: null },
+			{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: false, version: null },
+			{ kind: "acp-openhands", name: "ACP: OpenHands", installed: false, version: null },
+			{ kind: "acp-kimi", name: "ACP: Kimi", installed: false, version: null },
+			{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: false, version: null },
+			{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: false, version: null },
 		]);
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
@@ -475,6 +499,14 @@ test.describe("Agents settings page", () => {
 		await expect(page.getByText("ACP: Codex (unavailable)", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("ACP: opencode (unavailable)", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("ACP: Gemini (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Augment (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Cursor (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Kiro (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: OpenClaw (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: OpenHands (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Kimi (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Stakpak (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: fast-agent (unavailable)", { exact: true })).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
 	});
