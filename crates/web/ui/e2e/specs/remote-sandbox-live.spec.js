@@ -187,12 +187,13 @@ test.describe("Daytona Sandbox live integration", () => {
 		const createData = await createResp.json();
 		sandboxId = createData.id;
 		expect(sandboxId).toBeTruthy();
+		const toolboxBaseUrl = `${createData.toolboxProxyUrl.replace(/\/$/, "")}/${sandboxId}`;
 
 		// Wait for sandbox toolbox to become available (may take a few seconds after creation).
 		const execDeadline = Date.now() + 60000;
 		let execResp;
 		while (Date.now() < execDeadline) {
-			execResp = await fetch(`${DAYTONA_API}/toolbox/${sandboxId}/toolbox/process/execute`, {
+			execResp = await fetch(`${toolboxBaseUrl}/process/execute`, {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${DAYTONA_API_KEY}`,

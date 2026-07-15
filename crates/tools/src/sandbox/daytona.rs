@@ -37,6 +37,7 @@ const GENERIC_WORKSPACE_PREFIX: &str = "/home/sandbox/";
 /// State of a live Daytona sandbox session.
 struct DaytonaSession {
     sandbox_id: String,
+    toolbox_base_url: String,
     workspace_dir: String,
 }
 
@@ -135,6 +136,16 @@ impl DaytonaSandbox {
         )
     }
 
+    fn toolbox_base_url(
+        api_url: &str,
+        sandbox_id: &str,
+        toolbox_proxy_url: Option<&str>,
+    ) -> String {
+        toolbox_proxy_url
+            .map(|url| format!("{}/{}", url.trim_end_matches('/'), sandbox_id))
+            .unwrap_or_else(|| format!("{api_url}/toolbox/{sandbox_id}/toolbox"))
+    }
+
     /// Build an authenticated request.
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{path}", self.daytona.api_url);
@@ -144,8 +155,22 @@ impl DaytonaSandbox {
             .header("X-Daytona-Source", "moltis")
     }
 
-    /// Create a Daytona sandbox, returning (sandbox_id, workspace_dir).
-    async fn create_sandbox(&self) -> Result<(String, String)> {
+    /// Build an authenticated request to the sandbox toolbox proxy.
+    fn toolbox_request(
+        &self,
+        method: reqwest::Method,
+        toolbox_base_url: &str,
+        path: &str,
+    ) -> reqwest::RequestBuilder {
+        let url = format!("{toolbox_base_url}{path}");
+        self.client
+            .request(method, &url)
+            .bearer_auth(self.daytona.api_key.expose_secret())
+            .header("X-Daytona-Source", "moltis")
+    }
+
+    /// Create a Daytona sandbox, returning (sandbox_id, toolbox_base_url, workspace_dir).
+    async fn create_sandbox(&self) -> Result<(String, String, String)> {
         let mut body = serde_json::json!({});
 
         if let Some(ref image) = self.daytona.image {
@@ -186,6 +211,12 @@ impl DaytonaSandbox {
             .map(String::from)
             .ok_or_else(|| Error::message("daytona: missing id in create response"))?;
 
+        let toolbox_base_url = Self::toolbox_base_url(
+            &self.daytona.api_url,
+            &sandbox_id,
+            data["toolboxProxyUrl"].as_str(),
+        );
+
         // Try to get the workspace directory from the response.
         let workspace_dir = data["info"]["projectDir"]
             .as_str()
@@ -193,13 +224,13 @@ impl DaytonaSandbox {
             .map(String::from)
             .unwrap_or_else(|| DAYTONA_WORKSPACE.to_string());
 
-        Ok((sandbox_id, workspace_dir))
+        Ok((sandbox_id, toolbox_base_url, workspace_dir))
     }
 
     /// Run a command via the toolbox API.
     async fn run_command(
         &self,
-        sandbox_id: &str,
+        toolbox_base_url: &str,
         command: &str,
         cwd: &str,
         opts: &ExecOpts,
@@ -218,14 +249,11 @@ impl DaytonaSandbox {
             "timeout": timeout_secs,
         });
         if !opts.env.is_empty() {
-            body["env"] = serde_json::Value::Object(Self::env_object(&opts.env));
+            body["envs"] = serde_json::Value::Object(Self::env_object(&opts.env));
         }
 
         let resp = self
-            .request(
-                reqwest::Method::POST,
-                &format!("/toolbox/{sandbox_id}/toolbox/process/execute"),
-            )
+            .toolbox_request(reqwest::Method::POST, toolbox_base_url, "/process/execute")
             .timeout(opts.timeout + Duration::from_secs(10))
             .json(&body)
             .send()
@@ -256,10 +284,7 @@ impl DaytonaSandbox {
         });
         let mut stderr = String::new();
         if let Ok(resp) = self
-            .request(
-                reqwest::Method::POST,
-                &format!("/toolbox/{sandbox_id}/toolbox/process/execute"),
-            )
+            .toolbox_request(reqwest::Method::POST, toolbox_base_url, "/process/execute")
             .timeout(Duration::from_secs(10))
             .json(&stderr_body)
             .send()
@@ -280,7 +305,7 @@ impl DaytonaSandbox {
     }
 
     /// Upload a file to the sandbox via the toolbox API.
-    async fn upload_file(&self, sandbox_id: &str, path: &str, content: &[u8]) -> Result<()> {
+    async fn upload_file(&self, toolbox_base_url: &str, path: &str, content: &[u8]) -> Result<()> {
         let file_name: String = std::path::Path::new(path)
             .file_name()
             .and_then(|n| n.to_str())
@@ -294,10 +319,7 @@ impl DaytonaSandbox {
         let form = reqwest::multipart::Form::new().part("file", part);
 
         let resp = self
-            .request(
-                reqwest::Method::POST,
-                &format!("/toolbox/{sandbox_id}/toolbox/files/upload"),
-            )
+            .toolbox_request(reqwest::Method::POST, toolbox_base_url, "/files/upload")
             .query(&[("path", path)])
             .multipart(form)
             .send()
@@ -315,12 +337,9 @@ impl DaytonaSandbox {
     }
 
     /// Download a file from the sandbox via the toolbox API.
-    async fn download_file(&self, sandbox_id: &str, path: &str) -> Result<Option<Vec<u8>>> {
+    async fn download_file(&self, toolbox_base_url: &str, path: &str) -> Result<Option<Vec<u8>>> {
         let resp = self
-            .request(
-                reqwest::Method::GET,
-                &format!("/toolbox/{sandbox_id}/toolbox/files/download"),
-            )
+            .toolbox_request(reqwest::Method::GET, toolbox_base_url, "/files/download")
             .query(&[("path", path)])
             .send()
             .await
@@ -366,12 +385,14 @@ impl DaytonaSandbox {
     }
 
     /// Get the session state for a sandbox, or None.
-    async fn session_state(&self, id: &SandboxId) -> Option<(String, String)> {
-        self.active
-            .read()
-            .await
-            .get(&id.key)
-            .map(|s| (s.sandbox_id.clone(), s.workspace_dir.clone()))
+    async fn session_state(&self, id: &SandboxId) -> Option<(String, String, String)> {
+        self.active.read().await.get(&id.key).map(|s| {
+            (
+                s.sandbox_id.clone(),
+                s.toolbox_base_url.clone(),
+                s.workspace_dir.clone(),
+            )
+        })
     }
 }
 
@@ -400,7 +421,7 @@ impl Sandbox for DaytonaSandbox {
     async fn workspace_dir_for(&self, id: &SandboxId) -> String {
         self.session_state(id)
             .await
-            .map(|(_, workspace_dir)| workspace_dir)
+            .map(|(_, _, workspace_dir)| workspace_dir)
             .unwrap_or_else(|| DAYTONA_WORKSPACE.to_string())
     }
 
@@ -419,7 +440,7 @@ impl Sandbox for DaytonaSandbox {
 
         info!(%id, "daytona: creating sandbox");
 
-        let (sandbox_id, workspace_dir) = self.create_sandbox().await?;
+        let (sandbox_id, toolbox_base_url, workspace_dir) = self.create_sandbox().await?;
 
         info!(%id, daytona_id = sandbox_id, workspace = workspace_dir, "daytona: sandbox ready");
 
@@ -428,6 +449,7 @@ impl Sandbox for DaytonaSandbox {
             .await
             .insert(id.key.clone(), DaytonaSession {
                 sandbox_id,
+                toolbox_base_url,
                 workspace_dir,
             });
 
@@ -435,7 +457,7 @@ impl Sandbox for DaytonaSandbox {
     }
 
     async fn exec(&self, id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult> {
-        let (sandbox_id, workspace_dir) = self
+        let (_, toolbox_base_url, workspace_dir) = self
             .session_state(id)
             .await
             .ok_or_else(|| Error::message(format!("daytona: no active sandbox for {id}")))?;
@@ -446,7 +468,8 @@ impl Sandbox for DaytonaSandbox {
             &workspace_dir,
         );
 
-        self.run_command(&sandbox_id, command, &cwd, opts).await
+        self.run_command(&toolbox_base_url, command, &cwd, opts)
+            .await
     }
 
     async fn read_file(
@@ -455,12 +478,12 @@ impl Sandbox for DaytonaSandbox {
         file_path: &str,
         max_bytes: u64,
     ) -> Result<SandboxReadResult> {
-        let (sandbox_id, _) = self
+        let (_, toolbox_base_url, _) = self
             .session_state(id)
             .await
             .ok_or_else(|| Error::message(format!("daytona: no active sandbox for {id}")))?;
 
-        match self.download_file(&sandbox_id, file_path).await? {
+        match self.download_file(&toolbox_base_url, file_path).await? {
             None => Ok(SandboxReadResult::NotFound),
             Some(bytes) => {
                 if bytes.len() as u64 > max_bytes {
@@ -478,7 +501,7 @@ impl Sandbox for DaytonaSandbox {
         file_path: &str,
         content: &[u8],
     ) -> Result<Option<serde_json::Value>> {
-        let (sandbox_id, _) = self
+        let (_, toolbox_base_url, _) = self
             .session_state(id)
             .await
             .ok_or_else(|| Error::message(format!("daytona: no active sandbox for {id}")))?;
@@ -493,7 +516,7 @@ impl Sandbox for DaytonaSandbox {
             };
             let _ = self
                 .run_command(
-                    &sandbox_id,
+                    &toolbox_base_url,
                     &format!("mkdir -p '{}'", parent_str.replace('\'', "'\\''")),
                     "/",
                     &mkdir_opts,
@@ -501,7 +524,8 @@ impl Sandbox for DaytonaSandbox {
                 .await;
         }
 
-        self.upload_file(&sandbox_id, file_path, content).await?;
+        self.upload_file(&toolbox_base_url, file_path, content)
+            .await?;
 
         Ok(None)
     }
@@ -587,6 +611,22 @@ mod tests {
         assert_eq!(
             env.get("SESSION_ID").and_then(serde_json::Value::as_str),
             Some("abc123")
+        );
+    }
+
+    #[test]
+    fn test_toolbox_base_url_prefers_proxy_url() {
+        assert_eq!(
+            DaytonaSandbox::toolbox_base_url(
+                "https://app.daytona.io/api",
+                "sandbox-123",
+                Some("https://proxy.app-eu.daytona.io/toolbox/"),
+            ),
+            "https://proxy.app-eu.daytona.io/toolbox/sandbox-123"
+        );
+        assert_eq!(
+            DaytonaSandbox::toolbox_base_url("https://app.daytona.io/api", "sandbox-123", None),
+            "https://app.daytona.io/api/toolbox/sandbox-123/toolbox"
         );
     }
 
