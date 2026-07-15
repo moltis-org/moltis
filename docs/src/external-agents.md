@@ -15,6 +15,9 @@ Supported agent kinds:
 | `acp-codex` | `codex` | Named ACP session shown as `ACP: Codex` in the session header. |
 | `acp-claude` | `claude` | Named ACP session shown as `ACP: Claude` in the session header. |
 | `acp-pi` | `pi` | Named ACP session shown as `ACP: Pi` in the session header. |
+| `acp-opencode` | `opencode acp` | Named ACP session shown as `ACP: opencode` in the session header. |
+| `acp-gemini` | `gemini` | Named ACP session shown as `ACP: Gemini` in the session header. |
+| `acp-amp` | `amp` | Named ACP session shown as `ACP: Amp` in the session header. |
 
 ## Default ACP detection
 
@@ -26,6 +29,9 @@ External agent discovery is enabled by default. On startup, Moltis checks for th
 | `ACP: Codex` | `acp-codex` | `codex` |
 | `ACP: Claude` | `acp-claude` | `claude` |
 | `ACP: Pi` | `acp-pi` | `pi` |
+| `ACP: opencode` | `acp-opencode` | `opencode acp` |
+| `ACP: Gemini` | `acp-gemini` | `gemini` |
+| `ACP: Amp` | `acp-amp` | `amp` |
 
 Installed ACP agents appear automatically in each chat session's external-agent selector. Missing commands are hidden from the selector, so a fresh install with no ACP agents available continues to show only the normal Moltis agent.
 
@@ -60,6 +66,18 @@ args = []
 
 [external_agents.agents.acp-pi]
 binary = "pi"
+args = []
+
+[external_agents.agents.acp-opencode]
+binary = "opencode"
+args = ["acp"]
+
+[external_agents.agents.acp-gemini]
+binary = "gemini"
+args = []
+
+[external_agents.agents.acp-amp]
+binary = "amp"
 args = []
 ```
 

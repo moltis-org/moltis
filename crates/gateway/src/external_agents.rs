@@ -123,15 +123,21 @@ impl GatewayExternalAgentService {
         registry.register(Box::new(CodexTransport::new()));
         let acp_permission_handler: Arc<dyn AcpPermissionHandler> =
             Arc::new(GatewayAcpPermissionHandler::new(approval_manager));
-        for (kind, binary) in [
-            (AgentTransportKind::Acp, "acp"),
-            (AgentTransportKind::AcpCopilot, "copilot"),
-            (AgentTransportKind::AcpCodex, "codex"),
-            (AgentTransportKind::AcpClaude, "claude"),
-            (AgentTransportKind::AcpPi, "pi"),
+        for (kind, binary, default_args) in [
+            (AgentTransportKind::Acp, "acp", Vec::new()),
+            (AgentTransportKind::AcpCopilot, "copilot", Vec::new()),
+            (AgentTransportKind::AcpCodex, "codex", Vec::new()),
+            (AgentTransportKind::AcpClaude, "claude", Vec::new()),
+            (AgentTransportKind::AcpPi, "pi", Vec::new()),
+            (AgentTransportKind::AcpOpencode, "opencode", vec![
+                "acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpGemini, "gemini", Vec::new()),
+            (AgentTransportKind::AcpAmp, "amp", Vec::new()),
         ] {
             registry.register(Box::new(
                 AcpTransport::for_kind(kind, kind.display_name(), binary.to_string())
+                    .with_default_args(default_args)
                     .with_permission_handler(acp_permission_handler.clone()),
             ));
         }

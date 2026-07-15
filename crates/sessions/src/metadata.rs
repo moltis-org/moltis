@@ -27,6 +27,9 @@ pub enum ExternalAgentKind {
     AcpCodex,
     AcpClaude,
     AcpPi,
+    AcpOpencode,
+    AcpGemini,
+    AcpAmp,
 }
 
 impl ExternalAgentKind {
@@ -42,6 +45,9 @@ impl ExternalAgentKind {
             Self::AcpCodex => "acp-codex",
             Self::AcpClaude => "acp-claude",
             Self::AcpPi => "acp-pi",
+            Self::AcpOpencode => "acp-opencode",
+            Self::AcpGemini => "acp-gemini",
+            Self::AcpAmp => "acp-amp",
         }
     }
 
@@ -57,6 +63,9 @@ impl ExternalAgentKind {
             Self::AcpCodex => "ACP: Codex",
             Self::AcpClaude => "ACP: Claude",
             Self::AcpPi => "ACP: Pi",
+            Self::AcpOpencode => "ACP: opencode",
+            Self::AcpGemini => "ACP: Gemini",
+            Self::AcpAmp => "ACP: Amp",
         }
     }
 
@@ -64,7 +73,14 @@ impl ExternalAgentKind {
     pub fn is_acp(&self) -> bool {
         matches!(
             self,
-            Self::Acp | Self::AcpCopilot | Self::AcpCodex | Self::AcpClaude | Self::AcpPi
+            Self::Acp
+                | Self::AcpCopilot
+                | Self::AcpCodex
+                | Self::AcpClaude
+                | Self::AcpPi
+                | Self::AcpOpencode
+                | Self::AcpGemini
+                | Self::AcpAmp
         )
     }
 }
@@ -89,6 +105,9 @@ impl std::str::FromStr for ExternalAgentKind {
             "acp-codex" => Ok(Self::AcpCodex),
             "acp-claude" => Ok(Self::AcpClaude),
             "acp-pi" => Ok(Self::AcpPi),
+            "acp-opencode" => Ok(Self::AcpOpencode),
+            "acp-gemini" => Ok(Self::AcpGemini),
+            "acp-amp" => Ok(Self::AcpAmp),
             other => Err(format!("unknown external agent kind: {other}")),
         }
     }

@@ -414,6 +414,9 @@ test.describe("Agents settings page", () => {
 			{ kind: "acp-codex", name: "ACP: Codex", installed: true, version: null },
 			{ kind: "acp-claude", name: "ACP: Claude", installed: true, version: null },
 			{ kind: "acp-pi", name: "ACP: Pi", installed: true, version: null },
+			{ kind: "acp-opencode", name: "ACP: opencode", installed: true, version: null },
+			{ kind: "acp-gemini", name: "ACP: Gemini", installed: true, version: null },
+			{ kind: "acp-amp", name: "ACP: Amp", installed: true, version: null },
 		]);
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
@@ -427,6 +430,9 @@ test.describe("Agents settings page", () => {
 		await expect(page.getByText("ACP: Codex", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Claude", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Pi", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: opencode", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Gemini", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Amp", { exact: true })).toBeVisible();
 
 		await page.getByText("ACP: Copilot", { exact: true }).click();
 		await expect
@@ -449,6 +455,9 @@ test.describe("Agents settings page", () => {
 		await mockExternalAgentsRpc(page, [
 			{ kind: "acp-copilot", name: "ACP: Copilot", installed: false, version: null },
 			{ kind: "acp-codex", name: "ACP: Codex", installed: false, version: null },
+			{ kind: "acp-opencode", name: "ACP: opencode", installed: false, version: null },
+			{ kind: "acp-gemini", name: "ACP: Gemini", installed: false, version: null },
+			{ kind: "acp-amp", name: "ACP: Amp", installed: false, version: null },
 		]);
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
@@ -467,6 +476,9 @@ test.describe("Agents settings page", () => {
 		await expect(page.getByTestId("external-agent-picker")).toHaveCount(0);
 		await expect(page.getByText("ACP: Copilot (unavailable)", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("ACP: Codex (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: opencode (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Gemini (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Amp (unavailable)", { exact: true })).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
 	});

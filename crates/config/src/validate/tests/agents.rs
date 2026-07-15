@@ -362,6 +362,16 @@ binary = "claude"
 
 [external_agents.agents.acp-pi]
 binary = "pi"
+
+[external_agents.agents.acp-opencode]
+binary = "opencode"
+args = ["acp"]
+
+[external_agents.agents.acp-gemini]
+binary = "gemini"
+
+[external_agents.agents.acp-amp]
+binary = "amp"
 "#;
     let result = validate_toml_str(toml);
     let warning = result

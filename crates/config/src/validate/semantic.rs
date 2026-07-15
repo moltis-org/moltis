@@ -573,6 +573,9 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         "acp-codex",
         "acp-claude",
         "acp-pi",
+        "acp-opencode",
+        "acp-gemini",
+        "acp-amp",
     ];
     for agent_kind in config.external_agents.agents.keys() {
         if !valid_agent_kinds.contains(&agent_kind.as_str()) {

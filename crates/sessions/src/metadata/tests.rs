@@ -82,6 +82,13 @@ fn external_agent_kind_parses_named_acp_variants() {
         ("acp-codex", ExternalAgentKind::AcpCodex, "ACP: Codex"),
         ("acp-claude", ExternalAgentKind::AcpClaude, "ACP: Claude"),
         ("acp-pi", ExternalAgentKind::AcpPi, "ACP: Pi"),
+        (
+            "acp-opencode",
+            ExternalAgentKind::AcpOpencode,
+            "ACP: opencode",
+        ),
+        ("acp-gemini", ExternalAgentKind::AcpGemini, "ACP: Gemini"),
+        ("acp-amp", ExternalAgentKind::AcpAmp, "ACP: Amp"),
     ] {
         assert_eq!(raw.parse::<ExternalAgentKind>(), Ok(kind));
         assert_eq!(kind.as_str(), raw);

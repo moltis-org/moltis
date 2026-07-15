@@ -35,6 +35,7 @@ pub struct AcpTransport {
     kind: AgentTransportKind,
     name: String,
     binary: String,
+    default_args: Vec<String>,
     permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
 }
 
@@ -50,8 +51,15 @@ impl AcpTransport {
             kind,
             name: name.into(),
             binary,
+            default_args: Vec::new(),
             permission_handler: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_default_args(mut self, args: Vec<String>) -> Self {
+        self.default_args = args;
+        self
     }
 
     #[must_use]
@@ -85,8 +93,12 @@ impl ExternalAgentTransport for AcpTransport {
         spec: &ExternalAgentSpec,
     ) -> anyhow::Result<Box<dyn ExternalAgentSession>> {
         let binary = spec.binary.clone().unwrap_or_else(|| self.binary.clone());
+        let mut spec = spec.clone();
+        if spec.args.is_empty() {
+            spec.args.clone_from(&self.default_args);
+        }
         Ok(Box::new(
-            AcpSession::start(binary, spec.clone(), self.permission_handler.clone()).await?,
+            AcpSession::start(binary, spec, self.permission_handler.clone()).await?,
         ))
     }
 }
@@ -837,6 +849,18 @@ mod tests {
         assert_eq!(transport.supported_kinds(), &[
             AgentTransportKind::AcpCopilot
         ]);
+    }
+
+    #[test]
+    fn transport_can_store_default_args() {
+        let transport = AcpTransport::for_kind(
+            AgentTransportKind::AcpOpencode,
+            "ACP: opencode",
+            "opencode".to_string(),
+        )
+        .with_default_args(vec!["acp".to_string()]);
+
+        assert_eq!(transport.default_args, ["acp"]);
     }
 
     #[tokio::test]
