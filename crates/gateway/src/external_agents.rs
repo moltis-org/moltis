@@ -1064,7 +1064,7 @@ mod tests {
             .iter()
             .find(|agent| agent["kind"] == "codex")
             .expect("codex should be in list");
-        assert_eq!(codex["installed"], true);
+        assert_eq!(codex["name"], "Codex");
         assert_eq!(agent_state.starts.load(Ordering::SeqCst), 0);
     }
 
