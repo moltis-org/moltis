@@ -351,6 +351,10 @@ binary = "claude"
 [external_agents.agents.codex]
 binary = "codex"
 
+[external_agents.agents.acp]
+binary = "/path/to/acp-agent"
+args = ["--stdio"]
+
 [external_agents.agents.acp-copilot]
 binary = "copilot"
 args = ["--acp"]

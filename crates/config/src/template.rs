@@ -706,9 +706,10 @@ port = {port}                           # Port number (auto-generated for this i
 # binary = "codex"
 # args = ["app-server"]
 
+# Generic manual ACP server for advanced/custom CLIs not listed below.
 # [external_agents.agents.acp]
 # binary = "/path/to/acp-agent"
-# args = []
+# args = ["--stdio"]
 
 # Named ACP agents are auto-detected by default when their binaries are on PATH.
 # Add entries only to override binary paths, args, env, working_dir, or timeout.

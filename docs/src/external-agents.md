@@ -77,7 +77,7 @@ binary = "gemini"
 args = ["--experimental-acp"]
 ```
 
-If your ACP server is not one of the named options, use the generic `acp` kind:
+For advanced/manual ACP servers that are not one of the named options, use the generic `acp` kind:
 
 ```toml
 [external_agents]
