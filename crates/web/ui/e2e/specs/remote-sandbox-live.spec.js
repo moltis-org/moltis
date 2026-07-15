@@ -187,7 +187,9 @@ test.describe("Daytona Sandbox live integration", () => {
 		const createData = await createResp.json();
 		sandboxId = createData.id;
 		expect(sandboxId).toBeTruthy();
-		const toolboxBaseUrl = `${createData.toolboxProxyUrl.replace(/\/$/, "")}/${sandboxId}`;
+		const toolboxBaseUrl = createData.toolboxProxyUrl
+			? `${createData.toolboxProxyUrl.replace(/\/$/, "")}/${sandboxId}`
+			: `${DAYTONA_API}/toolbox/${sandboxId}/toolbox`;
 
 		// Wait for sandbox toolbox to become available (may take a few seconds after creation).
 		const execDeadline = Date.now() + 60000;
