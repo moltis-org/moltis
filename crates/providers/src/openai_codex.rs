@@ -127,8 +127,14 @@ impl OpenAiCodexProvider {
                 )
             })?;
 
-        // Check expiry with 5 min buffer
-        if let Some(expires_at) = tokens.expires_at {
+        // Check expiry with 5 min buffer. Stored tokens may lack `expires_at`
+        // (the Codex OAuth response has no `expires_in`), so fall back to the
+        // access token's own JWT `exp` claim — otherwise the refresh below can
+        // never trigger and the token eventually dies with a 401.
+        let expires_at = tokens
+            .expires_at
+            .or_else(|| Self::expires_at_from_jwt(tokens.access_token.expose_secret()));
+        if let Some(expires_at) = expires_at {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -149,6 +155,10 @@ impl OpenAiCodexProvider {
                     }
                     if new_tokens.account_id.is_none() {
                         new_tokens.account_id = tokens.account_id.clone();
+                    }
+                    if new_tokens.expires_at.is_none() {
+                        new_tokens.expires_at =
+                            Self::expires_at_from_jwt(new_tokens.access_token.expose_secret());
                     }
                     self.token_store.save("openai-codex", &new_tokens)?;
                     return Ok(new_tokens);
@@ -188,7 +198,8 @@ impl OpenAiCodexProvider {
             })
     }
 
-    fn extract_account_id(jwt: &str) -> Option<String> {
+    /// Decode the payload (claims) segment of a JWT without verifying the signature.
+    fn decode_jwt_claims(jwt: &str) -> Option<serde_json::Value> {
         let parts: Vec<&str> = jwt.split('.').collect();
         if parts.len() < 2 {
             return None;
@@ -203,8 +214,21 @@ impl OpenAiCodexProvider {
             base64::engine::general_purpose::STANDARD.decode(&padded)
         });
         let payload = payload.ok()?;
-        let claims: serde_json::Value = serde_json::from_slice(&payload).ok()?;
+        serde_json::from_slice(&payload).ok()
+    }
+
+    fn extract_account_id(jwt: &str) -> Option<String> {
+        let claims = Self::decode_jwt_claims(jwt)?;
         Self::extract_account_id_from_claims(&claims)
+    }
+
+    /// Best-effort expiry (unix seconds) from the JWT `exp` claim of an access token.
+    /// Codex OAuth responses omit `expires_in`, so stored tokens often have
+    /// `expires_at: None`; without it the proactive refresh below never runs.
+    fn expires_at_from_jwt(access_token: &str) -> Option<u64> {
+        Self::decode_jwt_claims(access_token)?
+            .get("exp")
+            .and_then(serde_json::Value::as_u64)
     }
 
     pub(crate) fn resolve_account_id(tokens: &moltis_oauth::OAuthTokens) -> anyhow::Result<String> {
@@ -1041,6 +1065,39 @@ mod tests {
                 &serde_json::from_str(org).unwrap()
             ),
             Some("org-id".to_string())
+        );
+    }
+
+    #[test]
+    fn expires_at_derived_from_jwt_exp_claim() {
+        let token = format!("h.{}.s", URL_SAFE_NO_PAD.encode(r#"{"exp":1893456000}"#));
+        assert_eq!(
+            OpenAiCodexProvider::expires_at_from_jwt(&token),
+            Some(1893456000)
+        );
+    }
+
+    #[test]
+    fn expires_at_none_without_exp_claim() {
+        let token = format!("h.{}.s", URL_SAFE_NO_PAD.encode(r#"{}"#));
+        assert_eq!(OpenAiCodexProvider::expires_at_from_jwt(&token), None);
+    }
+
+    #[test]
+    fn expires_at_none_for_malformed_token() {
+        assert_eq!(OpenAiCodexProvider::expires_at_from_jwt("not-a-jwt"), None);
+    }
+
+    #[test]
+    fn decode_jwt_claims_handles_standard_base64_padding() {
+        let token = format!(
+            "h.{}.s",
+            base64::engine::general_purpose::STANDARD.encode(r#"{"padding":true}"#)
+        );
+        assert_eq!(
+            OpenAiCodexProvider::decode_jwt_claims(&token)
+                .and_then(|claims| { claims.get("padding").and_then(serde_json::Value::as_bool) }),
+            Some(true)
         );
     }
 
