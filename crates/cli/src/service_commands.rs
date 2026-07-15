@@ -470,6 +470,10 @@ fn stop_linux_service() -> Result<()> {
         return stop_process_service();
     }
 
+    if !systemd_user_available() {
+        anyhow::bail!(portable_service_not_installed_message());
+    }
+
     stop_systemd()
 }
 
@@ -478,7 +482,15 @@ fn restart_linux_service() -> Result<()> {
         return restart_process_service();
     }
 
+    if !systemd_user_available() {
+        anyhow::bail!(portable_service_not_installed_message());
+    }
+
     restart_systemd()
+}
+
+fn portable_service_not_installed_message() -> &'static str {
+    "service not installed; systemd --user is unavailable, so run `moltis service install` to use the portable supervisor"
 }
 
 fn install_systemd(moltis_bin: &Path, opts: &GatewayServiceOpts, log_path: &Path) -> Result<()> {
