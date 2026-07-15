@@ -140,10 +140,47 @@ impl DaytonaSandbox {
         api_url: &str,
         sandbox_id: &str,
         toolbox_proxy_url: Option<&str>,
-    ) -> String {
-        toolbox_proxy_url
-            .map(|url| format!("{}/{}", url.trim_end_matches('/'), sandbox_id))
-            .unwrap_or_else(|| format!("{api_url}/toolbox/{sandbox_id}/toolbox"))
+    ) -> Result<String> {
+        let Some(toolbox_proxy_url) = toolbox_proxy_url else {
+            return Ok(format!("{api_url}/toolbox/{sandbox_id}/toolbox"));
+        };
+
+        let api = url::Url::parse(api_url)
+            .map_err(|e| Error::message(format!("daytona: invalid API URL: {e}")))?;
+        let proxy = url::Url::parse(toolbox_proxy_url)
+            .map_err(|e| Error::message(format!("daytona: invalid toolbox proxy URL: {e}")))?;
+        if proxy.scheme() != "https" {
+            return Err(Error::message("daytona: toolbox proxy URL must use https"));
+        }
+
+        let api_host = api
+            .host_str()
+            .ok_or_else(|| Error::message("daytona: API URL is missing a host"))?;
+        let proxy_host = proxy
+            .host_str()
+            .ok_or_else(|| Error::message("daytona: toolbox proxy URL is missing a host"))?;
+        if !Self::is_allowed_toolbox_proxy_host(api_host, proxy_host) {
+            return Err(Error::message(format!(
+                "daytona: toolbox proxy host {proxy_host} is not trusted for API host {api_host}"
+            )));
+        }
+
+        Ok(format!(
+            "{}/{}",
+            toolbox_proxy_url.trim_end_matches('/'),
+            sandbox_id
+        ))
+    }
+
+    fn is_allowed_toolbox_proxy_host(api_host: &str, proxy_host: &str) -> bool {
+        let api_host = api_host.trim_end_matches('.').to_ascii_lowercase();
+        let proxy_host = proxy_host.trim_end_matches('.').to_ascii_lowercase();
+
+        proxy_host == api_host
+            || proxy_host.ends_with(&format!(".{api_host}"))
+            || (api_host == "app.daytona.io"
+                && proxy_host.starts_with("proxy.")
+                && proxy_host.ends_with(".daytona.io"))
     }
 
     /// Build an authenticated request.
@@ -215,7 +252,7 @@ impl DaytonaSandbox {
             &self.daytona.api_url,
             &sandbox_id,
             data["toolboxProxyUrl"].as_str(),
-        );
+        )?;
 
         // Try to get the workspace directory from the response.
         let workspace_dir = data["info"]["projectDir"]
@@ -622,13 +659,39 @@ mod tests {
                 "https://app.daytona.io/api",
                 "sandbox-123",
                 Some("https://proxy.app-eu.daytona.io/toolbox/"),
-            ),
+            )
+            .unwrap(),
             "https://proxy.app-eu.daytona.io/toolbox/sandbox-123"
         );
         assert_eq!(
-            DaytonaSandbox::toolbox_base_url("https://app.daytona.io/api", "sandbox-123", None),
+            DaytonaSandbox::toolbox_base_url("https://app.daytona.io/api", "sandbox-123", None)
+                .unwrap(),
             "https://app.daytona.io/api/toolbox/sandbox-123/toolbox"
         );
+    }
+
+    #[test]
+    fn test_toolbox_base_url_rejects_untrusted_proxy_url() {
+        let err = DaytonaSandbox::toolbox_base_url(
+            "https://app.daytona.io/api",
+            "sandbox-123",
+            Some("https://attacker.example/toolbox/"),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("not trusted"));
+    }
+
+    #[test]
+    fn test_toolbox_base_url_rejects_insecure_proxy_url() {
+        let err = DaytonaSandbox::toolbox_base_url(
+            "https://app.daytona.io/api",
+            "sandbox-123",
+            Some("http://proxy.app-eu.daytona.io/toolbox/"),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("must use https"));
     }
 
     #[test]
