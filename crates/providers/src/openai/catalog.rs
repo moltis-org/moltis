@@ -147,13 +147,23 @@ fn parse_model_entry(entry: &serde_json::Value) -> Option<DiscoveredModel> {
         .and_then(serde_json::Value::as_str);
 
     let created_at = obj.get("created").and_then(serde_json::Value::as_i64);
+    let context_window = obj
+        .get("context_window")
+        .or_else(|| obj.get("context_length"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok());
 
     let recommended = is_recommended_openai_model(model_id);
-    Some(
-        DiscoveredModel::new(model_id, normalize_display_name(model_id, display_name))
-            .with_created_at(created_at)
-            .with_recommended(recommended),
-    )
+    let mut model = DiscoveredModel::new(model_id, normalize_display_name(model_id, display_name))
+        .with_created_at(created_at)
+        .with_recommended(recommended);
+    if let Some(context_window) = context_window {
+        let mut capabilities = crate::ModelCapabilities::infer(model_id);
+        capabilities.context_window = context_window;
+        model = model.with_capabilities(capabilities);
+    }
+
+    Some(model)
 }
 
 /// Known OpenAI flagship model IDs (latest generation, no date suffix).
@@ -299,4 +309,37 @@ pub fn available_models(api_key: &secrecy::Secret<String>, base_url: &str) -> Ve
     let merged = crate::merge_discovered_with_fallback_catalog(discovered, fallback);
     debug!(model_count = merged.len(), "loaded openai models catalog");
     merged
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_model_entry_preserves_discovered_context_window() {
+        let entry = serde_json::json!({
+            "id": "MiniMax-M3",
+            "display_name": "MiniMax M3",
+            "context_window": 1_000_000
+        });
+
+        let model = parse_model_entry(&entry).expect("model should parse");
+        let capabilities = model.capabilities.expect("capabilities should be set");
+
+        assert_eq!(capabilities.context_window, 1_000_000);
+    }
+
+    #[test]
+    fn parse_model_entry_accepts_context_length_alias() {
+        let entry = serde_json::json!({
+            "id": "custom-context-model",
+            "context_length": 321_000
+        });
+
+        let model = parse_model_entry(&entry).expect("model should parse");
+        let capabilities = model.capabilities.expect("capabilities should be set");
+
+        assert_eq!(capabilities.context_window, 321_000);
+    }
 }

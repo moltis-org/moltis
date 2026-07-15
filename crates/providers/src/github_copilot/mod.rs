@@ -1,6 +1,7 @@
 mod auth_prefetch;
 mod catalog;
 mod diagnostics;
+mod discovery;
 mod endpoints;
 mod provider;
 

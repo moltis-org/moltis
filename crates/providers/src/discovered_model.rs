@@ -114,6 +114,14 @@ pub(crate) fn merge_discovered_with_fallback_catalog(
         .into_iter()
         .map(|m| {
             let fallback_capabilities = fallback_by_id.get(&m.id).and_then(|fb| fb.capabilities);
+            let capabilities = match (m.capabilities, fallback_capabilities) {
+                (Some(mut live), Some(fallback)) => {
+                    live.requires_responses_api |= fallback.requires_responses_api;
+                    Some(live)
+                },
+                (Some(live), None) => Some(live),
+                (None, fallback) => fallback,
+            };
             let display_name = if m.display_name.trim().is_empty() {
                 fallback_by_id
                     .get(&m.id)
@@ -127,7 +135,7 @@ pub(crate) fn merge_discovered_with_fallback_catalog(
                 display_name,
                 created_at: m.created_at,
                 recommended: m.recommended,
-                capabilities: m.capabilities.or(fallback_capabilities),
+                capabilities,
             }
         })
         .collect()
@@ -164,5 +172,21 @@ mod tests {
 
         let ids: Vec<&str> = merged.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, vec!["fallback-a", "fallback-b"]);
+    }
+
+    #[test]
+    fn merge_discovered_with_fallback_preserves_responses_api_capability() {
+        let live = DiscoveredModel::new("gpt-5.6-luna", "GPT-5.6 Luna")
+            .with_capabilities(ModelCapabilities::infer("gpt-5.6-luna"));
+        let mut fallback_capabilities = ModelCapabilities::infer("gpt-5.6-luna");
+        fallback_capabilities.requires_responses_api = true;
+        let fallback = DiscoveredModel::new("gpt-5.6-luna", "GPT-5.6 Luna (Fallback)")
+            .with_capabilities(fallback_capabilities);
+
+        let merged = merge_discovered_with_fallback_catalog(vec![live], vec![fallback]);
+        let capabilities = merged[0].capabilities.expect("capabilities should merge");
+
+        assert!(capabilities.requires_responses_api);
+        assert_eq!(capabilities.context_window, 1_050_000);
     }
 }

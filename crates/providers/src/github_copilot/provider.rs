@@ -1,4 +1,4 @@
-use std::{collections::HashSet, pin::Pin, sync::mpsc, time::Duration};
+use std::{pin::Pin, sync::mpsc, time::Duration};
 
 use super::catalog::default_model_catalog;
 
@@ -23,6 +23,7 @@ use {
             CopilotTokenResponse, completion_to_stream_events, is_responses_api_required_error,
             log_copilot_chat_error, log_copilot_request, log_copilot_response,
         },
+        discovery::parse_models_payload,
         endpoints::{CopilotEndpoint, endpoint_from_cached_metadata, endpoint_from_metadata},
     },
     moltis_agents::model::{
@@ -65,16 +66,26 @@ pub(super) struct CopilotAuth {
 
 pub struct GitHubCopilotProvider {
     model: String,
-    requires_responses_api: bool,
+    model_capabilities: super::super::ModelCapabilities,
     client: &'static reqwest::Client,
     token_store: TokenStore,
 }
 
 impl GitHubCopilotProvider {
     pub fn new(model: String) -> Self {
+        let model_capabilities = super::super::ModelCapabilities::infer(&model);
+        let mut model_capabilities = model_capabilities;
+        if let Some(context_window) =
+            super::super::model_capabilities::context_window_fallback_for_model(
+                super::super::model_capabilities::ContextWindowFallbackScope::GitHubCopilot,
+                &model,
+            )
+        {
+            model_capabilities.context_window = context_window;
+        }
         Self {
             model,
-            requires_responses_api: false,
+            model_capabilities,
             client: crate::shared_http_client(),
             token_store: TokenStore::new(),
         }
@@ -85,7 +96,7 @@ impl GitHubCopilotProvider {
         capabilities: super::super::ModelCapabilities,
     ) -> Self {
         Self {
-            requires_responses_api: capabilities.requires_responses_api,
+            model_capabilities: capabilities,
             ..Self::new(model)
         }
     }
@@ -363,101 +374,6 @@ async fn fetch_copilot_auth_with_fallback(
         anyhow::bail!("not logged in to github-copilot — run OAuth device flow first");
     };
     fetch_copilot_auth(client, &token_store).await
-}
-
-fn normalize_display_name(model_id: &str, display_name: Option<&str>) -> String {
-    let normalized = display_name
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(model_id);
-    if normalized == model_id {
-        model_id.to_string()
-    } else {
-        normalized.to_string()
-    }
-}
-
-fn is_likely_model_id(model_id: &str) -> bool {
-    if model_id.is_empty() || model_id.len() > 120 {
-        return false;
-    }
-    if model_id.chars().any(char::is_whitespace) {
-        return false;
-    }
-    model_id
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
-}
-
-fn parse_model_entry(entry: &serde_json::Value) -> Option<super::super::DiscoveredModel> {
-    let obj = entry.as_object()?;
-    let model_id = obj
-        .get("id")
-        .or_else(|| obj.get("slug"))
-        .or_else(|| obj.get("model"))
-        .and_then(serde_json::Value::as_str)?;
-
-    if !is_likely_model_id(model_id) {
-        return None;
-    }
-
-    let display_name = obj
-        .get("display_name")
-        .or_else(|| obj.get("displayName"))
-        .or_else(|| obj.get("name"))
-        .or_else(|| obj.get("title"))
-        .and_then(serde_json::Value::as_str);
-
-    let created_at = obj.get("created").and_then(serde_json::Value::as_i64);
-
-    Some(
-        super::super::DiscoveredModel::new(
-            model_id,
-            normalize_display_name(model_id, display_name),
-        )
-        .with_created_at(created_at),
-    )
-}
-
-fn collect_candidate_arrays<'a>(
-    value: &'a serde_json::Value,
-    out: &mut Vec<&'a serde_json::Value>,
-) {
-    match value {
-        serde_json::Value::Array(items) => out.extend(items),
-        serde_json::Value::Object(map) => {
-            for key in ["models", "data", "items", "results", "available"] {
-                if let Some(nested) = map.get(key) {
-                    collect_candidate_arrays(nested, out);
-                }
-            }
-        },
-        _ => {},
-    }
-}
-
-fn parse_models_payload(value: &serde_json::Value) -> Vec<super::super::DiscoveredModel> {
-    let mut candidates = Vec::new();
-    collect_candidate_arrays(value, &mut candidates);
-
-    let mut models = Vec::new();
-    let mut seen = HashSet::new();
-    for entry in candidates {
-        if let Some(model) = parse_model_entry(entry)
-            && seen.insert(model.id.clone())
-        {
-            models.push(model);
-        }
-    }
-
-    models.sort_by(|a, b| match (a.created_at, b.created_at) {
-        (Some(a_ts), Some(b_ts)) => b_ts.cmp(&a_ts), // newest first
-        (Some(_), None) => std::cmp::Ordering::Less, // timestamp before no-timestamp
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
-
-    models
 }
 
 async fn fetch_models_from_api(
@@ -902,7 +818,11 @@ impl LlmProvider for GitHubCopilotProvider {
     }
 
     fn supports_tools(&self) -> bool {
-        super::super::supports_tools_for_model(&self.model)
+        self.model_capabilities.tools
+    }
+
+    fn context_window(&self) -> u32 {
+        self.model_capabilities.context_window
     }
 
     async fn complete(
@@ -910,7 +830,7 @@ impl LlmProvider for GitHubCopilotProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        if self.requires_responses_api {
+        if self.model_capabilities.requires_responses_api {
             return self.complete_responses(messages, tools).await;
         }
 
@@ -1034,7 +954,7 @@ impl LlmProvider for GitHubCopilotProvider {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-        if self.requires_responses_api {
+        if self.model_capabilities.requires_responses_api {
             return self.stream_responses_api(messages, tools);
         }
         self.stream_chat_completions(messages, tools)

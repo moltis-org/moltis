@@ -670,8 +670,14 @@ exit 0
             env_overrides: real_qmd_env(&tmp),
         });
 
-        manager.refresh_index(false).await.unwrap();
-        let results = manager.keyword_search("keyword target", 5).await.unwrap();
+        manager
+            .refresh_index(false)
+            .await
+            .unwrap_or_else(|error| panic!("installed qmd failed to refresh index: {error}"));
+        let results = manager
+            .keyword_search("keyword target", 5)
+            .await
+            .unwrap_or_else(|error| panic!("installed qmd failed keyword search: {error}"));
         assert!(!results.is_empty(), "expected keyword result from live qmd");
         let first = &results[0];
         assert!(
@@ -683,7 +689,7 @@ exit 0
         let body = manager
             .get_document(&first.docid_ref(), Some(first.line), Some(10))
             .await
-            .unwrap();
+            .unwrap_or_else(|error| panic!("installed qmd failed document get: {error}"));
         assert!(
             body.contains("gamma keyword target"),
             "expected qmd get to return indexed content, got: {body}"

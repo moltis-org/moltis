@@ -176,6 +176,7 @@ export function SessionHeader({
 	const currentExternalAgent = currentExternalAgentKind
 		? externalAgentOptions.find((agent) => agent.kind === currentExternalAgentKind) || null
 		: null;
+	const currentExternalAgentName = currentExternalAgent?.name || currentExternalAgentKind;
 
 	useEffect(() => {
 		let cancelled = false;
@@ -523,20 +524,23 @@ export function SessionHeader({
 	const shouldShowAgentPicker = !isCron && agentOptionsLoaded && (agentOptions.length > 1 || !hasCurrentAgentOption);
 
 	const shouldShowNodePicker = !isCron && (nodeOptions.length > 0 || Boolean(currentNodeId));
+	const selectableExternalAgents = externalAgentOptions.filter(
+		(agent) => agent.installed || agent.kind === currentExternalAgentKind,
+	);
 	const externalAgentSelectOptions: SelectOption[] = [
 		{ value: "", label: "Moltis agent" },
-		...externalAgentOptions.map((agent) => ({
+		...selectableExternalAgents.map((agent) => ({
 			value: agent.kind,
 			label: `${agent.name}${agent.installed ? "" : " (unavailable)"}`,
 		})),
 	];
-	const shouldShowExternalAgentPicker = !isCron && externalAgentOptions.length > 0;
+	const shouldShowExternalAgentPicker = !isCron && selectableExternalAgents.length > 0;
 	const externalAgentStatus = currentExternalAgentKind
 		? currentExternalAgent?.installed === false
-			? "External agent unavailable"
+			? `${currentExternalAgentName} unavailable`
 			: session?.externalSessionId
-				? `External session ${session.externalSessionId}`
-				: "External agent bound"
+				? `${currentExternalAgentName} session ${session.externalSessionId}`
+				: `${currentExternalAgentName} bound`
 		: "";
 	const hasCurrentNodeOption = currentNodeId === "" || nodeOptions.some((node) => node.nodeId === currentNodeId);
 	let nodeSelectOptions: SelectOption[] = [

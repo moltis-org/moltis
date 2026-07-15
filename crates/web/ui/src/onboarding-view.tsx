@@ -144,6 +144,13 @@ interface SummarySkills {
 	totalSkills: number;
 }
 
+interface SummaryExternalAgent {
+	kind: string;
+	name: string;
+	installed: boolean;
+	isAcp: boolean;
+}
+
 interface SummaryData {
 	identity: IdentityInfo | null;
 	mem: { total?: number; available?: number } | null;
@@ -155,6 +162,7 @@ interface SummaryData {
 	voice: SummaryVoice | null;
 	sandbox: { backend?: string } | null;
 	skills: SummarySkills | null;
+	externalAgents: SummaryExternalAgent[];
 }
 
 // ── SummaryStep ─────────────────────────────────────────────
@@ -180,61 +188,69 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 			} | null;
 			const voiceEnabled = getGon("voice_enabled") === true;
 
-			const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes, skillsRes] = await Promise.all([
-				(
-					sendRpc("providers.available", {}) as Promise<{
-						ok?: boolean;
-						payload?: SummaryProvider[];
-					}>
-				).catch(() => null),
-				(
-					fetchChannelStatus() as Promise<{
-						ok?: boolean;
-						payload?: { channels?: SummaryChannel[] };
-					}>
-				).catch(() => null),
-				fetch("/api/tailscale/status")
-					.then((r) =>
-						r.ok
-							? (r.json() as Promise<{
-									tailscale_up?: boolean;
-									installed?: boolean;
-								}>)
-							: null,
+			const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes, skillsRes, externalAgentsRes] =
+				await Promise.all([
+					(
+						sendRpc("providers.available", {}) as Promise<{
+							ok?: boolean;
+							payload?: SummaryProvider[];
+						}>
+					).catch(() => null),
+					(
+						fetchChannelStatus() as Promise<{
+							ok?: boolean;
+							payload?: { channels?: SummaryChannel[] };
+						}>
+					).catch(() => null),
+					fetch("/api/tailscale/status")
+						.then((r) =>
+							r.ok
+								? (r.json() as Promise<{
+										tailscale_up?: boolean;
+										installed?: boolean;
+									}>)
+								: null,
+						)
+						.catch(() => null),
+					voiceEnabled
+						? (
+								fetchVoiceProviders() as Promise<{
+									ok?: boolean;
+									payload?: SummaryVoice;
+								}>
+							).catch(() => null)
+						: Promise.resolve(null),
+					fetch(
+						"/api/bootstrap?include_channels=false&include_sessions=false&include_models=false&include_projects=false&include_counts=false&include_identity=false",
 					)
-					.catch(() => null),
-				voiceEnabled
-					? (
-							fetchVoiceProviders() as Promise<{
-								ok?: boolean;
-								payload?: SummaryVoice;
-							}>
-						).catch(() => null)
-					: Promise.resolve(null),
-				fetch(
-					"/api/bootstrap?include_channels=false&include_sessions=false&include_models=false&include_projects=false&include_counts=false&include_identity=false",
-				)
-					.then((r) =>
-						r.ok
-							? (r.json() as Promise<{
-									sandbox?: { backend?: string };
-								}>)
-							: null,
-					)
-					.catch(() => null),
-				(
-					sendRpc("skills.bundled.categories", {}) as Promise<{
-						ok?: boolean;
-						payload?: { categories?: { name: string; count: number; enabled: boolean }[]; total_skills?: number };
-					}>
-				).catch(() => null),
-			]);
+						.then((r) =>
+							r.ok
+								? (r.json() as Promise<{
+										sandbox?: { backend?: string };
+									}>)
+								: null,
+						)
+						.catch(() => null),
+					(
+						sendRpc("skills.bundled.categories", {}) as Promise<{
+							ok?: boolean;
+							payload?: { categories?: { name: string; count: number; enabled: boolean }[]; total_skills?: number };
+						}>
+					).catch(() => null),
+					(
+						sendRpc("external_agents.list", {}) as Promise<{
+							ok?: boolean;
+							payload?: SummaryExternalAgent[];
+						}>
+					).catch(() => null),
+				]);
 
 			if (cancelled) return;
 
 			const skillsCats = skillsRes?.ok ? skillsRes.payload?.categories || [] : [];
 			const skillsTotal = skillsRes?.ok ? skillsRes.payload?.total_skills || 0 : 0;
 			const skillsEnabledCats = skillsCats.filter((c) => c.enabled);
+			const externalAgents = externalAgentsRes?.ok ? externalAgentsRes.payload || [] : [];
 
 			setData({
 				identity,
@@ -254,6 +270,7 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 							totalSkills: skillsTotal,
 						}
 					: null,
+				externalAgents,
 			});
 			setLoading(false);
 		}
@@ -275,6 +292,7 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 
 	const activeModel = localStorage.getItem("moltis-model");
 	const configuredProviders = data.providers.filter((p) => p.configured);
+	const installedAcpAgents = data.externalAgents.filter((agent) => agent.installed && agent.isAcp);
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -320,6 +338,24 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 						</div>
 					) : (
 						<span className="text-[var(--error)]">No LLM providers configured</span>
+					)}
+				</SummaryRow>
+
+				{/* ACP Agents */}
+				<SummaryRow icon={installedAcpAgents.length > 0 ? <CheckIcon /> : <InfoIcon />} label="ACP Agents">
+					{installedAcpAgents.length > 0 ? (
+						<div className="flex flex-col gap-1">
+							<div className="flex flex-wrap gap-1">
+								{installedAcpAgents.map((agent) => (
+									<span key={agent.kind} className="provider-item-badge configured">
+										{agent.name}
+									</span>
+								))}
+							</div>
+							<div>Available in each chat session's external-agent selector.</div>
+						</div>
+					) : (
+						<>No ACP agents detected on PATH</>
 					)}
 				</SummaryRow>
 

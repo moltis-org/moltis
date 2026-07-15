@@ -33,25 +33,12 @@ use catalog::{
 
 pub struct OpenAiCodexProvider {
     model: String,
+    model_capabilities: crate::ModelCapabilities,
     base_url: String,
     client: &'static reqwest::Client,
     token_store: TokenStore,
     stream_transport: ProviderStreamTransport,
     reasoning_effort: Option<ReasoningEffort>,
-}
-
-// The ChatGPT Codex backend advertises 372K for GPT-5.6 and its variants,
-// distinct from the 1.05M context window exposed by the OpenAI API.
-const GPT_5_6_CODEX_CONTEXT_WINDOW: u32 = 372_000;
-
-fn codex_context_window(model_id: &str) -> u32 {
-    if matches!(
-        model_id,
-        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
-    ) {
-        return GPT_5_6_CODEX_CONTEXT_WINDOW;
-    }
-    200_000
 }
 
 fn codex_done_arguments(evt: &serde_json::Value) -> Option<&str> {
@@ -82,13 +69,33 @@ impl OpenAiCodexProvider {
     }
 
     pub fn new_with_transport(model: String, stream_transport: ProviderStreamTransport) -> Self {
+        let model_capabilities = crate::ModelCapabilities::infer(&model);
+        let mut model_capabilities = model_capabilities;
+        if let Some(context_window) = crate::model_capabilities::context_window_fallback_for_model(
+            crate::model_capabilities::ContextWindowFallbackScope::OpenAiCodex,
+            &model,
+        ) {
+            model_capabilities.context_window = context_window;
+        }
         Self {
             model,
+            model_capabilities,
             base_url: "https://chatgpt.com/backend-api".to_string(),
             client: crate::shared_http_client(),
             token_store: TokenStore::new(),
             stream_transport,
             reasoning_effort: None,
+        }
+    }
+
+    pub fn new_with_capabilities(
+        model: String,
+        stream_transport: ProviderStreamTransport,
+        model_capabilities: crate::ModelCapabilities,
+    ) -> Self {
+        Self {
+            model_capabilities,
+            ..Self::new_with_transport(model, stream_transport)
         }
     }
 
@@ -127,8 +134,14 @@ impl OpenAiCodexProvider {
                 )
             })?;
 
-        // Check expiry with 5 min buffer
-        if let Some(expires_at) = tokens.expires_at {
+        // Check expiry with 5 min buffer. Stored tokens may lack `expires_at`
+        // (the Codex OAuth response has no `expires_in`), so fall back to the
+        // access token's own JWT `exp` claim — otherwise the refresh below can
+        // never trigger and the token eventually dies with a 401.
+        let expires_at = tokens
+            .expires_at
+            .or_else(|| Self::expires_at_from_jwt(tokens.access_token.expose_secret()));
+        if let Some(expires_at) = expires_at {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -149,6 +162,10 @@ impl OpenAiCodexProvider {
                     }
                     if new_tokens.account_id.is_none() {
                         new_tokens.account_id = tokens.account_id.clone();
+                    }
+                    if new_tokens.expires_at.is_none() {
+                        new_tokens.expires_at =
+                            Self::expires_at_from_jwt(new_tokens.access_token.expose_secret());
                     }
                     self.token_store.save("openai-codex", &new_tokens)?;
                     return Ok(new_tokens);
@@ -188,7 +205,8 @@ impl OpenAiCodexProvider {
             })
     }
 
-    fn extract_account_id(jwt: &str) -> Option<String> {
+    /// Decode the payload (claims) segment of a JWT without verifying the signature.
+    fn decode_jwt_claims(jwt: &str) -> Option<serde_json::Value> {
         let parts: Vec<&str> = jwt.split('.').collect();
         if parts.len() < 2 {
             return None;
@@ -203,8 +221,21 @@ impl OpenAiCodexProvider {
             base64::engine::general_purpose::STANDARD.decode(&padded)
         });
         let payload = payload.ok()?;
-        let claims: serde_json::Value = serde_json::from_slice(&payload).ok()?;
+        serde_json::from_slice(&payload).ok()
+    }
+
+    fn extract_account_id(jwt: &str) -> Option<String> {
+        let claims = Self::decode_jwt_claims(jwt)?;
         Self::extract_account_id_from_claims(&claims)
+    }
+
+    /// Best-effort expiry (unix seconds) from the JWT `exp` claim of an access token.
+    /// Codex OAuth responses omit `expires_in`, so stored tokens often have
+    /// `expires_at: None`; without it the proactive refresh below never runs.
+    fn expires_at_from_jwt(access_token: &str) -> Option<u64> {
+        Self::decode_jwt_claims(access_token)?
+            .get("exp")
+            .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
     }
 
     pub(crate) fn resolve_account_id(tokens: &moltis_oauth::OAuthTokens) -> anyhow::Result<String> {
@@ -388,7 +419,7 @@ impl LlmProvider for OpenAiCodexProvider {
     }
 
     fn context_window(&self) -> u32 {
-        codex_context_window(&self.model)
+        self.model_capabilities.context_window
     }
 
     fn reasoning_effort(&self) -> Option<ReasoningEffort> {
@@ -401,6 +432,7 @@ impl LlmProvider for OpenAiCodexProvider {
     ) -> Option<std::sync::Arc<dyn LlmProvider>> {
         Some(std::sync::Arc::new(Self {
             model: self.model.clone(),
+            model_capabilities: self.model_capabilities,
             base_url: self.base_url.clone(),
             client: self.client,
             token_store: self.token_store.clone(),
@@ -861,14 +893,24 @@ mod tests {
     }
 
     #[test]
-    fn gpt_5_6_models_use_codex_context_window() {
-        for model_id in ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
-            let provider = OpenAiCodexProvider::new(model_id.to_string());
-            assert_eq!(provider.context_window(), GPT_5_6_CODEX_CONTEXT_WINDOW);
-        }
+    fn context_window_uses_model_capabilities() {
+        let context_window = crate::model_capabilities::context_window_fallback_for_model(
+            crate::model_capabilities::ContextWindowFallbackScope::OpenAiCodex,
+            "gpt-5.6-sol",
+        )
+        .unwrap_or_else(|| panic!("missing codex context-window fallback"));
+        let provider = OpenAiCodexProvider::new_with_capabilities(
+            "gpt-5.6-sol".to_string(),
+            ProviderStreamTransport::Sse,
+            crate::ModelCapabilities {
+                context_window,
+                ..crate::ModelCapabilities::infer("gpt-5.6-sol")
+            },
+        );
+        assert_eq!(provider.context_window(), context_window);
 
-        let existing_model = OpenAiCodexProvider::new("gpt-5.4".to_string());
-        assert_eq!(existing_model.context_window(), 200_000);
+        let default_provider = OpenAiCodexProvider::new("gpt-5.6-sol".to_string());
+        assert_eq!(default_provider.context_window(), context_window);
     }
 
     #[test]
@@ -1041,6 +1083,48 @@ mod tests {
                 &serde_json::from_str(org).unwrap()
             ),
             Some("org-id".to_string())
+        );
+    }
+
+    #[test]
+    fn expires_at_derived_from_jwt_exp_claim() {
+        let token = format!("h.{}.s", URL_SAFE_NO_PAD.encode(r#"{"exp":1893456000}"#));
+        assert_eq!(
+            OpenAiCodexProvider::expires_at_from_jwt(&token),
+            Some(1893456000)
+        );
+    }
+
+    #[test]
+    fn expires_at_derived_from_decimal_jwt_exp_claim() {
+        let token = format!("h.{}.s", URL_SAFE_NO_PAD.encode(r#"{"exp":1893456000.0}"#));
+        assert_eq!(
+            OpenAiCodexProvider::expires_at_from_jwt(&token),
+            Some(1893456000)
+        );
+    }
+
+    #[test]
+    fn expires_at_none_without_exp_claim() {
+        let token = format!("h.{}.s", URL_SAFE_NO_PAD.encode(r#"{}"#));
+        assert_eq!(OpenAiCodexProvider::expires_at_from_jwt(&token), None);
+    }
+
+    #[test]
+    fn expires_at_none_for_malformed_token() {
+        assert_eq!(OpenAiCodexProvider::expires_at_from_jwt("not-a-jwt"), None);
+    }
+
+    #[test]
+    fn decode_jwt_claims_handles_standard_base64_padding() {
+        let token = format!(
+            "h.{}.s",
+            base64::engine::general_purpose::STANDARD.encode(r#"{"padding":true}"#)
+        );
+        assert_eq!(
+            OpenAiCodexProvider::decode_jwt_claims(&token)
+                .and_then(|claims| { claims.get("padding").and_then(serde_json::Value::as_bool) }),
+            Some(true)
         );
     }
 

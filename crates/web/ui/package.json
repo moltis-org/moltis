@@ -32,10 +32,10 @@
     "@types/luxon": "^3.4.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.1",
     "shiki": "^3.0.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.0",
-    "vite": "^6.1.0"
+    "vite": "^8.1.4"
   }
 }

@@ -358,7 +358,7 @@ pub struct MoltisConfig {
 }
 
 /// Configuration for external CLI agent integrations.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExternalAgentsConfig {
     pub enabled: bool,
@@ -366,13 +366,21 @@ pub struct ExternalAgentsConfig {
     pub agents: HashMap<String, ExternalAgentConfig>,
 }
 
+impl Default for ExternalAgentsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            agents: HashMap::new(),
+        }
+    }
+}
+
 /// Per-agent configuration for an external CLI agent.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExternalAgentConfig {
     pub binary: Option<String>,
-    #[serde(default)]
-    pub args: Vec<String>,
+    pub args: Option<Vec<String>>,
     #[serde(default)]
     pub env: HashMap<String, String>,
     pub working_dir: Option<String>,

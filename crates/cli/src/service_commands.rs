@@ -2,12 +2,18 @@
 //!
 //! - **macOS**: launchd user agent (`~/Library/LaunchAgents/org.moltis.plist`)
 //! - **Linux**: systemd user unit (`~/.config/systemd/user/moltis.service`)
+//! - **Linux without systemd**: portable user supervisor (`~/.moltis/moltis-service-supervisor.sh`)
 
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    thread,
+    time::Duration,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use {anyhow::Result, clap::Subcommand};
 
@@ -63,7 +69,15 @@ pub fn handle_service(action: ServiceAction) -> Result<()> {
             if cfg!(target_os = "macos") {
                 install_launchd(&moltis_bin, &opts, &log_path)?;
             } else if cfg!(target_os = "linux") {
-                install_systemd(&moltis_bin, &opts, &log_path)?;
+                if systemd_user_available() {
+                    install_systemd(&moltis_bin, &opts, &log_path)?;
+                } else {
+                    install_process_service(&moltis_bin, &opts, &log_path)?;
+                    println!("Using portable supervisor because systemd --user is unavailable.");
+                    println!(
+                        "Auto-start after container reboot requires your devbox startup configuration."
+                    );
+                }
             } else {
                 anyhow::bail!("service install not supported on {}", std::env::consts::OS);
             }
@@ -77,7 +91,7 @@ pub fn handle_service(action: ServiceAction) -> Result<()> {
             if cfg!(target_os = "macos") {
                 uninstall_launchd()?;
             } else if cfg!(target_os = "linux") {
-                uninstall_systemd()?;
+                uninstall_linux_service()?;
             } else {
                 anyhow::bail!(
                     "service uninstall not supported on {}",
@@ -92,7 +106,7 @@ pub fn handle_service(action: ServiceAction) -> Result<()> {
             let status = if cfg!(target_os = "macos") {
                 status_launchd()?
             } else if cfg!(target_os = "linux") {
-                status_systemd()?
+                status_linux_service()?
             } else {
                 anyhow::bail!("service status not supported on {}", std::env::consts::OS);
             };
@@ -104,7 +118,7 @@ pub fn handle_service(action: ServiceAction) -> Result<()> {
             if cfg!(target_os = "macos") {
                 stop_launchd()?;
             } else if cfg!(target_os = "linux") {
-                stop_systemd()?;
+                stop_linux_service()?;
             } else {
                 anyhow::bail!("service stop not supported on {}", std::env::consts::OS);
             }
@@ -116,7 +130,7 @@ pub fn handle_service(action: ServiceAction) -> Result<()> {
             if cfg!(target_os = "macos") {
                 restart_launchd()?;
             } else if cfg!(target_os = "linux") {
-                restart_systemd()?;
+                restart_linux_service()?;
             } else {
                 anyhow::bail!("service restart not supported on {}", std::env::consts::OS);
             }
@@ -146,6 +160,7 @@ enum ServiceStatus {
     Running { pid: Option<u32> },
     Stopped,
     NotInstalled,
+    Unknown(String),
 }
 
 impl std::fmt::Display for ServiceStatus {
@@ -155,6 +170,7 @@ impl std::fmt::Display for ServiceStatus {
             Self::Running { pid: None } => write!(f, "running"),
             Self::Stopped => write!(f, "stopped"),
             Self::NotInstalled => write!(f, "not installed"),
+            Self::Unknown(message) => write!(f, "unknown: {message}"),
         }
     }
 }
@@ -417,6 +433,66 @@ WantedBy=default.target
     )
 }
 
+fn uninstall_linux_service() -> Result<()> {
+    let mut removed = false;
+    let supervisor_path = process_service_supervisor_path()?;
+
+    if supervisor_path.exists() {
+        stop_process_service_if_installed()?;
+        fs::remove_file(supervisor_path)?;
+        remove_file_if_exists(&process_service_pid_path()?)?;
+        remove_file_if_exists(&process_service_child_pid_path()?)?;
+        removed = true;
+    }
+
+    if systemd_unit_path()?.exists() {
+        uninstall_systemd()?;
+        removed = true;
+    }
+
+    if !removed {
+        anyhow::bail!("service not installed");
+    }
+
+    Ok(())
+}
+
+fn status_linux_service() -> Result<ServiceStatus> {
+    if process_service_supervisor_path()?.exists() {
+        return status_process_service();
+    }
+
+    status_systemd()
+}
+
+fn stop_linux_service() -> Result<()> {
+    if process_service_supervisor_path()?.exists() {
+        return stop_process_service();
+    }
+
+    if !systemd_user_available() {
+        anyhow::bail!(portable_service_not_installed_message());
+    }
+
+    stop_systemd()
+}
+
+fn restart_linux_service() -> Result<()> {
+    if process_service_supervisor_path()?.exists() {
+        return restart_process_service();
+    }
+
+    if !systemd_user_available() {
+        anyhow::bail!(portable_service_not_installed_message());
+    }
+
+    restart_systemd()
+}
+
+fn portable_service_not_installed_message() -> &'static str {
+    "service not installed; systemd --user is unavailable, so run `moltis service install` to use the portable supervisor"
+}
+
 fn install_systemd(moltis_bin: &Path, opts: &GatewayServiceOpts, log_path: &Path) -> Result<()> {
     let unit_path = systemd_unit_path()?;
 
@@ -462,7 +538,19 @@ fn status_systemd() -> Result<ServiceStatus> {
         .args(["--user", "is-active", SYSTEMD_UNIT])
         .output()?;
 
+    let output_text = command_output_text(&output);
+    if systemd_unavailable_output(&output_text) {
+        return Ok(ServiceStatus::Unknown(
+            "systemd --user is unavailable; run `moltis service install` to use the portable supervisor".into(),
+        ));
+    }
+
     let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !output.status.success() && state.is_empty() {
+        return Ok(ServiceStatus::Unknown(format!(
+            "systemctl is-active failed: {output_text}"
+        )));
+    }
 
     match state.as_str() {
         "active" => {
@@ -483,7 +571,8 @@ fn status_systemd() -> Result<ServiceStatus> {
             Ok(ServiceStatus::Running { pid })
         },
         "inactive" | "deactivating" => Ok(ServiceStatus::Stopped),
-        _ => Ok(ServiceStatus::Stopped),
+        "failed" => Ok(ServiceStatus::Unknown("failed".into())),
+        other => Ok(ServiceStatus::Unknown(other.into())),
     }
 }
 
@@ -508,11 +597,358 @@ fn run_systemctl(args: &[&str]) -> Result<()> {
     full_args.extend_from_slice(args);
 
     let output = Command::new("systemctl").args(&full_args).output()?;
+    let output_text = command_output_text(&output);
+    if systemd_unavailable_output(&output_text) {
+        anyhow::bail!(
+            "systemctl {} failed because systemd --user is unavailable in this environment: {output_text}",
+            args.join(" ")
+        );
+    }
+
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("systemctl {} failed: {stderr}", args.join(" "));
+        anyhow::bail!("systemctl {} failed: {output_text}", args.join(" "));
     }
     Ok(())
+}
+
+fn systemd_user_available() -> bool {
+    Command::new("systemctl")
+        .args([
+            "--user",
+            "list-units",
+            "--type=service",
+            "--no-pager",
+            "--no-legend",
+        ])
+        .output()
+        .map(|output| {
+            output.status.success() && !systemd_unavailable_output(&command_output_text(&output))
+        })
+        .unwrap_or(false)
+}
+
+fn command_output_text(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (true, true) => format!("exit status {}", output.status),
+        (false, true) => stdout,
+        (true, false) => stderr,
+        (false, false) => format!("{stdout}\n{stderr}"),
+    }
+}
+
+fn systemd_unavailable_output(output: &str) -> bool {
+    let output = output.to_ascii_lowercase();
+    (output.contains("systemd")
+        && (output.contains("not running") || output.contains("not been booted")))
+        || output.contains("failed to connect to bus")
+        || output.contains("no medium found")
+}
+
+// ── Linux portable process supervisor ──────────────────────────────────────
+
+fn process_service_supervisor_path() -> Result<PathBuf> {
+    Ok(moltis_config::data_dir().join("moltis-service-supervisor.sh"))
+}
+
+fn process_service_pid_path() -> Result<PathBuf> {
+    Ok(moltis_config::data_dir().join("moltis-service.pid"))
+}
+
+fn process_service_child_pid_path() -> Result<PathBuf> {
+    Ok(moltis_config::data_dir().join("moltis.pid"))
+}
+
+fn process_service_stop_path() -> Result<PathBuf> {
+    Ok(moltis_config::data_dir().join("moltis-service.stop"))
+}
+
+fn install_process_service(
+    moltis_bin: &Path,
+    opts: &GatewayServiceOpts,
+    log_path: &Path,
+) -> Result<()> {
+    stop_process_service_if_installed()?;
+
+    let supervisor_path = process_service_supervisor_path()?;
+    if let Some(parent) = supervisor_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let script = generate_process_supervisor_script(moltis_bin, opts, log_path)?;
+    fs::write(&supervisor_path, script)?;
+
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&supervisor_path)?.permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&supervisor_path, permissions)?;
+    }
+
+    start_process_service()
+}
+
+fn stop_process_service_if_installed() -> Result<()> {
+    if process_service_supervisor_path()?.exists() {
+        stop_process_service()?;
+    }
+    Ok(())
+}
+
+fn status_process_service() -> Result<ServiceStatus> {
+    let supervisor_path = process_service_supervisor_path()?;
+    if !supervisor_path.exists() {
+        return Ok(ServiceStatus::NotInstalled);
+    }
+
+    let child_pid = read_pid(&process_service_child_pid_path()?)?;
+    if child_pid.is_some_and(pid_is_alive) {
+        return Ok(ServiceStatus::Running { pid: child_pid });
+    }
+
+    let supervisor_pid = read_pid(&process_service_pid_path()?)?;
+    if supervisor_pid.is_some_and(pid_is_alive) {
+        return Ok(ServiceStatus::Running {
+            pid: supervisor_pid,
+        });
+    }
+
+    Ok(ServiceStatus::Stopped)
+}
+
+fn stop_process_service() -> Result<()> {
+    if !process_service_supervisor_path()?.exists() {
+        anyhow::bail!("service not installed");
+    }
+
+    fs::write(process_service_stop_path()?, b"stop\n")?;
+
+    let child_pid = read_pid(&process_service_child_pid_path()?)?;
+    let supervisor_pid = read_pid(&process_service_pid_path()?)?;
+
+    if let Some(pid) = child_pid.filter(|pid| pid_is_alive(*pid)) {
+        let _ = signal_process(pid, "TERM");
+    }
+    if let Some(pid) = supervisor_pid.filter(|pid| pid_is_alive(*pid)) {
+        let _ = signal_process(pid, "TERM");
+        wait_for_process_exit(pid);
+        if pid_is_alive(pid) {
+            let _ = signal_process(pid, "KILL");
+            wait_for_process_exit(pid);
+        }
+    }
+    if let Some(pid) = child_pid.filter(|pid| pid_is_alive(*pid)) {
+        wait_for_process_exit(pid);
+        if pid_is_alive(pid) {
+            let _ = signal_process(pid, "KILL");
+            wait_for_process_exit(pid);
+        }
+    }
+
+    remove_file_if_exists(&process_service_pid_path()?)?;
+    remove_file_if_exists(&process_service_child_pid_path()?)?;
+    remove_file_if_exists(&process_service_stop_path()?)?;
+
+    Ok(())
+}
+
+fn restart_process_service() -> Result<()> {
+    if !process_service_supervisor_path()?.exists() {
+        anyhow::bail!("service not installed");
+    }
+
+    stop_process_service()?;
+    start_process_service()
+}
+
+fn start_process_service() -> Result<()> {
+    let supervisor_path = process_service_supervisor_path()?;
+    if !supervisor_path.exists() {
+        anyhow::bail!("service not installed");
+    }
+
+    remove_file_if_exists(&process_service_stop_path()?)?;
+    remove_file_if_exists(&process_service_pid_path()?)?;
+    remove_file_if_exists(&process_service_child_pid_path()?)?;
+
+    let mut command = if which::which("setsid").is_ok() {
+        let mut command = Command::new("setsid");
+        command.arg(&supervisor_path);
+        command
+    } else {
+        Command::new(&supervisor_path)
+    };
+
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    wait_for_process_service_start()
+}
+
+fn wait_for_process_service_start() -> Result<()> {
+    for _ in 0..50 {
+        match status_process_service()? {
+            ServiceStatus::Running { .. } => return Ok(()),
+            ServiceStatus::Stopped | ServiceStatus::NotInstalled | ServiceStatus::Unknown(_) => {},
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    anyhow::bail!(
+        "portable supervisor did not start; check logs with `tail -f {}`",
+        moltis_config::data_dir().join("moltis.log").display()
+    )
+}
+
+fn generate_process_supervisor_script(
+    moltis_bin: &Path,
+    opts: &GatewayServiceOpts,
+    log_path: &Path,
+) -> Result<String> {
+    let data_dir = moltis_config::data_dir();
+    let supervisor_pid_path = process_service_pid_path()?;
+    let child_pid_path = process_service_child_pid_path()?;
+    let stop_path = process_service_stop_path()?;
+
+    let mut args = vec!["--log-level".to_string(), opts.log_level.clone()];
+    if let Some(bind) = &opts.bind {
+        args.push("--bind".to_string());
+        args.push(bind.clone());
+    }
+    if let Some(port) = opts.port {
+        args.push("--port".to_string());
+        args.push(port.to_string());
+    }
+
+    let command_args = args
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    Ok(format!(
+        r#"#!/bin/sh
+set -u
+
+MOLTIS_BIN={bin}
+DATA_DIR={data_dir}
+LOG_FILE={log}
+SUPERVISOR_PID_FILE={supervisor_pid}
+CHILD_PID_FILE={child_pid}
+STOP_FILE={stop_file}
+RESTART_DELAY=10
+
+mkdir -p "$DATA_DIR"
+rm -f "$STOP_FILE"
+printf '%s\n' "$$" > "$SUPERVISOR_PID_FILE"
+
+cleanup() {{
+  touch "$STOP_FILE"
+  if [ -s "$CHILD_PID_FILE" ]; then
+    kill "$(cat "$CHILD_PID_FILE")" 2>/dev/null || true
+  fi
+  rm -f "$SUPERVISOR_PID_FILE" "$CHILD_PID_FILE"
+  exit 0
+}}
+
+trap cleanup INT TERM
+
+while [ ! -e "$STOP_FILE" ]; do
+  RUST_LOG=info "$MOLTIS_BIN" {args} >> "$LOG_FILE" 2>&1 &
+  child="$!"
+  printf '%s\n' "$child" > "$CHILD_PID_FILE"
+  wait "$child"
+  status="$?"
+  rm -f "$CHILD_PID_FILE"
+
+  if [ -e "$STOP_FILE" ]; then
+    break
+  fi
+
+  printf '%s\n' "moltis exited with status $status; restarting in $RESTART_DELAY seconds" >> "$LOG_FILE"
+  sleep "$RESTART_DELAY" &
+  wait "$!"
+done
+
+rm -f "$SUPERVISOR_PID_FILE" "$CHILD_PID_FILE" "$STOP_FILE"
+"#,
+        bin = shell_quote(&moltis_bin.display().to_string()),
+        args = command_args,
+        data_dir = shell_quote(&data_dir.display().to_string()),
+        log = shell_quote(&log_path.display().to_string()),
+        supervisor_pid = shell_quote(&supervisor_pid_path.display().to_string()),
+        child_pid = shell_quote(&child_pid_path.display().to_string()),
+        stop_file = shell_quote(&stop_path.display().to_string()),
+    ))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn read_pid(path: &Path) -> Result<Option<u32>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(path)?;
+    Ok(contents.trim().parse::<u32>().ok())
+}
+
+fn pid_is_alive(pid: u32) -> bool {
+    if is_linux_zombie(pid) {
+        return false;
+    }
+
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn is_linux_zombie(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| linux_proc_stat_state(&stat))
+        .is_some_and(|state| state == 'Z')
+}
+
+fn linux_proc_stat_state(stat: &str) -> Option<char> {
+    stat.rsplit_once(") ")?
+        .1
+        .split_whitespace()
+        .next()?
+        .chars()
+        .next()
+}
+
+fn signal_process(pid: u32, signal: &str) -> bool {
+    Command::new("kill")
+        .args([format!("-{signal}"), pid.to_string()])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn wait_for_process_exit(pid: u32) {
+    for _ in 0..30 {
+        if !pid_is_alive(pid) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err.into()),
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -641,6 +1077,57 @@ mod tests {
     }
 
     #[test]
+    fn detects_container_systemctl_wrapper() {
+        assert!(systemd_unavailable_output(
+            r#""systemd" is not running in this container due to its overhead."#
+        ));
+        assert!(systemd_unavailable_output(
+            "System has not been booted with systemd as init system"
+        ));
+        assert!(systemd_unavailable_output(
+            "Failed to connect to bus: No medium found"
+        ));
+        assert!(!systemd_unavailable_output("inactive"));
+    }
+
+    #[test]
+    fn shell_quote_escapes_single_quotes() {
+        assert_eq!(shell_quote("abc"), "'abc'");
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn parses_linux_proc_stat_state() {
+        assert_eq!(linux_proc_stat_state("123 (moltis) S 1 2 3"), Some('S'));
+        assert_eq!(
+            linux_proc_stat_state("123 (name with spaces) Z 1 2 3"),
+            Some('Z')
+        );
+        assert_eq!(linux_proc_stat_state("invalid"), None);
+    }
+
+    #[test]
+    fn process_supervisor_script_runs_gateway_with_flags() {
+        let bin = PathBuf::from("/opt/moltis bin/moltis");
+        let opts = GatewayServiceOpts {
+            bind: Some("0.0.0.0".into()),
+            port: Some(9090),
+            log_level: "debug".into(),
+        };
+        let log = PathBuf::from("/tmp/moltis service.log");
+
+        let script = generate_process_supervisor_script(&bin, &opts, &log).unwrap();
+
+        assert!(script.contains("MOLTIS_BIN='/opt/moltis bin/moltis'"));
+        assert!(script.contains(
+            "RUST_LOG=info \"$MOLTIS_BIN\" '--log-level' 'debug' '--bind' '0.0.0.0' '--port' '9090'"
+        ));
+        assert!(script.contains("LOG_FILE='/tmp/moltis service.log'"));
+        assert!(script.contains("RESTART_DELAY=10"));
+        assert!(!script.contains("MOLTIS_ARGS="));
+    }
+
+    #[test]
     fn status_display() {
         assert_eq!(
             ServiceStatus::Running { pid: Some(42) }.to_string(),
@@ -649,5 +1136,9 @@ mod tests {
         assert_eq!(ServiceStatus::Running { pid: None }.to_string(), "running");
         assert_eq!(ServiceStatus::Stopped.to_string(), "stopped");
         assert_eq!(ServiceStatus::NotInstalled.to_string(), "not installed");
+        assert_eq!(
+            ServiceStatus::Unknown("failed".into()).to_string(),
+            "unknown: failed"
+        );
     }
 }

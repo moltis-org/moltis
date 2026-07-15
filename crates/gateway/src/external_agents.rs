@@ -121,11 +121,54 @@ impl GatewayExternalAgentService {
         let mut registry = ExternalAgentRegistry::new();
         registry.register(Box::new(ClaudeCodeTransport::new()));
         registry.register(Box::new(CodexTransport::new()));
-        registry.register(Box::new(
-            AcpTransport::new("acp".to_string()).with_permission_handler(Arc::new(
-                GatewayAcpPermissionHandler::new(approval_manager),
-            )),
-        ));
+        let acp_permission_handler: Arc<dyn AcpPermissionHandler> =
+            Arc::new(GatewayAcpPermissionHandler::new(approval_manager));
+        for (kind, binary, default_args) in [
+            (AgentTransportKind::Acp, "acp", Vec::new()),
+            (AgentTransportKind::AcpCopilot, "copilot", vec![
+                "--acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpCodex, "codex-acp", Vec::new()),
+            (
+                AgentTransportKind::AcpClaude,
+                "claude-agent-acp",
+                Vec::new(),
+            ),
+            (AgentTransportKind::AcpPi, "pi-acp", Vec::new()),
+            (AgentTransportKind::AcpOpencode, "opencode", vec![
+                "acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpGemini, "gemini", vec![
+                "--experimental-acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpAugment, "auggie", vec![
+                "--acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpKiro, "kiro-cli", vec![
+                "acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpOpenclaw, "openclaw", vec![
+                "acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpOpenhands, "openhands", vec![
+                "acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpKimi, "kimi", vec!["acp".to_string()]),
+            (AgentTransportKind::AcpStakpak, "stakpak", vec![
+                "acp".to_string(),
+            ]),
+            (
+                AgentTransportKind::AcpFastAgent,
+                "fast-agent-acp",
+                Vec::new(),
+            ),
+        ] {
+            registry.register(Box::new(
+                AcpTransport::for_kind(kind, kind.display_name(), binary.to_string())
+                    .with_default_args(default_args)
+                    .with_permission_handler(acp_permission_handler.clone()),
+            ));
+        }
         Self {
             registry,
             config,
@@ -230,7 +273,10 @@ impl GatewayExternalAgentService {
         let mut spec = ExternalAgentSpec::new(kind);
         if let Some(agent_config) = self.config.agents.get(kind.as_str()) {
             spec.binary = agent_config.binary.clone();
-            spec.args = agent_config.args.clone();
+            if let Some(args) = &agent_config.args {
+                spec.args.clone_from(args);
+                spec.args_configured = true;
+            }
             spec.env = agent_config.env.clone();
             spec.working_dir = agent_config.working_dir.as_ref().map(Into::into);
             spec.timeout_secs = agent_config.timeout_secs;
@@ -1006,7 +1052,10 @@ mod tests {
         let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
         let agent_state = Arc::new(FakeAgentState::default());
         let service = fake_external_agents_with_config(
-            ExternalAgentsConfig::default(),
+            ExternalAgentsConfig {
+                enabled: false,
+                ..ExternalAgentsConfig::default()
+            },
             Arc::clone(&metadata),
             Arc::clone(&agent_state),
         );
@@ -1014,6 +1063,28 @@ mod tests {
         let agents = service.list().await.expect("list external agents");
 
         assert_eq!(agents, serde_json::json!([]));
+        assert_eq!(agent_state.starts.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn list_uses_default_enabled_external_agent_detection() {
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let agent_state = Arc::new(FakeAgentState::default());
+        let service = fake_external_agents_with_config(
+            ExternalAgentsConfig::default(),
+            Arc::clone(&metadata),
+            Arc::clone(&agent_state),
+        );
+
+        let agents = service.list().await.expect("list external agents");
+
+        let codex = agents
+            .as_array()
+            .expect("list is an array")
+            .iter()
+            .find(|agent| agent["kind"] == "codex")
+            .expect("codex should be in list");
+        assert_eq!(codex["name"], "Codex");
         assert_eq!(agent_state.starts.load(Ordering::SeqCst), 0);
     }
 
@@ -1028,7 +1099,10 @@ mod tests {
             .await;
         let agent_state = Arc::new(FakeAgentState::default());
         let external_agents = fake_external_agents_with_config(
-            ExternalAgentsConfig::default(),
+            ExternalAgentsConfig {
+                enabled: false,
+                ..ExternalAgentsConfig::default()
+            },
             Arc::clone(&metadata),
             Arc::clone(&agent_state),
         );

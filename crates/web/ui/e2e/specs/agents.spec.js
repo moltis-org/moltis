@@ -52,8 +52,8 @@ async function mockExternalAgentsRpc(page, listPayload) {
 		window.__externalAgentE2EPatched = true;
 		window.__externalAgentE2ERequests = [];
 		window.__externalAgentE2EListPayload = externalAgentsListPayload || [
-			{ kind: "codex", name: "Codex", installed: true, version: null },
-			{ kind: "claude-code", name: "Claude Code", installed: false, version: null },
+			{ kind: "codex", name: "Codex", installed: true, isAcp: false, version: null },
+			{ kind: "claude-code", name: "Claude Code", installed: false, isAcp: false, version: null },
 		];
 		const originalSend = WebSocket.prototype.send;
 
@@ -407,9 +407,76 @@ test.describe("Agents settings page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("external-agent picker is hidden when external agents are disabled", async ({ page }) => {
+	test("external-agent picker labels named ACP agents", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await mockExternalAgentsRpc(page, []);
+		await mockExternalAgentsRpc(page, [
+			{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null },
+			{ kind: "acp-codex", name: "ACP: Codex", installed: true, isAcp: true, version: null },
+			{ kind: "acp-claude", name: "ACP: Claude", installed: true, isAcp: true, version: null },
+			{ kind: "acp-pi", name: "ACP: Pi", installed: true, isAcp: true, version: null },
+			{ kind: "acp-opencode", name: "ACP: opencode", installed: true, isAcp: true, version: null },
+			{ kind: "acp-gemini", name: "ACP: Gemini", installed: true, isAcp: true, version: null },
+			{ kind: "acp-augment", name: "ACP: Augment", installed: true, isAcp: true, version: null },
+			{ kind: "acp-kiro", name: "ACP: Kiro", installed: true, isAcp: true, version: null },
+			{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: true, isAcp: true, version: null },
+			{ kind: "acp-openhands", name: "ACP: OpenHands", installed: true, isAcp: true, version: null },
+			{ kind: "acp-kimi", name: "ACP: Kimi", installed: true, isAcp: true, version: null },
+			{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: true, isAcp: true, version: null },
+			{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: true, isAcp: true, version: null },
+		]);
+		await page.goto("/chats");
+		await expectPageContentMounted(page);
+		await waitForWsConnected(page);
+		await createSession(page);
+
+		const picker = page.getByTestId("external-agent-picker");
+		await expect(picker).toBeVisible({ timeout: 10_000 });
+		await picker.locator("button").click();
+		await expect(page.getByText("ACP: Copilot", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Codex", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Claude", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Pi", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: opencode", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Gemini", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Augment", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Kiro", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: OpenClaw", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: OpenHands", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Kimi", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Stakpak", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: fast-agent", { exact: true })).toBeVisible();
+
+		await page.getByText("ACP: Copilot", { exact: true }).click();
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(() =>
+						(window.__externalAgentE2ERequests || []).some(
+							(req) => req.method === "external_agents.bind" && req.params?.kind === "acp-copilot",
+						),
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("external-agent picker is hidden when no external agents are installed", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockExternalAgentsRpc(page, [
+			{ kind: "acp-copilot", name: "ACP: Copilot", installed: false, isAcp: true, version: null },
+			{ kind: "acp-codex", name: "ACP: Codex", installed: false, isAcp: true, version: null },
+			{ kind: "acp-opencode", name: "ACP: opencode", installed: false, isAcp: true, version: null },
+			{ kind: "acp-gemini", name: "ACP: Gemini", installed: false, isAcp: true, version: null },
+			{ kind: "acp-augment", name: "ACP: Augment", installed: false, isAcp: true, version: null },
+			{ kind: "acp-kiro", name: "ACP: Kiro", installed: false, isAcp: true, version: null },
+			{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: false, isAcp: true, version: null },
+			{ kind: "acp-openhands", name: "ACP: OpenHands", installed: false, isAcp: true, version: null },
+			{ kind: "acp-kimi", name: "ACP: Kimi", installed: false, isAcp: true, version: null },
+			{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: false, isAcp: true, version: null },
+			{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: false, isAcp: true, version: null },
+		]);
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
 		await waitForWsConnected(page);
@@ -425,8 +492,17 @@ test.describe("Agents settings page", () => {
 			)
 			.toBe(true);
 		await expect(page.getByTestId("external-agent-picker")).toHaveCount(0);
-		await expect(page.getByText("Claude Code (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("Codex", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Copilot (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Codex (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: opencode (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Gemini (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Augment (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Kiro (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: OpenClaw (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: OpenHands (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Kimi (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: Stakpak (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("ACP: fast-agent (unavailable)", { exact: true })).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
 	});

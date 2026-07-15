@@ -9,9 +9,7 @@ use {
 
 use tracing::debug;
 
-use crate::{
-    ModelCapabilities, context_window_for_model_with_config, http::retry_after_ms_from_headers,
-};
+use crate::{ModelCapabilities, http::retry_after_ms_from_headers, model_id::capability_model_id};
 
 use moltis_agents::model::{
     AgentToolControls, ChatMessage, CompletionResponse, LlmProvider, ModelMetadata, StreamEvent,
@@ -388,11 +386,12 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn context_window(&self) -> u32 {
-        context_window_for_model_with_config(
-            &self.model,
-            &self.context_window_global,
-            &self.context_window_provider,
-        )
+        let normalized = capability_model_id(&self.model);
+        self.context_window_provider
+            .get(normalized)
+            .or_else(|| self.context_window_global.get(normalized))
+            .copied()
+            .unwrap_or(self.model_capabilities.context_window)
     }
 
     fn supports_vision(&self) -> bool {
@@ -652,5 +651,39 @@ mod tests {
                 .is_some(),
             "provider URLs must not enable provider-specific reasoning behavior"
         );
+    }
+
+    #[test]
+    fn context_window_uses_discovered_capabilities_before_heuristics() {
+        let mut capabilities = ModelCapabilities::infer("custom-context-model");
+        capabilities.context_window = 321_000;
+        let provider = OpenAiProvider::new_with_name(
+            secrecy::Secret::new("test-key".to_string()),
+            "custom-context-model".to_string(),
+            "https://example.com/v1".to_string(),
+            "custom-provider".to_string(),
+        )
+        .with_model_capabilities(capabilities);
+
+        assert_eq!(provider.context_window(), 321_000);
+    }
+
+    #[test]
+    fn context_window_config_override_beats_discovered_capabilities() {
+        let mut capabilities = ModelCapabilities::infer("custom-context-model");
+        capabilities.context_window = 321_000;
+        let provider = OpenAiProvider::new_with_name(
+            secrecy::Secret::new("test-key".to_string()),
+            "custom-context-model".to_string(),
+            "https://example.com/v1".to_string(),
+            "custom-provider".to_string(),
+        )
+        .with_model_capabilities(capabilities)
+        .with_context_window_overrides(
+            std::collections::HashMap::from([("custom-context-model".to_string(), 654_000)]),
+            std::collections::HashMap::new(),
+        );
+
+        assert_eq!(provider.context_window(), 654_000);
     }
 }

@@ -481,8 +481,14 @@ exit 0
         }));
         let runtime = QmdMemoryRuntime::new(manager, fallback, true);
 
-        runtime.sync().await.unwrap();
-        let results = runtime.search("runtime keyword target", 5).await.unwrap();
+        runtime
+            .sync()
+            .await
+            .unwrap_or_else(|error| panic!("installed qmd runtime sync failed: {error}"));
+        let results = runtime
+            .search("runtime keyword target", 5)
+            .await
+            .unwrap_or_else(|error| panic!("installed qmd runtime search failed: {error}"));
         assert!(
             !results.is_empty(),
             "expected runtime search results from live qmd"
@@ -496,7 +502,7 @@ exit 0
         let chunk = runtime
             .get_chunk(&results[0].chunk_id)
             .await
-            .unwrap()
+            .unwrap_or_else(|error| panic!("installed qmd runtime get_chunk failed: {error}"))
             .unwrap();
         assert_eq!(chunk.path, file_path.to_string_lossy());
         assert!(
