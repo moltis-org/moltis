@@ -142,7 +142,6 @@ impl GatewayExternalAgentService {
             (AgentTransportKind::AcpGemini, "gemini", vec![
                 "--experimental-acp".to_string(),
             ]),
-            (AgentTransportKind::AcpAmp, "amp", Vec::new()),
         ] {
             registry.register(Box::new(
                 AcpTransport::for_kind(kind, kind.display_name(), binary.to_string())

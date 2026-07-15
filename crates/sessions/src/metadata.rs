@@ -29,7 +29,6 @@ pub enum ExternalAgentKind {
     AcpPi,
     AcpOpencode,
     AcpGemini,
-    AcpAmp,
 }
 
 impl ExternalAgentKind {
@@ -45,7 +44,6 @@ impl ExternalAgentKind {
         Self::AcpPi,
         Self::AcpOpencode,
         Self::AcpGemini,
-        Self::AcpAmp,
     ];
 
     #[must_use]
@@ -62,7 +60,6 @@ impl ExternalAgentKind {
             Self::AcpPi => "acp-pi",
             Self::AcpOpencode => "acp-opencode",
             Self::AcpGemini => "acp-gemini",
-            Self::AcpAmp => "acp-amp",
         }
     }
 
@@ -80,7 +77,6 @@ impl ExternalAgentKind {
             Self::AcpPi => "ACP: Pi",
             Self::AcpOpencode => "ACP: opencode",
             Self::AcpGemini => "ACP: Gemini",
-            Self::AcpAmp => "ACP: Amp",
         }
     }
 
@@ -95,7 +91,6 @@ impl ExternalAgentKind {
                 | Self::AcpPi
                 | Self::AcpOpencode
                 | Self::AcpGemini
-                | Self::AcpAmp
         )
     }
 }
@@ -122,7 +117,6 @@ impl std::str::FromStr for ExternalAgentKind {
             "acp-pi" => Ok(Self::AcpPi),
             "acp-opencode" => Ok(Self::AcpOpencode),
             "acp-gemini" => Ok(Self::AcpGemini),
-            "acp-amp" => Ok(Self::AcpAmp),
             other => Err(format!("unknown external agent kind: {other}")),
         }
     }

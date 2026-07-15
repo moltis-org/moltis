@@ -736,10 +736,6 @@ port = {port}                           # Port number (auto-generated for this i
 # binary = "gemini"
 # args = ["--experimental-acp"]
 
-# [external_agents.agents.acp-amp]
-# binary = "amp"
-# args = []
-
 # [external_agents.agents.opencode]
 # binary = "opencode"
 # use_tmux = true                   # opencode requires tmux (TUI app)

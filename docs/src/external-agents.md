@@ -17,7 +17,6 @@ Supported agent kinds:
 | `acp-pi` | `pi --mode rpc` | Named RPC session shown as `ACP: Pi` in the session header. |
 | `acp-opencode` | `opencode acp` | Named ACP session shown as `ACP: opencode` in the session header. |
 | `acp-gemini` | `gemini --experimental-acp` | Named ACP session shown as `ACP: Gemini` in the session header. |
-| `acp-amp` | `amp` | Named ACP session shown as `ACP: Amp` in the session header. |
 
 ## Default ACP detection
 
@@ -31,7 +30,6 @@ External agent discovery is enabled by default. On startup, Moltis checks for th
 | `ACP: Pi` | `acp-pi` | `pi --mode rpc` |
 | `ACP: opencode` | `acp-opencode` | `opencode acp` |
 | `ACP: Gemini` | `acp-gemini` | `gemini --experimental-acp` |
-| `ACP: Amp` | `acp-amp` | `amp` |
 
 Installed ACP agents appear automatically in each chat session's external-agent selector. Missing commands are hidden from the selector, so a fresh install with no ACP agents available continues to show only the normal Moltis agent.
 
@@ -77,10 +75,6 @@ args = ["acp"]
 [external_agents.agents.acp-gemini]
 binary = "gemini"
 args = ["--experimental-acp"]
-
-[external_agents.agents.acp-amp]
-binary = "amp"
-args = []
 ```
 
 If your ACP server is not one of the named options, use the generic `acp` kind:

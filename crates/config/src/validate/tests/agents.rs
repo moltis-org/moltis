@@ -373,9 +373,6 @@ args = ["acp"]
 [external_agents.agents.acp-gemini]
 binary = "gemini"
 args = ["--experimental-acp"]
-
-[external_agents.agents.acp-amp]
-binary = "amp"
 "#;
     let result = validate_toml_str(toml);
     let warning = result
