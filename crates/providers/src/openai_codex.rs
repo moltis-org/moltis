@@ -228,7 +228,7 @@ impl OpenAiCodexProvider {
     fn expires_at_from_jwt(access_token: &str) -> Option<u64> {
         Self::decode_jwt_claims(access_token)?
             .get("exp")
-            .and_then(serde_json::Value::as_u64)
+            .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
     }
 
     pub(crate) fn resolve_account_id(tokens: &moltis_oauth::OAuthTokens) -> anyhow::Result<String> {
@@ -1071,6 +1071,15 @@ mod tests {
     #[test]
     fn expires_at_derived_from_jwt_exp_claim() {
         let token = format!("h.{}.s", URL_SAFE_NO_PAD.encode(r#"{"exp":1893456000}"#));
+        assert_eq!(
+            OpenAiCodexProvider::expires_at_from_jwt(&token),
+            Some(1893456000)
+        );
+    }
+
+    #[test]
+    fn expires_at_derived_from_decimal_jwt_exp_claim() {
+        let token = format!("h.{}.s", URL_SAFE_NO_PAD.encode(r#"{"exp":1893456000.0}"#));
         assert_eq!(
             OpenAiCodexProvider::expires_at_from_jwt(&token),
             Some(1893456000)
