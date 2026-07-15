@@ -102,6 +102,7 @@ const OPENAI_CODEX_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
     ContextWindowFallback::Exact("gpt-5.6-luna", 372_000),
     ContextWindowFallback::Exact("gpt-5.6-sol", 372_000),
     ContextWindowFallback::Exact("gpt-5.6-terra", 372_000),
+    ContextWindowFallback::Prefix("gpt-5", 200_000),
 ];
 
 const GITHUB_COPILOT_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
@@ -403,6 +404,29 @@ mod tests {
         assert_eq!(context_window_for_model("kimi-k2.6"), 128_000);
         assert_eq!(context_window_for_model("glm-5-turbo"), 128_000);
         assert_eq!(context_window_for_model("qwen3-next"), 128_000);
+    }
+
+    #[test]
+    fn codex_context_window_scope_preserves_gpt5_fallbacks() {
+        assert_eq!(
+            context_window_fallback_for_model(
+                ContextWindowFallbackScope::OpenAiCodex,
+                "gpt-5.6-sol"
+            ),
+            Some(372_000)
+        );
+        assert_eq!(
+            context_window_fallback_for_model(ContextWindowFallbackScope::OpenAiCodex, "gpt-5.4"),
+            Some(200_000)
+        );
+        assert_eq!(
+            context_window_fallback_for_model(
+                ContextWindowFallbackScope::OpenAiCodex,
+                "gpt-5.3-codex-spark",
+            ),
+            Some(200_000)
+        );
+        assert_eq!(context_window_for_model("gpt-5.4"), 128_000);
     }
 
     #[test]
