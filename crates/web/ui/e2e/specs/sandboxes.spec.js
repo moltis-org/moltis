@@ -116,6 +116,10 @@ test.describe("Sandboxes page – Shared home settings", () => {
 });
 
 test.describe("Sandboxes page – Backend recommendations", () => {
+	test.afterEach(async ({ page }) => {
+		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => undefined);
+	});
+
 	test("shows Apple Container install hint when unavailable on macOS", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
