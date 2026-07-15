@@ -73,6 +73,20 @@ pub fn has_stored_tokens() -> bool {
 
 pub fn default_model_catalog() -> Vec<crate::DiscoveredModel> {
     crate::catalog_to_discovered(DEFAULT_CODEX_MODELS, 3)
+        .into_iter()
+        .map(|model| {
+            let mut capabilities = crate::ModelCapabilities::infer(&model.id);
+            if let Some(context_window) =
+                crate::model_capabilities::context_window_fallback_for_model(
+                    crate::model_capabilities::ContextWindowFallbackScope::OpenAiCodex,
+                    &model.id,
+                )
+            {
+                capabilities.context_window = context_window;
+            }
+            model.with_capabilities(capabilities)
+        })
+        .collect()
 }
 
 fn formatted_model_name(model_id: &str) -> String {

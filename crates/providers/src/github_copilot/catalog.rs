@@ -68,6 +68,14 @@ pub fn default_model_catalog() -> Vec<super::super::DiscoveredModel> {
         .map(|(index, model)| {
             let mut capabilities = super::super::ModelCapabilities::infer(model.id);
             capabilities.requires_responses_api = model.requires_responses_api;
+            if let Some(context_window) =
+                super::super::model_capabilities::context_window_fallback_for_model(
+                    super::super::model_capabilities::ContextWindowFallbackScope::GitHubCopilot,
+                    model.id,
+                )
+            {
+                capabilities.context_window = context_window;
+            }
             super::super::DiscoveredModel::new(model.id, model.display_name)
                 .with_recommended(index < 3)
                 .with_capabilities(capabilities)
@@ -117,5 +125,25 @@ mod tests {
             panic!("missing gpt-5-mini capabilities");
         };
         assert!(!mini_capabilities.requires_responses_api);
+    }
+
+    #[test]
+    fn catalog_marks_copilot_extended_context_models_as_capability() {
+        let catalog = default_model_catalog();
+        let Some(opus) = catalog.iter().find(|model| model.id == "claude-opus-4.8") else {
+            panic!("missing claude-opus-4.8 model");
+        };
+        let Some(opus_capabilities) = opus.capabilities else {
+            panic!("missing claude-opus-4.8 capabilities");
+        };
+        assert_eq!(opus_capabilities.context_window, 1_000_000);
+
+        let Some(haiku) = catalog.iter().find(|model| model.id == "claude-haiku-4.5") else {
+            panic!("missing claude-haiku-4.5 model");
+        };
+        let Some(haiku_capabilities) = haiku.capabilities else {
+            panic!("missing claude-haiku-4.5 capabilities");
+        };
+        assert_eq!(haiku_capabilities.context_window, 200_000);
     }
 }

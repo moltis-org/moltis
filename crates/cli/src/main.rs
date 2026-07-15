@@ -40,6 +40,7 @@ mod memory_commands;
 #[cfg(feature = "netbird")]
 mod netbird_commands;
 mod node_commands;
+mod providers_commands;
 mod sandbox_commands;
 mod service_commands;
 #[cfg(feature = "tailscale")]
@@ -137,6 +138,11 @@ enum Commands {
     },
     /// List available models.
     Models,
+    /// Provider diagnostics and inspection.
+    Providers {
+        #[command(subcommand)]
+        action: providers_commands::ProviderAction,
+    },
     /// Interactive onboarding wizard.
     Onboard,
     /// Config validation and migration.
@@ -495,6 +501,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Some(Commands::Channels { action }) => channel_commands::handle_channels(action).await,
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
+        Some(Commands::Providers { action }) => providers_commands::handle_providers(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
         Some(Commands::Browser { action }) => browser_commands::handle_browser(action),
         Some(Commands::Data { action }) => data_commands::handle_data(action).await,

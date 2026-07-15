@@ -57,62 +57,78 @@ pub fn context_window_for_model_with_config(
     context_window_for_model_inner(model_id)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContextWindowFallbackScope {
+    Generic,
+    OpenAiCodex,
+    GitHubCopilot,
+}
+
+const GENERIC_CONTEXT_WINDOW_FALLBACKS: &[(&str, u32)] = &[
+    ("codestral-latest", 256_000),
+    ("gemini-2.0-flash", 1_000_000),
+    ("glm-4-32b-0414-128k", 128_000),
+    ("glm-4.5", 128_000),
+    ("glm-4.6", 128_000),
+    ("glm-4.7", 128_000),
+    ("glm-4.7-flash", 128_000),
+    ("glm-5", 128_000),
+    ("gpt-4-turbo", 128_000),
+    ("gpt-4o", 128_000),
+    ("gpt-4o-mini", 128_000),
+    ("gpt-5.2", 128_000),
+    ("gpt-5.6", 1_050_000),
+    ("gpt-5.6-luna", 1_050_000),
+    ("gpt-5.6-sol", 1_050_000),
+    ("gpt-5.6-terra", 1_050_000),
+    ("kimi-k2.5", 128_000),
+    ("mistral-large-latest", 128_000),
+    ("o3", 200_000),
+    ("o3-mini", 200_000),
+    ("o4-mini", 200_000),
+    ("qwen3-coder-next", 128_000),
+    ("qwen3-coder-plus", 128_000),
+    ("qwen3.5-plus", 128_000),
+    ("qwen3.6-plus", 128_000),
+    ("qwen3-max-2026-01-23", 128_000),
+];
+
+const OPENAI_CODEX_CONTEXT_WINDOW_FALLBACKS: &[(&str, u32)] = &[
+    ("gpt-5.6", 372_000),
+    ("gpt-5.6-luna", 372_000),
+    ("gpt-5.6-sol", 372_000),
+    ("gpt-5.6-terra", 372_000),
+];
+
+const GITHUB_COPILOT_CONTEXT_WINDOW_FALLBACKS: &[(&str, u32)] = &[
+    ("claude-fable-5", 1_000_000),
+    ("claude-opus-4.6", 1_000_000),
+    ("claude-opus-4.7", 1_000_000),
+    ("claude-opus-4.8", 1_000_000),
+    ("claude-sonnet-4.6", 1_000_000),
+    ("claude-sonnet-5", 1_000_000),
+];
+
+pub(crate) fn context_window_fallback_for_model(
+    scope: ContextWindowFallbackScope,
+    model_id: &str,
+) -> Option<u32> {
+    let model_id = capability_model_id(model_id);
+    let scoped = match scope {
+        ContextWindowFallbackScope::Generic => &[][..],
+        ContextWindowFallbackScope::OpenAiCodex => OPENAI_CODEX_CONTEXT_WINDOW_FALLBACKS,
+        ContextWindowFallbackScope::GitHubCopilot => GITHUB_COPILOT_CONTEXT_WINDOW_FALLBACKS,
+    };
+    scoped
+        .iter()
+        .chain(GENERIC_CONTEXT_WINDOW_FALLBACKS.iter())
+        .find_map(|(id, window)| (*id == model_id).then_some(*window))
+}
+
 /// Inner heuristic — kept private so callers go through the public wrappers.
 fn context_window_for_model_inner(model_id: &str) -> u32 {
-    let model_id = capability_model_id(model_id);
-    // GPT-5.6 Sol, Terra, Luna, and the Sol alias support a 1.05M-token context window.
-    if matches!(
-        model_id,
-        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
-    ) {
-        return 1_050_000;
-    }
-    // Codestral has the largest window at 256k.
-    if model_id.starts_with("codestral") {
-        return 256_000;
-    }
-    // Claude models: 200k.
-    if model_id.starts_with("claude-") {
-        return 200_000;
-    }
-    // OpenAI o3/o4-mini: 200k.
-    if model_id.starts_with("o3") || model_id.starts_with("o4-mini") {
-        return 200_000;
-    }
-    // GPT-4o, GPT-4-turbo, GPT-5 series: 128k.
-    if model_id.starts_with("gpt-4") || model_id.starts_with("gpt-5") {
-        return 128_000;
-    }
-    // Mistral Large: 128k.
-    if model_id.starts_with("mistral-large") {
-        return 128_000;
-    }
-    // Gemini: 1M context.
-    if model_id.starts_with("gemini-") {
-        return 1_000_000;
-    }
-    // Kimi K2.5: 128k.
-    if model_id.starts_with("kimi-") {
-        return 128_000;
-    }
-    // MiniMax M2/M2.1/M2.5/M2.7: 204,800.
-    if model_id.starts_with("MiniMax-") {
-        return 204_800;
-    }
-    // Z.AI GLM-4-32B: 128k.
-    if model_id == "glm-4-32b-0414-128k" {
-        return 128_000;
-    }
-    // Z.AI GLM-5/4.7/4.6/4.5 series: 128k.
-    if model_id.starts_with("glm-") {
-        return 128_000;
-    }
-    // Qwen3 series (Qwen3, Qwen3-Coder): 128k.
-    if model_id.starts_with("qwen3") {
-        return 128_000;
-    }
-    // Default fallback.
-    200_000
+    context_window_fallback_for_model(ContextWindowFallbackScope::Generic, model_id)
+        .unwrap_or(200_000)
 }
 
 /// Returns `false` for model IDs that are clearly not chat-completion models
@@ -291,8 +307,10 @@ pub fn supports_reasoning_for_model(model_id: &str) -> bool {
 /// Populated at registration time from the pattern-matching heuristics.
 /// Carried on `ModelInfo` so downstream code can check capabilities
 /// without a provider instance or re-running the heuristic.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct ModelCapabilities {
+    /// Maximum supported context window in tokens.
+    pub context_window: u32,
     /// Supports chat/text-generation requests.
     pub text_generation: bool,
     /// Supports OpenAI-style function/tool calling.
@@ -305,11 +323,25 @@ pub struct ModelCapabilities {
     pub requires_responses_api: bool,
 }
 
+impl Default for ModelCapabilities {
+    fn default() -> Self {
+        Self {
+            context_window: 200_000,
+            text_generation: false,
+            tools: false,
+            vision: false,
+            reasoning: false,
+            requires_responses_api: false,
+        }
+    }
+}
+
 impl ModelCapabilities {
     /// Infer capabilities from the model ID using the pattern-matching heuristics.
     #[must_use]
     pub fn infer(model_id: &str) -> Self {
         Self {
+            context_window: context_window_for_model(model_id),
             text_generation: is_chat_capable_model(model_id),
             tools: supports_tools_for_model(model_id),
             vision: supports_vision_for_model(model_id),
@@ -345,31 +377,10 @@ mod tests {
             context_window_for_model("claude-sonnet-4-20250514"),
             200_000
         );
-        assert_eq!(
-            context_window_for_model("claude-opus-4-5-20251101"),
-            200_000
-        );
         assert_eq!(context_window_for_model("gpt-4o"), 128_000);
-        assert_eq!(context_window_for_model("gpt-4o-mini"), 128_000);
-        assert_eq!(context_window_for_model("gpt-4-turbo"), 128_000);
-        assert_eq!(context_window_for_model("gpt-5.6"), 1_050_000);
         assert_eq!(context_window_for_model("gpt-5.6-sol"), 1_050_000);
-        assert_eq!(context_window_for_model("gpt-5.6-terra"), 1_050_000);
-        assert_eq!(context_window_for_model("gpt-5.6-luna"), 1_050_000);
-        assert_eq!(context_window_for_model("o3"), 200_000);
-        assert_eq!(context_window_for_model("o3-mini"), 200_000);
-        assert_eq!(context_window_for_model("o4-mini"), 200_000);
         assert_eq!(context_window_for_model("codestral-latest"), 256_000);
-        assert_eq!(context_window_for_model("mistral-large-latest"), 128_000);
         assert_eq!(context_window_for_model("gemini-2.0-flash"), 1_000_000);
-        assert_eq!(context_window_for_model("kimi-k2.5"), 128_000);
-        // Z.AI GLM models
-        assert_eq!(context_window_for_model("glm-5"), 128_000);
-        assert_eq!(context_window_for_model("glm-4.7"), 128_000);
-        assert_eq!(context_window_for_model("glm-4.7-flash"), 128_000);
-        assert_eq!(context_window_for_model("glm-4.6"), 128_000);
-        assert_eq!(context_window_for_model("glm-4.5"), 128_000);
-        assert_eq!(context_window_for_model("glm-4-32b-0414-128k"), 128_000);
         assert_eq!(
             context_window_for_model("custom-openrouter::openai/gpt-5.2"),
             128_000

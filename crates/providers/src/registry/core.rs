@@ -32,8 +32,8 @@ use crate::{
     model_capabilities::{ModelCapabilities, ModelInfo, extract_cw_overrides},
     model_catalogs::{ANTHROPIC_MODELS, OPENAI_COMPAT_PROVIDERS},
     model_id::{
-        REASONING_SUFFIX_SEP, REASONING_SUFFIXES, namespaced_model_id, raw_model_id,
-        split_reasoning_suffix,
+        REASONING_SUFFIX_SEP, REASONING_SUFFIXES, capability_model_id, namespaced_model_id,
+        raw_model_id, split_reasoning_suffix,
     },
     nearai,
     ollama::{
@@ -437,6 +437,24 @@ impl DynamicModelDiscovery for OpenAiCodexDiscovery {
         ))
     }
 
+    fn build_provider_with_capabilities(
+        &self,
+        model_id: String,
+        config: &ProvidersConfig,
+        capabilities: ModelCapabilities,
+    ) -> Arc<dyn LlmProvider> {
+        use crate::openai_codex;
+        let stream_transport = config
+            .get(self.provider_name())
+            .map(|entry| entry.stream_transport)
+            .unwrap_or(ProviderStreamTransport::Sse);
+        Arc::new(openai_codex::OpenAiCodexProvider::new_with_capabilities(
+            model_id,
+            stream_transport,
+            capabilities,
+        ))
+    }
+
     fn display_name(&self, _model_id: &str, discovered: &str) -> String {
         format!("{discovered} (Codex/OAuth)")
     }
@@ -604,9 +622,20 @@ impl ProviderRegistry {
             if self.has_provider_model(source.provider_name(), &model.id) {
                 continue;
             }
-            let capabilities = model
+            let mut capabilities = model
                 .capabilities
                 .unwrap_or_else(|| ModelCapabilities::infer(&model.id));
+            let provider_overrides = config
+                .get(source.provider_name())
+                .map(|entry| extract_cw_overrides(&entry.model_overrides))
+                .unwrap_or_default();
+            let normalized = capability_model_id(&model.id);
+            if let Some(&context_window) = provider_overrides
+                .get(normalized)
+                .or_else(|| self.global_cw_overrides.get(normalized))
+            {
+                capabilities.context_window = context_window;
+            }
             let provider =
                 source.build_provider_with_capabilities(model.id.clone(), config, capabilities);
             self.register(
@@ -657,9 +686,20 @@ impl ProviderRegistry {
         let new_entries: Vec<(ModelInfo, Arc<dyn LlmProvider>)> = next_models
             .into_iter()
             .map(|model| {
-                let caps = model
+                let mut caps = model
                     .capabilities
                     .unwrap_or_else(|| ModelCapabilities::infer(&model.id));
+                let provider_overrides = config
+                    .get(source.provider_name())
+                    .map(|entry| extract_cw_overrides(&entry.model_overrides))
+                    .unwrap_or_default();
+                let normalized = capability_model_id(&model.id);
+                if let Some(&context_window) = provider_overrides
+                    .get(normalized)
+                    .or_else(|| self.global_cw_overrides.get(normalized))
+                {
+                    caps.context_window = context_window;
+                }
                 (
                     ModelInfo {
                         id: model.id.clone(),
@@ -669,7 +709,7 @@ impl ProviderRegistry {
                         recommended: model.recommended,
                         capabilities: caps,
                     },
-                    source.build_provider(model.id, config),
+                    source.build_provider_with_capabilities(model.id, config, caps),
                 )
             })
             .collect();

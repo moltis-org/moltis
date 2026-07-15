@@ -65,16 +65,26 @@ pub(super) struct CopilotAuth {
 
 pub struct GitHubCopilotProvider {
     model: String,
-    requires_responses_api: bool,
+    model_capabilities: super::super::ModelCapabilities,
     client: &'static reqwest::Client,
     token_store: TokenStore,
 }
 
 impl GitHubCopilotProvider {
     pub fn new(model: String) -> Self {
+        let model_capabilities = super::super::ModelCapabilities::infer(&model);
+        let mut model_capabilities = model_capabilities;
+        if let Some(context_window) =
+            super::super::model_capabilities::context_window_fallback_for_model(
+                super::super::model_capabilities::ContextWindowFallbackScope::GitHubCopilot,
+                &model,
+            )
+        {
+            model_capabilities.context_window = context_window;
+        }
         Self {
             model,
-            requires_responses_api: false,
+            model_capabilities,
             client: crate::shared_http_client(),
             token_store: TokenStore::new(),
         }
@@ -85,7 +95,7 @@ impl GitHubCopilotProvider {
         capabilities: super::super::ModelCapabilities,
     ) -> Self {
         Self {
-            requires_responses_api: capabilities.requires_responses_api,
+            model_capabilities: capabilities,
             ..Self::new(model)
         }
     }
@@ -389,6 +399,61 @@ fn is_likely_model_id(model_id: &str) -> bool {
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
 }
 
+fn u64_metadata_field(value: &serde_json::Value, keys: &[&str]) -> Option<u64> {
+    let obj = value.as_object()?;
+    for key in keys {
+        if let Some(value) = obj.get(*key).and_then(serde_json::Value::as_u64) {
+            return Some(value);
+        }
+    }
+    obj.values()
+        .filter(|value| value.is_object())
+        .find_map(|nested| u64_metadata_field(nested, keys))
+}
+
+fn copilot_context_window_metadata(entry: &serde_json::Value) -> Option<u32> {
+    u64_metadata_field(entry, &[
+        "context_window",
+        "contextWindow",
+        "context_length",
+        "contextLength",
+        "max_context_tokens",
+        "maxContextTokens",
+        "max_input_tokens",
+        "maxInputTokens",
+        "input_token_limit",
+        "inputTokenLimit",
+    ])
+    .and_then(|value| u32::try_from(value).ok())
+}
+
+fn is_copilot_fast_mode(
+    model_id: &str,
+    display_name: Option<&str>,
+    entry: &serde_json::Value,
+) -> bool {
+    let id = model_id.to_ascii_lowercase();
+    if id.contains("fast-mode") || id.ends_with("-fast") || id.contains("-fast-") {
+        return true;
+    }
+    if display_name
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|name| name.contains("fast mode") || name.contains("(fast)"))
+    {
+        return true;
+    }
+    entry
+        .as_object()
+        .and_then(|obj| obj.get("fast_mode").or_else(|| obj.get("fastMode")))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+        || entry
+            .as_object()
+            .and_then(|obj| obj.get("mode").or_else(|| obj.get("variant")))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.eq_ignore_ascii_case("fast"))
+}
+
 fn parse_model_entry(entry: &serde_json::Value) -> Option<super::super::DiscoveredModel> {
     let obj = entry.as_object()?;
     let model_id = obj
@@ -409,14 +474,29 @@ fn parse_model_entry(entry: &serde_json::Value) -> Option<super::super::Discover
         .and_then(serde_json::Value::as_str);
 
     let created_at = obj.get("created").and_then(serde_json::Value::as_i64);
+    let context_window = copilot_context_window_metadata(entry);
 
-    Some(
-        super::super::DiscoveredModel::new(
-            model_id,
-            normalize_display_name(model_id, display_name),
-        )
-        .with_created_at(created_at),
+    let capabilities = context_window.map(|context_window| {
+        let mut capabilities = super::super::ModelCapabilities::infer(model_id);
+        capabilities.context_window = context_window;
+        if is_copilot_fast_mode(model_id, display_name, entry)
+            && capabilities.context_window > 200_000
+        {
+            capabilities.context_window = 200_000;
+        }
+        capabilities
+    });
+
+    let model = super::super::DiscoveredModel::new(
+        model_id,
+        normalize_display_name(model_id, display_name),
     )
+    .with_created_at(created_at);
+
+    Some(match capabilities {
+        Some(capabilities) => model.with_capabilities(capabilities),
+        None => model,
+    })
 }
 
 fn collect_candidate_arrays<'a>(
@@ -902,7 +982,11 @@ impl LlmProvider for GitHubCopilotProvider {
     }
 
     fn supports_tools(&self) -> bool {
-        super::super::supports_tools_for_model(&self.model)
+        self.model_capabilities.tools
+    }
+
+    fn context_window(&self) -> u32 {
+        self.model_capabilities.context_window
     }
 
     async fn complete(
@@ -910,7 +994,7 @@ impl LlmProvider for GitHubCopilotProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        if self.requires_responses_api {
+        if self.model_capabilities.requires_responses_api {
             return self.complete_responses(messages, tools).await;
         }
 
@@ -1034,10 +1118,94 @@ impl LlmProvider for GitHubCopilotProvider {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-        if self.requires_responses_api {
+        if self.model_capabilities.requires_responses_api {
             return self.stream_responses_api(messages, tools);
         }
         self.stream_chat_completions(messages, tools)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::GitHubCopilotProvider, crate::ModelCapabilities, moltis_agents::model::LlmProvider,
+    };
+
+    #[test]
+    fn context_window_uses_model_capability_heuristic() {
+        let provider = GitHubCopilotProvider::new("claude-opus-4.8".into());
+        assert_eq!(provider.context_window(), 1_000_000);
+
+        let provider = GitHubCopilotProvider::new("claude-opus-4.5".into());
+        assert_eq!(provider.context_window(), 200_000);
+    }
+
+    #[test]
+    fn context_window_uses_discovered_model_capabilities() {
+        let provider = GitHubCopilotProvider::new_with_capabilities(
+            "unknown-copilot-model".into(),
+            ModelCapabilities {
+                context_window: 123_456,
+                ..ModelCapabilities::infer("unknown-copilot-model")
+            },
+        );
+
+        assert_eq!(provider.context_window(), 123_456);
+    }
+
+    #[test]
+    fn parse_model_entry_reads_context_window_metadata() {
+        let entry = serde_json::json!({
+            "id": "claude-opus-4.8",
+            "name": "Claude Opus 4.8",
+            "context_window": 1_000_000,
+        });
+
+        let Some(model) = super::parse_model_entry(&entry) else {
+            panic!("model entry should parse");
+        };
+        let Some(capabilities) = model.capabilities else {
+            panic!("capabilities should be populated");
+        };
+        assert_eq!(capabilities.context_window, 1_000_000);
+    }
+
+    #[test]
+    fn parse_model_entry_reads_nested_context_window_metadata() {
+        let entry = serde_json::json!({
+            "id": "claude-opus-4.8",
+            "name": "Claude Opus 4.8",
+            "capabilities": {
+                "limits": {
+                    "maxInputTokens": 1_000_000,
+                },
+            },
+        });
+
+        let Some(model) = super::parse_model_entry(&entry) else {
+            panic!("model entry should parse");
+        };
+        let Some(capabilities) = model.capabilities else {
+            panic!("capabilities should be populated");
+        };
+        assert_eq!(capabilities.context_window, 1_000_000);
+    }
+
+    #[test]
+    fn parse_model_entry_keeps_fast_mode_at_standard_claude_window() {
+        let entry = serde_json::json!({
+            "id": "claude-opus-4.8-fast",
+            "name": "Claude Opus 4.8 (fast mode)",
+            "context_window": 1_000_000,
+        });
+
+        let Some(model) = super::parse_model_entry(&entry) else {
+            panic!("model entry should parse");
+        };
+        let Some(capabilities) = model.capabilities else {
+            panic!("capabilities should be populated");
+        };
+        assert_eq!(capabilities.context_window, 200_000);
     }
 }
 

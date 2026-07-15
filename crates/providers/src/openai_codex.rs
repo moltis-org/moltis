@@ -33,25 +33,12 @@ use catalog::{
 
 pub struct OpenAiCodexProvider {
     model: String,
+    model_capabilities: crate::ModelCapabilities,
     base_url: String,
     client: &'static reqwest::Client,
     token_store: TokenStore,
     stream_transport: ProviderStreamTransport,
     reasoning_effort: Option<ReasoningEffort>,
-}
-
-// The ChatGPT Codex backend advertises 372K for GPT-5.6 and its variants,
-// distinct from the 1.05M context window exposed by the OpenAI API.
-const GPT_5_6_CODEX_CONTEXT_WINDOW: u32 = 372_000;
-
-fn codex_context_window(model_id: &str) -> u32 {
-    if matches!(
-        model_id,
-        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
-    ) {
-        return GPT_5_6_CODEX_CONTEXT_WINDOW;
-    }
-    200_000
 }
 
 fn codex_done_arguments(evt: &serde_json::Value) -> Option<&str> {
@@ -82,13 +69,33 @@ impl OpenAiCodexProvider {
     }
 
     pub fn new_with_transport(model: String, stream_transport: ProviderStreamTransport) -> Self {
+        let model_capabilities = crate::ModelCapabilities::infer(&model);
+        let mut model_capabilities = model_capabilities;
+        if let Some(context_window) = crate::model_capabilities::context_window_fallback_for_model(
+            crate::model_capabilities::ContextWindowFallbackScope::OpenAiCodex,
+            &model,
+        ) {
+            model_capabilities.context_window = context_window;
+        }
         Self {
             model,
+            model_capabilities,
             base_url: "https://chatgpt.com/backend-api".to_string(),
             client: crate::shared_http_client(),
             token_store: TokenStore::new(),
             stream_transport,
             reasoning_effort: None,
+        }
+    }
+
+    pub fn new_with_capabilities(
+        model: String,
+        stream_transport: ProviderStreamTransport,
+        model_capabilities: crate::ModelCapabilities,
+    ) -> Self {
+        Self {
+            model_capabilities,
+            ..Self::new_with_transport(model, stream_transport)
         }
     }
 
@@ -388,7 +395,7 @@ impl LlmProvider for OpenAiCodexProvider {
     }
 
     fn context_window(&self) -> u32 {
-        codex_context_window(&self.model)
+        self.model_capabilities.context_window
     }
 
     fn reasoning_effort(&self) -> Option<ReasoningEffort> {
@@ -401,6 +408,7 @@ impl LlmProvider for OpenAiCodexProvider {
     ) -> Option<std::sync::Arc<dyn LlmProvider>> {
         Some(std::sync::Arc::new(Self {
             model: self.model.clone(),
+            model_capabilities: self.model_capabilities,
             base_url: self.base_url.clone(),
             client: self.client,
             token_store: self.token_store.clone(),
@@ -861,14 +869,24 @@ mod tests {
     }
 
     #[test]
-    fn gpt_5_6_models_use_codex_context_window() {
-        for model_id in ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
-            let provider = OpenAiCodexProvider::new(model_id.to_string());
-            assert_eq!(provider.context_window(), GPT_5_6_CODEX_CONTEXT_WINDOW);
-        }
+    fn context_window_uses_model_capabilities() {
+        let context_window = crate::model_capabilities::context_window_fallback_for_model(
+            crate::model_capabilities::ContextWindowFallbackScope::OpenAiCodex,
+            "gpt-5.6-sol",
+        )
+        .unwrap_or_else(|| panic!("missing codex context-window fallback"));
+        let provider = OpenAiCodexProvider::new_with_capabilities(
+            "gpt-5.6-sol".to_string(),
+            ProviderStreamTransport::Sse,
+            crate::ModelCapabilities {
+                context_window,
+                ..crate::ModelCapabilities::infer("gpt-5.6-sol")
+            },
+        );
+        assert_eq!(provider.context_window(), context_window);
 
-        let existing_model = OpenAiCodexProvider::new("gpt-5.4".to_string());
-        assert_eq!(existing_model.context_window(), 200_000);
+        let default_provider = OpenAiCodexProvider::new("gpt-5.6-sol".to_string());
+        assert_eq!(default_provider.context_window(), context_window);
     }
 
     #[test]

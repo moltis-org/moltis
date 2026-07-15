@@ -211,6 +211,27 @@ docker exec -it moltis moltis auth login --provider github-copilot
 Requires an active GitHub Copilot subscription.
 ```
 
+Moltis discovers Copilot models from GitHub's `/models` endpoint when possible.
+If GitHub returns non-secret model limit metadata such as `context_window`,
+`context_length`, or `max_input_tokens`, Moltis uses it for context-window
+display and auto-compaction thresholds. Otherwise Moltis falls back to built-in
+model heuristics. Fast-mode Claude variants are kept at the standard Claude
+window unless GitHub documents a larger limit for that variant.
+
+To inspect the redacted live model metadata Moltis can see:
+
+```bash
+moltis providers inspect github-copilot
+```
+
+If GitHub changes a model limit before Moltis has updated heuristics, override it
+in config:
+
+```toml
+[providers.github-copilot.model_overrides."claude-opus-4.8"]
+context_window = 1_000_000
+```
+
 ### Ollama
 
 Ollama auto-detects when running at `http://127.0.0.1:11434`. No API key needed.
