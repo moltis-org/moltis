@@ -31,13 +31,26 @@ and restarts after crashes.</p>
 
 
 
-<table><thead><tr><th>Platform</th><th>Service file</th><th>Init system</th></tr></thead><tbody><tr><td>macOS</td><td><code>~/Library/LaunchAgents/org.moltis.gateway.plist</code></td><td>launchd (user agent)</td></tr><tr><td>Linux</td><td><code>~/.config/systemd/user/moltis.service</code></td><td>systemd (user unit)</td></tr></tbody></table>
-<p>Both configurations:</p>
+
+
+
+
+
+<table><thead><tr><th>Platform</th><th>Service file</th><th>Init system</th></tr></thead><tbody><tr><td>macOS</td><td><code>~/Library/LaunchAgents/org.moltis.gateway.plist</code></td><td>launchd (user agent)</td></tr><tr><td>Linux</td><td><code>~/.config/systemd/user/moltis.service</code></td><td>systemd (user unit)</td></tr><tr><td>Linux containers without systemd</td><td><code>~/.moltis/moltis-service-supervisor.sh</code></td><td>portable user supervisor</td></tr></tbody></table>
+<p>The launchd and systemd configurations:</p>
 <ul>
 <li><strong>Start on boot</strong> (<code>RunAtLoad</code> / <code>WantedBy=default.target</code>)</li>
 <li><strong>Restart on failure</strong> with a 10-second cooldown</li>
 <li><strong>Log to</strong> <code>~/.moltis/moltis.log</code></li>
 </ul>
+<p>On Linux, Moltis first uses <code>systemd --user</code> when it is available. Some
+development containers, including Coder/devbox environments, do not run systemd
+or provide the SysV <code>service</code> command. In those environments, <code>moltis service install</code> falls back to a small user-owned supervisor script in <code>~/.moltis/</code>.
+The fallback starts Moltis in the background, records pid files, supports
+<code>status</code>, <code>stop</code>, <code>restart</code>, and restarts Moltis after crashes.</p>
+<p>The portable supervisor is tied to the current container session. If the
+workspace container is recreated, configure your devbox/Coder startup hook to
+run <code>moltis service restart</code> after installing Moltis.</p>
 <h3 id="options">Options</h3>
 <p>You can pass <code>--bind</code>, <code>--port</code>, and <code>--log-level</code> to bake them into the
 service definition:</p>
