@@ -714,11 +714,11 @@ port = {port}                           # Port number (auto-generated for this i
 # Add entries only to override binary paths, args, env, working_dir, or timeout.
 # [external_agents.agents.acp-copilot]
 # binary = "copilot"
-# args = []
+# args = ["--acp"]
 
 # [external_agents.agents.acp-codex]
 # binary = "codex"
-# args = []
+# args = ["app-server"]
 
 # [external_agents.agents.acp-claude]
 # binary = "claude"
@@ -726,7 +726,7 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [external_agents.agents.acp-pi]
 # binary = "pi"
-# args = []
+# args = ["--mode", "rpc"]
 
 # [external_agents.agents.acp-opencode]
 # binary = "opencode"
@@ -734,7 +734,7 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [external_agents.agents.acp-gemini]
 # binary = "gemini"
-# args = []
+# args = ["--experimental-acp"]
 
 # [external_agents.agents.acp-amp]
 # binary = "amp"

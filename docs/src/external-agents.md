@@ -11,12 +11,12 @@ Supported agent kinds:
 | `claude-code` | `claude -p --output-format json` | Print mode with `session_id` capture; later turns add `--resume <id>`. |
 | `codex` | `codex app-server` | Persistent app-server process; Moltis reuses the Codex `threadId` across turns. |
 | `acp` | `acp` | Persistent ACP JSON-RPC stdio session configured by `[external_agents.agents.acp]`. |
-| `acp-copilot` | `copilot` | Named ACP session shown as `ACP: Copilot` in the session header. |
-| `acp-codex` | `codex` | Named ACP session shown as `ACP: Codex` in the session header. |
+| `acp-copilot` | `copilot --acp` | Named ACP session shown as `ACP: Copilot` in the session header. |
+| `acp-codex` | `codex app-server` | Named stdio session shown as `ACP: Codex` in the session header. |
 | `acp-claude` | `claude` | Named ACP session shown as `ACP: Claude` in the session header. |
-| `acp-pi` | `pi` | Named ACP session shown as `ACP: Pi` in the session header. |
+| `acp-pi` | `pi --mode rpc` | Named RPC session shown as `ACP: Pi` in the session header. |
 | `acp-opencode` | `opencode acp` | Named ACP session shown as `ACP: opencode` in the session header. |
-| `acp-gemini` | `gemini` | Named ACP session shown as `ACP: Gemini` in the session header. |
+| `acp-gemini` | `gemini --experimental-acp` | Named ACP session shown as `ACP: Gemini` in the session header. |
 | `acp-amp` | `amp` | Named ACP session shown as `ACP: Amp` in the session header. |
 
 ## Default ACP detection
@@ -25,12 +25,12 @@ External agent discovery is enabled by default. On startup, Moltis checks for th
 
 | Selector label | Config key | Command checked |
 |----------------|------------|-----------------|
-| `ACP: Copilot` | `acp-copilot` | `copilot` |
-| `ACP: Codex` | `acp-codex` | `codex` |
+| `ACP: Copilot` | `acp-copilot` | `copilot --acp` |
+| `ACP: Codex` | `acp-codex` | `codex app-server` |
 | `ACP: Claude` | `acp-claude` | `claude` |
-| `ACP: Pi` | `acp-pi` | `pi` |
+| `ACP: Pi` | `acp-pi` | `pi --mode rpc` |
 | `ACP: opencode` | `acp-opencode` | `opencode acp` |
-| `ACP: Gemini` | `acp-gemini` | `gemini` |
+| `ACP: Gemini` | `acp-gemini` | `gemini --experimental-acp` |
 | `ACP: Amp` | `acp-amp` | `amp` |
 
 Installed ACP agents appear automatically in each chat session's external-agent selector. Missing commands are hidden from the selector, so a fresh install with no ACP agents available continues to show only the normal Moltis agent.
@@ -56,11 +56,11 @@ enabled = true
 
 [external_agents.agents.acp-copilot]
 binary = "copilot"                  # or an absolute path
-args = []
+args = ["--acp"]
 
 [external_agents.agents.acp-codex]
 binary = "codex"
-args = []
+args = ["app-server"]
 
 [external_agents.agents.acp-claude]
 binary = "claude"
@@ -68,7 +68,7 @@ args = []
 
 [external_agents.agents.acp-pi]
 binary = "pi"
-args = []
+args = ["--mode", "rpc"]
 
 [external_agents.agents.acp-opencode]
 binary = "opencode"
@@ -76,7 +76,7 @@ args = ["acp"]
 
 [external_agents.agents.acp-gemini]
 binary = "gemini"
-args = []
+args = ["--experimental-acp"]
 
 [external_agents.agents.acp-amp]
 binary = "amp"

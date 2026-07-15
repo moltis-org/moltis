@@ -125,14 +125,23 @@ impl GatewayExternalAgentService {
             Arc::new(GatewayAcpPermissionHandler::new(approval_manager));
         for (kind, binary, default_args) in [
             (AgentTransportKind::Acp, "acp", Vec::new()),
-            (AgentTransportKind::AcpCopilot, "copilot", Vec::new()),
-            (AgentTransportKind::AcpCodex, "codex", Vec::new()),
+            (AgentTransportKind::AcpCopilot, "copilot", vec![
+                "--acp".to_string(),
+            ]),
+            (AgentTransportKind::AcpCodex, "codex", vec![
+                "app-server".to_string(),
+            ]),
             (AgentTransportKind::AcpClaude, "claude", Vec::new()),
-            (AgentTransportKind::AcpPi, "pi", Vec::new()),
+            (AgentTransportKind::AcpPi, "pi", vec![
+                "--mode".to_string(),
+                "rpc".to_string(),
+            ]),
             (AgentTransportKind::AcpOpencode, "opencode", vec![
                 "acp".to_string(),
             ]),
-            (AgentTransportKind::AcpGemini, "gemini", Vec::new()),
+            (AgentTransportKind::AcpGemini, "gemini", vec![
+                "--experimental-acp".to_string(),
+            ]),
             (AgentTransportKind::AcpAmp, "amp", Vec::new()),
         ] {
             registry.register(Box::new(

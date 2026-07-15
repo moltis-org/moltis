@@ -353,15 +353,18 @@ binary = "codex"
 
 [external_agents.agents.acp-copilot]
 binary = "copilot"
+args = ["--acp"]
 
 [external_agents.agents.acp-codex]
 binary = "codex"
+args = ["app-server"]
 
 [external_agents.agents.acp-claude]
 binary = "claude"
 
 [external_agents.agents.acp-pi]
 binary = "pi"
+args = ["--mode", "rpc"]
 
 [external_agents.agents.acp-opencode]
 binary = "opencode"
@@ -369,6 +372,7 @@ args = ["acp"]
 
 [external_agents.agents.acp-gemini]
 binary = "gemini"
+args = ["--experimental-acp"]
 
 [external_agents.agents.acp-amp]
 binary = "amp"
