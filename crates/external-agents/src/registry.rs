@@ -134,6 +134,7 @@ impl ExternalAgentRegistry {
                     kind: *kind,
                     name: kind.display_name().to_string(),
                     installed,
+                    is_acp: kind.is_acp(),
                     version: None,
                 });
             }
@@ -464,6 +465,11 @@ mod tests {
         assert!(!registry.has_kind(AgentTransportKind::AcpCodex));
 
         let agents = registry.list_agents().await;
+        let copilot = agents
+            .iter()
+            .find(|agent| agent.kind == AgentTransportKind::AcpCopilot)
+            .expect("copilot should be listed");
+        assert!(copilot.is_acp);
         let names = agents
             .into_iter()
             .map(|agent| agent.name)

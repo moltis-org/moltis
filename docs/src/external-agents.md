@@ -35,6 +35,8 @@ External agent discovery is enabled by default. On startup, Moltis checks for th
 
 Installed ACP agents appear automatically in each chat session's external-agent selector. Missing commands are hidden from the selector, so a fresh install with no ACP agents available continues to show only the normal Moltis agent.
 
+Default detection only checks whether the named command exists on Moltis' `$PATH`; it does not verify the binary publisher or installation source. Only install ACP agents from trusted sources, keep untrusted directories out of the service `$PATH`, and use explicit `binary = "/absolute/path/to/agent"` overrides when you want to pin the executable Moltis may launch after a user selects that agent for a session.
+
 If you want to disable all external agent discovery, set:
 
 ```toml

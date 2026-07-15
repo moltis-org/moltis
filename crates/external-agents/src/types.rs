@@ -173,5 +173,7 @@ pub struct ExternalAgentInfo {
     pub kind: AgentTransportKind,
     pub name: String,
     pub installed: bool,
+    #[serde(rename = "isAcp")]
+    pub is_acp: bool,
     pub version: Option<String>,
 }

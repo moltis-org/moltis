@@ -148,6 +148,7 @@ interface SummaryExternalAgent {
 	kind: string;
 	name: string;
 	installed: boolean;
+	isAcp: boolean;
 }
 
 interface SummaryData {
@@ -291,7 +292,7 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 
 	const activeModel = localStorage.getItem("moltis-model");
 	const configuredProviders = data.providers.filter((p) => p.configured);
-	const installedAcpAgents = data.externalAgents.filter((agent) => agent.installed && agent.kind.startsWith("acp"));
+	const installedAcpAgents = data.externalAgents.filter((agent) => agent.installed && agent.isAcp);
 
 	return (
 		<div className="flex flex-col gap-4">

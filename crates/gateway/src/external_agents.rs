@@ -1047,8 +1047,13 @@ mod tests {
 
         let agents = service.list().await.expect("list external agents");
 
-        assert_eq!(agents[0]["kind"], "codex");
-        assert_eq!(agents[0]["installed"], true);
+        let codex = agents
+            .as_array()
+            .expect("list is an array")
+            .iter()
+            .find(|agent| agent["kind"] == "codex")
+            .expect("codex should be in list");
+        assert_eq!(codex["installed"], true);
         assert_eq!(agent_state.starts.load(Ordering::SeqCst), 0);
     }
 
