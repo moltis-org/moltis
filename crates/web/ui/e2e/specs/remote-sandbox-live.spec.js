@@ -203,8 +203,9 @@ test.describe("Daytona Sandbox live integration", () => {
 					"X-Daytona-Source": "moltis-e2e",
 				},
 				body: JSON.stringify({
-					command: "echo hello-from-daytona",
+					command: 'printf "%s" "$MOLTIS_DAYTONA_E2E_ENV"',
 					cwd: "/home/daytona",
+					envs: { MOLTIS_DAYTONA_E2E_ENV: "hello-from-daytona" },
 					timeout: 30,
 				}),
 			});

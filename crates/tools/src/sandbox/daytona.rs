@@ -249,6 +249,7 @@ impl DaytonaSandbox {
             "timeout": timeout_secs,
         });
         if !opts.env.is_empty() {
+            // Daytona's toolbox ExecuteRequest schema names command environment variables `envs`.
             body["envs"] = serde_json::Value::Object(Self::env_object(&opts.env));
         }
 
