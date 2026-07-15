@@ -2,6 +2,7 @@
 //!
 //! - **macOS**: launchd user agent (`~/Library/LaunchAgents/org.moltis.plist`)
 //! - **Linux**: systemd user unit (`~/.config/systemd/user/moltis.service`)
+//! - **Linux without systemd**: portable user supervisor (`~/.moltis/moltis-service-supervisor.sh`)
 
 use std::{
     fs,
