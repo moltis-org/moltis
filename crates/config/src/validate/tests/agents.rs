@@ -380,10 +380,6 @@ args = ["--experimental-acp"]
 binary = "auggie"
 args = ["--acp"]
 
-[external_agents.agents.acp-cursor]
-binary = "agent"
-args = ["acp"]
-
 [external_agents.agents.acp-kiro]
 binary = "kiro-cli"
 args = ["acp"]

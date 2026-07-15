@@ -52,8 +52,8 @@ async function mockExternalAgentsRpc(page, listPayload) {
 		window.__externalAgentE2EPatched = true;
 		window.__externalAgentE2ERequests = [];
 		window.__externalAgentE2EListPayload = externalAgentsListPayload || [
-			{ kind: "codex", name: "Codex", installed: true, version: null },
-			{ kind: "claude-code", name: "Claude Code", installed: false, version: null },
+			{ kind: "codex", name: "Codex", installed: true, isAcp: false, version: null },
+			{ kind: "claude-code", name: "Claude Code", installed: false, isAcp: false, version: null },
 		];
 		const originalSend = WebSocket.prototype.send;
 
@@ -410,20 +410,19 @@ test.describe("Agents settings page", () => {
 	test("external-agent picker labels named ACP agents", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await mockExternalAgentsRpc(page, [
-			{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, version: null },
-			{ kind: "acp-codex", name: "ACP: Codex", installed: true, version: null },
-			{ kind: "acp-claude", name: "ACP: Claude", installed: true, version: null },
-			{ kind: "acp-pi", name: "ACP: Pi", installed: true, version: null },
-			{ kind: "acp-opencode", name: "ACP: opencode", installed: true, version: null },
-			{ kind: "acp-gemini", name: "ACP: Gemini", installed: true, version: null },
-			{ kind: "acp-augment", name: "ACP: Augment", installed: true, version: null },
-			{ kind: "acp-cursor", name: "ACP: Cursor", installed: true, version: null },
-			{ kind: "acp-kiro", name: "ACP: Kiro", installed: true, version: null },
-			{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: true, version: null },
-			{ kind: "acp-openhands", name: "ACP: OpenHands", installed: true, version: null },
-			{ kind: "acp-kimi", name: "ACP: Kimi", installed: true, version: null },
-			{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: true, version: null },
-			{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: true, version: null },
+			{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null },
+			{ kind: "acp-codex", name: "ACP: Codex", installed: true, isAcp: true, version: null },
+			{ kind: "acp-claude", name: "ACP: Claude", installed: true, isAcp: true, version: null },
+			{ kind: "acp-pi", name: "ACP: Pi", installed: true, isAcp: true, version: null },
+			{ kind: "acp-opencode", name: "ACP: opencode", installed: true, isAcp: true, version: null },
+			{ kind: "acp-gemini", name: "ACP: Gemini", installed: true, isAcp: true, version: null },
+			{ kind: "acp-augment", name: "ACP: Augment", installed: true, isAcp: true, version: null },
+			{ kind: "acp-kiro", name: "ACP: Kiro", installed: true, isAcp: true, version: null },
+			{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: true, isAcp: true, version: null },
+			{ kind: "acp-openhands", name: "ACP: OpenHands", installed: true, isAcp: true, version: null },
+			{ kind: "acp-kimi", name: "ACP: Kimi", installed: true, isAcp: true, version: null },
+			{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: true, isAcp: true, version: null },
+			{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: true, isAcp: true, version: null },
 		]);
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
@@ -440,7 +439,6 @@ test.describe("Agents settings page", () => {
 		await expect(page.getByText("ACP: opencode", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Gemini", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Augment", { exact: true })).toBeVisible();
-		await expect(page.getByText("ACP: Cursor", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Kiro", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: OpenClaw", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: OpenHands", { exact: true })).toBeVisible();
@@ -467,18 +465,17 @@ test.describe("Agents settings page", () => {
 	test("external-agent picker is hidden when no external agents are installed", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await mockExternalAgentsRpc(page, [
-			{ kind: "acp-copilot", name: "ACP: Copilot", installed: false, version: null },
-			{ kind: "acp-codex", name: "ACP: Codex", installed: false, version: null },
-			{ kind: "acp-opencode", name: "ACP: opencode", installed: false, version: null },
-			{ kind: "acp-gemini", name: "ACP: Gemini", installed: false, version: null },
-			{ kind: "acp-augment", name: "ACP: Augment", installed: false, version: null },
-			{ kind: "acp-cursor", name: "ACP: Cursor", installed: false, version: null },
-			{ kind: "acp-kiro", name: "ACP: Kiro", installed: false, version: null },
-			{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: false, version: null },
-			{ kind: "acp-openhands", name: "ACP: OpenHands", installed: false, version: null },
-			{ kind: "acp-kimi", name: "ACP: Kimi", installed: false, version: null },
-			{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: false, version: null },
-			{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: false, version: null },
+			{ kind: "acp-copilot", name: "ACP: Copilot", installed: false, isAcp: true, version: null },
+			{ kind: "acp-codex", name: "ACP: Codex", installed: false, isAcp: true, version: null },
+			{ kind: "acp-opencode", name: "ACP: opencode", installed: false, isAcp: true, version: null },
+			{ kind: "acp-gemini", name: "ACP: Gemini", installed: false, isAcp: true, version: null },
+			{ kind: "acp-augment", name: "ACP: Augment", installed: false, isAcp: true, version: null },
+			{ kind: "acp-kiro", name: "ACP: Kiro", installed: false, isAcp: true, version: null },
+			{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: false, isAcp: true, version: null },
+			{ kind: "acp-openhands", name: "ACP: OpenHands", installed: false, isAcp: true, version: null },
+			{ kind: "acp-kimi", name: "ACP: Kimi", installed: false, isAcp: true, version: null },
+			{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: false, isAcp: true, version: null },
+			{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: false, isAcp: true, version: null },
 		]);
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
@@ -500,7 +497,6 @@ test.describe("Agents settings page", () => {
 		await expect(page.getByText("ACP: opencode (unavailable)", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("ACP: Gemini (unavailable)", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("ACP: Augment (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("ACP: Cursor (unavailable)", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("ACP: Kiro (unavailable)", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("ACP: OpenClaw (unavailable)", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("ACP: OpenHands (unavailable)", { exact: true })).toHaveCount(0);

@@ -230,6 +230,51 @@ async function advanceVisibleOnboardingStep(page) {
 	return clickFirstVisibleButton(page, { name: "Continue", exact: true });
 }
 
+async function moveToSummaryStep(page) {
+	const summaryHeading = page.getByRole("heading", { name: "Setup Summary", exact: true });
+	for (let i = 0; i < 50; i++) {
+		await waitForOnboardingStepLoaded(page);
+		if (await isVisible(summaryHeading)) return true;
+
+		if (await maybeSkipOpenClawImport(page)) continue;
+		if (await maybeSkipAuth(page)) continue;
+		if (await maybeCompleteIdentity(page)) continue;
+		if (await advanceVisibleOnboardingStep(page)) continue;
+		break;
+	}
+	return isVisible(summaryHeading);
+}
+
+async function mockOnboardingExternalAgents(page, agents) {
+	await page.addInitScript((externalAgentsListPayload) => {
+		if (window.__onboardingExternalAgentE2EPatched) return;
+		window.__onboardingExternalAgentE2EPatched = true;
+		const originalSend = WebSocket.prototype.send;
+
+		function respond(socket, id, payload) {
+			queueMicrotask(() => {
+				const event = new MessageEvent("message", {
+					data: JSON.stringify({ type: "res", id, ok: true, payload }),
+				});
+				if (typeof socket.onmessage === "function") socket.onmessage(event);
+			});
+		}
+
+		WebSocket.prototype.send = function (payload) {
+			try {
+				const parsed = JSON.parse(payload);
+				if (parsed?.method === "external_agents.list") {
+					respond(this, parsed.id, externalAgentsListPayload);
+					return;
+				}
+			} catch {
+				// Let non-JSON WebSocket traffic pass through unchanged.
+			}
+			return originalSend.call(this, payload);
+		};
+	}, agents);
+}
+
 async function moveToRemoteAccessStep(page) {
 	const reachedLlm = await moveToLlmStep(page);
 	if (!reachedLlm) return false;
@@ -509,6 +554,26 @@ test.describe("Onboarding wizard", () => {
 		await expect(page.getByPlaceholder("e.g. Alice")).toBeVisible();
 		await expect(page.getByPlaceholder("e.g. Rex")).toBeVisible();
 		await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
+	});
+
+	test("summary shows installed ACP agents", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockOnboardingExternalAgents(page, [
+			{ kind: "codex", name: "Codex", installed: true, isAcp: false, version: null },
+			{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null },
+			{ kind: "acp-gemini", name: "ACP: Gemini", installed: false, isAcp: true, version: null },
+		]);
+
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+		expect(await moveToSummaryStep(page)).toBeTruthy();
+
+		const acpRow = page.locator(".rounded-md.border").filter({ hasText: "ACP Agents" });
+		await expect(acpRow).toBeVisible();
+		await expect(acpRow.getByText("ACP: Copilot", { exact: true })).toBeVisible();
+		await expect(acpRow.getByText("ACP: Gemini", { exact: true })).toHaveCount(0);
+		await expect(acpRow.getByText("Codex", { exact: true })).toHaveCount(0);
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("mobile onboarding layout avoids horizontal overflow", async ({ page }) => {

@@ -18,7 +18,6 @@ Supported agent kinds:
 | `acp-opencode` | `opencode acp` | Named ACP session shown as `ACP: opencode` in the session header. |
 | `acp-gemini` | `gemini --experimental-acp` | Named ACP session shown as `ACP: Gemini` in the session header. |
 | `acp-augment` | `auggie --acp` | Augment/Auggie ACP mode. |
-| `acp-cursor` | `agent acp` | Cursor CLI ACP mode. |
 | `acp-kiro` | `kiro-cli acp` | Kiro CLI ACP mode. |
 | `acp-openclaw` | `openclaw acp` | OpenClaw ACP bridge. |
 | `acp-openhands` | `openhands acp` | OpenHands CLI ACP mode. |
@@ -39,7 +38,6 @@ External agent discovery is enabled by default. On startup, Moltis checks for th
 | `ACP: opencode` | `acp-opencode` | `opencode acp` |
 | `ACP: Gemini` | `acp-gemini` | `gemini --experimental-acp` |
 | `ACP: Augment` | `acp-augment` | `auggie --acp` |
-| `ACP: Cursor` | `acp-cursor` | `agent acp` |
 | `ACP: Kiro` | `acp-kiro` | `kiro-cli acp` |
 | `ACP: OpenClaw` | `acp-openclaw` | `openclaw acp` |
 | `ACP: OpenHands` | `acp-openhands` | `openhands acp` |
@@ -96,10 +94,6 @@ args = ["--experimental-acp"]
 binary = "auggie"
 args = ["--acp"]
 
-[external_agents.agents.acp-cursor]
-binary = "agent"
-args = ["acp"]
-
 [external_agents.agents.acp-kiro]
 binary = "kiro-cli"
 args = ["acp"]
@@ -126,6 +120,8 @@ args = []
 ```
 
 Claude ACP support is not provided by plain `claude`; Moltis detects the separate `claude-agent-acp` adapter binary. Install it from the upstream package/repository and ensure that binary is on the Moltis service `$PATH`, or set `binary = "/absolute/path/to/claude-agent-acp"`.
+
+Cursor CLI supports ACP with `agent acp`, but Moltis does not auto-detect it because `agent` is a generic executable name that can collide with unrelated tools. Configure Cursor manually with the generic `acp` entry and an absolute `binary` path if you want to use it.
 
 For advanced/manual ACP servers that are not one of the named options, use the generic `acp` kind:
 

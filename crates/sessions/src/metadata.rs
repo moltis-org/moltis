@@ -30,7 +30,6 @@ pub enum ExternalAgentKind {
     AcpOpencode,
     AcpGemini,
     AcpAugment,
-    AcpCursor,
     AcpKiro,
     AcpOpenclaw,
     AcpOpenhands,
@@ -53,7 +52,6 @@ impl ExternalAgentKind {
         Self::AcpOpencode,
         Self::AcpGemini,
         Self::AcpAugment,
-        Self::AcpCursor,
         Self::AcpKiro,
         Self::AcpOpenclaw,
         Self::AcpOpenhands,
@@ -77,7 +75,6 @@ impl ExternalAgentKind {
             Self::AcpOpencode => "acp-opencode",
             Self::AcpGemini => "acp-gemini",
             Self::AcpAugment => "acp-augment",
-            Self::AcpCursor => "acp-cursor",
             Self::AcpKiro => "acp-kiro",
             Self::AcpOpenclaw => "acp-openclaw",
             Self::AcpOpenhands => "acp-openhands",
@@ -102,7 +99,6 @@ impl ExternalAgentKind {
             Self::AcpOpencode => "ACP: opencode",
             Self::AcpGemini => "ACP: Gemini",
             Self::AcpAugment => "ACP: Augment",
-            Self::AcpCursor => "ACP: Cursor",
             Self::AcpKiro => "ACP: Kiro",
             Self::AcpOpenclaw => "ACP: OpenClaw",
             Self::AcpOpenhands => "ACP: OpenHands",
@@ -124,7 +120,6 @@ impl ExternalAgentKind {
                 | Self::AcpOpencode
                 | Self::AcpGemini
                 | Self::AcpAugment
-                | Self::AcpCursor
                 | Self::AcpKiro
                 | Self::AcpOpenclaw
                 | Self::AcpOpenhands
@@ -158,7 +153,6 @@ impl std::str::FromStr for ExternalAgentKind {
             "acp-opencode" => Ok(Self::AcpOpencode),
             "acp-gemini" => Ok(Self::AcpGemini),
             "acp-augment" => Ok(Self::AcpAugment),
-            "acp-cursor" => Ok(Self::AcpCursor),
             "acp-kiro" => Ok(Self::AcpKiro),
             "acp-openclaw" => Ok(Self::AcpOpenclaw),
             "acp-openhands" => Ok(Self::AcpOpenhands),

@@ -89,7 +89,6 @@ fn external_agent_kind_parses_named_acp_variants() {
         ),
         ("acp-gemini", ExternalAgentKind::AcpGemini, "ACP: Gemini"),
         ("acp-augment", ExternalAgentKind::AcpAugment, "ACP: Augment"),
-        ("acp-cursor", ExternalAgentKind::AcpCursor, "ACP: Cursor"),
         ("acp-kiro", ExternalAgentKind::AcpKiro, "ACP: Kiro"),
         (
             "acp-openclaw",

@@ -144,9 +144,6 @@ impl GatewayExternalAgentService {
             (AgentTransportKind::AcpAugment, "auggie", vec![
                 "--acp".to_string(),
             ]),
-            (AgentTransportKind::AcpCursor, "agent", vec![
-                "acp".to_string(),
-            ]),
             (AgentTransportKind::AcpKiro, "kiro-cli", vec![
                 "acp".to_string(),
             ]),

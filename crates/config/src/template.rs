@@ -747,10 +747,6 @@ port = {port}                           # Port number (auto-generated for this i
 # binary = "auggie"
 # args = ["--acp"]
 
-# [external_agents.agents.acp-cursor]
-# binary = "agent"
-# args = ["acp"]
-
 # [external_agents.agents.acp-kiro]
 # binary = "kiro-cli"
 # args = ["acp"]
@@ -774,6 +770,12 @@ port = {port}                           # Port number (auto-generated for this i
 # [external_agents.agents.acp-fast-agent]
 # binary = "fast-agent-acp"
 # args = []
+
+# Cursor also supports ACP with `agent acp`, but `agent` is too generic to
+# auto-detect safely. Configure it manually via the generic ACP entry if needed.
+# [external_agents.agents.acp]
+# binary = "/absolute/path/to/cursor/agent"
+# args = ["acp"]
 
 # [external_agents.agents.opencode]
 # binary = "opencode"
