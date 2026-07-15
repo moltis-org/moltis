@@ -889,11 +889,30 @@ fn read_pid(path: &Path) -> Result<Option<u32>> {
 }
 
 fn pid_is_alive(pid: u32) -> bool {
-    PathBuf::from(format!("/proc/{pid}")).exists()
-        || Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .is_ok_and(|status| status.success())
+    if is_linux_zombie(pid) {
+        return false;
+    }
+
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn is_linux_zombie(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| linux_proc_stat_state(&stat))
+        .is_some_and(|state| state == 'Z')
+}
+
+fn linux_proc_stat_state(stat: &str) -> Option<char> {
+    stat.rsplit_once(") ")?
+        .1
+        .split_whitespace()
+        .next()?
+        .chars()
+        .next()
 }
 
 fn signal_process(pid: u32, signal: &str) -> bool {
@@ -1063,6 +1082,16 @@ mod tests {
     fn shell_quote_escapes_single_quotes() {
         assert_eq!(shell_quote("abc"), "'abc'");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn parses_linux_proc_stat_state() {
+        assert_eq!(linux_proc_stat_state("123 (moltis) S 1 2 3"), Some('S'));
+        assert_eq!(
+            linux_proc_stat_state("123 (name with spaces) Z 1 2 3"),
+            Some('Z')
+        );
+        assert_eq!(linux_proc_stat_state("invalid"), None);
     }
 
     #[test]
