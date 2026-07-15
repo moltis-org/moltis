@@ -688,6 +688,9 @@ port = {port}                           # Port number (auto-generated for this i
 
 [external_agents]
 # enabled = true                    # Auto-detect installed external agents for chat session selection
+# Set enabled = false to opt out of all external-agent discovery.
+# Default detection trusts Moltis' PATH. Use absolute binary paths below when
+# you want to pin which executable Moltis may launch after a user selects it.
 
 # Per-agent configuration (key = agent kind)
 # [external_agents.agents.claude-code]
