@@ -245,7 +245,10 @@ impl GatewayExternalAgentService {
         let mut spec = ExternalAgentSpec::new(kind);
         if let Some(agent_config) = self.config.agents.get(kind.as_str()) {
             spec.binary = agent_config.binary.clone();
-            spec.args = agent_config.args.clone();
+            if let Some(args) = &agent_config.args {
+                spec.args.clone_from(args);
+                spec.args_configured = true;
+            }
             spec.env = agent_config.env.clone();
             spec.working_dir = agent_config.working_dir.as_ref().map(Into::into);
             spec.timeout_secs = agent_config.timeout_secs;

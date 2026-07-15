@@ -70,6 +70,14 @@ impl AcpTransport {
         self.permission_handler = Some(permission_handler);
         self
     }
+
+    fn spec_with_default_args(&self, spec: &ExternalAgentSpec) -> ExternalAgentSpec {
+        let mut spec = spec.clone();
+        if !spec.args_configured {
+            spec.args.clone_from(&self.default_args);
+        }
+        spec
+    }
 }
 
 #[async_trait]
@@ -93,10 +101,7 @@ impl ExternalAgentTransport for AcpTransport {
         spec: &ExternalAgentSpec,
     ) -> anyhow::Result<Box<dyn ExternalAgentSession>> {
         let binary = spec.binary.clone().unwrap_or_else(|| self.binary.clone());
-        let mut spec = spec.clone();
-        if spec.args.is_empty() {
-            spec.args.clone_from(&self.default_args);
-        }
+        let spec = self.spec_with_default_args(spec);
         Ok(Box::new(
             AcpSession::start(binary, spec, self.permission_handler.clone()).await?,
         ))
@@ -861,6 +866,28 @@ mod tests {
         .with_default_args(vec!["acp".to_string()]);
 
         assert_eq!(transport.default_args, ["acp"]);
+    }
+
+    #[test]
+    fn transport_default_args_respect_explicit_empty_config() {
+        let transport = AcpTransport::for_kind(
+            AgentTransportKind::AcpOpencode,
+            "ACP: opencode",
+            "opencode".to_string(),
+        )
+        .with_default_args(vec!["acp".to_string()]);
+
+        let absent_args = ExternalAgentSpec::new(AgentTransportKind::AcpOpencode);
+        assert_eq!(transport.spec_with_default_args(&absent_args).args, ["acp"]);
+
+        let mut explicit_empty_args = ExternalAgentSpec::new(AgentTransportKind::AcpOpencode);
+        explicit_empty_args.args_configured = true;
+        assert!(
+            transport
+                .spec_with_default_args(&explicit_empty_args)
+                .args
+                .is_empty()
+        );
     }
 
     #[tokio::test]

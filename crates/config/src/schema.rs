@@ -380,8 +380,7 @@ impl Default for ExternalAgentsConfig {
 #[serde(default)]
 pub struct ExternalAgentConfig {
     pub binary: Option<String>,
-    #[serde(default)]
-    pub args: Vec<String>,
+    pub args: Option<Vec<String>>,
     #[serde(default)]
     pub env: HashMap<String, String>,
     pub working_dir: Option<String>,

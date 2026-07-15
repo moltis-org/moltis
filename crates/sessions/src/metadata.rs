@@ -33,6 +33,21 @@ pub enum ExternalAgentKind {
 }
 
 impl ExternalAgentKind {
+    pub const ALL: &'static [Self] = &[
+        Self::ClaudeCode,
+        Self::Opencode,
+        Self::Codex,
+        Self::PiAgent,
+        Self::Acp,
+        Self::AcpCopilot,
+        Self::AcpCodex,
+        Self::AcpClaude,
+        Self::AcpPi,
+        Self::AcpOpencode,
+        Self::AcpGemini,
+        Self::AcpAmp,
+    ];
+
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
