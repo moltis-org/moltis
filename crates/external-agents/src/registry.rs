@@ -465,11 +465,11 @@ mod tests {
         assert!(!registry.has_kind(AgentTransportKind::AcpCodex));
 
         let agents = registry.list_agents().await;
-        let copilot = agents
+        let copilot_is_acp = agents
             .iter()
             .find(|agent| agent.kind == AgentTransportKind::AcpCopilot)
-            .expect("copilot should be listed");
-        assert!(copilot.is_acp);
+            .map(|agent| agent.is_acp);
+        assert_eq!(copilot_is_acp, Some(true));
         let names = agents
             .into_iter()
             .map(|agent| agent.name)
