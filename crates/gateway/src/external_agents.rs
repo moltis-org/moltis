@@ -15,7 +15,7 @@ use {
     moltis_sessions::{MessageContent, PersistedMessage},
     serde_json::Value,
     tokio::sync::Mutex,
-    tracing::warn,
+    tracing::{info, warn},
 };
 
 use moltis_tools::approval::{ApprovalDecision, ApprovalManager};
@@ -546,9 +546,18 @@ impl ExternalAgentChatService {
             .map_err(|error| error.to_string())?;
         let mut session = live_session.lock().await;
         let external_session_id = session.external_session_id().map(str::to_string);
+        info!(
+            session_key = %session_key,
+            external_agent = kind.as_str(),
+            external_session_id = external_session_id.as_deref().unwrap_or("pending"),
+            prompt_chars = text.len(),
+            "external agent prompt"
+        );
         if external_session_id.is_some() {
             self.session_metadata
                 .set_external_agent(&session_key, Some(kind), external_session_id.clone())
+                .await;
+            self.broadcast_external_agent_session_update(&session_key)
                 .await;
         }
         let mut events = match session.send_prompt(&text, Some(&context)).await {
@@ -611,6 +620,8 @@ impl ExternalAgentChatService {
             self.session_metadata
                 .set_external_agent(&session_key, Some(kind), Some(external_session_id))
                 .await;
+            self.broadcast_external_agent_session_update(&session_key)
+                .await;
         }
         drop(session);
         if let Some(error) = external_error {
@@ -639,6 +650,13 @@ impl ExternalAgentChatService {
             seq,
             run_id: Some(run_id.clone()),
         };
+        info!(
+            session_key = %session_key,
+            external_agent = kind.as_str(),
+            response_chars = assistant_text.len(),
+            duration_ms,
+            "external agent response"
+        );
         self.session_store
             .append(&session_key, &assistant_msg.to_value())
             .await
@@ -721,6 +739,9 @@ impl ChatService for ExternalAgentChatService {
     }
 
     async fn full_context(&self, params: Value) -> ServiceResult {
+        if let Some(context) = self.external_full_context(&params).await {
+            return context;
+        }
         self.inner.full_context(params).await
     }
 
@@ -746,6 +767,80 @@ impl ChatService for ExternalAgentChatService {
 
     async fn peek(&self, params: Value) -> ServiceResult {
         self.inner.peek(params).await
+    }
+}
+
+impl ExternalAgentChatService {
+    async fn broadcast_external_agent_session_update(&self, session_key: &str) {
+        let Some(entry) = self.session_metadata.get(session_key).await else {
+            return;
+        };
+        crate::broadcast::broadcast(
+            &self.state,
+            "session",
+            serde_json::json!({
+                "kind": "patched",
+                "sessionKey": session_key,
+                "entry": {
+                    "key": session_key,
+                    "external_agent_kind": entry.external_agent_kind.map(|kind| kind.as_str()),
+                    "externalAgentKind": entry.external_agent_kind.map(|kind| kind.as_str()),
+                    "externalSessionId": entry.external_session_id,
+                    "version": entry.version,
+                },
+            }),
+            BroadcastOpts::default(),
+        )
+        .await;
+    }
+
+    async fn external_full_context(&self, params: &Value) -> Option<ServiceResult> {
+        if !self.external_agents.config.enabled {
+            return None;
+        }
+        let session_key = resolve_session_key(params, &self.state).await;
+        let entry = self.session_metadata.get(&session_key).await?;
+        let kind = entry.external_agent_kind?;
+        let history = self
+            .session_store
+            .read(&session_key)
+            .await
+            .unwrap_or_default();
+        let context = context_from_history(&history);
+        let messages: Vec<Value> = context
+            .recent_turns
+            .iter()
+            .map(|turn| {
+                serde_json::json!({
+                    "role": turn.role,
+                    "content": turn.content,
+                })
+            })
+            .collect();
+        let llm_outputs: Vec<Value> = history
+            .iter()
+            .filter(|entry| entry.get("role").and_then(|role| role.as_str()) == Some("assistant"))
+            .cloned()
+            .collect();
+        let total_chars = messages
+            .iter()
+            .map(|message| serde_json::to_string(message).unwrap_or_default().len())
+            .sum::<usize>();
+
+        Some(Ok(serde_json::json!({
+            "messages": messages,
+            "llmOutputs": llm_outputs,
+            "messageCount": context.recent_turns.len(),
+            "systemPromptChars": 0,
+            "totalChars": total_chars,
+            "truncated": history.len() > context.recent_turns.len(),
+            "workspaceFiles": [],
+            "promptMemory": null,
+            "externalAgent": {
+                "kind": kind.as_str(),
+                "sessionId": entry.external_session_id,
+            },
+        })))
     }
 }
 
@@ -1203,6 +1298,41 @@ mod tests {
                 .and_then(|entry| entry.external_session_id),
             Some("fake-session-1".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn full_context_for_bound_external_agent_uses_persisted_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let agent_state = Arc::new(FakeAgentState::default());
+        let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+        external_agents
+            .bind(serde_json::json!({ "sessionKey": "main", "kind": "codex" }))
+            .await
+            .expect("bind external agent");
+        let chat = test_chat_service(
+            Arc::clone(&external_agents),
+            Arc::clone(&metadata),
+            Arc::clone(&session_store),
+        )
+        .await;
+        chat.send(serde_json::json!({ "sessionKey": "main", "text": "one" }))
+            .await
+            .expect("send external agent prompt");
+
+        let full_context = chat
+            .full_context(serde_json::json!({ "sessionKey": "main" }))
+            .await
+            .expect("full context");
+
+        assert_eq!(full_context["messageCount"], 2);
+        assert_eq!(full_context["messages"][0]["role"], "user");
+        assert_eq!(full_context["messages"][0]["content"], "one");
+        assert_eq!(full_context["messages"][1]["role"], "assistant");
+        assert_eq!(full_context["messages"][1]["content"], "reply to one");
+        assert_eq!(full_context["externalAgent"]["kind"], "codex");
+        assert_eq!(full_context["externalAgent"]["sessionId"], "fake-session-1");
     }
 
     #[tokio::test]

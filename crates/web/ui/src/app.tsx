@@ -202,13 +202,13 @@ gon.onChange("vault_status", showVaultBanner as (v: unknown) => void);
 
 function upsertSessionFromEvent(entry: SessionEntry | null): boolean {
 	if (!entry?.key) return false;
-	sessionStore.upsert(entry as never);
 	const legacy = S.sessions.slice() as SessionEntry[];
 	const idx = legacy.findIndex((session) => session.key === entry.key);
 	let nextEntry = { ...entry };
 	if (idx >= 0) {
 		nextEntry = { ...legacy[idx], ...entry };
 	}
+	sessionStore.upsert(nextEntry as never);
 	S.setSessions(insertSessionInOrder(legacy as never[], nextEntry as never));
 	renderSessionList();
 	return true;

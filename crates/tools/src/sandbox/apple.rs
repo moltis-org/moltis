@@ -4,6 +4,10 @@
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::sync::mpsc;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use async_trait::async_trait;
@@ -585,12 +589,16 @@ fn is_apple_container_service_running() -> bool {
 /// Returns `true` if the service was successfully started.
 #[cfg(target_os = "macos")]
 fn try_start_apple_container_service() -> bool {
-    tracing::info!("apple container service is not running, starting it automatically");
+    tracing::info!(
+        "apple container service is not running, starting it automatically; first startup can take about a minute"
+    );
+    let progress_done = spawn_apple_container_start_progress_logger();
     let result = Command::new("container")
         .args(["system", "start"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .status();
+    let _ = progress_done.send(());
     match result {
         Ok(status) if status.success() => {
             tracing::info!("apple container service started successfully");
@@ -611,6 +619,34 @@ fn try_start_apple_container_service() -> bool {
             false
         },
     }
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_apple_container_start_progress_logger() -> mpsc::Sender<()> {
+    const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+    spawn_apple_container_start_progress_logger_with_interval(PROGRESS_INTERVAL)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn spawn_apple_container_start_progress_logger_with_interval(
+    progress_interval: std::time::Duration,
+) -> mpsc::Sender<()> {
+    let (done_tx, done_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let started_at = Instant::now();
+        loop {
+            match done_rx.recv_timeout(progress_interval) {
+                Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    tracing::info!(
+                        elapsed_secs = started_at.elapsed().as_secs(),
+                        "still starting apple container service"
+                    );
+                },
+            }
+        }
+    });
+    done_tx
 }
 
 /// Ensure the Apple Container system service is running, starting it if needed.
