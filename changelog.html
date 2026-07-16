@@ -16,59 +16,80 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="removed">Removed</h3>
 <h3 id="fixed">Fixed</h3>
 <h3 id="security">Security</h3>
-<h2 id="2026071411---2026-07-14">[20260714.11] - 2026-07-14</h2>
+<h2 id="2026071601---2026-07-16">[20260716.01] - 2026-07-16</h2>
+<h3 id="added-1">Added</h3>
+<ul>
+<li>[external-agents] Auto-detect ACP agents (#1149)</li>
+<li>[providers] Add MiniMax M3 model support (#1151)</li>
+</ul>
+<h3 id="removed-1">Removed</h3>
+<ul>
+<li>[httpd] Remove unused hashmap import</li>
+</ul>
 <h3 id="fixed-1">Fixed</h3>
+<ul>
+<li>[sandbox] Harden apple container handling</li>
+<li>[e2e] Stabilize autoscroll indicator test</li>
+<li>Handle cron null fields and biome migration</li>
+<li>[cli] Support services without systemd (#1153)</li>
+<li>[providers] Derive context windows from capabilities (#1150)</li>
+<li>[providers] Derive openai-codex token expiry from JWT exp claim (#1152)</li>
+<li>[ci] Align biome version with repo config</li>
+<li>[e2e] Wait for onboarding summary readiness</li>
+</ul>
+<h2 id="2026071411---2026-07-14">[20260714.11] - 2026-07-14</h2>
+<h3 id="fixed-2">Fixed</h3>
 <ul>
 <li>[ci] Align workflow rust nightly pin</li>
 </ul>
 <h2 id="2026071410---2026-07-14">[20260714.10] - 2026-07-14</h2>
-<h3 id="fixed-2">Fixed</h3>
+<h3 id="fixed-3">Fixed</h3>
 <ul>
 <li>[e2e] Reset autoscroll mode per test</li>
 </ul>
 <h2 id="2026071409---2026-07-14">[20260714.09] - 2026-07-14</h2>
-<h3 id="fixed-3">Fixed</h3>
+<h3 id="fixed-4">Fixed</h3>
 <ul>
 <li>[ci] Reclaim disk before e2e tests</li>
 </ul>
 <h2 id="2026071408---2026-07-14">[20260714.08] - 2026-07-14</h2>
-<h3 id="fixed-4">Fixed</h3>
+<h3 id="fixed-5">Fixed</h3>
 <ul>
 <li>[ci] Run required jobs on hosted runners</li>
 </ul>
 <h2 id="2026071407---2026-07-14">[20260714.07] - 2026-07-14</h2>
-<h3 id="fixed-5">Fixed</h3>
+<h3 id="fixed-6">Fixed</h3>
 <ul>
 <li>[copilot] Satisfy provider lint gates</li>
 </ul>
 <h2 id="2026071406---2026-07-14">[20260714.06] - 2026-07-14</h2>
-<h3 id="fixed-6">Fixed</h3>
+<h3 id="fixed-7">Fixed</h3>
 <ul>
 <li>[providers] Enable provider features by default</li>
 </ul>
 <h2 id="2026071405---2026-07-14">[20260714.05] - 2026-07-14</h2>
-<h3 id="fixed-7">Fixed</h3>
+<h3 id="fixed-8">Fixed</h3>
 <ul>
 <li>[copilot] Keep OAuth provider enabled for registry rebuild</li>
 <li>[copilot] Include provider in packaged builds</li>
 <li>[ci] Install codecov cli from pypi</li>
 </ul>
 <h2 id="2026071404---2026-07-14">[20260714.04] - 2026-07-14</h2>
-<h3 id="fixed-8">Fixed</h3>
+<h3 id="fixed-9">Fixed</h3>
 <ul>
 <li>[ci] Clear profiled llama build caches</li>
 </ul>
 <h2 id="2026071403---2026-07-14">[20260714.03] - 2026-07-14</h2>
-<h3 id="fixed-9">Fixed</h3>
+<h3 id="fixed-10">Fixed</h3>
 <ul>
 <li>[ci] Restore macos and fireworks release jobs</li>
 </ul>
 <h2 id="2026071402---2026-07-14">[20260714.02] - 2026-07-14</h2>
-<h3 id="added-1">Added</h3>
+<h3 id="added-2">Added</h3>
 <ul>
 <li>Add GPT-5.6 model support (#1146)</li>
 </ul>
-<h3 id="fixed-10">Fixed</h3>
+<h3 id="fixed-11">Fixed</h3>
 <ul>
 <li>[mcp] Use direct fetch for resource_metadata URL from WWW-Authenticate (#1120)</li>
 <li>[caldav] Avoid panic on non-ASCII datetime in normalise_datetime (#1145)</li>
@@ -78,15 +99,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[validation] Restore local release checks</li>
 </ul>
 <h2 id="2026071401---2026-07-14">[20260714.01] - 2026-07-14</h2>
-<h3 id="added-2">Added</h3>
+<h3 id="added-3">Added</h3>
 <ul>
 <li>[whatsapp] Bump whatsapp-rust 0.5 -> 0.6 with LID-native addressing (#1144)</li>
 </ul>
-<h3 id="removed-1">Removed</h3>
+<h3 id="removed-2">Removed</h3>
 <ul>
 <li>Drop VOLUME declarations that shadow the home bind mount (#1122)</li>
 </ul>
-<h3 id="fixed-11">Fixed</h3>
+<h3 id="fixed-12">Fixed</h3>
 <ul>
 <li>[github-copilot] Improve enterprise diagnostics</li>
 <li>[github-copilot] Refresh auth after misdirected responses</li>
@@ -94,23 +115,23 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h2 id="2026060301---2026-06-03">[20260603.01] - 2026-06-03</h2>
 <h2 id="2026060205---2026-06-02">[20260602.05] - 2026-06-02</h2>
-<h3 id="fixed-12">Fixed</h3>
+<h3 id="fixed-13">Fixed</h3>
 <ul>
 <li>[providers] Restore Gemini tool signature replay</li>
 </ul>
 <h2 id="2026060204---2026-06-02">[20260602.04] - 2026-06-02</h2>
-<h3 id="fixed-13">Fixed</h3>
+<h3 id="fixed-14">Fixed</h3>
 <ul>
 <li>[providers] Default Alibaba Coding live test endpoint</li>
 </ul>
 <h2 id="2026060203---2026-06-02">[20260602.03] - 2026-06-02</h2>
-<h3 id="fixed-14">Fixed</h3>
+<h3 id="fixed-15">Fixed</h3>
 <ul>
 <li>[providers] Harden live gate checks</li>
 </ul>
 <h2 id="2026060202---2026-06-02">[20260602.02] - 2026-06-02</h2>
 <h2 id="2026060201---2026-06-02">[20260602.01] - 2026-06-02</h2>
-<h3 id="added-3">Added</h3>
+<h3 id="added-4">Added</h3>
 <ul>
 <li>Add NEAR AI Cloud provider (#1031)</li>
 </ul>
@@ -119,21 +140,21 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[providers] Split OpenAI Codex catalog</li>
 <li>[providers] Use explicit OpenAI capabilities (#1090)</li>
 </ul>
-<h3 id="fixed-15">Fixed</h3>
+<h3 id="fixed-16">Fixed</h3>
 <ul>
 <li>[providers] Propagate registry test errors</li>
 </ul>
 <h2 id="2026052902---2026-05-29">[20260529.02] - 2026-05-29</h2>
-<h3 id="fixed-16">Fixed</h3>
+<h3 id="fixed-17">Fixed</h3>
 <ul>
 <li>[providers] Harden OpenAI-compatible request metadata</li>
 </ul>
 <h2 id="2026052901---2026-05-29">[20260529.01] - 2026-05-29</h2>
-<h3 id="removed-2">Removed</h3>
+<h3 id="removed-3">Removed</h3>
 <ul>
 <li>[discord] Log silent voice message drops (#1081)</li>
 </ul>
-<h3 id="fixed-17">Fixed</h3>
+<h3 id="fixed-18">Fixed</h3>
 <ul>
 <li>[cron] Preserve host execution target (#1079)</li>
 <li>[web] Include clicked response in message forks (#1080)</li>
@@ -145,34 +166,34 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h2 id="2026052603---2026-05-26">[20260526.03] - 2026-05-26</h2>
 <h2 id="2026052602---2026-05-26">[20260526.02] - 2026-05-26</h2>
-<h3 id="fixed-18">Fixed</h3>
+<h3 id="fixed-19">Fixed</h3>
 <ul>
 <li>[ci] Stabilize release checks</li>
 </ul>
 <h2 id="2026052601---2026-05-26">[20260526.01] - 2026-05-26</h2>
-<h3 id="added-4">Added</h3>
+<h3 id="added-5">Added</h3>
 <ul>
 <li>[tools] Support nonblocking spawn agents (#1067)</li>
 <li>[agents] Support per-turn tool controls (#1069)</li>
 </ul>
-<h3 id="fixed-19">Fixed</h3>
+<h3 id="fixed-20">Fixed</h3>
 <ul>
 <li>[ci] Use valid release trigger condition</li>
 <li>Fix Docker build failures (#1073)</li>
 <li>[web] Stabilize command palette focus</li>
 </ul>
 <h2 id="2026052501---2026-05-25">[20260525.01] - 2026-05-25</h2>
-<h3 id="added-5">Added</h3>
+<h3 id="added-6">Added</h3>
 <ul>
 <li>[agents] Support per-agent runtime limits (#1066)</li>
 <li>Agents as capability boundaries (MCP, sandbox, skills) (#1049)</li>
 </ul>
-<h3 id="removed-3">Removed</h3>
+<h3 id="removed-4">Removed</h3>
 <ul>
 <li>Remove file size allowlist</li>
 <li>[web] Remove token bar race assertion</li>
 </ul>
-<h3 id="fixed-20">Fixed</h3>
+<h3 id="fixed-21">Fixed</h3>
 <ul>
 <li>[web] Restore light mode syntax highlighting (#1047)</li>
 <li>[vault] Initialize existing password vaults (#1050)</li>
@@ -186,15 +207,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[sandbox] Quiet image prebuild logs (#1065)</li>
 </ul>
 <h2 id="2026052301---2026-05-23">[20260523.01] - 2026-05-23</h2>
-<h3 id="added-6">Added</h3>
+<h3 id="added-7">Added</h3>
 <ul>
 <li>[openai-codex] Add reasoning effort support (#1005)</li>
 </ul>
-<h3 id="removed-4">Removed</h3>
+<h3 id="removed-5">Removed</h3>
 <ul>
 <li>[gateway] Remove needless return</li>
 </ul>
-<h3 id="fixed-21">Fixed</h3>
+<h3 id="fixed-22">Fixed</h3>
 <ul>
 <li>[vault] Keep auth password changes in sync (#1026)</li>
 <li>[sandbox] Auto-detect docker host data mounts (#1035)</li>
@@ -205,14 +226,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[voice] Return wav metadata for piper audio (#1043)</li>
 </ul>
 <h2 id="2026051901---2026-05-19">[20260519.01] - 2026-05-19</h2>
-<h3 id="fixed-22">Fixed</h3>
+<h3 id="fixed-23">Fixed</h3>
 <ul>
 <li>[web] Avoid false websocket disconnect timeouts (#1023)</li>
 <li>[sandbox] Reap docker sandbox zombies (#1025)</li>
 <li>[ci] Avoid slow session cleanup in e2e</li>
 </ul>
 <h2 id="2026051801---2026-05-18">[20260518.01] - 2026-05-18</h2>
-<h3 id="fixed-23">Fixed</h3>
+<h3 id="fixed-24">Fixed</h3>
 <ul>
 <li>[ci] Drain fake claude stdin in coverage test</li>
 <li>[config] Preserve explicit defaults on startup (#1015)</li>
@@ -224,17 +245,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[sandbox] Update slacrawl go module path (#1021)</li>
 </ul>
 <h2 id="2026051703---2026-05-17">[20260517.03] - 2026-05-17</h2>
-<h3 id="fixed-24">Fixed</h3>
+<h3 id="fixed-25">Fixed</h3>
 <ul>
 <li>[ci] Stabilize external agent e2e binding</li>
 </ul>
 <h2 id="2026051702---2026-05-17">[20260517.02] - 2026-05-17</h2>
-<h3 id="fixed-25">Fixed</h3>
+<h3 id="fixed-26">Fixed</h3>
 <ul>
 <li>[ci] Stabilize release e2e specs</li>
 </ul>
 <h2 id="2026051701---2026-05-17">[20260517.01] - 2026-05-17</h2>
-<h3 id="added-7">Added</h3>
+<h3 id="added-8">Added</h3>
 <ul>
 <li>[tls] Support public IP SAN for generated certs (#1000)</li>
 <li>[mcp] Support OAuth client secrets (#1001)</li>
@@ -242,7 +263,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[external-agents] Add persistent agent sessions (#566)</li>
 <li>Add NetBird and Cloudflare Tunnel to onboarding (#1008)</li>
 </ul>
-<h3 id="fixed-26">Fixed</h3>
+<h3 id="fixed-27">Fixed</h3>
 <ul>
 <li>[providers] Retry mistral rate limits</li>
 <li>[ci] Stabilize e2e module shims</li>
@@ -261,7 +282,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Correct codex tracing skip parameter</li>
 </ul>
 <h2 id="2026051001---2026-05-10">[20260510.01] - 2026-05-10</h2>
-<h3 id="fixed-27">Fixed</h3>
+<h3 id="fixed-28">Fixed</h3>
 <ul>
 <li>[release] Avoid large blob arguments</li>
 <li>[ci] Stabilize qmd and chat e2e checks</li>
@@ -270,12 +291,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Wait for chat clear before api dedupe check</li>
 </ul>
 <h2 id="2026050801---2026-05-08">[20260508.01] - 2026-05-08</h2>
-<h3 id="added-8">Added</h3>
+<h3 id="added-9">Added</h3>
 <ul>
 <li>[voice] Add whisper-local STT provider, show all voice providers by default (#981)</li>
 <li>[voice] Surface OpenAI realtime model guidance (#984)</li>
 </ul>
-<h3 id="fixed-28">Fixed</h3>
+<h3 id="fixed-29">Fixed</h3>
 <ul>
 <li>[sandbox] Map home file tools to mounted path</li>
 <li>[agents] Preserve tool argument diagnostics (#983)</li>
@@ -284,16 +305,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Update voice provider e2e expectations</li>
 </ul>
 <h2 id="2026050705---2026-05-07">[20260507.05] - 2026-05-07</h2>
-<h3 id="added-9">Added</h3>
+<h3 id="added-10">Added</h3>
 <ul>
 <li>[nodes] Ed25519 challenge-response node identity (TOFU) (#979)</li>
 <li>[telephony] Add phone call support via Twilio (#920)</li>
 </ul>
-<h3 id="removed-5">Removed</h3>
+<h3 id="removed-6">Removed</h3>
 <ul>
 <li>[release] Remove gpg signing confirmation prompt</li>
 </ul>
-<h3 id="fixed-29">Fixed</h3>
+<h3 id="fixed-30">Fixed</h3>
 <ul>
 <li>[website] Hide unpublished releases from changelog</li>
 <li>[website] Publish 20260507.04 changelog</li>
@@ -306,22 +327,22 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Stabilize e2e navigation and nodes setup</li>
 </ul>
 <h2 id="2026050704---2026-05-07">[20260507.04] - 2026-05-07</h2>
-<h3 id="fixed-30">Fixed</h3>
+<h3 id="fixed-31">Fixed</h3>
 <ul>
 <li>[e2e] Align sandbox settings tests with tabs</li>
 </ul>
 <h2 id="2026050703---2026-05-07">[20260507.03] - 2026-05-07</h2>
-<h3 id="fixed-31">Fixed</h3>
+<h3 id="fixed-32">Fixed</h3>
 <ul>
 <li>[sandbox] Clean up linux firecracker checks</li>
 </ul>
 <h2 id="2026050702---2026-05-07">[20260507.02] - 2026-05-07</h2>
-<h3 id="fixed-32">Fixed</h3>
+<h3 id="fixed-33">Fixed</h3>
 <ul>
 <li>[sandbox] Compile firecracker backend with all features</li>
 </ul>
 <h2 id="2026050701---2026-05-07">[20260507.01] - 2026-05-07</h2>
-<h3 id="added-10">Added</h3>
+<h3 id="added-11">Added</h3>
 <ul>
 <li>[sandbox] Remote &#x26; multi-backend sandbox support (Vercel, Daytona, Firecracker) (#942)</li>
 </ul>
@@ -329,14 +350,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[e2e] Consolidate sendRpcFromPage into shared helpers</li>
 </ul>
-<h3 id="removed-6">Removed</h3>
+<h3 id="removed-7">Removed</h3>
 <ul>
 <li>Remove unused sendRpcFromPage import from sessions.spec.js</li>
 <li>[ci] Drop e2e runtime state before cache save</li>
 <li>[e2e] Remove retry-hidden flakes</li>
 <li>[ci] Remove temporary websocket diagnostics</li>
 </ul>
-<h3 id="fixed-33">Fixed</h3>
+<h3 id="fixed-34">Fixed</h3>
 <ul>
 <li>[e2e] Revert tee log capture (breaks exec on CI), reduce RPC timeout to 5s</li>
 <li>[e2e] Reduce sendRpc retries from 40 to 10 — 40×5s=200s per test was hanging CI</li>
@@ -371,12 +392,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h2 id="2026050401---2026-05-04">[20260504.01] - 2026-05-04</h2>
 <h2 id="2026050201---2026-05-02">[20260502.01] - 2026-05-02</h2>
-<h3 id="added-11">Added</h3>
+<h3 id="added-12">Added</h3>
 <ul>
 <li>[portable] Add data import/export for config, databases, and sessions (#951)</li>
 <li>[i18n] Add zh-TW Traditional Chinese locale support (#339)</li>
 </ul>
-<h3 id="fixed-34">Fixed</h3>
+<h3 id="fixed-35">Fixed</h3>
 <ul>
 <li>[discord] Register slash command arguments and add all thinking levels (#950)</li>
 <li>[web-ui] Prevent horizontal overflow in chat messages container (#952)</li>
@@ -393,13 +414,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[e2e] Use poll-based scroll assertion in sequential messages autoscroll test</li>
 </ul>
 <h2 id="2026050101---2026-05-01">[20260501.01] - 2026-05-01</h2>
-<h3 id="added-12">Added</h3>
+<h3 id="added-13">Added</h3>
 <ul>
 <li>[providers] Add Zen (opencode.ai) multi-protocol provider (#944)</li>
 <li>[web-ui] Hide voice buttons when stt/tts disabled in config (#943)</li>
 </ul>
 <h2 id="2026043002---2026-04-30">[20260430.02] - 2026-04-30</h2>
-<h3 id="added-13">Added</h3>
+<h3 id="added-14">Added</h3>
 <ul>
 <li>[web-ui] Add message action bar to assistant responses (#932)</li>
 <li>[gateway] Auto-generate session titles from conversation (#933)</li>
@@ -409,7 +430,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[sandbox] Add GitHub CLI (gh) to default sandbox packages</li>
 <li>[web-ui] Show progress indicator during sandbox image build</li>
 </ul>
-<h3 id="fixed-35">Fixed</h3>
+<h3 id="fixed-36">Fixed</h3>
 <ul>
 <li>Replace completion-based model probe with lightweight catalog check (#931)</li>
 <li>[deploy] Correct subcommand in systemd service file</li>
@@ -423,26 +444,26 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[e2e] Fix settings-nav, voice, onboarding, and command palette tests</li>
 </ul>
 <h2 id="2026043001---2026-04-30">[20260430.01] - 2026-04-30</h2>
-<h3 id="added-14">Added</h3>
+<h3 id="added-15">Added</h3>
 <ul>
 <li>Add /btw, /fast, /insights, /steer, /queue commands and auxiliary model config (#926)</li>
 </ul>
-<h3 id="fixed-36">Fixed</h3>
+<h3 id="fixed-37">Fixed</h3>
 <ul>
 <li>[mcp] Preserve auth_state on expired OAuth token so re-auth button shows (#930)</li>
 <li>[web-ui] Remove scroll-hijacking ResizeObserver in chat (#922) (#925)</li>
 </ul>
 <h2 id="2026042902---2026-04-29">[20260429.02] - 2026-04-29</h2>
-<h3 id="added-15">Added</h3>
+<h3 id="added-16">Added</h3>
 <ul>
 <li>[voice] Add voice personas for deterministic TTS identity (#916)</li>
 </ul>
-<h3 id="fixed-37">Fixed</h3>
+<h3 id="fixed-38">Fixed</h3>
 <ul>
 <li>[sandbox] Prevent sandbox escape via RestrictedHostSandbox and FailoverSandbox (#924)</li>
 </ul>
 <h2 id="2026042901---2026-04-29">[20260429.01] - 2026-04-29</h2>
-<h3 id="added-16">Added</h3>
+<h3 id="added-17">Added</h3>
 <ul>
 <li>[update] Add /update command and web UI update button (#911)</li>
 <li>[browser] Add Obscura as lightweight sidecar browser backend (#869)</li>
@@ -455,14 +476,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Unify provider name validation into single source of truth (#912)</li>
 <li>[agents] Split model.rs into chat, convert, and stream modules</li>
 </ul>
-<h3 id="removed-7">Removed</h3>
+<h3 id="removed-8">Removed</h3>
 <ul>
 <li>[e2e] Remove dead tests for deleted UI features</li>
 <li>Remove CLAUDE.local.md from repo and add to .gitignore</li>
 <li>Remove unused PathBuf imports in hermes-import</li>
 <li>Remove unused imports in httpd gateway</li>
 </ul>
-<h3 id="fixed-38">Fixed</h3>
+<h3 id="fixed-39">Fixed</h3>
 <ul>
 <li>[e2e] Stabilize rename test and skip broken Matrix ownership test</li>
 <li>[docs] Use $http_host in nginx proxy examples to preserve port (#907)</li>
@@ -489,70 +510,6 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[e2e] Fix flaky command palette, reasoning toggle, and projects tests</li>
 </ul>
 <h2 id="2026042803---2026-04-28">[20260428.03] - 2026-04-28</h2>
-<h3 id="added-17">Added</h3>
-<ul>
-<li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
-<li>[web-ui] Show chat status badges in visible toolbar row (#886)</li>
-<li>[local-llm] On-demand model loading/unloading with idle timeout (#884)</li>
-<li>Make telegram channel optional (#891)</li>
-<li>Make discord and msteams channels optional (#899)</li>
-</ul>
-<h3 id="changed-4">Changed</h3>
-<ul>
-<li>[config] Extract initialize_config() from discover_and_load()</li>
-<li>Derive nightly toolchain from rust-toolchain.toml everywhere</li>
-<li>[gateway] Split skills service helpers into separate module</li>
-<li>[gateway] Move skills impl out of mod.rs into service.rs</li>
-</ul>
-<h3 id="removed-8">Removed</h3>
-<ul>
-<li>Remove needless return in skills toggle_bundled_skill</li>
-</ul>
-<h3 id="fixed-39">Fixed</h3>
-<ul>
-<li>[tests] Stabilize flaky memory_config_get test</li>
-<li>[ci] Pin NCCL version to match CUDA 12.4 container</li>
-<li>[ci] Match NCCL dev headers to pre-installed runtime version</li>
-<li>[ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug</li>
-<li>[ci] Remove pre-installed libnccl-dev from CUDA container</li>
-<li>[providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL</li>
-<li>Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat</li>
-<li>[mcp] Prefer native MCP tools over mcporter (#874)</li>
-<li>[ci] Use keychain-profile for notarization and log failures</li>
-<li>[gateway] Handle bundled skill disable/enable via config (#877)</li>
-<li>[gateway] Derive bundled skill enabled state from config (#878)</li>
-<li>[tests] Increase watcher test timeout to accommodate debounce + FSEvents latency</li>
-<li>[web-ui] Stop auto-enabling all skills on repository import (#882)</li>
-<li>[skills] Store per-skill relative paths for marketplace repos (#883)</li>
-<li>[tests] Mark flaky FSEvents watcher test as ignored</li>
-<li>[tests] Use PollWatcher in watcher tests for reliable cross-platform behavior</li>
-<li>Use if-let instead of single-arm match in poll watcher test</li>
-<li>[security] Store voice API keys in credential store, not moltis.toml (#885)</li>
-<li>[e2e] Update session tests for inline action buttons (#886 follow-up)</li>
-<li>[tests] Add missing LocalLlmService trait methods to MockLocalLlm</li>
-<li>Collapse nested if-let in key_store timestamp check</li>
-<li>Derive Default for ModelLifecycleManager</li>
-<li>[web-ui] Restore session name and inline rename in chat toolbar (#892)</li>
-<li>Use ApplicationType::Web for non-loopback Matrix OIDC redirect URIs (#893)</li>
-<li>Add TSX source to Tailwind content scanning</li>
-<li>Show RPC error messages in skills UI and auto-trust on install (#897)</li>
-<li>[config] Add mcp field to agent preset in schema map</li>
-<li>[e2e] Update tests for identity→profile route rename</li>
-<li>[e2e] Complete identity→profile rename in remaining tests</li>
-<li>[e2e] Stabilize session rename test against onBlur race</li>
-<li>[config] Use atomic writes to prevent moltis.toml corruption</li>
-<li>[config] Use unique temp file for atomic writes</li>
-<li>[config] Move tempfile from dev-dependencies to dependencies</li>
-<li>[e2e] Use .chat-session-name selector for rename assertion</li>
-<li>[ci] Copy scripts/ into Docker build and improve download retries</li>
-</ul>
-<h3 id="security-1">Security</h3>
-<ul>
-<li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
-<li>[ci] Align macOS certificate import with working arbor pattern</li>
-<li>[ci] Add —timestamp and strip get-task-allow for macOS notarization</li>
-</ul>
-<h2 id="2026042802---2026-04-28">[20260428.02] - 2026-04-28</h2>
 <h3 id="added-18">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
@@ -561,7 +518,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Make telegram channel optional (#891)</li>
 <li>Make discord and msteams channels optional (#899)</li>
 </ul>
-<h3 id="changed-5">Changed</h3>
+<h3 id="changed-4">Changed</h3>
 <ul>
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 <li>Derive nightly toolchain from rust-toolchain.toml everywhere</li>
@@ -607,14 +564,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Use atomic writes to prevent moltis.toml corruption</li>
 <li>[config] Use unique temp file for atomic writes</li>
 <li>[config] Move tempfile from dev-dependencies to dependencies</li>
+<li>[e2e] Use .chat-session-name selector for rename assertion</li>
+<li>[ci] Copy scripts/ into Docker build and improve download retries</li>
 </ul>
-<h3 id="security-2">Security</h3>
+<h3 id="security-1">Security</h3>
 <ul>
 <li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
 <li>[ci] Add —timestamp and strip get-task-allow for macOS notarization</li>
 </ul>
-<h2 id="2026042801---2026-04-28">[20260428.01] - 2026-04-28</h2>
+<h2 id="2026042802---2026-04-28">[20260428.02] - 2026-04-28</h2>
 <h3 id="added-19">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
@@ -623,7 +582,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Make telegram channel optional (#891)</li>
 <li>Make discord and msteams channels optional (#899)</li>
 </ul>
-<h3 id="changed-6">Changed</h3>
+<h3 id="changed-5">Changed</h3>
 <ul>
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 <li>Derive nightly toolchain from rust-toolchain.toml everywhere</li>
@@ -670,6 +629,68 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Use unique temp file for atomic writes</li>
 <li>[config] Move tempfile from dev-dependencies to dependencies</li>
 </ul>
+<h3 id="security-2">Security</h3>
+<ul>
+<li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
+<li>[ci] Align macOS certificate import with working arbor pattern</li>
+<li>[ci] Add —timestamp and strip get-task-allow for macOS notarization</li>
+</ul>
+<h2 id="2026042801---2026-04-28">[20260428.01] - 2026-04-28</h2>
+<h3 id="added-20">Added</h3>
+<ul>
+<li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
+<li>[web-ui] Show chat status badges in visible toolbar row (#886)</li>
+<li>[local-llm] On-demand model loading/unloading with idle timeout (#884)</li>
+<li>Make telegram channel optional (#891)</li>
+<li>Make discord and msteams channels optional (#899)</li>
+</ul>
+<h3 id="changed-6">Changed</h3>
+<ul>
+<li>[config] Extract initialize_config() from discover_and_load()</li>
+<li>Derive nightly toolchain from rust-toolchain.toml everywhere</li>
+<li>[gateway] Split skills service helpers into separate module</li>
+<li>[gateway] Move skills impl out of mod.rs into service.rs</li>
+</ul>
+<h3 id="removed-11">Removed</h3>
+<ul>
+<li>Remove needless return in skills toggle_bundled_skill</li>
+</ul>
+<h3 id="fixed-42">Fixed</h3>
+<ul>
+<li>[tests] Stabilize flaky memory_config_get test</li>
+<li>[ci] Pin NCCL version to match CUDA 12.4 container</li>
+<li>[ci] Match NCCL dev headers to pre-installed runtime version</li>
+<li>[ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug</li>
+<li>[ci] Remove pre-installed libnccl-dev from CUDA container</li>
+<li>[providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL</li>
+<li>Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat</li>
+<li>[mcp] Prefer native MCP tools over mcporter (#874)</li>
+<li>[ci] Use keychain-profile for notarization and log failures</li>
+<li>[gateway] Handle bundled skill disable/enable via config (#877)</li>
+<li>[gateway] Derive bundled skill enabled state from config (#878)</li>
+<li>[tests] Increase watcher test timeout to accommodate debounce + FSEvents latency</li>
+<li>[web-ui] Stop auto-enabling all skills on repository import (#882)</li>
+<li>[skills] Store per-skill relative paths for marketplace repos (#883)</li>
+<li>[tests] Mark flaky FSEvents watcher test as ignored</li>
+<li>[tests] Use PollWatcher in watcher tests for reliable cross-platform behavior</li>
+<li>Use if-let instead of single-arm match in poll watcher test</li>
+<li>[security] Store voice API keys in credential store, not moltis.toml (#885)</li>
+<li>[e2e] Update session tests for inline action buttons (#886 follow-up)</li>
+<li>[tests] Add missing LocalLlmService trait methods to MockLocalLlm</li>
+<li>Collapse nested if-let in key_store timestamp check</li>
+<li>Derive Default for ModelLifecycleManager</li>
+<li>[web-ui] Restore session name and inline rename in chat toolbar (#892)</li>
+<li>Use ApplicationType::Web for non-loopback Matrix OIDC redirect URIs (#893)</li>
+<li>Add TSX source to Tailwind content scanning</li>
+<li>Show RPC error messages in skills UI and auto-trust on install (#897)</li>
+<li>[config] Add mcp field to agent preset in schema map</li>
+<li>[e2e] Update tests for identity→profile route rename</li>
+<li>[e2e] Complete identity→profile rename in remaining tests</li>
+<li>[e2e] Stabilize session rename test against onBlur race</li>
+<li>[config] Use atomic writes to prevent moltis.toml corruption</li>
+<li>[config] Use unique temp file for atomic writes</li>
+<li>[config] Move tempfile from dev-dependencies to dependencies</li>
+</ul>
 <h3 id="security-3">Security</h3>
 <ul>
 <li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
@@ -677,7 +698,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Add —timestamp and strip get-task-allow for macOS notarization</li>
 </ul>
 <h2 id="2026042605---2026-04-26">[20260426.05] - 2026-04-26</h2>
-<h3 id="added-20">Added</h3>
+<h3 id="added-21">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
 <li>[web-ui] Show chat status badges in visible toolbar row (#886)</li>
@@ -688,11 +709,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 <li>Derive nightly toolchain from rust-toolchain.toml everywhere</li>
 </ul>
-<h3 id="removed-11">Removed</h3>
+<h3 id="removed-12">Removed</h3>
 <ul>
 <li>Remove needless return in skills toggle_bundled_skill</li>
 </ul>
-<h3 id="fixed-42">Fixed</h3>
+<h3 id="fixed-43">Fixed</h3>
 <ul>
 <li>[tests] Stabilize flaky memory_config_get test</li>
 <li>[ci] Pin NCCL version to match CUDA 12.4 container</li>
@@ -724,7 +745,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Add —timestamp and strip get-task-allow for macOS notarization</li>
 </ul>
 <h2 id="2026042604---2026-04-26">[20260426.04] - 2026-04-26</h2>
-<h3 id="added-21">Added</h3>
+<h3 id="added-22">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
 </ul>
@@ -733,7 +754,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 <li>Derive nightly toolchain from rust-toolchain.toml everywhere</li>
 </ul>
-<h3 id="fixed-43">Fixed</h3>
+<h3 id="fixed-44">Fixed</h3>
 <ul>
 <li>[tests] Stabilize flaky memory_config_get test</li>
 <li>[ci] Pin NCCL version to match CUDA 12.4 container</li>
@@ -752,7 +773,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Add —timestamp and strip get-task-allow for macOS notarization</li>
 </ul>
 <h2 id="2026042603---2026-04-26">[20260426.03] - 2026-04-26</h2>
-<h3 id="added-22">Added</h3>
+<h3 id="added-23">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
 </ul>
@@ -761,7 +782,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 <li>Derive nightly toolchain from rust-toolchain.toml everywhere</li>
 </ul>
-<h3 id="fixed-44">Fixed</h3>
+<h3 id="fixed-45">Fixed</h3>
 <ul>
 <li>[tests] Stabilize flaky memory_config_get test</li>
 <li>[ci] Pin NCCL version to match CUDA 12.4 container</li>
@@ -779,7 +800,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
 </ul>
 <h2 id="2026042602---2026-04-26">[20260426.02] - 2026-04-26</h2>
-<h3 id="added-23">Added</h3>
+<h3 id="added-24">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
 </ul>
@@ -788,7 +809,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 <li>Derive nightly toolchain from rust-toolchain.toml everywhere</li>
 </ul>
-<h3 id="fixed-45">Fixed</h3>
+<h3 id="fixed-46">Fixed</h3>
 <ul>
 <li>[tests] Stabilize flaky memory_config_get test</li>
 <li>[ci] Pin NCCL version to match CUDA 12.4 container</li>
@@ -806,7 +827,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
 </ul>
 <h2 id="2026042601---2026-04-26">[20260426.01] - 2026-04-26</h2>
-<h3 id="added-24">Added</h3>
+<h3 id="added-25">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
 </ul>
@@ -815,7 +836,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 <li>Derive nightly toolchain from rust-toolchain.toml everywhere</li>
 </ul>
-<h3 id="fixed-46">Fixed</h3>
+<h3 id="fixed-47">Fixed</h3>
 <ul>
 <li>[tests] Stabilize flaky memory_config_get test</li>
 <li>[ci] Pin NCCL version to match CUDA 12.4 container</li>
@@ -830,7 +851,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
 </ul>
 <h2 id="2026042509---2026-04-25">[20260425.09] - 2026-04-25</h2>
-<h3 id="added-25">Added</h3>
+<h3 id="added-26">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
 </ul>
@@ -838,7 +859,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 </ul>
-<h3 id="fixed-47">Fixed</h3>
+<h3 id="fixed-48">Fixed</h3>
 <ul>
 <li>[tests] Stabilize flaky memory_config_get test</li>
 <li>[ci] Pin NCCL version to match CUDA 12.4 container</li>
@@ -853,7 +874,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
 </ul>
 <h2 id="2026042508---2026-04-25">[20260425.08] - 2026-04-25</h2>
-<h3 id="added-26">Added</h3>
+<h3 id="added-27">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
 </ul>
@@ -861,7 +882,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 </ul>
-<h3 id="fixed-48">Fixed</h3>
+<h3 id="fixed-49">Fixed</h3>
 <ul>
 <li>[tests] Stabilize flaky memory_config_get test</li>
 <li>[ci] Pin NCCL version to match CUDA 12.4 container</li>
@@ -871,7 +892,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL</li>
 </ul>
 <h2 id="2026042507---2026-04-25">[20260425.07] - 2026-04-25</h2>
-<h3 id="added-27">Added</h3>
+<h3 id="added-28">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
 </ul>
@@ -879,14 +900,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 </ul>
-<h3 id="fixed-49">Fixed</h3>
+<h3 id="fixed-50">Fixed</h3>
 <ul>
 <li>[tests] Stabilize flaky memory_config_get test</li>
 <li>[ci] Pin NCCL version to match CUDA 12.4 container</li>
 <li>[ci] Match NCCL dev headers to pre-installed runtime version</li>
 </ul>
 <h2 id="2026042506---2026-04-25">[20260425.06] - 2026-04-25</h2>
-<h3 id="added-28">Added</h3>
+<h3 id="added-29">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
 </ul>
@@ -894,13 +915,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 </ul>
-<h3 id="fixed-50">Fixed</h3>
+<h3 id="fixed-51">Fixed</h3>
 <ul>
 <li>[tests] Stabilize flaky memory_config_get test</li>
 <li>[ci] Pin NCCL version to match CUDA 12.4 container</li>
 </ul>
 <h2 id="2026042505---2026-04-25">[20260425.05] - 2026-04-25</h2>
-<h3 id="added-29">Added</h3>
+<h3 id="added-30">Added</h3>
 <ul>
 <li>[cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)</li>
 </ul>
@@ -908,7 +929,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 </ul>
-<h3 id="fixed-51">Fixed</h3>
+<h3 id="fixed-52">Fixed</h3>
 <ul>
 <li>[tests] Stabilize flaky memory_config_get test</li>
 </ul>
@@ -917,39 +938,39 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[config] Extract initialize_config() from discover_and_load()</li>
 </ul>
-<h3 id="fixed-52">Fixed</h3>
+<h3 id="fixed-53">Fixed</h3>
 <ul>
 <li>[tests] Stabilize flaky memory_config_get test</li>
 </ul>
 <h2 id="2026042503---2026-04-25">[20260425.03] - 2026-04-25</h2>
-<h3 id="fixed-53">Fixed</h3>
+<h3 id="fixed-54">Fixed</h3>
 <ul>
 <li>[e2e] Stabilize flaky gemini, autoscroll, and settings-nav tests</li>
 </ul>
 <h2 id="2026042502---2026-04-25">[20260425.02] - 2026-04-25</h2>
-<h3 id="fixed-54">Fixed</h3>
+<h3 id="fixed-55">Fixed</h3>
 <ul>
 <li>[ci] Allow held NCCL packages to be upgraded</li>
 </ul>
 <h2 id="2026042501---2026-04-25">[20260425.01] - 2026-04-25</h2>
-<h3 id="fixed-55">Fixed</h3>
+<h3 id="fixed-56">Fixed</h3>
 <ul>
 <li>[ci] Add NCCL to build deps and fix flaky tests</li>
 </ul>
 <h2 id="2026042409---2026-04-24">[20260424.09] - 2026-04-24</h2>
-<h3 id="fixed-56">Fixed</h3>
+<h3 id="fixed-57">Fixed</h3>
 <ul>
 <li>Replace expect() with let-else in splitter tests</li>
 <li>[benchmarks] Update code_index bench to use free-function chunker API</li>
 </ul>
 <h2 id="2026042408---2026-04-24">[20260424.08] - 2026-04-24</h2>
 <h2 id="2026042407---2026-04-24">[20260424.07] - 2026-04-24</h2>
-<h3 id="fixed-57">Fixed</h3>
+<h3 id="fixed-58">Fixed</h3>
 <ul>
 <li>Replace unwrap() with expect() in splitter tests</li>
 </ul>
 <h2 id="2026042406---2026-04-24">[20260424.06] - 2026-04-24</h2>
-<h3 id="fixed-58">Fixed</h3>
+<h3 id="fixed-59">Fixed</h3>
 <ul>
 <li>Remove needless Ok wrapper in refresh_qmd_index</li>
 </ul>
@@ -959,13 +980,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[splitter] Extract moltis-splitter crate for AST-aware chunking (#791)</li>
 </ul>
-<h3 id="fixed-59">Fixed</h3>
+<h3 id="fixed-60">Fixed</h3>
 <ul>
 <li>[ci] Prevent releases.json from updating before GitHub release exists</li>
 <li>Revert releases.json to latest published release (20260421.05)</li>
 </ul>
 <h2 id="2026042403---2026-04-24">[20260424.03] - 2026-04-24</h2>
-<h3 id="added-30">Added</h3>
+<h3 id="added-31">Added</h3>
 <ul>
 <li>[skills] Add bundled skill category management to onboarding and settings (#829)</li>
 <li>[signal] Add signal-cli channel (#841)</li>
@@ -985,14 +1006,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Split loader tests into submodules (file-size limit)</li>
 <li>[gateway] Extract NoopSkillsService into services/skills.rs (file-size limit)</li>
 </ul>
-<h3 id="removed-12">Removed</h3>
+<h3 id="removed-13">Removed</h3>
 <ul>
 <li>Remove set -e from codesign-debug recipe that breaks just test</li>
 <li>[web] Remove stale accountId assertion from signal channel E2E test</li>
 <li>[ui] Wire up project combo dropdown in chat header (#847)</li>
 <li>[config] Remove unused imports from test submodule</li>
 </ul>
-<h3 id="fixed-60">Fixed</h3>
+<h3 id="fixed-61">Fixed</h3>
 <ul>
 <li>[tools] Block exec approval bypass via env-var prefix injection (#822)</li>
 <li>[browser] Add diagnostic logging for container readiness failures (#820)</li>
@@ -1036,7 +1057,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[gateway] Collapse nested if for clippy</li>
 </ul>
 <h2 id="2026042402---2026-04-24">[20260424.02] - 2026-04-24</h2>
-<h3 id="added-31">Added</h3>
+<h3 id="added-32">Added</h3>
 <ul>
 <li>[skills] Add bundled skill category management to onboarding and settings (#829)</li>
 <li>[signal] Add signal-cli channel (#841)</li>
@@ -1048,13 +1069,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[providers] Split openai_compat tests into submodules</li>
 </ul>
-<h3 id="removed-13">Removed</h3>
+<h3 id="removed-14">Removed</h3>
 <ul>
 <li>Remove set -e from codesign-debug recipe that breaks just test</li>
 <li>[web] Remove stale accountId assertion from signal channel E2E test</li>
 <li>[ui] Wire up project combo dropdown in chat header (#847)</li>
 </ul>
-<h3 id="fixed-61">Fixed</h3>
+<h3 id="fixed-62">Fixed</h3>
 <ul>
 <li>[tools] Block exec approval bypass via env-var prefix injection (#822)</li>
 <li>[browser] Add diagnostic logging for container readiness failures (#820)</li>
@@ -1092,7 +1113,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[benchmarks] Wire qmd feature to moltis-qmd dep for —all-features CI</li>
 </ul>
 <h2 id="2026042401---2026-04-24">[20260424.01] - 2026-04-24</h2>
-<h3 id="added-32">Added</h3>
+<h3 id="added-33">Added</h3>
 <ul>
 <li>[skills] Add bundled skill category management to onboarding and settings (#829)</li>
 <li>[signal] Add signal-cli channel (#841)</li>
@@ -1101,12 +1122,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[providers] Split openai_compat tests into submodules</li>
 </ul>
-<h3 id="removed-14">Removed</h3>
+<h3 id="removed-15">Removed</h3>
 <ul>
 <li>Remove set -e from codesign-debug recipe that breaks just test</li>
 <li>[web] Remove stale accountId assertion from signal channel E2E test</li>
 </ul>
-<h3 id="fixed-62">Fixed</h3>
+<h3 id="fixed-63">Fixed</h3>
 <ul>
 <li>[tools] Block exec approval bypass via env-var prefix injection (#822)</li>
 <li>[browser] Add diagnostic logging for container readiness failures (#820)</li>
@@ -1127,26 +1148,6 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[channels] Update ALL variant count for Signal channel type</li>
 </ul>
 <h2 id="2026042301---2026-04-23">[20260423.01] - 2026-04-23</h2>
-<h3 id="added-33">Added</h3>
-<ul>
-<li>[skills] Add bundled skill category management to onboarding and settings (#829)</li>
-</ul>
-<h3 id="fixed-63">Fixed</h3>
-<ul>
-<li>[tools] Block exec approval bypass via env-var prefix injection (#822)</li>
-<li>[browser] Add diagnostic logging for container readiness failures (#820)</li>
-<li>[gateway] Downgrade broadcast log from debug to trace (#830)</li>
-<li>[chat] Correct push notification click-through URL (#831)</li>
-<li>[tools] Skip sysfs tmpfs mounts on WSL2 (#835)</li>
-<li>[chat] Preserve Gemini tool call metadata (#836)</li>
-<li>[providers] Normalize non-strict tool schema unions (#833)</li>
-<li>[providers] Apply Kimi router overrides in Fireworks integration tests (#832)</li>
-<li>[config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)</li>
-<li>[web] Repair gemini tool-signature and reasoning-toggle E2E tests</li>
-<li>[ci] Move release test job to self-hosted runner</li>
-<li>[skills] Repair embedded bundled skill discovery in release builds</li>
-</ul>
-<h2 id="2026042201---2026-04-22">[20260422.01] - 2026-04-22</h2>
 <h3 id="added-34">Added</h3>
 <ul>
 <li>[skills] Add bundled skill category management to onboarding and settings (#829)</li>
@@ -1163,9 +1164,29 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[providers] Apply Kimi router overrides in Fireworks integration tests (#832)</li>
 <li>[config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)</li>
 <li>[web] Repair gemini tool-signature and reasoning-toggle E2E tests</li>
+<li>[ci] Move release test job to self-hosted runner</li>
+<li>[skills] Repair embedded bundled skill discovery in release builds</li>
+</ul>
+<h2 id="2026042201---2026-04-22">[20260422.01] - 2026-04-22</h2>
+<h3 id="added-35">Added</h3>
+<ul>
+<li>[skills] Add bundled skill category management to onboarding and settings (#829)</li>
+</ul>
+<h3 id="fixed-65">Fixed</h3>
+<ul>
+<li>[tools] Block exec approval bypass via env-var prefix injection (#822)</li>
+<li>[browser] Add diagnostic logging for container readiness failures (#820)</li>
+<li>[gateway] Downgrade broadcast log from debug to trace (#830)</li>
+<li>[chat] Correct push notification click-through URL (#831)</li>
+<li>[tools] Skip sysfs tmpfs mounts on WSL2 (#835)</li>
+<li>[chat] Preserve Gemini tool call metadata (#836)</li>
+<li>[providers] Normalize non-strict tool schema unions (#833)</li>
+<li>[providers] Apply Kimi router overrides in Fireworks integration tests (#832)</li>
+<li>[config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)</li>
+<li>[web] Repair gemini tool-signature and reasoning-toggle E2E tests</li>
 </ul>
 <h2 id="2026042105---2026-04-21">[20260421.05] - 2026-04-21</h2>
-<h3 id="fixed-65">Fixed</h3>
+<h3 id="fixed-66">Fixed</h3>
 <ul>
 <li>[code-index] Use discover_opts with permissive trust for gix</li>
 <li>[web] Render inline markdown in table cells</li>
@@ -1177,23 +1198,23 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Install git before checkout in CUDA containers</li>
 </ul>
 <h2 id="2026042104---2026-04-21">[20260421.04] - 2026-04-21</h2>
-<h3 id="fixed-66">Fixed</h3>
+<h3 id="fixed-67">Fixed</h3>
 <ul>
 <li>[ci] Make safe.directory step non-fatal when git is absent</li>
 </ul>
 <h2 id="2026042103---2026-04-21">[20260421.03] - 2026-04-21</h2>
-<h3 id="fixed-67">Fixed</h3>
+<h3 id="fixed-68">Fixed</h3>
 <ul>
 <li>[ci] Restore original step order, fix gix open, revert npm flag</li>
 </ul>
 <h2 id="2026042102---2026-04-21">[20260421.02] - 2026-04-21</h2>
-<h3 id="fixed-68">Fixed</h3>
+<h3 id="fixed-69">Fixed</h3>
 <ul>
 <li>[ci] Gix safe.directory, read_ops file_path regression, npm —ignore-scripts</li>
 <li>[tools] Empty file_path falls through to read_primary, whitespace rejected</li>
 </ul>
 <h2 id="2026042101---2026-04-21">[20260421.01] - 2026-04-21</h2>
-<h3 id="added-35">Added</h3>
+<h3 id="added-36">Added</h3>
 <ul>
 <li>[channels] Centralized command registry for all channels (#794)</li>
 <li>Gemini thought_signature round-tripping and schema validation fixes (#795)</li>
@@ -1207,7 +1228,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[tools] Split skill_tools.rs into submodules</li>
 </ul>
-<h3 id="fixed-69">Fixed</h3>
+<h3 id="fixed-70">Fixed</h3>
 <ul>
 <li>[ci] Add safe.directory for container jobs (gix ownership check)</li>
 <li>[slack] Strip leading slash from commands before gateway dispatch (#804)</li>
@@ -1219,17 +1240,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Pass safe.directory to gix via env vars in rust-ci container</li>
 </ul>
 <h2 id="2026042002---2026-04-20">[20260420.02] - 2026-04-20</h2>
-<h3 id="fixed-70">Fixed</h3>
+<h3 id="fixed-71">Fixed</h3>
 <ul>
 <li>[ci] Address main rust failures</li>
 </ul>
 <h2 id="2026042001---2026-04-20">[20260420.01] - 2026-04-20</h2>
-<h3 id="fixed-71">Fixed</h3>
+<h3 id="fixed-72">Fixed</h3>
 <ul>
 <li>[ci] Handle .ts locale files in i18n-check on Node &#x3C;22</li>
 </ul>
 <h2 id="2026041901---2026-04-19">[20260419.01] - 2026-04-19</h2>
-<h3 id="added-36">Added</h3>
+<h3 id="added-37">Added</h3>
 <ul>
 <li>[code-index] Add code indexing crate with builtin SQLite+FTS5 backend (#771)</li>
 <li>[config] Add server.external_url for reverse proxy WebAuthn (#785)</li>
@@ -1238,22 +1259,22 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>Add thiserror Error types to 8 library crates (#792)</li>
 </ul>
-<h3 id="fixed-72">Fixed</h3>
+<h3 id="fixed-73">Fixed</h3>
 <ul>
 <li>[task_list] List all tasks by default and add list_lists action (#779)</li>
 <li>[sandbox] Add observability and prevent repeated package provisioning (#784)</li>
 </ul>
 <h2 id="2026041702---2026-04-17">[20260417.02] - 2026-04-17</h2>
-<h3 id="added-37">Added</h3>
+<h3 id="added-38">Added</h3>
 <ul>
 <li>[nostr] Add NIP-59 Gift Wrap support for private DMs (#763)</li>
 <li>[matrix] Add OIDC authentication via Matrix Authentication Service (#730)</li>
 </ul>
-<h3 id="removed-15">Removed</h3>
+<h3 id="removed-16">Removed</h3>
 <ul>
 <li>[tests] Remove hardcoded secret fixtures (#768)</li>
 </ul>
-<h3 id="fixed-73">Fixed</h3>
+<h3 id="fixed-74">Fixed</h3>
 <ul>
 <li>[providers] Strip $schema recursively and downgrade fallback log level (#762)</li>
 <li>[matrix] Retry sync loop on transient connection failures (#761)</li>
@@ -1263,11 +1284,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[matrix] Restore main CI after OIDC changes</li>
 </ul>
 <h2 id="2026041701---2026-04-17">[20260417.01] - 2026-04-17</h2>
-<h3 id="added-38">Added</h3>
+<h3 id="added-39">Added</h3>
 <ul>
 <li>[web] Add reasoning effort toggle to chat toolbar (#750)</li>
 </ul>
-<h3 id="fixed-74">Fixed</h3>
+<h3 id="fixed-75">Fixed</h3>
 <ul>
 <li>[providers] Sanitize MCP tool schemas regardless of JSON Schema draft (#746)</li>
 <li>[node-host] Install rustls CryptoProvider before wss:// connections (#749)</li>
@@ -1278,7 +1299,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Harden linux dependency installer</li>
 </ul>
 <h2 id="2026041602---2026-04-16">[20260416.02] - 2026-04-16</h2>
-<h3 id="added-39">Added</h3>
+<h3 id="added-40">Added</h3>
 <ul>
 <li>[providers] Configurable context windows + oldest-first compaction (#737)</li>
 </ul>
@@ -1286,7 +1307,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[tests] Split oversized Rust test modules</li>
 </ul>
-<h3 id="fixed-75">Fixed</h3>
+<h3 id="fixed-76">Fixed</h3>
 <ul>
 <li>[ci] Repair MCP e2e and iOS chat event handling</li>
 <li>[providers] Detect Grok 3/4 as reasoning-capable models (#741)</li>
@@ -1296,7 +1317,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Install openssh client in Linux build container</li>
 </ul>
 <h2 id="2026041501---2026-04-15">[20260415.01] - 2026-04-15</h2>
-<h3 id="added-40">Added</h3>
+<h3 id="added-41">Added</h3>
 <ul>
 <li>Allow GUIDELINES.md file override for hardcoded tool guidelines</li>
 <li>[channels] Add WhatsApp to default offered channels</li>
@@ -1310,11 +1331,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Clean up provider tests and onboarding UI</li>
 <li>Move implementation code out of mod.rs and lib.rs (#731)</li>
 </ul>
-<h3 id="removed-16">Removed</h3>
+<h3 id="removed-17">Removed</h3>
 <ul>
 <li>[web] Remove duplicate assets warn import</li>
 </ul>
-<h3 id="fixed-76">Fixed</h3>
+<h3 id="fixed-77">Fixed</h3>
 <ul>
 <li>[graphql] Make sessionKey required for all chat operations</li>
 <li>[graphql] Address PR review — harden subscription filter and tests</li>
@@ -1361,7 +1382,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[node-exec] Merge node exec types into owners</li>
 <li>[web] Remove prompt memory toolbar from chat header</li>
 </ul>
-<h3 id="fixed-77">Fixed</h3>
+<h3 id="fixed-78">Fixed</h3>
 <ul>
 <li>[web] Harden flaky e2e tests for cron delete and identity autosave</li>
 <li>[sandbox] Mask /proc and /sys host metadata in Docker/Podman containers</li>
@@ -1380,7 +1401,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[node-exec] Merge node exec types into owners</li>
 <li>[web] Remove prompt memory toolbar from chat header</li>
 </ul>
-<h3 id="fixed-78">Fixed</h3>
+<h3 id="fixed-79">Fixed</h3>
 <ul>
 <li>[web] Harden flaky e2e tests for cron delete and identity autosave</li>
 <li>[sandbox] Mask /proc and /sys host metadata in Docker/Podman containers</li>
@@ -1391,12 +1412,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[auth] Update password minimum length strings from 8 to 12 characters</li>
 </ul>
 <h2 id="2026041306---2026-04-13">[20260413.06] - 2026-04-13</h2>
-<h3 id="fixed-79">Fixed</h3>
+<h3 id="fixed-80">Fixed</h3>
 <ul>
 <li>[web] Gate openai live e2e server on api key</li>
 </ul>
 <h2 id="2026041305---2026-04-13">[20260413.05] - 2026-04-13</h2>
-<h3 id="added-41">Added</h3>
+<h3 id="added-42">Added</h3>
 <ul>
 <li>[voice] Add local whisper web setup</li>
 <li>[chat] Show cached input tokens</li>
@@ -1407,12 +1428,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[providers] Move schema normalization out of mod.rs</li>
 <li>[chat] Unify usage propagation paths</li>
 </ul>
-<h3 id="removed-17">Removed</h3>
+<h3 id="removed-18">Removed</h3>
 <ul>
 <li>[httpd] Remove unused route import</li>
 <li>[httpd] Drop unused get import</li>
 </ul>
-<h3 id="fixed-80">Fixed</h3>
+<h3 id="fixed-81">Fixed</h3>
 <ul>
 <li>[providers] Sanitize openai tool schemas</li>
 <li>[providers] Address PR review feedback</li>
@@ -1436,11 +1457,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Split remaining oversized rust modules</li>
 <li>Remove replaced module entrypoints</li>
 </ul>
-<h3 id="removed-18">Removed</h3>
+<h3 id="removed-19">Removed</h3>
 <ul>
 <li>[agents] Remove duplicate tool arg match arm</li>
 </ul>
-<h3 id="fixed-81">Fixed</h3>
+<h3 id="fixed-82">Fixed</h3>
 <ul>
 <li>[providers] Preserve native tool arg types</li>
 <li>[gateway] Repair split module blockers</li>
@@ -1463,12 +1484,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Restore main build stability</li>
 </ul>
 <h2 id="2026041303---2026-04-13">[20260413.03] - 2026-04-13</h2>
-<h3 id="fixed-82">Fixed</h3>
+<h3 id="fixed-83">Fixed</h3>
 <ul>
 <li>[gateway] Resolve release CI regressions</li>
 </ul>
 <h2 id="2026041302---2026-04-13">[20260413.02] - 2026-04-13</h2>
-<h3 id="added-42">Added</h3>
+<h3 id="added-43">Added</h3>
 <ul>
 <li>[voice] Add base_url config for OpenAI TTS and Whisper STT providers</li>
 </ul>
@@ -1482,7 +1503,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Group lock-free broadcast state into Broadcaster struct</li>
 <li>[tools] Unify cron schema field helper</li>
 </ul>
-<h3 id="fixed-83">Fixed</h3>
+<h3 id="fixed-84">Fixed</h3>
 <ul>
 <li>[telegram] Persist inbound documents</li>
 <li>[review] Make inbound document replay robust</li>
@@ -1502,7 +1523,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h2 id="2026041301---2026-04-13">[20260413.01] - 2026-04-13</h2>
 <h2 id="2026041201---2026-04-12">[20260412.01] - 2026-04-12</h2>
-<h3 id="added-43">Added</h3>
+<h3 id="added-44">Added</h3>
 <ul>
 <li>[discord] Handle inbound voice and image attachments</li>
 <li>[hooks] Include channel provenance in payloads</li>
@@ -1562,7 +1583,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[tools] Stream OCI file transfers</li>
 <li>[tools] Stream OCI reads from cp</li>
 </ul>
-<h3 id="fixed-84">Fixed</h3>
+<h3 id="fixed-85">Fixed</h3>
 <ul>
 <li>[agents] Dispatch ToolResultPersist hooks</li>
 <li>[agents] Sanitize ToolResultPersist tool names</li>
@@ -1666,7 +1687,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[auth] Harden remote access with 9 security improvements</li>
 </ul>
 <h2 id="2026041001---2026-04-10">[20260410.01] - 2026-04-10</h2>
-<h3 id="added-44">Added</h3>
+<h3 id="added-45">Added</h3>
 <ul>
 <li>[oauth] Log loopback redirect URI rewrites at debug level</li>
 <li>[skills] Ship native read_skill tool</li>
@@ -1677,11 +1698,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[oauth] Share loopback redirect normalizer and apply to provider setup</li>
 <li>[oauth] Eliminate dead branches in normalize_loopback_redirect</li>
 </ul>
-<h3 id="removed-19">Removed</h3>
+<h3 id="removed-20">Removed</h3>
 <ul>
 <li>[web] Stabilize node selector and fork delete e2e</li>
 </ul>
-<h3 id="fixed-85">Fixed</h3>
+<h3 id="fixed-86">Fixed</h3>
 <ul>
 <li>[gateway] Dcg-guard PATH augmentation and loud missing-dcg warning</li>
 <li>[gateway] Refresh stale dcg-guard files and use async subprocess</li>
@@ -1701,20 +1722,20 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[hooks] Pin dcg install to tag and verify checksum</li>
 </ul>
 <h2 id="2026040904---2026-04-09">[20260409.04] - 2026-04-09</h2>
-<h3 id="added-45">Added</h3>
+<h3 id="added-46">Added</h3>
 <ul>
 <li>[providers] Add Alibaba Cloud Coding Plan provider</li>
 </ul>
-<h3 id="fixed-86">Fixed</h3>
+<h3 id="fixed-87">Fixed</h3>
 <ul>
 <li>[ci] Avoid dynamic provider secrets</li>
 </ul>
 <h2 id="2026040903---2026-04-09">[20260409.03] - 2026-04-09</h2>
-<h3 id="removed-20">Removed</h3>
+<h3 id="removed-21">Removed</h3>
 <ul>
 <li>Remove redundant http client fallback check</li>
 </ul>
-<h3 id="fixed-87">Fixed</h3>
+<h3 id="fixed-88">Fixed</h3>
 <ul>
 <li>[common] Ensure User-Agent survives all HTTP client fallback paths</li>
 <li>[test] Address PR review — clarify comment and assert no Error events</li>
@@ -1727,14 +1748,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[providers] Handle multimodal content in MiniMax system prompt rewrite</li>
 </ul>
 <h2 id="2026040902---2026-04-09">[20260409.02] - 2026-04-09</h2>
-<h3 id="added-46">Added</h3>
+<h3 id="added-47">Added</h3>
 <ul>
 <li>[msteams] Comprehensive Teams channel implementation</li>
 <li>[providers] Add Gemini 3.x models to catalog and update capability detection</li>
 <li>[providers] Add ModelCapabilities struct to ModelInfo and DiscoveredModel</li>
 <li>[chat] Use ModelCapabilities in API responses instead of provider lookups</li>
 </ul>
-<h3 id="fixed-88">Fixed</h3>
+<h3 id="fixed-89">Fixed</h3>
 <ul>
 <li>[web] Integrate Tailscale Funnel into Teams channel setup</li>
 <li>[web] Remove ‘Requires public URL’ badge from Teams card</li>
@@ -1773,12 +1794,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Align auth middleware tests with gateway state</li>
 </ul>
 <h2 id="2026040901---2026-04-09">[20260409.01] - 2026-04-09</h2>
-<h3 id="added-47">Added</h3>
+<h3 id="added-48">Added</h3>
 <ul>
 <li>[matrix] Add slash command support</li>
 <li>[models] Make model detection opt-in and add stop button</li>
 </ul>
-<h3 id="fixed-89">Fixed</h3>
+<h3 id="fixed-90">Fixed</h3>
 <ul>
 <li>[matrix] Match help command by exact name, not prefix</li>
 <li>[models] Abort probe tasks on cancel, show feedback, await RPC</li>
@@ -1793,12 +1814,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Harden superset setup envrc handling</li>
 </ul>
 <h2 id="2026040801---2026-04-08">[20260408.01] - 2026-04-08</h2>
-<h3 id="added-48">Added</h3>
+<h3 id="added-49">Added</h3>
 <ul>
 <li>[agents] Auto-continue when model stops mid-task + max iterations UX</li>
 <li>[config] Make auto-continue tool-call threshold configurable</li>
 </ul>
-<h3 id="fixed-90">Fixed</h3>
+<h3 id="fixed-91">Fixed</h3>
 <ul>
 <li>Address PR review — translatable continue message, document tool-call threshold</li>
 <li>Guard auto-continue against min_tool_calls=0 usize tautology</li>
@@ -1807,7 +1828,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[providers] Mark anthropic recommendations globally</li>
 </ul>
 <h2 id="2026040701---2026-04-07">[20260407.01] - 2026-04-07</h2>
-<h3 id="added-49">Added</h3>
+<h3 id="added-50">Added</h3>
 <ul>
 <li>[webhooks] Add generic webhook ingress for triggering AI agents</li>
 <li>[web] Link to Hoppscotch for webhook testing</li>
@@ -1818,7 +1839,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[web] Extract webhooks nav icon to external SVG file</li>
 </ul>
-<h3 id="fixed-91">Fixed</h3>
+<h3 id="fixed-92">Fixed</h3>
 <ul>
 <li>[cli] Report release version in —version output</li>
 <li>[providers] Propagate cache tokens in Responses API and custom providers</li>
@@ -1863,11 +1884,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Add webhooks feature documentation</li>
 </ul>
 <h2 id="2026040605---2026-04-06">[20260406.05] - 2026-04-06</h2>
-<h3 id="added-50">Added</h3>
+<h3 id="added-51">Added</h3>
 <ul>
 <li>[openclaw-import] Convert non-default agents to spawn_agent presets</li>
 </ul>
-<h3 id="fixed-92">Fixed</h3>
+<h3 id="fixed-93">Fixed</h3>
 <ul>
 <li>[web] Allow session sidebar links to open in new tabs</li>
 <li>[web] Tighten session sidebar link accessibility</li>
@@ -1875,7 +1896,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[docker] Use default features instead of explicit list</li>
 </ul>
 <h2 id="2026040604---2026-04-06">[20260406.04] - 2026-04-06</h2>
-<h3 id="added-51">Added</h3>
+<h3 id="added-52">Added</h3>
 <ul>
 <li>[website] Add provider/channel pills section and update branding</li>
 <li>[website] Add positioning, how-it-works, use cases, and community quote</li>
@@ -1885,7 +1906,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[providers] Avoid quadratic SSE buffer copies</li>
 <li>[providers] Align copilot stream error handling</li>
 </ul>
-<h3 id="fixed-93">Fixed</h3>
+<h3 id="fixed-94">Fixed</h3>
 <ul>
 <li>[providers] Route Copilot enterprise tokens via proxy endpoint (#352)</li>
 <li>[providers] Address PR review comments on Copilot enterprise</li>
@@ -1911,21 +1932,21 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[providers] Redact CopilotTokenResponse token in Debug output</li>
 </ul>
 <h2 id="2026040603---2026-04-06">[20260406.03] - 2026-04-06</h2>
-<h3 id="fixed-94">Fixed</h3>
+<h3 id="fixed-95">Fixed</h3>
 <ul>
 <li>[web] Restore all-features build</li>
 </ul>
 <h2 id="2026040602---2026-04-06">[20260406.02] - 2026-04-06</h2>
-<h3 id="fixed-95">Fixed</h3>
+<h3 id="fixed-96">Fixed</h3>
 <ul>
 <li>[web] Map config reload errors explicitly</li>
 </ul>
 <h2 id="2026040601---2026-04-06">[20260406.01] - 2026-04-06</h2>
-<h3 id="added-52">Added</h3>
+<h3 id="added-53">Added</h3>
 <ul>
 <li>[cron] Auto-clean orphaned sessions and prune sandbox containers</li>
 </ul>
-<h3 id="fixed-96">Fixed</h3>
+<h3 id="fixed-97">Fixed</h3>
 <ul>
 <li>[swift-bridge] Await embedded httpd shutdown</li>
 <li>[cron] Use time crate for retention math and fix named-session guard</li>
@@ -1942,12 +1963,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="2026040505---2026-04-05">[20260405.05] - 2026-04-05</h2>
 <h2 id="2026040504---2026-04-05">[20260405.04] - 2026-04-05</h2>
 <h2 id="2026040503---2026-04-05">[20260405.03] - 2026-04-05</h2>
-<h3 id="fixed-97">Fixed</h3>
+<h3 id="fixed-98">Fixed</h3>
 <ul>
 <li>[web] Restore matrix onboarding icon</li>
 </ul>
 <h2 id="2026040502---2026-04-05">[20260405.02] - 2026-04-05</h2>
-<h3 id="added-53">Added</h3>
+<h3 id="added-54">Added</h3>
 <ul>
 <li>[providers] Add zai-code provider for Z.AI Coding plan</li>
 <li>[tools] Add cross-session search recall</li>
@@ -1985,11 +2006,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ssh] Use secrecy for imported key material</li>
 <li>Replace vendored sqlx-sqlite with git dependency</li>
 </ul>
-<h3 id="removed-21">Removed</h3>
+<h3 id="removed-22">Removed</h3>
 <ul>
 <li>[web] Remove unused gon import</li>
 </ul>
-<h3 id="fixed-98">Fixed</h3>
+<h3 id="fixed-99">Fixed</h3>
 <ul>
 <li>[providers] Address PR review comments for zai-code</li>
 <li>[vault] Allow unencrypted session history while sealed</li>
@@ -2062,7 +2083,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[web] Satisfy biome hook and lint checks</li>
 </ul>
 <h2 id="2026032803---2026-03-28">[20260328.03] - 2026-03-28</h2>
-<h3 id="fixed-99">Fixed</h3>
+<h3 id="fixed-100">Fixed</h3>
 <ul>
 <li>[telegram] Route forum-topic replies to correct thread</li>
 <li>[telegram] Restore raw chat_id in logs, add thread_id to tracing</li>
@@ -2070,7 +2091,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[providers] Address PR review feedback</li>
 </ul>
 <h2 id="2026032802---2026-03-28">[20260328.02] - 2026-03-28</h2>
-<h3 id="added-54">Added</h3>
+<h3 id="added-55">Added</h3>
 <ul>
 <li>[telegram] Isolate forum-topic sessions by thread_id</li>
 </ul>
@@ -2078,7 +2099,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[telegram] Consolidate parse_chat_target, fix typing indicator</li>
 </ul>
-<h3 id="fixed-100">Fixed</h3>
+<h3 id="fixed-101">Fixed</h3>
 <ul>
 <li>[telegram] Propagate thread_id parse errors in parse_chat_target</li>
 <li>[providers] Skip model discovery for custom providers with explicit models</li>
@@ -2092,7 +2113,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[provider-setup] Use Arc<atomicbool> instead of static in test</atomicbool></li>
 </ul>
 <h2 id="2026032801---2026-03-28">[20260328.01] - 2026-03-28</h2>
-<h3 id="added-55">Added</h3>
+<h3 id="added-56">Added</h3>
 <ul>
 <li>[website] Add local dev server with SSR partial injection</li>
 <li>[web] Add changelog link to header nav</li>
@@ -2106,7 +2127,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[telegram] Use std::str::from_utf8 for UTF-8 truncation</li>
 <li>[telegram] Normalize MIME type once, avoid redundant UTF-8 scans</li>
 </ul>
-<h3 id="fixed-101">Fixed</h3>
+<h3 id="fixed-102">Fixed</h3>
 <ul>
 <li>[website] Allow nav links without data-page to navigate normally</li>
 <li>[website] Highlight Changelog tab and show GitHub stars on /changelog</li>
@@ -2124,22 +2145,22 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[release] Build changelog HTML in prepare-release instead of CI</li>
 </ul>
 <h2 id="2026032704---2026-03-27">[20260327.04] - 2026-03-27</h2>
-<h3 id="fixed-102">Fixed</h3>
+<h3 id="fixed-103">Fixed</h3>
 <ul>
 <li>[ci] Use file input for changelog blob to avoid argument list too long</li>
 </ul>
 <h2 id="2026032703---2026-03-27">[20260327.03] - 2026-03-27</h2>
-<h3 id="added-56">Added</h3>
+<h3 id="added-57">Added</h3>
 <ul>
 <li>[website] Add changelog HTML page and fix RPM version override</li>
 </ul>
 <h2 id="2026032702---2026-03-27">[20260327.02] - 2026-03-27</h2>
-<h3 id="fixed-103">Fixed</h3>
+<h3 id="fixed-104">Fixed</h3>
 <ul>
 <li>[install] Support date-based version tags in installer and package builds</li>
 </ul>
 <h2 id="2026032701---2026-03-27">[20260327.01] - 2026-03-27</h2>
-<h3 id="added-57">Added</h3>
+<h3 id="added-58">Added</h3>
 <ul>
 <li>[gateway] Embedded web chat UI at root endpoint</li>
 <li>[gateway] Add services, pairing, expanded methods and auth</li>
@@ -2752,7 +2773,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[docker] Split runtime installs into separate layers</li>
 <li>[dev] Deduplicate release-preflight by delegating to lint</li>
 </ul>
-<h3 id="removed-22">Removed</h3>
+<h3 id="removed-23">Removed</h3>
 <ul>
 <li>Merge branch ‘main’ into claude/remove-unsafe-code-ehZlQ</li>
 <li>[ui] Remove decimal digits from memory display</li>
@@ -2777,7 +2798,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Merge branch ‘main’ into claude/remove-unsafe-code-ehZlQ</li>
 <li>[local-llm] Remove unused gguf runtime helper</li>
 </ul>
-<h3 id="fixed-104">Fixed</h3>
+<h3 id="fixed-105">Fixed</h3>
 <ul>
 <li>[oauth] Use correct OpenAI client_id, add config layer and tests</li>
 <li>[agents] Prefer tool-capable provider when tools are registered</li>
@@ -3470,7 +3491,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[tools] Add send_document tool for file sharing to channels</li>
 </ul>
 <h2 id="01018---2026-03-09">[0.10.18] - 2026-03-09</h2>
-<h3 id="added-58">Added</h3>
+<h3 id="added-59">Added</h3>
 <ul>
 <li>[gateway] Make provider discovery startup non-blocking</li>
 <li>[monitoring] Track memory history and improve local-llm memory reporting (#325)</li>
@@ -3486,12 +3507,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[web] Move chat history hydration to paged HTTP</li>
 <li>[web] Paginate sessions and auto-load older history</li>
 </ul>
-<h3 id="removed-23">Removed</h3>
+<h3 id="removed-24">Removed</h3>
 <ul>
 <li>[web] Remove nested onboarding scroll and restore settings nav icons</li>
 <li>[web] Declutter chat controls and fix dropdown positioning</li>
 </ul>
-<h3 id="fixed-105">Fixed</h3>
+<h3 id="fixed-106">Fixed</h3>
 <ul>
 <li>[gateway] Speed up startup by deferring tailscale and log scan</li>
 <li>[gateway] Improve browser warmup integration</li>
@@ -3524,33 +3545,33 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[security] Add direct nginx websocket proxy example (#364)</li>
 </ul>
 <h2 id="01017---2026-03-05">[0.10.17] - 2026-03-05</h2>
-<h3 id="fixed-106">Fixed</h3>
+<h3 id="fixed-107">Fixed</h3>
 <ul>
 <li>[config] Include tmux in default sandbox packages</li>
 </ul>
 <h2 id="01016---2026-03-05">[0.10.16] - 2026-03-05</h2>
-<h3 id="fixed-107">Fixed</h3>
+<h3 id="fixed-108">Fixed</h3>
 <ul>
 <li>[ci,tools] Unblock dependabot and support wasmtime 36</li>
 <li>[auth] Honor forwarded host for proxy session cookies</li>
 </ul>
 <h2 id="01015---2026-03-05">[0.10.15] - 2026-03-05</h2>
-<h3 id="fixed-108">Fixed</h3>
+<h3 id="fixed-109">Fixed</h3>
 <ul>
 <li>Install rustls CryptoProvider before channel startup (#336)</li>
 </ul>
 <h2 id="01014---2026-03-05">[0.10.14] - 2026-03-05</h2>
-<h3 id="fixed-109">Fixed</h3>
+<h3 id="fixed-110">Fixed</h3>
 <ul>
 <li>[packaging] Use cli-relative web assets in cargo-deb</li>
 </ul>
 <h2 id="01013---2026-03-04">[0.10.13] - 2026-03-04</h2>
-<h3 id="fixed-110">Fixed</h3>
+<h3 id="fixed-111">Fixed</h3>
 <ul>
 <li>[ci] Stage wasm assets for cargo-deb packaging</li>
 </ul>
 <h2 id="01012---2026-03-04">[0.10.12] - 2026-03-04</h2>
-<h3 id="added-59">Added</h3>
+<h3 id="added-60">Added</h3>
 <ul>
 <li>[ci] Add release dry-run mode</li>
 <li>[browser] Add container_host for Docker-in-Docker connectivity (#300)</li>
@@ -3570,12 +3591,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[web] Move chat history hydration to paged HTTP</li>
 <li>[web] Paginate sessions and auto-load older history</li>
 </ul>
-<h3 id="removed-24">Removed</h3>
+<h3 id="removed-25">Removed</h3>
 <ul>
 <li>[web] Remove nested onboarding scroll and restore settings nav icons</li>
 <li>[web] Declutter chat controls and fix dropdown positioning</li>
 </ul>
-<h3 id="fixed-111">Fixed</h3>
+<h3 id="fixed-112">Fixed</h3>
 <ul>
 <li>[config] Support provider url alias for remote Ollama config (#299)</li>
 <li>[ci] Make release dry-run job conditions valid</li>
@@ -3602,12 +3623,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h2 id="01011---2026-03-02">[0.10.11] - 2026-03-02</h2>
 <h2 id="01010---2026-03-02">[0.10.10] - 2026-03-02</h2>
-<h3 id="fixed-112">Fixed</h3>
+<h3 id="fixed-113">Fixed</h3>
 <ul>
 <li>[swift-bridge] Stabilize gateway migration and stream tests</li>
 </ul>
 <h2 id="0109---2026-03-02">[0.10.9] - 2026-03-02</h2>
-<h3 id="fixed-113">Fixed</h3>
+<h3 id="fixed-114">Fixed</h3>
 <ul>
 <li>[ci] Harden tailwindcss cli downloads</li>
 </ul>
@@ -3616,13 +3637,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[gateway] Fetch updates from releases manifest instead of GitHub API</li>
 </ul>
-<h3 id="fixed-114">Fixed</h3>
+<h3 id="fixed-115">Fixed</h3>
 <ul>
 <li>[ci] Add Tailwind CSS build step to release workflow, Dockerfile, and snapcraft</li>
 <li>[e2e] Wait for session history render before DOM injection in chat-abort</li>
 </ul>
 <h2 id="0107---2026-03-02">[0.10.7] - 2026-03-02</h2>
-<h3 id="added-60">Added</h3>
+<h3 id="added-61">Added</h3>
 <ul>
 <li>[sandbox] Add GitHub runner parity packages and enable corepack (#284)</li>
 <li>[providers] Add first-class LM Studio provider (#286)</li>
@@ -3634,7 +3655,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[channels] Registry-driven dispatch for cheap new channels (#277)</li>
 </ul>
-<h3 id="fixed-115">Fixed</h3>
+<h3 id="fixed-116">Fixed</h3>
 <ul>
 <li>[e2e] Make sandboxes container tests deterministic</li>
 <li>[e2e] Replace remaining racy waitForResponse with route interceptors</li>
@@ -3654,7 +3675,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[channels] Shared channel webhook middleware pipeline (#290)</li>
 </ul>
 <h2 id="0106---2026-03-01">[0.10.6] - 2026-03-01</h2>
-<h3 id="fixed-116">Fixed</h3>
+<h3 id="fixed-117">Fixed</h3>
 <ul>
 <li>[web] Fix Shiki highlighter init failures in E2E tests</li>
 <li>[web] Make thinking stop button smaller with left spacing</li>
@@ -3662,17 +3683,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[providers] Emit StreamEvent::Error on non-success finish_reason</li>
 </ul>
 <h2 id="0105---2026-03-01">[0.10.5] - 2026-03-01</h2>
-<h3 id="fixed-117">Fixed</h3>
+<h3 id="fixed-118">Fixed</h3>
 <ul>
 <li>[web] Lazy-load Shiki to prevent blocking page mount</li>
 </ul>
 <h2 id="0104---2026-03-01">[0.10.4] - 2026-03-01</h2>
-<h3 id="added-61">Added</h3>
+<h3 id="added-62">Added</h3>
 <ul>
 <li>[web] Add Shiki syntax highlighting to code blocks</li>
 </ul>
 <h2 id="0103---2026-03-01">[0.10.3] - 2026-03-01</h2>
-<h3 id="added-62">Added</h3>
+<h3 id="added-63">Added</h3>
 <ul>
 <li>Add channel-aware heartbeat delivery and send_message agent tool (#270)</li>
 <li>[memory] Add tree-sitter code splitter and RRF search merge</li>
@@ -3681,7 +3702,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>[ffi] Tighten unsafe_code allowances</li>
 </ul>
-<h3 id="fixed-118">Fixed</h3>
+<h3 id="fixed-119">Fixed</h3>
 <ul>
 <li>[sandbox] Make apple container keepalive portable (#269)</li>
 <li>[local-llm] Combine compile-time and runtime Metal detection</li>
@@ -3689,25 +3710,25 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[web] Replace rg with grep in changelog guard and deduplicate passkey status refresh</li>
 </ul>
 <h2 id="0102---2026-02-28">[0.10.2] - 2026-02-28</h2>
-<h3 id="added-63">Added</h3>
+<h3 id="added-64">Added</h3>
 <h3 id="changed-45">Changed</h3>
 <h3 id="deprecated-1">Deprecated</h3>
-<h3 id="removed-25">Removed</h3>
-<h3 id="fixed-119">Fixed</h3>
+<h3 id="removed-26">Removed</h3>
+<h3 id="fixed-120">Fixed</h3>
 <ul>
 <li>Release packaging now installs cross-compilation targets on the active nightly toolchain in the Homebrew binary job, fixing <code>error[E0463]: can't find crate for core</code> during macOS binary builds.</li>
 <li>Docker release builds now copy <code>apps/courier</code> into the image build context so Cargo workspace metadata resolves correctly during WASM component builds.</li>
 </ul>
 <h3 id="security-20">Security</h3>
 <h2 id="0101---2026-02-28">[0.10.1] - 2026-02-28</h2>
-<h3 id="added-64">Added</h3>
+<h3 id="added-65">Added</h3>
 <h3 id="changed-46">Changed</h3>
 <h3 id="deprecated-2">Deprecated</h3>
-<h3 id="removed-26">Removed</h3>
-<h3 id="fixed-120">Fixed</h3>
+<h3 id="removed-27">Removed</h3>
+<h3 id="fixed-121">Fixed</h3>
 <h3 id="security-21">Security</h3>
 <h2 id="0100---2026-02-28">[0.10.0] - 2026-02-28</h2>
-<h3 id="added-65">Added</h3>
+<h3 id="added-66">Added</h3>
 <ul>
 <li><strong>Gemini first-class provider</strong>: Google Gemini is now registered via the OpenAI-compatible endpoint with native tool calling, vision/multimodal support, streaming, and model discovery. Replaces the previous genai-backed fallback that lacked tool support. Supports both <code>GEMINI_API_KEY</code> and <code>GOOGLE_API_KEY</code> environment variables</li>
 <li><strong>Podman sandbox backend</strong> — Podman as a first-class sandbox backend. Set <code>backend = "podman"</code> or let auto-detection prefer it over Docker (Apple Container → Podman → Docker → restricted-host). Uses the <code>podman</code> CLI directly (no socket compatibility needed)</li>
@@ -3781,8 +3802,8 @@ onboarding-ready configs.</li>
 <li>Settings → Sandboxes now includes shared-home controls (enabled + folder path), and sandbox config supports <code>tools.exec.sandbox.shared_home_dir</code> for custom shared persistence location</li>
 </ul>
 <h3 id="deprecated-3">Deprecated</h3>
-<h3 id="removed-27">Removed</h3>
-<h3 id="fixed-121">Fixed</h3>
+<h3 id="removed-28">Removed</h3>
+<h3 id="fixed-122">Fixed</h3>
 <ul>
 <li><strong>OpenAI Codex OAuth in Docker</strong>: the web UI no longer overrides the provider’s pre-registered <code>redirect_uri</code>, which caused OpenAI to reject the authorization request with <code>unknown_error</code>. The OAuth callback server now also respects the gateway bind address (<code>0.0.0.0</code> in Docker) so the callback port (1455) is reachable from the host. Docker image now exposes port 1455 for OAuth callbacks (#207)</li>
 <li><strong>Slow SQLite writes</strong>: <code>moltis.db</code> and <code>memory.db</code> now use <code>journal_mode=WAL</code> and <code>synchronous=NORMAL</code> (matching <code>metrics.db</code>), eliminating multi-second write contention that caused 3–10 s INSERT times under concurrent access</li>
@@ -3808,73 +3829,73 @@ centered spinner.</li>
 </ul>
 <h3 id="security-22">Security</h3>
 <h2 id="0910---2026-02-21">[0.9.10] - 2026-02-21</h2>
-<h3 id="added-66">Added</h3>
+<h3 id="added-67">Added</h3>
 <h3 id="changed-48">Changed</h3>
 <h3 id="deprecated-4">Deprecated</h3>
-<h3 id="removed-28">Removed</h3>
-<h3 id="fixed-122">Fixed</h3>
-<h3 id="security-23">Security</h3>
-<h2 id="099---2026-02-21">[0.9.9] - 2026-02-21</h2>
-<h3 id="added-67">Added</h3>
-<h3 id="changed-49">Changed</h3>
-<h3 id="deprecated-5">Deprecated</h3>
 <h3 id="removed-29">Removed</h3>
 <h3 id="fixed-123">Fixed</h3>
-<h3 id="security-24">Security</h3>
-<h2 id="098---2026-02-21">[0.9.8] - 2026-02-21</h2>
+<h3 id="security-23">Security</h3>
+<h2 id="099---2026-02-21">[0.9.9] - 2026-02-21</h2>
 <h3 id="added-68">Added</h3>
-<h3 id="changed-50">Changed</h3>
-<h3 id="deprecated-6">Deprecated</h3>
+<h3 id="changed-49">Changed</h3>
+<h3 id="deprecated-5">Deprecated</h3>
 <h3 id="removed-30">Removed</h3>
 <h3 id="fixed-124">Fixed</h3>
-<h3 id="security-25">Security</h3>
-<h2 id="097---2026-02-20">[0.9.7] - 2026-02-20</h2>
+<h3 id="security-24">Security</h3>
+<h2 id="098---2026-02-21">[0.9.8] - 2026-02-21</h2>
 <h3 id="added-69">Added</h3>
-<h3 id="changed-51">Changed</h3>
-<h3 id="deprecated-7">Deprecated</h3>
+<h3 id="changed-50">Changed</h3>
+<h3 id="deprecated-6">Deprecated</h3>
 <h3 id="removed-31">Removed</h3>
 <h3 id="fixed-125">Fixed</h3>
+<h3 id="security-25">Security</h3>
+<h2 id="097---2026-02-20">[0.9.7] - 2026-02-20</h2>
+<h3 id="added-70">Added</h3>
+<h3 id="changed-51">Changed</h3>
+<h3 id="deprecated-7">Deprecated</h3>
+<h3 id="removed-32">Removed</h3>
+<h3 id="fixed-126">Fixed</h3>
 <h3 id="security-26">Security</h3>
 <h2 id="096---2026-02-20">[0.9.6] - 2026-02-20</h2>
-<h3 id="added-70">Added</h3>
+<h3 id="added-71">Added</h3>
 <ul>
 <li>Cron jobs can now deliver agent turn output to Telegram channels via the <code>deliver</code>, <code>channel</code>, and <code>to</code> payload fields</li>
 </ul>
 <h3 id="changed-52">Changed</h3>
 <h3 id="deprecated-8">Deprecated</h3>
-<h3 id="removed-32">Removed</h3>
-<h3 id="fixed-126">Fixed</h3>
+<h3 id="removed-33">Removed</h3>
+<h3 id="fixed-127">Fixed</h3>
 <ul>
 <li>Accessing <code>http://</code> on the HTTPS port now returns a 301 redirect to <code>https://</code> instead of a garbled TLS handshake page</li>
 <li>SQLite metrics store now uses WAL journal mode and <code>synchronous=NORMAL</code> to fix slow INSERT times (1-3s) on Docker/WSL2</li>
 </ul>
 <h3 id="security-27">Security</h3>
 <h2 id="095---2026-02-20">[0.9.5] - 2026-02-20</h2>
-<h3 id="added-71">Added</h3>
+<h3 id="added-72">Added</h3>
 <h3 id="changed-53">Changed</h3>
 <h3 id="deprecated-9">Deprecated</h3>
-<h3 id="removed-33">Removed</h3>
-<h3 id="fixed-127">Fixed</h3>
+<h3 id="removed-34">Removed</h3>
+<h3 id="fixed-128">Fixed</h3>
 <ul>
 <li>Skip jemalloc on Windows (platform-specific dependency gate)</li>
 </ul>
 <h3 id="security-28">Security</h3>
 <h2 id="094---2026-02-20">[0.9.4] - 2026-02-20</h2>
-<h3 id="added-72">Added</h3>
+<h3 id="added-73">Added</h3>
 <h3 id="changed-54">Changed</h3>
 <h3 id="deprecated-10">Deprecated</h3>
-<h3 id="removed-34">Removed</h3>
-<h3 id="fixed-128">Fixed</h3>
-<h3 id="security-29">Security</h3>
-<h2 id="093---2026-02-20">[0.9.3] - 2026-02-20</h2>
-<h3 id="added-73">Added</h3>
-<h3 id="changed-55">Changed</h3>
-<h3 id="deprecated-11">Deprecated</h3>
 <h3 id="removed-35">Removed</h3>
 <h3 id="fixed-129">Fixed</h3>
+<h3 id="security-29">Security</h3>
+<h2 id="093---2026-02-20">[0.9.3] - 2026-02-20</h2>
+<h3 id="added-74">Added</h3>
+<h3 id="changed-55">Changed</h3>
+<h3 id="deprecated-11">Deprecated</h3>
+<h3 id="removed-36">Removed</h3>
+<h3 id="fixed-130">Fixed</h3>
 <h3 id="security-30">Security</h3>
 <h2 id="092---2026-02-20">[0.9.2] - 2026-02-20</h2>
-<h3 id="added-74">Added</h3>
+<h3 id="added-75">Added</h3>
 <ul>
 <li>Event-driven heartbeat wake system: cron jobs can now trigger immediate
 heartbeat runs via a <code>wakeMode</code> field (<code>"now"</code> or <code>"nextHeartbeat"</code>).</li>
@@ -3887,11 +3908,11 @@ background task results.</li>
 </ul>
 <h3 id="changed-56">Changed</h3>
 <h3 id="deprecated-12">Deprecated</h3>
-<h3 id="removed-36">Removed</h3>
-<h3 id="fixed-130">Fixed</h3>
+<h3 id="removed-37">Removed</h3>
+<h3 id="fixed-131">Fixed</h3>
 <h3 id="security-31">Security</h3>
 <h2 id="091---2026-02-19">[0.9.1] - 2026-02-19</h2>
-<h3 id="added-75">Added</h3>
+<h3 id="added-76">Added</h3>
 <ul>
 <li><code>lightweight</code> feature profile for memory-constrained devices (Raspberry Pi, etc.)
 with only essential features: <code>jemalloc</code>, <code>tls</code>, <code>web-ui</code>.</li>
@@ -3920,8 +3941,8 @@ backpressure for slow consumers.</li>
 <li>Release profile: <code>panic = "abort"</code> and <code>codegen-units = 1</code> for smaller binaries.</li>
 </ul>
 <h3 id="deprecated-13">Deprecated</h3>
-<h3 id="removed-37">Removed</h3>
-<h3 id="fixed-131">Fixed</h3>
+<h3 id="removed-38">Removed</h3>
+<h3 id="fixed-132">Fixed</h3>
 <ul>
 <li>Onboarding identity save now captures browser timezone and persists it to
 <code>USER.md</code> via <code>user_timezone</code>, so first-run profile setup records the user’s
@@ -3956,7 +3977,7 @@ layout.</li>
 </ul>
 <h3 id="security-32">Security</h3>
 <h2 id="090---2026-02-17">[0.9.0] - 2026-02-17</h2>
-<h3 id="added-76">Added</h3>
+<h3 id="added-77">Added</h3>
 <ul>
 <li>Settings > Cron job editor now supports per-job LLM model selection and
 execution target selection (<code>host</code> or <code>sandbox</code>), including optional
@@ -3970,8 +3991,8 @@ sandbox image override when sandbox execution is selected.</li>
 updated provider and local-LLM snippets.</li>
 </ul>
 <h3 id="deprecated-14">Deprecated</h3>
-<h3 id="removed-38">Removed</h3>
-<h3 id="fixed-132">Fixed</h3>
+<h3 id="removed-39">Removed</h3>
+<h3 id="fixed-133">Fixed</h3>
 <ul>
 <li>Agent loop iteration limit is now configurable via
 <code>tools.agent_max_iterations</code> in <code>moltis.toml</code> (default <code>25</code>) instead of
@@ -3979,7 +4000,7 @@ being hardcoded at runtime.</li>
 </ul>
 <h3 id="security-33">Security</h3>
 <h2 id="0838---2026-02-17">[0.8.38] - 2026-02-17</h2>
-<h3 id="added-77">Added</h3>
+<h3 id="added-78">Added</h3>
 <ul>
 <li><code>show_map</code> now supports multi-point maps via <code>points[]</code>, rendering all
 destinations in one screenshot with auto-fit zoom/centering, while keeping
@@ -3993,11 +4014,11 @@ delay the first streamed message until enough text has accumulated.</li>
 </ul>
 <h3 id="changed-59">Changed</h3>
 <h3 id="deprecated-15">Deprecated</h3>
-<h3 id="removed-39">Removed</h3>
-<h3 id="fixed-133">Fixed</h3>
+<h3 id="removed-40">Removed</h3>
+<h3 id="fixed-134">Fixed</h3>
 <h3 id="security-34">Security</h3>
 <h2 id="0837---2026-02-17">[0.8.37] - 2026-02-17</h2>
-<h3 id="added-78">Added</h3>
+<h3 id="added-79">Added</h3>
 <ul>
 <li>Settings > Terminal now includes tmux window tabs for the managed
 <code>moltis-host-terminal</code> session, plus a <code>+ Tab</code> action to create new tmux
@@ -4021,8 +4042,8 @@ a Moltis-friendly profile (status off, mouse off, stable window naming).</li>
 show stale <code>$</code>/<code>#</code> information after privilege changes inside the shell.</li>
 </ul>
 <h3 id="deprecated-16">Deprecated</h3>
-<h3 id="removed-40">Removed</h3>
-<h3 id="fixed-134">Fixed</h3>
+<h3 id="removed-41">Removed</h3>
+<h3 id="fixed-135">Fixed</h3>
 <ul>
 <li>Apple Container sandbox startup now pins <code>--workdir /tmp</code>, bootstraps
 <code>/home/sandbox</code> before <code>sleep infinity</code>, and uses explicit exec workdirs to
@@ -4063,7 +4084,7 @@ windows stayed at stale dimensions until a manual tab switch.</li>
 </ul>
 <h3 id="security-35">Security</h3>
 <h2 id="0836---2026-02-16">[0.8.36] - 2026-02-16</h2>
-<h3 id="added-79">Added</h3>
+<h3 id="added-80">Added</h3>
 <ul>
 <li>OAuth 2.1 support for remote MCP servers — automatic discovery (RFC 9728/8414), dynamic client registration (RFC 7591), PKCE authorization code flow, and Bearer token injection with 401 retry</li>
 <li><code>McpOAuthOverride</code> config option for servers that don’t implement standard OAuth discovery</li>
@@ -4076,8 +4097,8 @@ CIDR ranges from SSRF blocking, enabling Docker inter-container networking.</li>
 </ul>
 <h3 id="changed-61">Changed</h3>
 <h3 id="deprecated-17">Deprecated</h3>
-<h3 id="removed-41">Removed</h3>
-<h3 id="fixed-135">Fixed</h3>
+<h3 id="removed-42">Removed</h3>
+<h3 id="fixed-136">Fixed</h3>
 <ul>
 <li><strong>Telegram queued replies</strong>: route channel reply targets per queued message so
 <code>chat.message_queue_mode = "followup"</code> delivers replies one-by-one instead of
@@ -4092,17 +4113,17 @@ collapsing queued channel replies into a single batch delivery.</li>
 </ul>
 <h3 id="security-36">Security</h3>
 <h2 id="0835---2026-02-15">[0.8.35] - 2026-02-15</h2>
-<h3 id="added-80">Added</h3>
+<h3 id="added-81">Added</h3>
 <ul>
 <li>Add memory target routing guidance to <code>memory_save</code> prompt hint — core facts go to MEMORY.md, everything else to <code>memory/&#x3C;topic>.md</code> to keep context lean</li>
 </ul>
 <h3 id="changed-62">Changed</h3>
 <h3 id="deprecated-18">Deprecated</h3>
-<h3 id="removed-42">Removed</h3>
-<h3 id="fixed-136">Fixed</h3>
+<h3 id="removed-43">Removed</h3>
+<h3 id="fixed-137">Fixed</h3>
 <h3 id="security-37">Security</h3>
 <h2 id="0834---2026-02-15">[0.8.34] - 2026-02-15</h2>
-<h3 id="added-81">Added</h3>
+<h3 id="added-82">Added</h3>
 <ul>
 <li>Add explicit <code>memory_save</code> hint in system prompt so weaker models (MiniMax, etc.) call the tool when asked to remember something</li>
 <li>Add anchor text after memory content so models don’t ignore known facts when <code>memory_search</code> returns empty</li>
@@ -4110,33 +4131,33 @@ collapsing queued channel replies into a single batch delivery.</li>
 </ul>
 <h3 id="changed-63">Changed</h3>
 <h3 id="deprecated-19">Deprecated</h3>
-<h3 id="removed-43">Removed</h3>
-<h3 id="fixed-137">Fixed</h3>
-<h3 id="security-38">Security</h3>
-<h2 id="0833---2026-02-15">[0.8.33] - 2026-02-15</h2>
-<h3 id="added-82">Added</h3>
-<h3 id="changed-64">Changed</h3>
-<h3 id="deprecated-20">Deprecated</h3>
 <h3 id="removed-44">Removed</h3>
 <h3 id="fixed-138">Fixed</h3>
+<h3 id="security-38">Security</h3>
+<h2 id="0833---2026-02-15">[0.8.33] - 2026-02-15</h2>
+<h3 id="added-83">Added</h3>
+<h3 id="changed-64">Changed</h3>
+<h3 id="deprecated-20">Deprecated</h3>
+<h3 id="removed-45">Removed</h3>
+<h3 id="fixed-139">Fixed</h3>
 <ul>
 <li><strong>CI</strong>: remove unnecessary <code>std::path::</code> qualification in gateway server flagged
 by nightly clippy.</li>
 </ul>
 <h3 id="security-39">Security</h3>
 <h2 id="0832---2026-02-15">[0.8.32] - 2026-02-15</h2>
-<h3 id="added-83">Added</h3>
+<h3 id="added-84">Added</h3>
 <h3 id="changed-65">Changed</h3>
 <h3 id="deprecated-21">Deprecated</h3>
-<h3 id="removed-45">Removed</h3>
-<h3 id="fixed-139">Fixed</h3>
+<h3 id="removed-46">Removed</h3>
+<h3 id="fixed-140">Fixed</h3>
 <ul>
 <li><strong>CI</strong>: gate macOS-only sandbox helper functions with <code>#[cfg]</code> to fix dead-code
 errors on Linux CI.</li>
 </ul>
 <h3 id="security-40">Security</h3>
 <h2 id="0831---2026-02-15">[0.8.31] - 2026-02-15</h2>
-<h3 id="added-84">Added</h3>
+<h3 id="added-85">Added</h3>
 <ul>
 <li>
 <p><strong>Sandbox toggle notification</strong>: when the sandbox is enabled or disabled
@@ -4195,8 +4216,8 @@ container images are visible in one place.</p>
 packages.</li>
 </ul>
 <h3 id="deprecated-22">Deprecated</h3>
-<h3 id="removed-46">Removed</h3>
-<h3 id="fixed-140">Fixed</h3>
+<h3 id="removed-47">Removed</h3>
+<h3 id="fixed-141">Fixed</h3>
 <ul>
 <li><strong>Thinking indicator lost on reload</strong>: reloading the page while the model
 was generating no longer loses the “thinking” dots. The backend now includes
@@ -4233,7 +4254,7 @@ when all counts are zero; it stays visible as a baseline indicator.</li>
 </ul>
 <h3 id="security-41">Security</h3>
 <h2 id="0830---2026-02-15">[0.8.30] - 2026-02-15</h2>
-<h3 id="added-85">Added</h3>
+<h3 id="added-86">Added</h3>
 <h3 id="changed-67">Changed</h3>
 <ul>
 <li><strong>Assistant reasoning persistence</strong>: conversation reasoning is now persisted
@@ -4241,11 +4262,11 @@ in assistant messages and shared snapshots so resumed sessions retain
 reasoning context instead of dropping it after refresh/share operations.</li>
 </ul>
 <h3 id="deprecated-23">Deprecated</h3>
-<h3 id="removed-47">Removed</h3>
-<h3 id="fixed-141">Fixed</h3>
+<h3 id="removed-48">Removed</h3>
+<h3 id="fixed-142">Fixed</h3>
 <h3 id="security-42">Security</h3>
 <h2 id="0829---2026-02-14">[0.8.29] - 2026-02-14</h2>
-<h3 id="added-86">Added</h3>
+<h3 id="added-87">Added</h3>
 <ul>
 <li><strong>Memory bootstrap</strong>: inject <code>MEMORY.md</code> content directly into the system
 prompt (truncated at 20,000 chars) so the agent always has core memory
@@ -4263,8 +4284,8 @@ memory turn and <code>MemorySaveTool</code> both delegate to the manager, which 
 path validation, size limits, and automatic re-indexing after writes</li>
 </ul>
 <h3 id="deprecated-24">Deprecated</h3>
-<h3 id="removed-48">Removed</h3>
-<h3 id="fixed-142">Fixed</h3>
+<h3 id="removed-49">Removed</h3>
+<h3 id="fixed-143">Fixed</h3>
 <ul>
 <li><strong>Memory file watcher</strong>: the file watcher now covers <code>MEMORY.md</code> at the data
 directory root, which was previously excluded because the filter only matched
@@ -4272,7 +4293,7 @@ directories</li>
 </ul>
 <h3 id="security-43">Security</h3>
 <h2 id="0828---2026-02-14">[0.8.28] - 2026-02-14</h2>
-<h3 id="added-87">Added</h3>
+<h3 id="added-88">Added</h3>
 <h3 id="changed-69">Changed</h3>
 <ul>
 <li><strong>Browser sandbox resolution</strong>: <code>BrowserTool</code> now resolves sandbox mode
@@ -4280,8 +4301,8 @@ directly from <code>SandboxRouter</code> instead of relying on a <code>_sandbox<
 injected via tool call params.</li>
 </ul>
 <h3 id="deprecated-25">Deprecated</h3>
-<h3 id="removed-49">Removed</h3>
-<h3 id="fixed-143">Fixed</h3>
+<h3 id="removed-50">Removed</h3>
+<h3 id="fixed-144">Fixed</h3>
 <ul>
 <li><strong>E2E onboarding failures</strong>: Fixed missing <code>saveProviderKey</code> export in
 <code>provider-validation.js</code> that was accidentally left unstaged in the DRY
@@ -4289,7 +4310,7 @@ refactoring commit.</li>
 </ul>
 <h3 id="security-44">Security</h3>
 <h2 id="0827---2026-02-14">[0.8.27] - 2026-02-14</h2>
-<h3 id="added-88">Added</h3>
+<h3 id="added-89">Added</h3>
 <h3 id="changed-70">Changed</h3>
 <ul>
 <li><strong>DRY voice/identity/channel utils</strong>: Extracted shared RPC wrappers and
@@ -4298,8 +4319,8 @@ validation helpers from <code>onboarding-view.js</code> and <code>page-settings.
 and <code>channel-utils.js</code> modules.</li>
 </ul>
 <h3 id="deprecated-26">Deprecated</h3>
-<h3 id="removed-50">Removed</h3>
-<h3 id="fixed-144">Fixed</h3>
+<h3 id="removed-51">Removed</h3>
+<h3 id="fixed-145">Fixed</h3>
 <ul>
 <li><strong>Config test env isolation</strong>: Fixed spurious
 <code>save_config_to_path_removes_stale_keys_when_values_are_cleared</code> test
@@ -4308,7 +4329,7 @@ into the test via <code>apply_env_overrides</code>.</li>
 </ul>
 <h3 id="security-45">Security</h3>
 <h2 id="0826---2026-02-14">[0.8.26] - 2026-02-14</h2>
-<h3 id="added-89">Added</h3>
+<h3 id="added-90">Added</h3>
 <ul>
 <li><strong>Rustls/OpenSSL migration roadmap</strong>: Added
 <code>plans/2026-02-14-rustls-migration-and-openssl-reduction.md</code> with a staged
@@ -4317,8 +4338,8 @@ networking paths toward rustls.</li>
 </ul>
 <h3 id="changed-71">Changed</h3>
 <h3 id="deprecated-27">Deprecated</h3>
-<h3 id="removed-51">Removed</h3>
-<h3 id="fixed-145">Fixed</h3>
+<h3 id="removed-52">Removed</h3>
+<h3 id="fixed-146">Fixed</h3>
 <ul>
 <li><strong>Windows release build reliability</strong>: The <code>.exe</code> release workflow now forces
 Strawberry Perl (<code>OPENSSL_SRC_PERL</code>/<code>PERL</code>) so vendored OpenSSL builds do not
@@ -4332,21 +4353,21 @@ Settings > LLM flow.</li>
 </ul>
 <h3 id="security-46">Security</h3>
 <h2 id="0825---2026-02-14">[0.8.25] - 2026-02-14</h2>
-<h3 id="added-90">Added</h3>
+<h3 id="added-91">Added</h3>
 <h3 id="changed-72">Changed</h3>
 <h3 id="deprecated-28">Deprecated</h3>
-<h3 id="removed-52">Removed</h3>
-<h3 id="fixed-146">Fixed</h3>
-<h3 id="security-47">Security</h3>
-<h2 id="0824---2026-02-13">[0.8.24] - 2026-02-13</h2>
-<h3 id="added-91">Added</h3>
-<h3 id="changed-73">Changed</h3>
-<h3 id="deprecated-29">Deprecated</h3>
 <h3 id="removed-53">Removed</h3>
 <h3 id="fixed-147">Fixed</h3>
+<h3 id="security-47">Security</h3>
+<h2 id="0824---2026-02-13">[0.8.24] - 2026-02-13</h2>
+<h3 id="added-92">Added</h3>
+<h3 id="changed-73">Changed</h3>
+<h3 id="deprecated-29">Deprecated</h3>
+<h3 id="removed-54">Removed</h3>
+<h3 id="fixed-148">Fixed</h3>
 <h3 id="security-48">Security</h3>
 <h2 id="0823---2026-02-13">[0.8.23] - 2026-02-13</h2>
-<h3 id="added-92">Added</h3>
+<h3 id="added-93">Added</h3>
 <ul>
 <li><strong>Multi-select preferred models per provider</strong>: The LLMs page now has a
 “Preferred Models” button per provider that opens a multi-select modal.
@@ -4392,7 +4413,7 @@ files no longer check <code>provider.name === "ollama"</code> for behavior.
 Instead, the backend exposes a <code>keyOptional</code> field on provider
 metadata, making the UI provider-agnostic.</li>
 </ul>
-<h3 id="fixed-148">Fixed</h3>
+<h3 id="fixed-149">Fixed</h3>
 <ul>
 <li><strong>Settings UI env vars now available process-wide</strong>: environment variables
 set via Settings > Environment were previously only injected into sandbox
@@ -4409,19 +4430,19 @@ credential removed). An <code>auth.credentials_changed</code> event notifies bro
 to redirect to <code>/login</code>. Existing sessions are also invalidated on password
 change for defense-in-depth.</li>
 </ul>
-<h3 id="fixed-149">Fixed</h3>
+<h3 id="fixed-150">Fixed</h3>
 <ul>
 <li><strong>Onboarding test for SOUL.md clear behavior</strong>: Fixed <code>identity_update_partial</code>
 test to match the new empty-file behavior from v0.8.13.</li>
 </ul>
 <h2 id="0813---2026-02-11">[0.8.13] - 2026-02-11</h2>
-<h3 id="added-93">Added</h3>
+<h3 id="added-94">Added</h3>
 <ul>
 <li><strong>Auto-create SOUL.md on first run</strong>: <code>SOUL.md</code> is now seeded with the
 default soul text when the file doesn’t exist, mirroring how <code>moltis.toml</code>
 is auto-created. If deleted, it re-seeds on next load.</li>
 </ul>
-<h3 id="fixed-150">Fixed</h3>
+<h3 id="fixed-151">Fixed</h3>
 <ul>
 <li><strong>SOUL.md clear via settings</strong>: Clearing the soul textarea in settings no
 longer re-creates the default on the next load. An explicit clear now writes
@@ -4436,7 +4457,7 @@ authentication method when a passkey is already registered.</li>
 <li><strong>Moonshot provider</strong>: Added Moonshot to the default offered providers list.</li>
 </ul>
 <h2 id="0812---2026-02-11">[0.8.12] - 2026-02-11</h2>
-<h3 id="fixed-151">Fixed</h3>
+<h3 id="fixed-152">Fixed</h3>
 <ul>
 <li><strong>E2E test CI stability</strong>: <code>NoopChatService::clear()</code> now returns Ok instead
 of an error when no LLM providers are configured, fixing 5 e2e test failures
@@ -4457,7 +4478,7 @@ live; Safari-specific reload guidance is shown only when Safari is detected.</li
 only, without appending <code>AI assistant</code> suffix text.</li>
 </ul>
 <h2 id="087---2026-02-11">[0.8.7] - 2026-02-11</h2>
-<h3 id="added-94">Added</h3>
+<h3 id="added-95">Added</h3>
 <ul>
 <li><strong>Model allowlist probe output support</strong>: Model allowlist matching now handles
 provider probe output more robustly and applies stricter matching semantics.</li>
@@ -4474,7 +4495,7 @@ release profile to reduce artifact size.</li>
 <li><strong>SPA route handling</strong>: Centralized SPA route definitions and preserved TOML
 comments during config updates.</li>
 </ul>
-<h3 id="fixed-152">Fixed</h3>
+<h3 id="fixed-153">Fixed</h3>
 <ul>
 <li><strong>Auth setup hardening</strong>: Enforced authentication immediately after password
 or passkey setup to prevent unintended post-setup unauthenticated access.</li>
@@ -4490,7 +4511,7 @@ when no container runtime is available.</li>
 tests and blocks all package builds (deb, rpm, arch, AppImage, snap,
 Homebrew, Docker) if they fail.</li>
 </ul>
-<h3 id="added-95">Added</h3>
+<h3 id="added-96">Added</h3>
 <ul>
 <li><strong>XML tag stripping</strong>: Strip internal XML tags from LLM responses to prevent
 tag leakage in chat (thinking, reasoning, scratchpad, etc.)</li>
@@ -4499,7 +4520,7 @@ accurate context window detection during auto-compaction</li>
 <li><strong>Run detail UI</strong>: Panel showing tool calls and message flow for agent runs,
 accessible via expandable button on assistant messages</li>
 </ul>
-<h3 id="fixed-153">Fixed</h3>
+<h3 id="fixed-154">Fixed</h3>
 <ul>
 <li><strong>Docker TLS setup</strong>: All Docker examples now expose port 13132 for CA
 certificate download with instructions to trust the self-signed cert,
@@ -4510,13 +4531,13 @@ run against the default gateway (wrong server) instead of the onboarding-auth
 gateway. Tightened regex to <code>/\/auth\.spec/</code>.</li>
 </ul>
 <h2 id="085---2026-02-11">[0.8.5] - 2026-02-11</h2>
-<h3 id="added-96">Added</h3>
+<h3 id="added-97">Added</h3>
 <ul>
 <li><strong>CLI <code>--version</code> flag</strong>: <code>moltis --version</code> now prints the version.</li>
 <li><strong>Askama HTML rendering</strong>: SPA index and social metadata templates use
 Askama instead of string replacement.</li>
 </ul>
-<h3 id="fixed-154">Fixed</h3>
+<h3 id="fixed-155">Fixed</h3>
 <ul>
 <li><strong>WebSocket reconnect after remote onboarding auth</strong>: Connection now
 reconnects immediately after auth setup instead of waiting for the backoff
@@ -4542,21 +4563,21 @@ user content could mimic role prefixes (similar to GHSA-g8p2-7wf7-98mq).</li>
 <li><strong>Session delete UX</strong>: Forked sessions with no new messages beyond the fork
 point are deleted immediately without a confirmation dialog.</li>
 </ul>
-<h3 id="fixed-155">Fixed</h3>
+<h3 id="fixed-156">Fixed</h3>
 <ul>
 <li><strong>Localhost passkey compatibility</strong>: Gateway startup URLs and TLS redirect
 hints now use <code>localhost</code> for loopback hosts, while WebAuthn also allows
 <code>moltis.localhost</code> as an additional origin when RP ID is <code>localhost</code>.</li>
 </ul>
 <h2 id="083---2026-02-11">[0.8.3] - 2026-02-11</h2>
-<h3 id="fixed-156">Fixed</h3>
+<h3 id="fixed-157">Fixed</h3>
 <ul>
 <li><strong>Linux clippy <code>unused_mut</code> failure</strong>: Fixed a target-specific <code>unused_mut</code>
 warning in browser stale-container cleanup that failed release clippy on
 Linux with <code>-D warnings</code>.</li>
 </ul>
 <h2 id="082---2026-02-11">[0.8.2] - 2026-02-11</h2>
-<h3 id="fixed-157">Fixed</h3>
+<h3 id="fixed-158">Fixed</h3>
 <ul>
 <li><strong>Release clippy environment parity</strong>: The release workflow clippy job now
 runs in the same CUDA-capable environment as main CI, includes the llama
@@ -4564,7 +4585,7 @@ source git bootstrap step, and installs <code>rustfmt</code> alongside <code>cli
 fixes release clippy failures caused by missing CUDA toolchain/runtime.</li>
 </ul>
 <h2 id="081---2026-02-11">[0.8.1] - 2026-02-11</h2>
-<h3 id="fixed-158">Fixed</h3>
+<h3 id="fixed-159">Fixed</h3>
 <ul>
 <li><strong>Clippy validation parity</strong>: Unified local validation, CI (main), and
 release workflows to use the same clippy command and flags
@@ -4572,7 +4593,7 @@ release workflows to use the same clippy command and flags
 prevents release-only clippy failures from command drift.</li>
 </ul>
 <h2 id="080---2026-02-11">[0.8.0] - 2026-02-11</h2>
-<h3 id="added-97">Added</h3>
+<h3 id="added-98">Added</h3>
 <ul>
 <li><strong>Instance-scoped container naming</strong>: Browser and sandbox container/image
 prefixes now derive from the configured instance name, so multiple Moltis
@@ -4587,7 +4608,7 @@ unrelated containers.</li>
 the modern Apple container CLI flow (<code>container image pull --help</code>) without
 legacy fallback behavior.</li>
 </ul>
-<h3 id="fixed-159">Fixed</h3>
+<h3 id="fixed-160">Fixed</h3>
 <ul>
 <li><strong>Release workflow artifacts</strong>: Disabled docker build record artifact uploads
 in release CI to avoid release workflow failures from missing artifact paths.</li>
@@ -4595,14 +4616,14 @@ in release CI to avoid release workflow failures from missing artifact paths.</l
 release preflight checks with CI formatting/lint gates.</li>
 </ul>
 <h2 id="071---2026-02-11">[0.7.1] - 2026-02-11</h2>
-<h3 id="fixed-160">Fixed</h3>
+<h3 id="fixed-161">Fixed</h3>
 <ul>
 <li><strong>Release format gate</strong>: Included missing Rust formatting updates in release
 history so the release workflow <code>cargo fmt --all -- --check</code> passes for
 tagged builds.</li>
 </ul>
 <h2 id="070---2026-02-11">[0.7.0] - 2026-02-11</h2>
-<h3 id="added-98">Added</h3>
+<h3 id="added-99">Added</h3>
 <ul>
 <li><strong>HTTP endpoint throttling</strong>: Added gateway-level per-IP rate limits for
 login (<code>/api/auth/login</code>), auth API routes, general API routes, and WebSocket
@@ -4626,7 +4647,7 @@ static while the retry countdown is shown only on the button.</li>
 <code>docs/src/authentication.md</code>, and <code>docs/src/security.md</code>.</li>
 </ul>
 <h2 id="061---2026-02-10">[0.6.1] - 2026-02-10</h2>
-<h3 id="fixed-161">Fixed</h3>
+<h3 id="fixed-162">Fixed</h3>
 <ul>
 <li><strong>Release clippy</strong>: Aligned release workflow clippy command with nightly
 flags (<code>-Z unstable-options</code>, <code>--timings</code>).</li>
@@ -4634,7 +4655,7 @@ flags (<code>-Z unstable-options</code>, <code>--timings</code>).</li>
 <code>use</code> statement; replaced <code>.unwrap()</code> with <code>.expect()</code> in auth route tests.</li>
 </ul>
 <h2 id="060---2026-02-10">[0.6.0] - 2026-02-10</h2>
-<h3 id="added-99">Added</h3>
+<h3 id="added-100">Added</h3>
 <ul>
 <li><strong>CalDAV integration</strong>: New <code>moltis-caldav</code> crate providing calendar CRUD
 operations (list calendars, list/create/update/delete events) via the CalDAV
@@ -4653,7 +4674,7 @@ event names in the config file.</li>
 decision matrix, credential types, API key scopes, session endpoints,
 and WebSocket auth documentation.</li>
 </ul>
-<h3 id="fixed-162">Fixed</h3>
+<h3 id="fixed-163">Fixed</h3>
 <ul>
 <li><strong>Browser container lifecycle</strong>: Browser containers (browserless/chrome)
 now have proper lifecycle management — periodic cleanup removes idle
@@ -4692,7 +4713,7 @@ on local connections, because the <code>has_password()</code> check returned fal
 even though <code>is_setup_complete()</code> was true.</li>
 </ul>
 <h2 id="050---2026-02-09">[0.5.0] - 2026-02-09</h2>
-<h3 id="added-100">Added</h3>
+<h3 id="added-101">Added</h3>
 <ul>
 <li><strong><code>moltis doctor</code> command</strong>: Comprehensive health check that validates config,
 audits security (file permissions, API keys in config), checks directory and
@@ -4709,13 +4730,13 @@ access instead of silently receiving full admin privileges. Keys must specify
 at least one scope explicitly (least-privilege by default).</li>
 </ul>
 <h2 id="041---2026-02-09">[0.4.1] - 2026-02-09</h2>
-<h3 id="fixed-163">Fixed</h3>
+<h3 id="fixed-164">Fixed</h3>
 <ul>
 <li><strong>Clippy lint in map test</strong>: Replace <code>is_some()</code>/<code>unwrap()</code> with <code>if let Some</code> to
 fix <code>clippy::unnecessary_unwrap</code> that broke the v0.4.0 release build.</li>
 </ul>
 <h2 id="040---2026-02-09">[0.4.0] - 2026-02-09</h2>
-<h3 id="added-101">Added</h3>
+<h3 id="added-102">Added</h3>
 <ul>
 <li><strong>Auto-import external OAuth tokens</strong>: At startup, auto-detected provider
 tokens (e.g. Codex CLI <code>~/.codex/auth.json</code>) are imported into the central
@@ -4758,7 +4779,7 @@ same validate-first flow as onboarding. Credentials are validated before
 saving (bad keys are never persisted), a model selector appears after
 validation, and OAuth flows show model selection after authentication.</li>
 </ul>
-<h3 id="fixed-164">Fixed</h3>
+<h3 id="fixed-165">Fixed</h3>
 <ul>
 <li><strong>Docker RAM detection</strong>: Fall back to <code>/proc/meminfo</code> when <code>sysinfo</code> returns
 0 bytes for memory inside Docker/cgroup environments.</li>
@@ -4781,34 +4802,34 @@ skip when no usable container runtime is available (backend = “none”).</li>
 <li><strong>Release CI parallelization</strong>: Split clippy and test into separate parallel
 jobs in the release workflow for faster feedback on GitHub-hosted runners.</li>
 </ul>
-<h3 id="fixed-165">Fixed</h3>
+<h3 id="fixed-166">Fixed</h3>
 <ul>
 <li><strong>CodSpeed workflow zizmor audit</strong>: Pinned <code>CodSpeedHQ/action@v4</code> to commit
 SHA to satisfy zizmor’s <code>unpinned-uses</code> audit.</li>
 </ul>
 <h2 id="037---2026-02-09">[0.3.7] - 2026-02-09</h2>
-<h3 id="fixed-166">Fixed</h3>
+<h3 id="fixed-167">Fixed</h3>
 <ul>
 <li><strong>Clippy warnings</strong>: Fixed <code>MutexGuard</code> held across await in telegram
 test, <code>field assignment outside initializer</code> in provider setup test, and
 <code>items after test module</code> in gateway services.</li>
 </ul>
 <h2 id="036---2026-02-09">[0.3.6] - 2026-02-09</h2>
-<h3 id="fixed-167">Fixed</h3>
+<h3 id="fixed-168">Fixed</h3>
 <ul>
 <li><strong>Release CI zizmor audit</strong>: Removed <code>rust-cache</code> from the release workflow’s
 clippy-test job entirely instead of using <code>save-if: false</code>, which zizmor does
 not recognize as a cache-poisoning mitigation.</li>
 </ul>
 <h2 id="035---2026-02-09">[0.3.5] - 2026-02-09</h2>
-<h3 id="fixed-168">Fixed</h3>
+<h3 id="fixed-169">Fixed</h3>
 <ul>
 <li><strong>Release CI cache-poisoning</strong>: Set <code>save-if: false</code> on <code>rust-cache</code> in the
 release workflow to satisfy zizmor’s cache-poisoning audit for tag-triggered
 workflows that publish artifacts.</li>
 </ul>
 <h2 id="034---2026-02-09">[0.3.4] - 2026-02-09</h2>
-<h3 id="fixed-169">Fixed</h3>
+<h3 id="fixed-170">Fixed</h3>
 <ul>
 <li><strong>Session file lock contention</strong>: Replaced non-blocking <code>try_write()</code> with
 blocking <code>write()</code> in <code>SessionStore::append()</code> and <code>replace_history()</code> so
@@ -4822,7 +4843,7 @@ format, clippy, and test checks before building any packages, ensuring code
 correctness before artifacts are produced.</li>
 </ul>
 <h2 id="033---2026-02-09">[0.3.3] - 2026-02-09</h2>
-<h3 id="fixed-170">Fixed</h3>
+<h3 id="fixed-171">Fixed</h3>
 <ul>
 <li><strong>OpenAI Codex token refresh panic</strong>: Made <code>get_valid_token()</code> async to fix
 <code>block_on</code> inside async runtime panic when refreshing expired OAuth tokens.</li>
@@ -4831,7 +4852,7 @@ binding, fixing <code>get_user_location</code> failures on first Telegram messag
 <li><strong>Cargo.lock sync</strong>: Lock file now matches workspace version.</li>
 </ul>
 <h2 id="030---2026-02-08">[0.3.0] - 2026-02-08</h2>
-<h3 id="added-102">Added</h3>
+<h3 id="added-103">Added</h3>
 <ul>
 <li>
 <p><strong>Silent replies</strong>: The system prompt instructs the LLM to return an empty
@@ -4949,7 +4970,7 @@ cache-miss token counters in the metrics subsystem.</p>
 <li><strong>Configurable model ordering</strong>: Added <code>chat.priority_models</code> in <code>moltis.toml</code> to pin preferred models at the top of model selectors without rebuilding. Runtime model selectors (<code>models.list</code>, chat model dropdown, Telegram <code>/model</code>) hide unsupported models, while Providers diagnostics continue to show full catalog entries (including unsupported flags).</li>
 <li><strong>Configurable provider offerings in UI</strong>: Added <code>[providers] offered = [...]</code> allowlist in <code>moltis.toml</code> to control which providers are shown in onboarding/provider-picker UI. New config templates default this to <code>["openai", "github-copilot"]</code>; setting <code>offered = []</code> shows all known providers. Configured providers remain visible for management.</li>
 </ul>
-<h3 id="fixed-171">Fixed</h3>
+<h3 id="fixed-172">Fixed</h3>
 <ul>
 <li>
 <p><strong>Web search DuckDuckGo fallback</strong>: When no search API key (Brave or
@@ -5021,7 +5042,7 @@ Rust structs instead of ad-hoc <code>serde_json::Value</code> maps.</li>
 personality bootstrapping.</li>
 </ul>
 <h2 id="029---2026-02-08">[0.2.9] - 2026-02-08</h2>
-<h3 id="added-103">Added</h3>
+<h3 id="added-104">Added</h3>
 <ul>
 <li><strong>Voice provider policy controls</strong>: Added provider-list allowlists so config templates and runtime voice setup can explicitly limit shown/allowed TTS and STT providers.</li>
 <li><strong>Typed voice provider metadata</strong>: Expanded voice provider metadata and preference handling to use typed flows across gateway and UI paths.</li>
@@ -5030,7 +5051,7 @@ personality bootstrapping.</li>
 <ul>
 <li><strong>Reply medium preference handling</strong>: Chat now prefers the same reply medium when possible and falls back to text when a medium cannot be preserved.</li>
 </ul>
-<h3 id="fixed-172">Fixed</h3>
+<h3 id="fixed-173">Fixed</h3>
 <ul>
 <li><strong>Chat UI reply badge visibility</strong>: Assistant footer now reliably shows the selected reply medium badge.</li>
 <li><strong>Voice UX polish</strong>: Improved microphone timing behavior and preserved settings scroll state in voice configuration views.</li>
@@ -5049,7 +5070,7 @@ plugins manifest and directory into the new unified location.</li>
 <code>[voice]</code> section with provider-list allowlists limited to ElevenLabs for TTS and
 Mistral + ElevenLabs for STT.</li>
 </ul>
-<h3 id="fixed-173">Fixed</h3>
+<h3 id="fixed-174">Fixed</h3>
 <ul>
 <li><strong>Update checker repository configuration</strong>: The update checker now reads
 <code>server.update_repository_url</code> from <code>moltis.toml</code>, defaults new configs to
@@ -5068,7 +5089,7 @@ hide <code>create_skill</code>/<code>update_skill</code> and leave only a subset
 Chat runs now use configured tool policy for runtime filtering without globally
 restricting tools based on discovered skill metadata.</li>
 </ul>
-<h3 id="added-104">Added</h3>
+<h3 id="added-105">Added</h3>
 <ul>
 <li>
 <p><strong>Voice Provider Management UI</strong>: Configure TTS and STT providers from Settings > Voice</p>
@@ -5217,7 +5238,7 @@ Empty lists keep current behavior and show all providers.</p>
 <li><strong>Skill trust lifecycle</strong>: Installed marketplace skills/plugins now track a <code>trusted</code> state and must be trusted before they can be enabled; the skills UI now surfaces untrusted status and supports trust-before-enable.</li>
 <li><strong>Git metadata via gitoxide</strong>: Gateway now resolves branch names, repo HEAD SHAs, and commit timestamps using <code>gix</code> (gitoxide) instead of shelling out to <code>git</code> for those read-only operations.</li>
 </ul>
-<h3 id="fixed-174">Fixed</h3>
+<h3 id="fixed-175">Fixed</h3>
 <ul>
 <li><strong>OAuth callback on hosted deployments</strong>: OpenAI Codex OAuth now uses the web app origin callback (<code>/auth/callback</code>) in the UI flow instead of hardcoded localhost loopback, allowing DigitalOcean/Fly/Render deployments to complete OAuth successfully.</li>
 <li><strong>Sandbox startup on hosted Docker environments</strong>: Skip sandbox image pre-build when sandbox mode is off, and require Docker daemon accessibility (not just Docker CLI presence) before selecting the Docker sandbox backend.</li>
@@ -5272,29 +5293,29 @@ with vertical scrolling instead of being scaled down to fit the viewport.</li>
 <li><strong>CI builds</strong>: Migrate all release build jobs from self-hosted to GitHub-hosted runners for full parallelism (<code>ubuntu-latest</code>, <code>ubuntu-latest-arm</code>, <code>macos-latest</code>), remove all cross-compilation toolchain steps</li>
 </ul>
 <h2 id="018---2026-02-06">[0.1.8] - 2026-02-06</h2>
-<h3 id="fixed-175">Fixed</h3>
+<h3 id="fixed-176">Fixed</h3>
 <ul>
 <li><strong>CI builds</strong>: Fix corrupted cargo config on all self-hosted runner jobs, fix macOS runner label, add llama-cpp build deps to Docker and Snap builds</li>
 </ul>
 <h2 id="017---2026-02-06">[0.1.7] - 2026-02-06</h2>
-<h3 id="fixed-176">Fixed</h3>
+<h3 id="fixed-177">Fixed</h3>
 <ul>
 <li><strong>CI builds</strong>: Use project-local <code>.cargo/config.toml</code> for cross-compilation instead of appending to global config (fixes duplicate key errors on self-hosted runners)</li>
 </ul>
 <h2 id="016---2026-02-06">[0.1.6] - 2026-02-06</h2>
-<h3 id="fixed-177">Fixed</h3>
+<h3 id="fixed-178">Fixed</h3>
 <ul>
 <li><strong>CI builds</strong>: Use macOS GitHub-hosted runners for apple-darwin binary builds instead of cross-compiling from Linux</li>
 <li><strong>CI performance</strong>: Run lightweight lint jobs (zizmor, biome, fmt) on GitHub-hosted runners to free up self-hosted runners</li>
 </ul>
 <h2 id="015---2026-02-06">[0.1.5] - 2026-02-06</h2>
-<h3 id="fixed-178">Fixed</h3>
+<h3 id="fixed-179">Fixed</h3>
 <ul>
 <li><strong>CI security</strong>: Use GitHub-hosted runners for PRs to prevent untrusted code from running on self-hosted infrastructure</li>
 <li><strong>CI security</strong>: Add <code>persist-credentials: false</code> to docs workflow checkout (fixes zizmor artipacked warning)</li>
 </ul>
 <h2 id="014---2026-02-06">[0.1.4] - 2026-02-06</h2>
-<h3 id="added-105">Added</h3>
+<h3 id="added-106">Added</h3>
 <ul>
 <li>
 <p><strong><code>--no-tls</code> CLI flag</strong>: <code>--no-tls</code> flag and <code>MOLTIS_NO_TLS</code> environment variable to disable
@@ -5476,7 +5497,7 @@ registration.</p>
 <code>clone_without_prefix("mcp__")</code> in all three call sites.</p>
 </li>
 </ul>
-<h3 id="fixed-179">Fixed</h3>
+<h3 id="fixed-180">Fixed</h3>
 <ul>
 <li>Push notifications not sending when chat uses agent mode (run_with_tools)</li>
 <li>Missing space in Safari install instructions (“usingFile” → “using File”)</li>
