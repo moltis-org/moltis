@@ -64,6 +64,7 @@ function refreshAvailableBackends(): void {
 		})
 		.catch(() => {
 			availableBackends = [];
+			backendsFetchStarted = false;
 			updateSandboxUI(S.sessionSandboxEnabled);
 			updateSandboxImageUI(S.sessionSandboxImage);
 		});
