@@ -10,7 +10,7 @@ supported by Moltis so you can pick the best fit for your use case.
 | **Best overall quality** | Anthropic | Claude Sonnet 4 and Opus 4 excel at tool use, long context, and instruction following |
 | **Widest model range** | OpenAI | GPT-5.6 Sol, Terra, Luna, GPT-4.1, o3/o4-mini reasoning models, image generation |
 | **Best membership option** | OpenAI | GPT-5.6 Sol is a top-quality model and can be available through memberships |
-| **Largest context window** | OpenAI | Up to 1.05M tokens with GPT-5.6 |
+| **Largest context window** | OpenAI, Moonshot | Up to 1.05M tokens with GPT-5.6 and 1M with Kimi K3 |
 | **Best value** | DeepSeek | DeepSeek V3 and R1 offer strong performance at low cost |
 | **Fast inference** | Groq | Hardware-accelerated inference, very low latency |
 | **Free / offline** | Ollama | Run open models locally, no API key needed |
@@ -32,7 +32,7 @@ supported by Moltis so you can pick the best fit for your use case.
 | **MiniMax** | MiniMax M3, M2.7 | Full | Yes | 204.8K-1M | $ | Fast | Strong multilingual, long context |
 | **Z.AI (Zhipu)** | GLM-4, GLM-4 Air | Full | Yes | 128K | $ | Fast | GLM-4 series, competitive quality |
 | **Z.AI Coding** | CodeGeeX, GLM-4 Code | Full | Yes | 128K | $ | Fast | Optimized for code tasks |
-| **Moonshot** | Kimi | Full | Yes | 200K | $ | Medium | Long context, Chinese/English |
+| **Moonshot** | Kimi K3, K2.7 Code, K2.6 | Full | Yes | 256K-1M | $ | Medium | Long context, Chinese/English |
 | **Venice** | Various | Varies | Yes | Varies | $ | Medium | Privacy-focused, uncensored models |
 | **NEAR AI Cloud** | GLM, Qwen, GPT OSS, Claude | Full | Yes | Varies | Varies | Medium | TEE-backed private inference with attestation-aware catalog |
 | **Ollama** | Any GGUF model | Varies | Yes | Varies | Free | Varies | Local inference, no API key |

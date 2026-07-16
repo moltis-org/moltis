@@ -179,9 +179,11 @@ pub fn has_stored_tokens() -> bool {
 
 /// Known Kimi Code models.
 pub const KIMI_CODE_MODELS: &[(&str, &str)] = &[
+    ("kimi-k3", "Kimi K3"),
+    ("kimi-k2.7-code-highspeed", "Kimi K2.7 Code Highspeed"),
     ("kimi-for-coding", "Kimi For Coding"),
-    ("kimi-k2.5", "Kimi K2.5"),
     ("kimi-k2.6", "Kimi K2.6"),
+    ("kimi-k2.5", "Kimi K2.5"),
 ];
 
 // ── LlmProvider impl ────────────────────────────────────────────────────────

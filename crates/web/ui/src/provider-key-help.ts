@@ -60,7 +60,7 @@ const KEY_SOURCE_BY_PROVIDER: Record<string, KeySource> = {
 		label: "MiniMax Platform",
 	},
 	moonshot: {
-		url: "https://platform.moonshot.ai/console/api-keys",
+		url: "https://platform.kimi.ai/console/api-keys",
 		label: "Moonshot Platform",
 	},
 	"kimi-code": {

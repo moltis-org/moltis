@@ -21,6 +21,7 @@ pub(crate) enum RateLimitPolicy {
 pub(crate) enum ReasoningEffortPolicy {
     OpenAi,
     DeepSeek,
+    KimiMax,
     Unsupported,
 }
 

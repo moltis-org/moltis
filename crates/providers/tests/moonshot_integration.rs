@@ -18,11 +18,16 @@ use {
 };
 
 const MOONSHOT_BASE_URL: &str = "https://api.moonshot.ai/v1";
-const TEST_MODEL: &str = "kimi-k2.5";
+const TEST_MODEL: &str = "kimi-k3";
 
 /// Known Moonshot models we catalog. Keep in sync with `MOONSHOT_MODELS` in
 /// `crates/providers/src/lib.rs`.
-const KNOWN_MODELS: &[&str] = &["kimi-k2.5", "kimi-k2.6"];
+const KNOWN_MODELS: &[&str] = &[
+    "kimi-k3",
+    "kimi-k2.7-code-highspeed",
+    "kimi-k2.6",
+    "kimi-k2.5",
+];
 
 fn api_key() -> Secret<String> {
     let key = std::env::var("MOONSHOT_API_KEY")

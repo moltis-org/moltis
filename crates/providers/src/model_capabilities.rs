@@ -91,6 +91,9 @@ const GENERIC_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
     ContextWindowFallback::Prefix("gpt-4", 128_000),
     ContextWindowFallback::Prefix("gpt-5", 128_000),
     ContextWindowFallback::Prefix("mistral-large", 128_000),
+    ContextWindowFallback::Exact("kimi-k3", 1_000_000),
+    ContextWindowFallback::Prefix("kimi-k2.7-code", 256_000),
+    ContextWindowFallback::Exact("kimi-k2.6", 256_000),
     ContextWindowFallback::Prefix("kimi-", 128_000),
     ContextWindowFallback::Prefix("glm-", 128_000),
     ContextWindowFallback::Prefix("qwen3", 128_000),
@@ -309,6 +312,10 @@ pub fn supports_reasoning_for_model(model_id: &str) -> bool {
     if id.starts_with("grok-3") || id.starts_with("grok-4") {
         return true;
     }
+    // Kimi K3 uses the top-level reasoning_effort field; K2.7 Code also has thinking mode.
+    if id == "kimi-k3" || id.starts_with("kimi-k2.7-code") {
+        return true;
+    }
     false
 }
 
@@ -391,6 +398,12 @@ mod tests {
         assert_eq!(context_window_for_model("gpt-5.6-sol"), 1_050_000);
         assert_eq!(context_window_for_model("codestral-latest"), 256_000);
         assert_eq!(context_window_for_model("gemini-2.0-flash"), 1_000_000);
+        assert_eq!(context_window_for_model("kimi-k3"), 1_000_000);
+        assert_eq!(
+            context_window_for_model("kimi-k2.7-code-highspeed"),
+            256_000
+        );
+        assert_eq!(context_window_for_model("kimi-k2.6"), 256_000);
         assert_eq!(context_window_for_model("kimi-k2.5"), 128_000);
         assert_eq!(context_window_for_model("MiniMax-M3"), 1_000_000);
         assert_eq!(context_window_for_model("MiniMax-M2.7"), 204_800);
@@ -416,7 +429,7 @@ mod tests {
         assert_eq!(context_window_for_model("gpt-4.1"), 128_000);
         assert_eq!(context_window_for_model("gpt-5.3"), 128_000);
         assert_eq!(context_window_for_model("mistral-large-2411"), 128_000);
-        assert_eq!(context_window_for_model("kimi-k2.6"), 128_000);
+        assert_eq!(context_window_for_model("kimi-k2.6-lite"), 128_000);
         assert_eq!(context_window_for_model("glm-5-turbo"), 128_000);
         assert_eq!(context_window_for_model("qwen3-next"), 128_000);
     }
@@ -511,6 +524,7 @@ mod tests {
         // Unknown models default to vision support (better to try and fail
         // with an API error than to silently strip images)
         assert!(supports_vision_for_model("some-unknown-model"));
+        assert!(supports_vision_for_model("kimi-k3"));
         assert!(supports_vision_for_model("kimi-k2.5"));
     }
 
@@ -664,6 +678,8 @@ mod tests {
         assert!(supports_reasoning_for_model("gpt-5"));
         assert!(supports_reasoning_for_model("gpt-5-mini"));
         assert!(supports_reasoning_for_model("gpt-5.2"));
+        assert!(supports_reasoning_for_model("kimi-k3"));
+        assert!(supports_reasoning_for_model("kimi-k2.7-code-highspeed"));
         // xAI Grok reasoning models
         assert!(supports_reasoning_for_model("grok-3"));
         assert!(supports_reasoning_for_model("grok-3-latest"));

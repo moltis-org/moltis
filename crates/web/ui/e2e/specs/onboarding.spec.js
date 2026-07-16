@@ -1192,6 +1192,97 @@ test.describe("Onboarding wizard", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("moonshot configuration surfaces Kimi K3 in model selection", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.route("**/api/auth/status", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ authenticated: true, setup_required: false, localhost_only: true }),
+			});
+		});
+
+		await page.addInitScript(() => {
+			const rpcPayloads = {
+				connect: { type: "hello-ok" },
+				"providers.available": [
+					{
+						name: "moonshot",
+						displayName: "Moonshot",
+						authType: "api-key",
+						configured: false,
+						defaultBaseUrl: "https://api.moonshot.ai/v1",
+						baseUrl: "https://api.moonshot.ai/v1",
+						requiresModel: false,
+					},
+				],
+				"providers.validate_key": {
+					valid: true,
+					models: [
+						{ id: "kimi-k3", displayName: "Kimi K3", provider: "moonshot", supportsTools: true },
+						{
+							id: "kimi-k2.7-code-highspeed",
+							displayName: "Kimi K2.7 Code Highspeed",
+							provider: "moonshot",
+							supportsTools: true,
+						},
+					],
+				},
+				"models.test": { ok: true },
+			};
+
+			class FakeWebSocket {
+				static CONNECTING = 0;
+				static OPEN = 1;
+				static CLOSING = 2;
+				static CLOSED = 3;
+
+				readyState = FakeWebSocket.CONNECTING;
+				onopen = null;
+				onmessage = null;
+				onclose = null;
+
+				constructor() {
+					queueMicrotask(() => {
+						this.readyState = FakeWebSocket.OPEN;
+						this.onopen?.({});
+					});
+				}
+
+				send(raw) {
+					const request = JSON.parse(raw || "{}");
+					const payload = rpcPayloads[request.method] || {};
+					const response = { type: "res", id: request.id, ok: true, payload };
+					queueMicrotask(() => this.onmessage?.({ data: JSON.stringify(response) }));
+				}
+
+				close() {
+					this.readyState = FakeWebSocket.CLOSED;
+					this.onclose?.({});
+				}
+			}
+
+			window.WebSocket = FakeWebSocket;
+		});
+
+		await page.goto("/onboarding");
+		await moveToLlmStep(page);
+		await page.getByRole("button", { name: /All providers/ }).click();
+
+		const moonshotRow = page
+			.locator(".onboarding-card .rounded-md.border")
+			.filter({ has: page.getByText("Moonshot", { exact: true }) })
+			.first();
+		await moonshotRow.getByRole("button", { name: "Configure", exact: true }).click();
+		await moonshotRow.locator('input[type="password"]').fill("sk-test-moonshot");
+		await moonshotRow.getByRole("button", { name: "Save", exact: true }).click();
+
+		await expect(moonshotRow.getByText("Select preferred models", { exact: true })).toBeVisible();
+		await expect(moonshotRow.getByText("Kimi K3", { exact: true })).toBeVisible();
+		await expect(moonshotRow.getByText("kimi-k3", { exact: true })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("configured non-default LLM providers appear in recommended onboarding list", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 

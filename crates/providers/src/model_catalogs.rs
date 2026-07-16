@@ -127,8 +127,12 @@ pub(crate) const DEEPSEEK_MODELS: &[(&str, &str)] = &[
 ];
 
 /// Known Moonshot models.
-pub(crate) const MOONSHOT_MODELS: &[(&str, &str)] =
-    &[("kimi-k2.5", "Kimi K2.5"), ("kimi-k2.6", "Kimi K2.6")];
+pub(crate) const MOONSHOT_MODELS: &[(&str, &str)] = &[
+    ("kimi-k3", "Kimi K3"),
+    ("kimi-k2.7-code-highspeed", "Kimi K2.7 Code Highspeed"),
+    ("kimi-k2.6", "Kimi K2.6"),
+    ("kimi-k2.5", "Kimi K2.5"),
+];
 
 /// Known Google Gemini models.
 /// See: <https://ai.google.dev/gemini-api/docs/models>
@@ -236,6 +240,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         models: MOONSHOT_MODELS,
         capabilities: OpenAiProviderCapabilities {
             default_reasoning_content_on_tool_messages: true,
+            reasoning_effort_policy: ReasoningEffortPolicy::KimiMax,
             ..OpenAiProviderCapabilities::DEFAULT
         },
         ..OpenAiCompatDef::DEFAULT

@@ -261,6 +261,7 @@ impl OpenAiProvider {
                 | ReasoningEffort::High => "high",
                 ReasoningEffort::ExtraHigh => "max",
             }),
+            ReasoningEffortPolicy::KimiMax => self.reasoning_effort.map(|_| "max"),
             ReasoningEffortPolicy::OpenAi => self.reasoning_effort.map(|e| match e {
                 ReasoningEffort::Minimal => {
                     tracing::debug!(

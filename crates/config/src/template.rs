@@ -237,7 +237,7 @@ port = {port}                           # Port number (auto-generated for this i
 # [providers.moonshot]
 # enabled = true
 # api_key = "..."                             # Or set MOONSHOT_API_KEY env var
-# models = ["kimi-k2.5"]                      # Preferred models shown first
+# models = ["kimi-k3", "kimi-k2.7-code-highspeed", "kimi-k2.6"]  # Preferred models shown first
 # base_url = "https://api.moonshot.ai/v1"
 # alias = "moonshot"
 
