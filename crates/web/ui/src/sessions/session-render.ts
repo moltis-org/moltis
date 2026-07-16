@@ -113,6 +113,7 @@ interface ExternalAgentInfo {
 
 const installedExternalAgents = new Set<string>();
 let externalAgentsLoaded = false;
+let externalAgentsLoadingPromise: Promise<void> | null = null;
 
 /** History message with an optional seq field, used for resuming chat sequence counters. */
 interface SeqHistoryMessage extends HistoryMessage {
@@ -527,7 +528,11 @@ export function renderWelcomeAgentPicker(
 
 function hasInstalledExternalAgent(): boolean {
 	if (externalAgentsLoaded) return installedExternalAgents.size > 0;
-	void refreshExternalAgentAvailability();
+	if (!externalAgentsLoadingPromise) {
+		externalAgentsLoadingPromise = refreshExternalAgentAvailability().finally(() => {
+			externalAgentsLoadingPromise = null;
+		});
+	}
 	return false;
 }
 
@@ -543,9 +548,7 @@ function refreshExternalAgentAvailability(): Promise<void> {
 			externalAgentsLoaded = true;
 			refreshWelcomeCardIfNeeded();
 		})
-		.catch(() => {
-			externalAgentsLoaded = true;
-		});
+		.catch(() => {});
 }
 
 function hasChatBackend(): boolean {

@@ -15,7 +15,7 @@ use {
     moltis_sessions::{MessageContent, PersistedMessage},
     serde_json::Value,
     tokio::sync::Mutex,
-    tracing::{info, warn},
+    tracing::warn,
 };
 
 use moltis_tools::approval::{ApprovalDecision, ApprovalManager};
@@ -546,13 +546,6 @@ impl ExternalAgentChatService {
             .map_err(|error| error.to_string())?;
         let mut session = live_session.lock().await;
         let external_session_id = session.external_session_id().map(str::to_string);
-        info!(
-            session_key = %session_key,
-            external_agent = kind.as_str(),
-            external_session_id = external_session_id.as_deref().unwrap_or("pending"),
-            prompt_chars = text.len(),
-            "external agent prompt"
-        );
         if external_session_id.is_some() {
             self.session_metadata
                 .set_external_agent(&session_key, Some(kind), external_session_id.clone())
@@ -650,13 +643,6 @@ impl ExternalAgentChatService {
             seq,
             run_id: Some(run_id.clone()),
         };
-        info!(
-            session_key = %session_key,
-            external_agent = kind.as_str(),
-            response_chars = assistant_text.len(),
-            duration_ms,
-            "external agent response"
-        );
         self.session_store
             .append(&session_key, &assistant_msg.to_value())
             .await
@@ -783,7 +769,6 @@ impl ExternalAgentChatService {
                 "sessionKey": session_key,
                 "entry": {
                     "key": session_key,
-                    "external_agent_kind": entry.external_agent_kind.map(|kind| kind.as_str()),
                     "externalAgentKind": entry.external_agent_kind.map(|kind| kind.as_str()),
                     "externalSessionId": entry.external_session_id,
                     "version": entry.version,
@@ -798,7 +783,7 @@ impl ExternalAgentChatService {
         if !self.external_agents.config.enabled {
             return None;
         }
-        let session_key = resolve_session_key(params, &self.state).await;
+        let session_key = resolve_connection_session_key(params, &self.state).await;
         let entry = self.session_metadata.get(&session_key).await?;
         let kind = entry.external_agent_kind?;
         let history = self
@@ -842,6 +827,18 @@ impl ExternalAgentChatService {
             },
         })))
     }
+}
+
+async fn resolve_connection_session_key(params: &Value, state: &GatewayState) -> String {
+    let Some(conn_id) = params.get("_conn_id").and_then(|value| value.as_str()) else {
+        return "main".to_string();
+    };
+    let registry = state.client_registry.read().await;
+    registry
+        .active_sessions
+        .get(conn_id)
+        .cloned()
+        .unwrap_or_else(|| "main".to_string())
 }
 
 async fn resolve_session_key(params: &Value, state: &GatewayState) -> String {
@@ -1322,7 +1319,7 @@ mod tests {
             .expect("send external agent prompt");
 
         let full_context = chat
-            .full_context(serde_json::json!({ "sessionKey": "main" }))
+            .full_context(serde_json::json!({ "_conn_id": "conn-1", "sessionKey": "other" }))
             .await
             .expect("full context");
 
