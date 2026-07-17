@@ -166,6 +166,7 @@ export function SessionHeader({
 	const [switchingExternalAgent, setSwitchingExternalAgent] = useState(false);
 	const [hasLlmModels, setHasLlmModels] = useState<boolean | null>(null);
 	const acpAutoBindAttemptedRef = useRef<Set<string>>(new Set());
+	const acpAutoBindInFlightRef = useRef<Set<string>>(new Set());
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	const fullName = session ? session.label || session.key : currentKey;
@@ -524,27 +525,38 @@ export function SessionHeader({
 	);
 
 	useEffect(() => {
-		if (isCron || hasLlmModels !== false || currentExternalAgentKind || acpAutoBindAttemptedRef.current.has(currentKey)) {
+		if (
+			isCron ||
+			hasLlmModels !== false ||
+			currentExternalAgentKind ||
+			acpAutoBindAttemptedRef.current.has(currentKey) ||
+			acpAutoBindInFlightRef.current.has(currentKey)
+		) {
 			return;
 		}
 		const firstAcpAgent = externalAgentOptions.find((agent) => agent.installed && agent.isAcp);
 		if (!firstAcpAgent) return;
 
 		let cancelled = false;
-		acpAutoBindAttemptedRef.current.add(currentKey);
-		sendRpc("external_agents.bind", { sessionKey: currentKey, kind: firstAcpAgent.kind }).then((bindRes) => {
-			if (cancelled) return;
-			if (!bindRes?.ok) {
-				showToast((bindRes?.error as { message?: string })?.message || "Failed to select ACP agent", "error");
-				return;
-			}
-			if (session) {
-				session.external_agent_kind = firstAcpAgent.kind;
-				session.dataVersion.value++;
-			}
-			refreshModelComboAvailability();
-			fetchSessions();
-		});
+		acpAutoBindInFlightRef.current.add(currentKey);
+		sendRpc("external_agents.bind", { sessionKey: currentKey, kind: firstAcpAgent.kind })
+			.then((bindRes) => {
+				if (cancelled) return;
+				acpAutoBindAttemptedRef.current.add(currentKey);
+				if (!bindRes?.ok) {
+					showToast((bindRes?.error as { message?: string })?.message || "Failed to select ACP agent", "error");
+					return;
+				}
+				if (session) {
+					session.external_agent_kind = firstAcpAgent.kind;
+					session.dataVersion.value++;
+				}
+				refreshModelComboAvailability();
+				fetchSessions();
+			})
+			.finally(() => {
+				acpAutoBindInFlightRef.current.delete(currentKey);
+			});
 		return () => {
 			cancelled = true;
 		};
@@ -584,6 +596,8 @@ export function SessionHeader({
 	}));
 	if (hasLlmModels !== false) {
 		externalAgentSelectOptions.unshift({ value: "", label: "Built-in LLM agent" });
+	} else if (!currentExternalAgentKind) {
+		externalAgentSelectOptions.unshift({ value: "", label: "Select ACP agent" });
 	}
 	const shouldShowExternalAgentPicker = !isCron && selectableExternalAgents.length > 0;
 	const externalAgentStatus = currentExternalAgentKind

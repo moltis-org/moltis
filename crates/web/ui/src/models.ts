@@ -15,15 +15,16 @@ interface ExternalAgentInfo {
 	isAcp?: boolean;
 }
 
-let installedAcpAgents: ExternalAgentInfo[] = [];
+let installedExternalAgents: ExternalAgentInfo[] = [];
+
+function installedAcpAgents(): ExternalAgentInfo[] {
+	return installedExternalAgents.filter((agent) => agent.isAcp);
+}
 
 function activeExternalAgent(): ExternalAgentInfo | null {
 	const kind = sessionStore.activeSession.value?.external_agent_kind || "";
 	if (!kind) return null;
-	return (
-		installedAcpAgents.find((agent) => agent.kind === kind) ||
-		{ kind, name: "ACP agent", installed: true, isAcp: true }
-	);
+	return installedExternalAgents.find((agent) => agent.kind === kind) || null;
 }
 
 export function updateModelComboAvailability(): void {
@@ -47,15 +48,15 @@ export function updateModelComboAvailability(): void {
 function refreshAcpAgents(): Promise<void> {
 	return sendRpc<ExternalAgentInfo[]>("external_agents.list", {})
 		.then((res) => {
-			installedAcpAgents = res?.ok ? (res.payload || []).filter((agent) => agent.installed && agent.isAcp) : [];
+			installedExternalAgents = res?.ok ? (res.payload || []).filter((agent) => agent.installed) : [];
 		})
 		.catch(() => {
-			installedAcpAgents = [];
+			installedExternalAgents = [];
 		});
 }
 
 function updateAcpOnlyModelComboLabel(): void {
-	if (!(S.modelComboLabel && modelStore.models.value.length === 0 && installedAcpAgents.length > 0)) return;
+	if (!(S.modelComboLabel && modelStore.models.value.length === 0 && installedAcpAgents().length > 0)) return;
 	S.modelComboLabel.textContent = "ACP agent";
 	S.modelComboLabel.title = "Using an ACP agent selected in the session header";
 }
@@ -196,10 +197,11 @@ export function renderModelList(query: string): void {
 	if (filtered.length === 0) {
 		const empty = document.createElement("div");
 		empty.className = "model-dropdown-empty";
-		if (allModels.length === 0 && installedAcpAgents.length > 0) {
+		const acpAgents = installedAcpAgents();
+		if (allModels.length === 0 && acpAgents.length > 0) {
 			empty.textContent = "No LLM models configured. ACP agents are selected from the session header.";
 			S.modelDropdownList.appendChild(empty);
-			installedAcpAgents.forEach((agent) => {
+			acpAgents.forEach((agent) => {
 				const item = document.createElement("div");
 				item.className = "model-dropdown-item model-dropdown-item-unsupported";
 				const label = document.createElement("span");
