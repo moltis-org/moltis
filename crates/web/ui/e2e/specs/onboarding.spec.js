@@ -589,6 +589,29 @@ test.describe("Onboarding wizard", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("LLM step shows detected ACP agents before provider choices", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockOnboardingExternalAgents(page, [
+			{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null },
+			{ kind: "acp-gemini", name: "ACP: Gemini", installed: false, isAcp: true, version: null },
+			{ kind: "codex", name: "Codex", installed: true, isAcp: false, version: null },
+		]);
+
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+		await waitForOnboardingWsOpen(page);
+		expect(await moveToLlmStep(page)).toBeTruthy();
+
+		const acpPanel = page.locator(".rounded-md.border").filter({ hasText: "Detected ACP agents" });
+		await expect(acpPanel).toBeVisible();
+		await expect(acpPanel.getByText("ACP: Copilot", { exact: true })).toBeVisible();
+		await expect(acpPanel.getByText("ACP: Gemini", { exact: true })).toHaveCount(0);
+		await expect(acpPanel.getByText("Codex", { exact: true })).toHaveCount(0);
+		await expect(acpPanel.getByText(/you can skip LLM setup/)).toBeVisible();
+		await expect(page.getByRole("button", { name: "Skip for now", exact: true })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("mobile onboarding layout avoids horizontal overflow", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.setViewportSize({ width: 375, height: 812 });

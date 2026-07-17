@@ -22,7 +22,7 @@ import { ProviderStep } from "./onboarding/steps/ProviderStep";
 import { RemoteAccessStep } from "./onboarding/steps/RemoteAccessStep";
 import { SkillsStep } from "./onboarding/steps/SkillsStep";
 import { VoiceStep } from "./onboarding/steps/VoiceStep";
-import type { IdentityInfo } from "./onboarding/types";
+import type { ExternalAgentInfo, IdentityInfo } from "./onboarding/types";
 import { fetchVoiceProviders } from "./voice-utils";
 
 // ── Step indicator ──────────────────────────────────────────
@@ -144,13 +144,6 @@ interface SummarySkills {
 	totalSkills: number;
 }
 
-interface SummaryExternalAgent {
-	kind: string;
-	name: string;
-	installed: boolean;
-	isAcp: boolean;
-}
-
 interface SummaryData {
 	identity: IdentityInfo | null;
 	mem: { total?: number; available?: number } | null;
@@ -162,7 +155,7 @@ interface SummaryData {
 	voice: SummaryVoice | null;
 	sandbox: { backend?: string } | null;
 	skills: SummarySkills | null;
-	externalAgents: SummaryExternalAgent[];
+	externalAgents: ExternalAgentInfo[];
 }
 
 // ── SummaryStep ─────────────────────────────────────────────
@@ -240,7 +233,7 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 					(
 						sendRpc("external_agents.list", {}) as Promise<{
 							ok?: boolean;
-							payload?: SummaryExternalAgent[];
+							payload?: ExternalAgentInfo[];
 						}>
 					).catch(() => null),
 				]);
@@ -293,6 +286,8 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 	const activeModel = localStorage.getItem("moltis-model");
 	const configuredProviders = data.providers.filter((p) => p.configured);
 	const installedAcpAgents = data.externalAgents.filter((agent) => agent.installed && agent.isAcp);
+	const hasConfiguredLlm = configuredProviders.length > 0;
+	const hasAcpOnlyAgent = !hasConfiguredLlm && installedAcpAgents.length > 0;
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -320,8 +315,11 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 				</SummaryRow>
 
 				{/* LLMs */}
-				<SummaryRow icon={configuredProviders.length > 0 ? <CheckIcon /> : <ErrorIcon />} label="LLMs">
-					{configuredProviders.length > 0 ? (
+				<SummaryRow
+					icon={hasConfiguredLlm ? <CheckIcon /> : hasAcpOnlyAgent ? <InfoIcon /> : <ErrorIcon />}
+					label="LLMs"
+				>
+					{hasConfiguredLlm ? (
 						<div className="flex flex-col gap-1">
 							<div className="flex flex-wrap gap-1">
 								{configuredProviders.map((p) => (
@@ -336,6 +334,8 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 								</div>
 							) : null}
 						</div>
+					) : hasAcpOnlyAgent ? (
+						<span>No LLM providers configured; ACP agents are available for chat.</span>
 					) : (
 						<span className="text-[var(--error)]">No LLM providers configured</span>
 					)}

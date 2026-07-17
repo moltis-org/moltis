@@ -42,6 +42,7 @@ interface ExternalAgentInfo {
 	kind: string;
 	name: string;
 	installed: boolean;
+	isAcp?: boolean;
 	version?: string | null;
 }
 
@@ -94,6 +95,12 @@ function buildShareUrl(payload: SharePayload): string {
 
 function isSshTargetNode(node: NodeInfo | null): boolean {
 	return node?.platform === "ssh" || String(node?.nodeId || "").startsWith("ssh:");
+}
+
+function refreshModelComboAvailability(): void {
+	void import("../models").then(({ updateModelComboAvailability }) => {
+		updateModelComboAvailability();
+	});
 }
 
 function nodeOptionLabel(node: NodeInfo | null): string {
@@ -157,6 +164,8 @@ export function SessionHeader({
 	const [switchingNode, setSwitchingNode] = useState(false);
 	const [externalAgentOptions, setExternalAgentOptions] = useState<ExternalAgentInfo[]>([]);
 	const [switchingExternalAgent, setSwitchingExternalAgent] = useState(false);
+	const [hasLlmModels, setHasLlmModels] = useState<boolean | null>(null);
+	const acpAutoBindAttemptedRef = useRef<Set<string>>(new Set());
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	const fullName = session ? session.label || session.key : currentKey;
@@ -190,6 +199,18 @@ export function SessionHeader({
 			setDefaultAgentId(parsed.defaultId);
 			setAgentOptions(parsed.agents as AgentOption[]);
 			setAgentOptionsLoaded(true);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [currentKey]);
+
+	useEffect(() => {
+		let cancelled = false;
+		setHasLlmModels(null);
+		sendRpc<{ id?: string }[]>("models.list", {}).then((res) => {
+			if (cancelled) return;
+			setHasLlmModels(Boolean(res?.ok && (res.payload || []).length > 0));
 		});
 		return () => {
 			cancelled = true;
@@ -492,6 +513,7 @@ export function SessionHeader({
 						session.external_agent_kind = nextKind || null;
 						session.dataVersion.value++;
 					}
+					refreshModelComboAvailability();
 					fetchSessions();
 				})
 				.finally(() => {
@@ -500,6 +522,33 @@ export function SessionHeader({
 		},
 		[currentExternalAgentKind, currentKey, session, switchingExternalAgent],
 	);
+
+	useEffect(() => {
+		if (isCron || hasLlmModels !== false || currentExternalAgentKind || acpAutoBindAttemptedRef.current.has(currentKey)) {
+			return;
+		}
+		const firstAcpAgent = externalAgentOptions.find((agent) => agent.installed && agent.isAcp);
+		if (!firstAcpAgent) return;
+
+		let cancelled = false;
+		acpAutoBindAttemptedRef.current.add(currentKey);
+		sendRpc("external_agents.bind", { sessionKey: currentKey, kind: firstAcpAgent.kind }).then((bindRes) => {
+			if (cancelled) return;
+			if (!bindRes?.ok) {
+				showToast((bindRes?.error as { message?: string })?.message || "Failed to select ACP agent", "error");
+				return;
+			}
+			if (session) {
+				session.external_agent_kind = firstAcpAgent.kind;
+				session.dataVersion.value++;
+			}
+			refreshModelComboAvailability();
+			fetchSessions();
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [currentExternalAgentKind, currentKey, externalAgentOptions, hasLlmModels, isCron, session]);
 
 	const agentSelectValue = currentAgentId;
 	const hasCurrentAgentOption = agentOptions.some((agent) => agent.id === agentSelectValue);
@@ -525,15 +574,17 @@ export function SessionHeader({
 
 	const shouldShowNodePicker = !isCron && (nodeOptions.length > 0 || Boolean(currentNodeId));
 	const selectableExternalAgents = externalAgentOptions.filter(
-		(agent) => agent.installed || agent.kind === currentExternalAgentKind,
+		(agent) =>
+			(agent.isAcp || agent.kind === currentExternalAgentKind) &&
+			(agent.installed || agent.kind === currentExternalAgentKind),
 	);
-	const externalAgentSelectOptions: SelectOption[] = [
-		{ value: "", label: "Moltis agent" },
-		...selectableExternalAgents.map((agent) => ({
-			value: agent.kind,
-			label: `${agent.name}${agent.installed ? "" : " (unavailable)"}`,
-		})),
-	];
+	const externalAgentSelectOptions: SelectOption[] = selectableExternalAgents.map((agent) => ({
+		value: agent.kind,
+		label: `${agent.name}${agent.installed ? "" : " (unavailable)"}`,
+	}));
+	if (hasLlmModels !== false) {
+		externalAgentSelectOptions.unshift({ value: "", label: "Built-in LLM agent" });
+	}
 	const shouldShowExternalAgentPicker = !isCron && selectableExternalAgents.length > 0;
 	const externalAgentStatus = currentExternalAgentKind
 		? currentExternalAgent?.installed === false
