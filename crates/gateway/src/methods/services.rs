@@ -334,6 +334,8 @@ fn parse_memory_backend(value: &str) -> Result<moltis_config::MemoryBackend, Err
     match value {
         "builtin" => Ok(moltis_config::MemoryBackend::Builtin),
         "qmd" => Ok(moltis_config::MemoryBackend::Qmd),
+        #[cfg(feature = "zvec")]
+        "zvec" => Ok(moltis_config::MemoryBackend::Zvec),
         _ => Err(invalid_memory_config_value("backend", value)),
     }
 }

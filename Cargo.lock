@@ -1045,10 +1045,14 @@ dependencies = [
  "moltis-agents",
  "moltis-code-index",
  "moltis-config",
+ "moltis-memory",
+ "moltis-memory-zvec",
  "moltis-providers",
  "moltis-qmd",
  "moltis-sessions",
+ "rand 0.10.1",
  "serde_json",
+ "sqlx",
  "tempfile",
  "tokio",
  "toml 0.8.23",
@@ -1896,6 +1900,19 @@ name = "condtype"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf0a07a401f374238ab8e2f11a104d2851bf9ce711ec69804834de8af45c7af"
+
+[[package]]
+name = "console"
+version = "0.15.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "054ccb5b10f9f2cbf51eb355ca1d05c2d279ce1804688d0db74b4733a5aeafd8"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "once_cell",
+ "unicode-width",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "const-oid"
@@ -3061,6 +3078,12 @@ name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+
+[[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "encoding_rs"
@@ -5683,6 +5706,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "indicatif"
+version = "0.17.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "183b3088984b400f4cfac3620d5e076c84da5364016b4f49473de574b2586235"
+dependencies = [
+ "console",
+ "number_prefix",
+ "portable-atomic",
+ "unicode-width",
+ "web-time",
+]
+
+[[package]]
 name = "inotify"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7120,6 +7156,7 @@ dependencies = [
  "anyhow",
  "clap",
  "dotenvy",
+ "indicatif",
  "moltis-agents",
  "moltis-browser",
  "moltis-claude-import",
@@ -7132,6 +7169,7 @@ dependencies = [
  "moltis-httpd",
  "moltis-import-core",
  "moltis-memory",
+ "moltis-memory-zvec",
  "moltis-node-host",
  "moltis-oauth",
  "moltis-onboarding",
@@ -7585,6 +7623,7 @@ dependencies = [
  "moltis-mcp-agent-bridge",
  "moltis-media",
  "moltis-memory",
+ "moltis-memory-zvec",
  "moltis-metrics",
  "moltis-msteams",
  "moltis-netbird",
@@ -7883,6 +7922,29 @@ dependencies = [
  "tokio",
  "tracing",
  "walkdir",
+]
+
+[[package]]
+name = "moltis-memory-zvec"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "half",
+ "hex",
+ "moltis-memory",
+ "redb",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "zvec",
+ "zvec-sys",
 ]
 
 [[package]]
@@ -9184,6 +9246,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "number_prefix"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
+
+[[package]]
 name = "oauth2"
 version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10406,6 +10474,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7e264f9ec4f3d112e8e2f214e8e7cb5cf3b83278f3570b7e00bfe13d3bd8ff"
 dependencies = [
  "tokio",
+]
+
+[[package]]
+name = "redb"
+version = "2.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eca1e9d98d5a7e9002d0013e18d5a9b000aee942eb134883a82f06ebffb6c01"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -16052,3 +16129,16 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
+
+[[package]]
+name = "zvec"
+version = "0.5.0"
+source = "git+https://github.com/zvec-ai/zvec-rust?rev=b1ca2393029f5c807275e8580e4ef22d83aff404#b1ca2393029f5c807275e8580e4ef22d83aff404"
+dependencies = [
+ "zvec-sys",
+]
+
+[[package]]
+name = "zvec-sys"
+version = "0.5.0"
+source = "git+https://github.com/zvec-ai/zvec-rust?rev=b1ca2393029f5c807275e8580e4ef22d83aff404#b1ca2393029f5c807275e8580e4ef22d83aff404"

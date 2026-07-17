@@ -1,11 +1,10 @@
 /// SQLite implementation of the `MemoryStore` trait.
-use async_trait::async_trait;
-use sqlx::SqlitePool;
+use {async_trait::async_trait, sqlx::SqlitePool};
 
 use crate::{
     schema::{ChunkRow, FileRow},
-    search::SearchResult,
-    store::{CacheEntry, MemoryStore},
+    search::{self, SearchResult},
+    store::{CacheEntry, MemoryStore, MergeStrategy},
 };
 
 /// Sanitize a user query for FTS5 `MATCH`.
@@ -36,6 +35,119 @@ fn sanitize_fts5_query(query: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Run vector (cosine similarity) search via SQLite, returning top-K results.
+async fn vector_search_sqlite(
+    pool: &SqlitePool,
+    query_embedding: &[f32],
+    limit: usize,
+) -> crate::error::Result<Vec<SearchResult>> {
+    use {futures::TryStreamExt, std::collections::BinaryHeap};
+
+    let mut heap: BinaryHeap<ScoredResult> = BinaryHeap::with_capacity(limit + 1);
+
+    let mut stream = sqlx::query_as::<_, (String, String, String, i64, i64, Option<Vec<u8>>)>(
+        "SELECT id, path, source, start_line, end_line, embedding FROM chunks WHERE embedding IS NOT NULL",
+    )
+    .fetch(pool);
+
+    while let Some((id, path, source, start_line, end_line, emb)) = stream.try_next().await? {
+        let Some(emb) = emb else {
+            continue;
+        };
+        let embedding = blob_as_f32_slice(&emb);
+        let score = cosine_similarity(query_embedding, &embedding);
+
+        if heap.len() < limit {
+            heap.push(ScoredResult {
+                score,
+                result: SearchResult {
+                    chunk_id: id,
+                    path,
+                    source,
+                    start_line,
+                    end_line,
+                    score,
+                    text: String::new(),
+                },
+            });
+        } else if let Some(min) = heap.peek()
+            && score > min.score
+        {
+            heap.pop();
+            heap.push(ScoredResult {
+                score,
+                result: SearchResult {
+                    chunk_id: id,
+                    path,
+                    source,
+                    start_line,
+                    end_line,
+                    score,
+                    text: String::new(),
+                },
+            });
+        }
+    }
+
+    let mut results: Vec<SearchResult> = heap.into_iter().map(|s| s.result).collect();
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(results)
+}
+
+/// Run keyword (FTS5) search via SQLite, returning top-K results.
+async fn keyword_search_sqlite(
+    pool: &SqlitePool,
+    query: &str,
+    limit: usize,
+) -> crate::error::Result<Vec<SearchResult>> {
+    let sanitized = sanitize_fts5_query(query);
+    if sanitized.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let rows: Vec<(String, String, String, i64, i64, f64)> = sqlx::query_as(
+        "SELECT c.id, c.path, c.source, c.start_line, c.end_line, rank
+         FROM chunks_fts f
+         JOIN chunks c ON c.rowid = f.rowid
+         WHERE chunks_fts MATCH ?
+         ORDER BY rank
+         LIMIT ?",
+    )
+    .bind(&sanitized)
+    .bind(limit as i64)
+    .fetch_all(pool)
+    .await?;
+
+    // FTS5 rank is negative (lower = better). Normalize to 0..1 range.
+    let min_rank = rows.iter().map(|r| r.5).fold(f64::INFINITY, f64::min);
+    let max_rank = rows.iter().map(|r| r.5).fold(f64::NEG_INFINITY, f64::max);
+    let range = max_rank - min_rank;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, path, source, start_line, end_line, rank)| {
+            let score = if range.abs() < 1e-9 {
+                1.0
+            } else {
+                (1.0 - ((rank - min_rank) / range)) as f32
+            };
+            SearchResult {
+                chunk_id: id,
+                path,
+                source,
+                start_line,
+                end_line,
+                score,
+                text: String::new(),
+            }
+        })
+        .collect())
 }
 
 pub struct SqliteMemoryStore {
@@ -376,126 +488,62 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(result.rows_affected() as usize)
     }
 
-    async fn vector_search(
+    #[tracing::instrument(skip(self, embedding, query), fields(query_len = query.len(), limit))]
+    async fn hybrid_search(
         &self,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> crate::error::Result<Vec<SearchResult>> {
-        use {futures::TryStreamExt, std::collections::BinaryHeap};
-
-        // Stream rows one at a time, keeping only the top-K results in a
-        // min-heap. Memory usage is O(limit) instead of O(all_chunks).
-        let mut heap: BinaryHeap<ScoredResult> = BinaryHeap::with_capacity(limit + 1);
-
-        let mut stream = sqlx::query_as::<_, (String, String, String, i64, i64, Option<Vec<u8>>)>(
-            "SELECT id, path, source, start_line, end_line, embedding FROM chunks WHERE embedding IS NOT NULL",
-        )
-        .fetch(&self.pool);
-
-        while let Some((id, path, source, start_line, end_line, emb)) = stream.try_next().await? {
-            let Some(emb) = emb else {
-                continue;
-            };
-            let embedding = blob_as_f32_slice(&emb);
-            let score = cosine_similarity(query_embedding, &embedding);
-
-            if heap.len() < limit {
-                heap.push(ScoredResult {
-                    score,
-                    result: SearchResult {
-                        chunk_id: id,
-                        path,
-                        source,
-                        start_line,
-                        end_line,
-                        score,
-                        text: String::new(),
-                    },
-                });
-            } else if let Some(min) = heap.peek()
-                && score > min.score
-            {
-                heap.pop();
-                heap.push(ScoredResult {
-                    score,
-                    result: SearchResult {
-                        chunk_id: id,
-                        path,
-                        source,
-                        start_line,
-                        end_line,
-                        score,
-                        text: String::new(),
-                    },
-                });
-            }
-        }
-
-        // Extract results sorted by score descending.
-        let mut results: Vec<SearchResult> = heap.into_iter().map(|s| s.result).collect();
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        Ok(results)
-    }
-
-    async fn keyword_search(
-        &self,
+        embedding: &[f32],
         query: &str,
+        vector_weight: f32,
+        keyword_weight: f32,
+        merge_strategy: MergeStrategy,
         limit: usize,
     ) -> crate::error::Result<Vec<SearchResult>> {
-        let sanitized = sanitize_fts5_query(query);
-        if sanitized.is_empty() {
-            return Ok(Vec::new());
-        }
+        let fetch_limit = limit * 3;
 
-        let rows: Vec<(String, String, String, i64, i64, f64)> = sqlx::query_as(
-            "SELECT c.id, c.path, c.source, c.start_line, c.end_line, rank
-             FROM chunks_fts f
-             JOIN chunks c ON c.rowid = f.rowid
-             WHERE chunks_fts MATCH ?
-             ORDER BY rank
-             LIMIT ?",
-        )
-        .bind(&sanitized)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await?;
+        let vector_results = if !embedding.is_empty() {
+            vector_search_sqlite(&self.pool, embedding, fetch_limit).await?
+        } else {
+            Vec::new()
+        };
 
-        // FTS5 rank is negative (lower = better). Normalize to 0..1 range.
-        let min_rank = rows.iter().map(|r| r.5).fold(f64::INFINITY, f64::min);
-        let max_rank = rows.iter().map(|r| r.5).fold(f64::NEG_INFINITY, f64::max);
-        let range = max_rank - min_rank;
+        let keyword_results = if !query.is_empty() {
+            keyword_search_sqlite(&self.pool, query, fetch_limit).await?
+        } else {
+            Vec::new()
+        };
 
-        Ok(rows
-            .into_iter()
-            .map(|(id, path, source, start_line, end_line, rank)| {
-                let score = if range.abs() < 1e-9 {
-                    1.0
-                } else {
-                    // Invert: most negative rank → highest score
-                    (1.0 - ((rank - min_rank) / range)) as f32
-                };
-                SearchResult {
-                    chunk_id: id,
-                    path,
-                    source,
-                    start_line,
-                    end_line,
-                    score,
-                    text: String::new(),
-                }
-            })
-            .collect())
+        let merged = match merge_strategy {
+            MergeStrategy::Weighted => search::merge_weighted(
+                &vector_results,
+                &keyword_results,
+                vector_weight,
+                keyword_weight,
+            ),
+            MergeStrategy::Rrf { k } => search::merge_rrf(
+                &vector_results,
+                &keyword_results,
+                vector_weight,
+                keyword_weight,
+                k,
+            ),
+        };
+
+        let mut final_results: Vec<SearchResult> = merged.into_iter().take(limit).collect();
+        search::fill_missing_text(self, &mut final_results).await?;
+        Ok(final_results)
     }
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::schema::run_migrations};
+    use {
+        super::*,
+        crate::{
+            schema::run_migrations,
+            search::{merge_rrf, merge_weighted},
+        },
+    };
 
     async fn setup() -> SqliteMemoryStore {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -638,7 +686,10 @@ mod tests {
         };
         store.upsert_chunks(&[c1, c2]).await.unwrap();
 
-        let results = store.vector_search(&[1.0, 0.0, 0.0], 2).await.unwrap();
+        let results = store
+            .hybrid_search(&[1.0, 0.0, 0.0], "", 1.0, 0.0, MergeStrategy::Weighted, 2)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].chunk_id, "c1");
         assert!((results[0].score - 1.0).abs() < 1e-6);
@@ -682,7 +733,10 @@ mod tests {
         };
         store.upsert_chunks(&[c1, c2]).await.unwrap();
 
-        let results = store.keyword_search("rust", 10).await.unwrap();
+        let results = store
+            .hybrid_search(&[], "rust", 0.0, 1.0, MergeStrategy::Weighted, 10)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].chunk_id, "c1");
     }
@@ -746,12 +800,25 @@ mod tests {
         store.upsert_chunks(&[c1]).await.unwrap();
 
         // Query with dots (like coordinates) should not error
-        let results = store.keyword_search("37.759 location", 10).await.unwrap();
+        let results = store
+            .hybrid_search(
+                &[],
+                "37.759 location",
+                0.0,
+                1.0,
+                MergeStrategy::Weighted,
+                10,
+            )
+            .await
+            .unwrap();
         // May or may not find results, but must not panic/error
         assert!(results.len() <= 10);
 
         // Query with only punctuation should return empty, not error
-        let results = store.keyword_search("...", 10).await.unwrap();
+        let results = store
+            .hybrid_search(&[], "...", 0.0, 1.0, MergeStrategy::Weighted, 10)
+            .await
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -772,5 +839,99 @@ mod tests {
         for (a, b) in v.iter().zip(back.iter()) {
             assert!((a - b).abs() < 1e-7);
         }
+    }
+
+    fn make_search_result(id: &str, score: f32) -> SearchResult {
+        SearchResult {
+            chunk_id: id.into(),
+            path: "test.md".into(),
+            source: "daily".into(),
+            start_line: 1,
+            end_line: 5,
+            score,
+            text: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_merge_weighted_deduplication() {
+        let vec_results = vec![make_search_result("c1", 0.9), make_search_result("c2", 0.5)];
+        let kw_results = vec![make_search_result("c1", 0.8), make_search_result("c3", 0.7)];
+
+        let merged = merge_weighted(&vec_results, &kw_results, 0.7, 0.3);
+
+        // c1 should have combined score: 0.9*0.7 + 0.8*0.3 = 0.63 + 0.24 = 0.87
+        let c1 = merged.iter().find(|r| r.chunk_id == "c1").unwrap();
+        assert!((c1.score - 0.87).abs() < 1e-5);
+
+        let c2 = merged.iter().find(|r| r.chunk_id == "c2").unwrap();
+        assert!((c2.score - 0.35).abs() < 1e-5);
+
+        let c3 = merged.iter().find(|r| r.chunk_id == "c3").unwrap();
+        assert!((c3.score - 0.21).abs() < 1e-5);
+
+        assert!(merged[0].score >= merged[1].score);
+        assert!(merged[1].score >= merged[2].score);
+    }
+
+    #[test]
+    fn test_merge_weighted_empty() {
+        let merged = merge_weighted(&[], &[], 0.7, 0.3);
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn test_merge_rrf_deduplication() {
+        let vec_results = vec![make_search_result("c1", 0.9), make_search_result("c2", 0.5)];
+        let kw_results = vec![make_search_result("c1", 0.8), make_search_result("c3", 0.7)];
+
+        let merged = merge_rrf(&vec_results, &kw_results, 0.7, 0.3, 5);
+
+        let c1_count = merged.iter().filter(|r| r.chunk_id == "c1").count();
+        assert_eq!(c1_count, 1, "c1 should be deduplicated");
+
+        assert_eq!(merged.len(), 3);
+
+        for i in 0..merged.len() - 1 {
+            assert!(
+                merged[i].score >= merged[i + 1].score,
+                "results should be sorted descending by score"
+            );
+        }
+    }
+
+    #[test]
+    fn test_merge_rrf_empty() {
+        let merged = merge_rrf(&[], &[], 0.7, 0.3, 5);
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn test_merge_rrf_single_source() {
+        let vec_results = vec![make_search_result("c1", 0.9), make_search_result("c2", 0.5)];
+        let merged = merge_rrf(&vec_results, &[], 0.7, 0.3, 5);
+        assert_eq!(merged.len(), 2);
+        assert!(merged[0].score > merged[1].score);
+    }
+
+    #[test]
+    fn test_rrf_vs_weighted_produce_different_rankings() {
+        let vec_results = vec![
+            make_search_result("c1", 0.95),
+            make_search_result("c2", 0.1),
+        ];
+        let kw_results = vec![
+            make_search_result("c2", 10.0),
+            make_search_result("c1", 0.5),
+        ];
+
+        let weighted = merge_weighted(&vec_results, &kw_results, 0.7, 0.3);
+        let rrf = merge_rrf(&vec_results, &kw_results, 0.7, 0.3, 5);
+
+        // Weighted: c2 = 0.1*0.7 + 10.0*0.3 = 3.07, c1 = 0.95*0.7 + 0.5*0.3 = 0.815
+        assert_eq!(weighted[0].chunk_id, "c2");
+
+        // RRF: c1 is rank 0 in vector (high weight), rank 1 in keyword
+        assert_eq!(rrf[0].chunk_id, "c1");
     }
 }

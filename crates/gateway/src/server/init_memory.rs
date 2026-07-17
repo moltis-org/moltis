@@ -30,6 +30,8 @@ pub(crate) async fn init_memory_system(
 
     let mem_cfg = &config.memory;
 
+    validate_memory_backend(mem_cfg.backend);
+
     if mem_cfg.disable_rag {
         info!("memory: RAG disabled via memory.disable_rag=true, using keyword-only search");
     } else {
@@ -191,6 +193,23 @@ pub(crate) async fn init_memory_system(
             }
         };
 
+    #[cfg(feature = "zvec")]
+    if mem_cfg.backend == moltis_config::MemoryBackend::Zvec {
+        let embedding_dimension = mem_cfg
+            .embedding_dimension
+            .or_else(|| embedder.as_ref().map(|e| e.dimensions() as u32));
+        match try_init_zvec(mem_cfg, data_dir, embedding_dimension) {
+            Ok(store) => {
+                return build_memory_runtime_from_store(mem_cfg, data_dir, embedder, store).await;
+            },
+            Err(e) => {
+                warn!(
+                    "zvec initialization failed ({e:#}), falling back to built-in SQLite backend"
+                );
+            },
+        }
+    }
+
     let memory_db_path = data_dir.join("memory.db");
     let memory_pool_result = {
         use {
@@ -241,6 +260,83 @@ async fn build_memory_runtime(
     embedder: Option<Box<dyn moltis_memory::embeddings::EmbeddingProvider>>,
     memory_pool: sqlx::SqlitePool,
 ) -> Option<moltis_memory::runtime::DynMemoryRuntime> {
+    let store: Box<dyn moltis_memory::store::MemoryStore> = Box::new(
+        moltis_memory::store_sqlite::SqliteMemoryStore::new(memory_pool),
+    );
+    build_memory_runtime_from_store(mem_cfg, data_dir, embedder, store).await
+}
+
+/// Validate that the configured memory backend is available with the current
+/// build features. Logs a clear warning when the required feature is missing.
+fn validate_memory_backend(backend: moltis_config::MemoryBackend) {
+    match backend {
+        moltis_config::MemoryBackend::Builtin => {},
+        moltis_config::MemoryBackend::Zvec => {
+            #[cfg(not(feature = "zvec"))]
+            warn!(
+                "memory: zvec backend requires moltis built with --features zvec, \
+                 falling back to built-in SQLite backend"
+            );
+        },
+        moltis_config::MemoryBackend::Qmd => {
+            #[cfg(not(feature = "qmd"))]
+            warn!(
+                "memory: qmd backend requires moltis built with --features qmd, \
+                 falling back to built-in SQLite backend"
+            );
+        },
+    }
+}
+
+/// Initialize the zvec memory backend.
+///
+/// Returns the ready store on success; on failure the error propagates to the
+/// caller, which logs a warning and falls back to the built-in SQLite backend.
+#[cfg(feature = "zvec")]
+fn try_init_zvec(
+    cfg: &moltis_config::schema::MemoryEmbeddingConfig,
+    data_dir: &FsPath,
+    embedding_dimension: Option<u32>,
+) -> anyhow::Result<Box<dyn moltis_memory::store::MemoryStore>> {
+    let db_path = cfg.db_path.as_deref().unwrap_or("memory.zvec");
+    let collection_path = data_dir.join(db_path);
+    let dim = embedding_dimension.unwrap_or(768);
+    let collection = moltis_memory_zvec::initialize(&collection_path, embedding_dimension)?;
+
+    let cache_path = data_dir.join(format!("{}.cache", db_path));
+    let cache_config = moltis_memory_zvec::ZvecCacheConfig {
+        dimension: dim,
+        cache_max_entries: 200_000,
+    };
+    let cache = moltis_memory_zvec::RedbCache::with_config(&cache_path, cache_config)?;
+    let store = moltis_memory_zvec::ZvecMemoryStore::with_cache(collection, cache)
+        .with_cache_dimension(dim)
+        .with_collection_disk_path(&collection_path);
+    if let Err(e) = store.optimize() {
+        tracing::warn!("zvec: initial optimize failed: {e}");
+    }
+    let zvec_collection = store.collection_arc();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if let Err(e) = zvec_collection.optimize() {
+                tracing::warn!("zvec: periodic optimize failed: {e}");
+            }
+        }
+    });
+    tracing::info!("using zvec memory backend");
+    Ok(Box::new(store))
+}
+
+/// Build the memory runtime from a pre-created store (used by both SQLite and zvec backends).
+async fn build_memory_runtime_from_store(
+    mem_cfg: &moltis_config::schema::MemoryEmbeddingConfig,
+    data_dir: &FsPath,
+    embedder: Option<Box<dyn moltis_memory::embeddings::EmbeddingProvider>>,
+    store: Box<dyn moltis_memory::store::MemoryStore>,
+) -> Option<moltis_memory::runtime::DynMemoryRuntime> {
     let data_memory_file = data_dir.join("MEMORY.md");
     let data_memory_file_lower = data_dir.join("memory.md");
     let data_memory_sub = data_dir.join("memory");
@@ -287,9 +383,6 @@ async fn build_memory_runtime(
         ..Default::default()
     };
 
-    let store = Box::new(moltis_memory::store_sqlite::SqliteMemoryStore::new(
-        memory_pool,
-    ));
     let memory_dirs_for_watch = memory_runtime_config.memory_dirs.clone();
     let builtin_manager = Arc::new(if let Some(embedder) = embedder {
         moltis_memory::manager::MemoryManager::new(memory_runtime_config, store, embedder)
@@ -338,6 +431,13 @@ async fn build_memory_runtime(
                 );
                 builtin_manager.clone()
             }
+        },
+        moltis_config::MemoryBackend::Zvec => {
+            #[cfg(not(feature = "zvec"))]
+            warn!(
+                "memory: zvec backend requested but the gateway was built without the zvec feature, falling back to builtin memory"
+            );
+            builtin_manager.clone()
         },
     };
 

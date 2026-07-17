@@ -70,6 +70,9 @@ export default {
 			"Utilisation du bac à sable WASM avec isolation du système de fichiers. Pour une isolation conteneur, installez Docker ou Apple Container.",
 	},
 
+	// ── Backends mémoire ────────────────────────────────────
+	zvec: "Zvec (vecteurs rapides)",
+
 	// ── Alert labels ───────────────────────────────────────
 	alertWarning: "Warning: ",
 	alertTip: "Tip: ",

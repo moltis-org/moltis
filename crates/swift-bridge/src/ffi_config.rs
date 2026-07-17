@@ -104,6 +104,8 @@ pub extern "C" fn moltis_memory_status() -> *mut c_char {
                 db_size_display: format_bytes(db_size),
                 embedding_model,
                 has_embeddings,
+                backend_type: "sqlite".to_string(),
+                hnsw_percent: None,
                 error: Some("memory.db not found".to_owned()),
             };
             return encode_json(&response);
@@ -121,6 +123,8 @@ pub extern "C" fn moltis_memory_status() -> *mut c_char {
                     db_size_display: format_bytes(db_size),
                     embedding_model,
                     has_embeddings,
+                    backend_type: "sqlite".to_string(),
+                    hnsw_percent: None,
                     error: Some(format!("invalid sqlite path: {error}")),
                 };
                 return encode_json(&response);
@@ -141,6 +145,8 @@ pub extern "C" fn moltis_memory_status() -> *mut c_char {
                     db_size_display: format_bytes(db_size),
                     embedding_model,
                     has_embeddings,
+                    backend_type: "sqlite".to_string(),
+                    hnsw_percent: None,
                     error: Some(format!("failed to open memory.db: {error}")),
                 };
                 return encode_json(&response);
@@ -192,6 +198,8 @@ pub extern "C" fn moltis_memory_status() -> *mut c_char {
             db_size_display: format_bytes(db_size),
             embedding_model,
             has_embeddings,
+            backend_type: "sqlite".to_string(),
+            hnsw_percent: None,
             error: None,
         };
         encode_json(&response)
@@ -231,6 +239,7 @@ pub extern "C" fn moltis_memory_config_get() -> *mut c_char {
             backend: match memory.backend {
                 moltis_config::MemoryBackend::Builtin => "builtin".to_owned(),
                 moltis_config::MemoryBackend::Qmd => "qmd".to_owned(),
+                moltis_config::MemoryBackend::Zvec => "zvec".to_owned(),
             },
             provider: match memory.provider {
                 Some(moltis_config::MemoryProvider::Local) => "local".to_owned(),
@@ -311,6 +320,7 @@ pub extern "C" fn moltis_memory_config_update(request_json: *const c_char) -> *m
         let backend = request.backend.unwrap_or_else(|| match current.backend {
             moltis_config::MemoryBackend::Builtin => "builtin".to_owned(),
             moltis_config::MemoryBackend::Qmd => "qmd".to_owned(),
+            moltis_config::MemoryBackend::Zvec => "zvec".to_owned(),
         });
         let provider = request.provider.unwrap_or_else(|| match current.provider {
             Some(moltis_config::MemoryProvider::Local) => "local".to_owned(),

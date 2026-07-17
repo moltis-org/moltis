@@ -15,12 +15,43 @@ pub enum MemoryAction {
     },
     /// Show memory system status (files, chunks, database size).
     Status,
+    /// Re-index chunks from one zvec collection to another with re-embedding.
+    #[cfg(feature = "zvec")]
+    Reindex {
+        /// Source zvec collection path (default: active collection from config).
+        #[arg(long)]
+        from: Option<String>,
+        /// Target zvec collection path (required).
+        #[arg(long)]
+        to: String,
+        /// Model for re-embedding (default: current config model).
+        #[arg(long)]
+        model: Option<String>,
+        /// Target embedding dimension (default: same as source).
+        #[arg(long)]
+        target_dim: Option<u32>,
+        /// Print plan without executing.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Skip confirmation prompt.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+    },
 }
 
 pub async fn handle_memory(action: MemoryAction) -> anyhow::Result<()> {
     match action {
         MemoryAction::Search { query, limit, json } => search_memory(&query, limit, json).await,
         MemoryAction::Status => show_status().await,
+        #[cfg(feature = "zvec")]
+        MemoryAction::Reindex {
+            from,
+            to,
+            model,
+            target_dim,
+            dry_run,
+            yes,
+        } => handle_reindex(from, to, model, target_dim, dry_run, yes).await,
     }
 }
 
@@ -92,7 +123,6 @@ fn print_human(results: &[moltis_memory::search::SearchResult]) {
             "[{:.2}] {} (lines {}-{})",
             r.score, r.path, r.start_line, r.end_line
         );
-        // Indent the text snippet
         let snippet = r.text.trim();
         let preview: String = snippet.chars().take(200).collect();
         for line in preview.lines() {
@@ -128,6 +158,217 @@ async fn show_status() -> anyhow::Result<()> {
     println!("  Embedding model: {}", status.embedding_model);
     println!("  Database size:   {}", status.db_size_display());
     println!("  Database path:   {}", db_path.display());
+
+    Ok(())
+}
+
+#[cfg(feature = "zvec")]
+async fn handle_reindex(
+    from: Option<String>,
+    to: String,
+    model: Option<String>,
+    target_dim: Option<u32>,
+    dry_run: bool,
+    yes: bool,
+) -> anyhow::Result<()> {
+    use std::path::Path;
+
+    use {
+        moltis_memory::{embeddings::EmbeddingProvider, store::MemoryStore},
+        secrecy::ExposeSecret,
+    };
+
+    let config = moltis_config::discover_and_load();
+    let data_dir = moltis_config::data_dir();
+
+    let source_path = match from {
+        Some(ref p) => Path::new(p).to_path_buf(),
+        None => {
+            let db_name = config.memory.db_path.as_deref().unwrap_or("memory_zvec");
+            data_dir.join(db_name)
+        },
+    };
+
+    moltis_memory_zvec::ensure_zvec_initialized()?;
+
+    // Open the source as a full store so enumeration uses the durable redb
+    // file/chunk index (HNSW filter queries can't reliably list documents).
+    let source_cache_path = {
+        let mut p = source_path.clone();
+        p.as_mut_os_string().push(".cache");
+        p
+    };
+    let source = {
+        let sp = source_path.clone();
+        let cp = source_cache_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let collection = moltis_memory_zvec::open_or_create_collection(&sp, None)?;
+            let cache = moltis_memory_zvec::RedbCache::new(&cp)?;
+            Ok::<_, anyhow::Error>(moltis_memory_zvec::ZvecMemoryStore::with_cache(
+                collection, cache,
+            ))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn_blocking join failed: {e}"))??
+    };
+
+    let default_dim = config.memory.embedding_dimension.unwrap_or(768);
+    let source_dim = {
+        let coll = source.collection_arc();
+        tokio::task::spawn_blocking(move || moltis_memory_zvec::read_dimension_meta(&coll))
+            .await
+            .map_err(|e| anyhow::anyhow!("spawn_blocking join failed: {e}"))??
+            .unwrap_or(default_dim)
+    };
+
+    let source_rows = source.list_files().await?;
+    let file_paths: Vec<String> = source_rows.iter().map(|f| f.path.clone()).collect();
+
+    let mut total_chunks: usize = 0;
+    for fp in &file_paths {
+        total_chunks += source.get_chunks_for_file(fp).await?.len();
+    }
+
+    let model_name = model.unwrap_or_else(|| {
+        config
+            .memory
+            .model
+            .clone()
+            .unwrap_or_else(|| "text-embedding-3-small".to_string())
+    });
+
+    let target_dim = target_dim.unwrap_or(source_dim);
+    let embed_dims = target_dim as usize;
+
+    let api_key = config
+        .memory
+        .api_key
+        .as_ref()
+        .map(|k| k.expose_secret().clone())
+        .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No embedding API key configured. Set [memory] api_key in config \
+                 or OPENAI_API_KEY environment variable."
+            )
+        })?;
+
+    let base_url = config
+        .memory
+        .base_url
+        .clone()
+        .unwrap_or_else(|| "https://api.openai.com".to_string());
+
+    let embedder = moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(api_key)
+        .with_base_url(base_url)
+        .with_model(model_name.clone(), embed_dims);
+
+    println!("Re-index plan:");
+    println!("  Source collection:  {}", source_path.display());
+    println!("  Target collection:  {}", Path::new(&to).display());
+    println!("  Source dimension:   {}", source_dim);
+    println!("  Target dimension:   {}", target_dim);
+    println!("  Model:              {}", model_name);
+    println!("  Chunks to process:  {}", total_chunks);
+
+    if dry_run {
+        return Ok(());
+    }
+
+    if !yes {
+        println!();
+        print!("Proceed with re-index? [y/N]: ");
+        use std::io::Write;
+        std::io::stdout().flush()?;
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        let answer = answer.trim().to_lowercase();
+        if answer != "y" && answer != "yes" {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    // Open the target as a store so writes populate its redb index too.
+    let target_path = Path::new(&to).to_path_buf();
+    let target_cache_path = {
+        let mut p = target_path.clone();
+        p.as_mut_os_string().push(".cache");
+        p
+    };
+    let mut target = {
+        let tp = target_path.clone();
+        let cp = target_cache_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let collection = moltis_memory_zvec::open_or_create_collection(&tp, Some(target_dim))?;
+            let cache = moltis_memory_zvec::RedbCache::new(&cp)?;
+            Ok::<_, anyhow::Error>(moltis_memory_zvec::ZvecMemoryStore::with_cache(
+                collection, cache,
+            ))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn_blocking join failed: {e}"))??
+    };
+    target = target.with_cache_dimension(target_dim);
+
+    let pb = indicatif::ProgressBar::new(total_chunks as u64);
+    let style = indicatif::ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+        .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar())
+        .progress_chars("#>-");
+    pb.set_style(style);
+
+    let mut processed: usize = 0;
+
+    for file_row in &source_rows {
+        let chunks = source.get_chunks_for_file(&file_row.path).await?;
+        if chunks.is_empty() {
+            continue;
+        }
+
+        // Carry the file metadata into the target store.
+        target.upsert_file(file_row).await?;
+
+        let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
+        let embeddings: Vec<Vec<f32>> = embedder.embed_batch(&texts).await?;
+
+        let new_chunks: Vec<moltis_memory::schema::ChunkRow> = chunks
+            .into_iter()
+            .zip(embeddings)
+            .map(|(mut c, emb)| {
+                let emb_bytes: Vec<u8> = emb.iter().flat_map(|f| f.to_le_bytes()).collect();
+                c.model = model_name.clone();
+                c.embedding = Some(emb_bytes);
+                c
+            })
+            .collect();
+
+        let count = new_chunks.len();
+        target.upsert_chunks(&new_chunks).await?;
+        processed += count;
+        pb.inc(count as u64);
+    }
+
+    pb.finish_and_clear();
+
+    let mut final_total: usize = 0;
+    for fp in target.list_files().await? {
+        final_total += target.get_chunks_for_file(&fp.path).await?.len();
+    }
+
+    println!();
+    println!(
+        "Re-index complete: {} chunks processed, {} verified in target.",
+        processed, final_total
+    );
+
+    if final_total != total_chunks {
+        anyhow::bail!(
+            "Chunk count mismatch: source had {} chunks, target has {}.",
+            total_chunks,
+            final_total
+        );
+    }
 
     Ok(())
 }

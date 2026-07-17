@@ -100,6 +100,7 @@ members = [
   "crates/mcp",
   "crates/media",
   "crates/memory",
+  "crates/memory-zvec",
   "crates/metrics",
   "crates/msteams",
   "crates/netbird",
@@ -206,9 +207,15 @@ tracing               = "0.1"
 tracing-opentelemetry = "0.30"
 tracing-subscriber    = { features = ["env-filter", "json"], version = "0.3" }
 # CLI
-clap = { features = ["derive", "env"], version = "4" }
+clap      = { features = ["derive", "env"], version = "4" }
+indicatif = "0.17"
 # Database
 sqlx = { features = ["migrate", "runtime-tokio", "sqlite"], version = "0.8" }
+# Embedded key-value store (zvec memory backend cache + file index)
+redb = "2"
+# Zvec vector database (memory backend); pinned to a known-good revision.
+zvec     = { git = "https://github.com/zvec-ai/zvec-rust", rev = "b1ca2393029f5c807275e8580e4ef22d83aff404" }
+zvec-sys = { git = "https://github.com/zvec-ai/zvec-rust", rev = "b1ca2393029f5c807275e8580e4ef22d83aff404" }
 # HTTP client
 reqwest = { features = ["form", "json", "multipart", "query", "socks", "stream"], version = "0.13" }
 # UUID
@@ -244,6 +251,7 @@ json_schema_ast = "0.3.1"
 async-graphql      = "7"
 async-graphql-axum = "7"
 gix                = "0.83"
+half               = "2"
 hex                = "0.4"
 hmac               = "0.12"
 jsonwebtoken       = { features = ["aws_lc_rs"], version = "10" }
@@ -394,6 +402,7 @@ moltis-mcp              = { path = "crates/mcp" }
 moltis-mcp-agent-bridge = { path = "crates/mcp-agent-bridge" }
 moltis-media            = { path = "crates/media" }
 moltis-memory           = { path = "crates/memory" }
+moltis-memory-zvec      = { path = "crates/memory-zvec" }
 moltis-metrics          = { path = "crates/metrics" }
 moltis-msteams          = { path = "crates/msteams" }
 moltis-netbird          = { path = "crates/netbird" }

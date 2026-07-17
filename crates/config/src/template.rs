@@ -663,8 +663,11 @@ port = {port}                           # Port number (auto-generated for this i
 # [memory]
 # style = "hybrid"                  # "hybrid" | "prompt-only" | "search-only" | "off"
 # agent_write_mode = "hybrid"       # "hybrid" | "prompt-only" | "search-only" | "off"
-# backend = "builtin"               # "builtin" | "qmd"
+# backend = "builtin"               # "builtin" | "qmd" | "zvec"
 # provider = "auto"                 # "local" | "ollama" | "openai" | "custom"
+# db_path = "memory.zvec"           # Zvec collection directory (only when backend = "zvec")
+# vector_weight = 0.7               # Weight for vector similarity in hybrid search
+# keyword_weight = 0.3              # Weight for keyword/FTS similarity in hybrid search
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PHONE (Telephony Providers)

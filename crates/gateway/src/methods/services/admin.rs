@@ -806,6 +806,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         Ok(status) => Ok(serde_json::json!({
                             "available": true,
                             "backend": mm.backend_name(),
+                            "backend_type": status.backend_type,
+                            "hnsw_percent": status.hnsw_percent,
                             "total_files": status.total_files,
                             "total_chunks": status.total_chunks,
                             "db_size": status.db_size_bytes,
@@ -857,6 +859,16 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     "backend": match memory.backend {
                         moltis_config::MemoryBackend::Builtin => "builtin",
                         moltis_config::MemoryBackend::Qmd => "qmd",
+                        moltis_config::MemoryBackend::Zvec => {
+                            #[cfg(feature = "zvec")]
+                            {
+                                "zvec"
+                            }
+                            #[cfg(not(feature = "zvec"))]
+                            {
+                                "builtin"
+                            }
+                        },
                     },
                     "provider": match memory.provider {
                         Some(moltis_config::MemoryProvider::Local) => "local",
@@ -885,6 +897,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         moltis_config::PromptMemoryMode::FrozenAtSessionStart => "frozen-at-session-start",
                     },
                     "qmd_feature_enabled": cfg!(feature = "qmd"),
+                    "zvec_feature_enabled": cfg!(feature = "zvec"),
                     "enable_prefetch": memory.enable_prefetch,
                     "prefetch_limit": memory.prefetch_limit,
                     "auto_extract_interval": memory.auto_extract_interval,
@@ -917,6 +930,16 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .unwrap_or(match current_memory.backend {
                         moltis_config::MemoryBackend::Builtin => "builtin",
                         moltis_config::MemoryBackend::Qmd => "qmd",
+                        moltis_config::MemoryBackend::Zvec => {
+                            #[cfg(feature = "zvec")]
+                            {
+                                "zvec"
+                            }
+                            #[cfg(not(feature = "zvec"))]
+                            {
+                                "builtin"
+                            }
+                        },
                     });
                 let agent_write_mode = ctx
                     .params

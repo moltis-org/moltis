@@ -16,7 +16,7 @@ use crate::{
     embeddings::EmbeddingProvider,
     error::Result,
     schema::{ChunkRow, FileRow},
-    search::{self, SearchResult},
+    search::SearchResult,
     store::{CacheEntry, MemoryStore},
     writer::validate_memory_path,
 };
@@ -35,6 +35,10 @@ pub struct MemoryStatus {
     pub embedding_model: String,
     /// SQLite database file size in bytes (0 for in-memory DBs).
     pub db_size_bytes: u64,
+    /// Backend type identifier: "sqlite" or "zvec".
+    pub backend_type: String,
+    /// HNSW index build percentage (zvec only).
+    pub hnsw_percent: Option<f64>,
 }
 
 impl MemoryStatus {
@@ -82,6 +86,11 @@ impl MemoryManager {
     /// Whether this manager has an embedding provider for vector search.
     pub fn has_embeddings(&self) -> bool {
         self.embedder.is_some()
+    }
+
+    /// Backend type identifier from the underlying store.
+    pub fn backend_type(&self) -> &'static str {
+        self.store.store_type()
     }
 
     /// Get the citation mode for this manager.
@@ -377,20 +386,54 @@ impl MemoryManager {
     /// falls back to keyword-only search otherwise.
     #[tracing::instrument(skip(self), fields(query_len = query.len(), limit))]
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        if let Some(ref embedder) = self.embedder {
-            search::hybrid_search(
-                self.store.as_ref(),
-                embedder.as_ref(),
+        #[cfg(feature = "metrics")]
+        use moltis_metrics::memory as mem_metrics;
+
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
+
+        #[cfg(feature = "metrics")]
+        let search_type = if self.embedder.is_some() {
+            "hybrid"
+        } else {
+            "keyword"
+        };
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            mem_metrics::SEARCHES_TOTAL,
+            moltis_metrics::labels::SEARCH_TYPE => search_type
+        )
+        .increment(1);
+
+        let embedding = if let Some(ref embedder) = self.embedder {
+            embedder.embed(query).await?
+        } else {
+            vec![]
+        };
+
+        let strategy = self.config.search_strategy();
+
+        let results = self
+            .store
+            .hybrid_search(
+                &embedding,
                 query,
-                limit,
                 self.config.vector_weight,
                 self.config.keyword_weight,
-                self.config.merge_strategy,
+                strategy,
+                limit,
             )
-            .await
-        } else {
-            search::keyword_only_search(self.store.as_ref(), query, limit).await
-        }
+            .await?;
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::histogram!(
+            mem_metrics::SEARCH_DURATION_SECONDS,
+            moltis_metrics::labels::SEARCH_TYPE => search_type
+        )
+        .record(start.elapsed().as_secs_f64());
+
+        Ok(results)
     }
 
     /// Get a specific chunk by ID.
@@ -406,9 +449,16 @@ impl MemoryManager {
             let chunks = self.store.get_chunks_for_file(&file.path).await?;
             total_chunks += chunks.len();
         }
-        let db_size_bytes = std::fs::metadata(&self.config.db_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let db_size_bytes = {
+            let store_size = self.store.disk_size_bytes();
+            if store_size > 0 {
+                store_size
+            } else {
+                std::fs::metadata(&self.config.db_path)
+                    .map(|m| m.len())
+                    .unwrap_or(0)
+            }
+        };
         Ok(MemoryStatus {
             total_files: files.len(),
             total_chunks,
@@ -418,6 +468,8 @@ impl MemoryManager {
                 .map(|e| e.model_name().to_string())
                 .unwrap_or_else(|| "none (keyword-only)".into()),
             db_size_bytes,
+            backend_type: self.store.store_type().to_string(),
+            hnsw_percent: self.store.hnsw_percent(),
         })
     }
 }
