@@ -542,11 +542,11 @@ export function SessionHeader({
 		sendRpc("external_agents.bind", { sessionKey: currentKey, kind: firstAcpAgent.kind })
 			.then((bindRes) => {
 				if (cancelled) return;
-				acpAutoBindAttemptedRef.current.add(currentKey);
 				if (!bindRes?.ok) {
 					showToast((bindRes?.error as { message?: string })?.message || "Failed to select ACP agent", "error");
 					return;
 				}
+				acpAutoBindAttemptedRef.current.add(currentKey);
 				if (session) {
 					session.external_agent_kind = firstAcpAgent.kind;
 					session.dataVersion.value++;
