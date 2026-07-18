@@ -73,15 +73,6 @@ impl SlackOutbound {
             .map(|(_, ts)| ts.clone())
     }
 
-    /// Get the edit throttle duration for streaming.
-    fn get_edit_throttle(&self, account_id: &str) -> Duration {
-        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-        accounts
-            .get(account_id)
-            .map(|s| Duration::from_millis(s.config.edit_throttle_ms))
-            .unwrap_or(Duration::from_millis(500))
-    }
-
     /// Get the stream mode for the given account.
     fn get_stream_mode(&self, account_id: &str) -> StreamMode {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
@@ -91,22 +82,29 @@ impl SlackOutbound {
             .unwrap_or_default()
     }
 
-    /// Get the raw bot token string for API calls not covered by slack-morphism.
-    fn get_bot_token(&self, account_id: &str) -> ChannelResult<String> {
+    /// Get the edit throttle duration for edit-in-place streaming.
+    fn get_edit_throttle(&self, account_id: &str) -> Duration {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-        let state = accounts
+        accounts
             .get(account_id)
-            .ok_or_else(|| ChannelError::unknown_account(account_id))?;
-        Ok(state.config.bot_token.expose_secret().clone())
+            .map(|s| Duration::from_millis(s.config.edit_throttle_ms))
+            .unwrap_or(Duration::from_millis(500))
     }
 
-    /// Get the configured Slack Web API base URL.
-    fn get_api_base_url(&self, account_id: &str) -> ChannelResult<String> {
+    /// Get native streaming settings in one account lookup.
+    fn get_native_stream_config(
+        &self,
+        account_id: &str,
+    ) -> ChannelResult<(String, String, Duration)> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         let state = accounts
             .get(account_id)
             .ok_or_else(|| ChannelError::unknown_account(account_id))?;
-        Ok(state.config.api_base_url.clone())
+        Ok((
+            state.config.bot_token.expose_secret().clone(),
+            state.config.api_base_url.clone(),
+            Duration::from_millis(state.config.edit_throttle_ms),
+        ))
     }
 
     /// Native Slack streaming using chat.startStream/appendStream/stopStream.
@@ -117,10 +115,8 @@ impl SlackOutbound {
         thread_ts: Option<&str>,
         stream: &mut StreamReceiver,
     ) -> ChannelResult<()> {
-        let bot_token = self.get_bot_token(account_id)?;
-        let api_base_url = self.get_api_base_url(account_id)?;
+        let (bot_token, api_base_url, throttle) = self.get_native_stream_config(account_id)?;
         let http = moltis_common::http_client::build_default_http_client();
-        let throttle = self.get_edit_throttle(account_id);
 
         let stream_id =
             start_native_stream(&http, &api_base_url, &bot_token, to, thread_ts).await?;
