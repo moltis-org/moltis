@@ -195,18 +195,30 @@ pub(crate) async fn init_memory_system(
 
     #[cfg(feature = "zvec")]
     if mem_cfg.backend == moltis_config::MemoryBackend::Zvec {
+        // zvec derives its on-disk collection path from the embedding dimension
+        // (e.g. memory.zvec_768). To avoid silently splitting collections when
+        // an embedder is added later, only use zvec when a concrete dimension
+        // is available now; otherwise fall back to the built-in SQLite backend.
         let embedding_dimension = mem_cfg
             .embedding_dimension
             .or_else(|| embedder.as_ref().map(|e| e.dimensions() as u32));
-        match try_init_zvec(mem_cfg, data_dir, embedding_dimension) {
-            Ok(store) => {
-                return build_memory_runtime_from_store(mem_cfg, data_dir, embedder, store).await;
+        match embedding_dimension {
+            Some(dim) => match try_init_zvec(mem_cfg, data_dir, dim) {
+                Ok(store) => {
+                    return build_memory_runtime_from_store(mem_cfg, data_dir, embedder, store)
+                        .await;
+                },
+                Err(e) => {
+                    warn!(
+                        "zvec initialization failed ({e:#}), falling back to built-in SQLite backend"
+                    );
+                },
             },
-            Err(e) => {
-                warn!(
-                    "zvec initialization failed ({e:#}), falling back to built-in SQLite backend"
-                );
-            },
+            None => warn!(
+                "memory: zvec backend requires an embedding dimension (configure memory.model or \
+                 memory.embedding_dimension, or run with an embedding provider); \
+                 falling back to built-in SQLite backend"
+            ),
         }
     }
 
@@ -292,16 +304,21 @@ fn validate_memory_backend(backend: moltis_config::MemoryBackend) {
 ///
 /// Returns the ready store on success; on failure the error propagates to the
 /// caller, which logs a warning and falls back to the built-in SQLite backend.
+///
+/// `embedding_dimension` must be a concrete value (never `None`) so the on-disk
+/// collection path is stable across restarts (e.g. `memory.zvec_768`). Callers
+/// are responsible for falling back to the built-in backend when no dimension
+/// can be resolved.
 #[cfg(feature = "zvec")]
 fn try_init_zvec(
     cfg: &moltis_config::schema::MemoryEmbeddingConfig,
     data_dir: &FsPath,
-    embedding_dimension: Option<u32>,
+    embedding_dimension: u32,
 ) -> anyhow::Result<Box<dyn moltis_memory::store::MemoryStore>> {
     let db_path = cfg.db_path.as_deref().unwrap_or("memory.zvec");
     let collection_path = data_dir.join(db_path);
-    let dim = embedding_dimension.unwrap_or(768);
-    let collection = moltis_memory_zvec::initialize(&collection_path, embedding_dimension)?;
+    let dim = embedding_dimension;
+    let collection = moltis_memory_zvec::initialize(&collection_path, Some(dim))?;
 
     let cache_path = data_dir.join(format!("{}.cache", db_path));
     let cache_config = moltis_memory_zvec::ZvecCacheConfig {
