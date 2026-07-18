@@ -160,7 +160,7 @@ pub fn delete_chunks_for_file(collection: &Collection, path: &str) -> Result<()>
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::tests::TestGuard};
+    use {super::*, crate::collection::TestGuard};
 
     #[test]
     fn test_upsert_chunks_dedup_reupsert() {

@@ -325,7 +325,7 @@ pub fn get_chunk_by_id(collection: &Collection, id: &str) -> Result<Option<Chunk
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::tests::TestGuard};
+    use {super::*, crate::collection::TestGuard};
 
     const DIM: u32 = 768;
 
