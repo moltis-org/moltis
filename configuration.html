@@ -447,6 +447,8 @@ offered = [&#x22;slack&#x22;]
 [channels.slack.my-bot]
 bot_token = &#x22;xoxb-...&#x22;
 app_token = &#x22;xapp-...&#x22;
+# Optional. Defaults to Slack; set only for Slack-compatible proxies/gateways.
+api_base_url = &#x22;https://slack.com/api&#x22;
 dm_policy = &#x22;allowlist&#x22;
 allowlist = [&#x22;U123456789&#x22;]"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channels</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">offered </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"slack"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
@@ -454,6 +456,8 @@ allowlist = [&#x22;U123456789&#x22;]"><code><span class="line"><span style="colo
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channels</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">slack</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">my-bot</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">bot_token </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "xoxb-..."</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">app_token </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "xapp-..."</span></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Optional. Defaults to Slack; set only for Slack-compatible proxies/gateways.</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">api_base_url </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "https://slack.com/api"</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">dm_policy </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "allowlist"</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">allowlist </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"U123456789"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span></code></pre>
 <p>See <a href="/slack.html">Slack</a> for full configuration reference and setup instructions.</p>

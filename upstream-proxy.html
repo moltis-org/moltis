@@ -63,7 +63,9 @@ automatically excluded from the proxy (<code>no_proxy</code>).</p>
 However, regular <code>chat.postMessage</code> calls go through the <code>slack-morphism</code>
 library’s built-in hyper connector, which does <strong>not</strong> use the upstream
 proxy. If you need full Slack proxy coverage, also set the <code>HTTPS_PROXY</code>
-environment variable.</p>
+environment variable. If you are using a Slack-compatible API gateway instead
+of a generic outbound proxy, configure the Slack channel’s <code>api_base_url</code>
+instead.</p>
 <h3 id="telegram-caveat">Telegram caveat</h3>
 <p>Telegram uses <a href="https://github.com/teloxide/teloxide">teloxide</a> which bundles
 its own HTTP client (reqwest 0.11). The <code>upstream_proxy</code> config does not apply
