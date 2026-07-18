@@ -170,6 +170,10 @@ connection_mode = "socket_mode"
 For Socket Mode, Moltis calls `apps.connections.open` on this endpoint and
 connects to the WebSocket URL returned by that API.
 
+The endpoint must be a public HTTP(S) URL. Localhost, private-network,
+link-local, and other non-public IP targets are rejected because Slack API calls
+carry the bot token.
+
 If using a proxy, ensure it supports Slack's native streaming methods before
 setting `stream_mode = "native"`.
 
