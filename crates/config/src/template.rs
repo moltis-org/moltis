@@ -804,6 +804,13 @@ port = {port}                           # Port number (auto-generated for this i
 # [channels]
 # offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]
 
+# Example Slack account. api_base_url defaults to Slack; set it only for
+# Slack-compatible proxies, mock servers, or gateways.
+# [channels.slack.my-bot]
+# bot_token = "xoxb-..."
+# app_token = "xapp-..."
+# api_base_url = "https://slack.com/api"
+
 # See docs or defaults.toml for full channel configuration examples
 # (WhatsApp, Telegram, Teams, Discord, Slack, Matrix, Nostr, Signal).
 

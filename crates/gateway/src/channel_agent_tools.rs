@@ -101,6 +101,7 @@ struct ChannelSettingsPatch {
     reply_to_message: Option<bool>,
     thread_replies: Option<bool>,
     stream_mode: Option<ChannelSettingsStreamMode>,
+    api_base_url: Option<String>,
     allowlist_add: Vec<String>,
     allowlist_remove: Vec<String>,
     group_allowlist_add: Vec<String>,
@@ -255,6 +256,10 @@ impl AgentTool for UpdateChannelSettingsTool {
                             "type": "string",
                             "enum": ["edit_in_place", "native", "off"],
                             "description": "Supported by Telegram (`edit_in_place`, `off`) and Slack (`edit_in_place`, `native`, `off`)."
+                        },
+                        "api_base_url": {
+                            "type": "string",
+                            "description": "Slack Web API base URL. Defaults to https://slack.com/api; set only for Slack-compatible proxies, mock servers, or gateways. Supported by Slack."
                         },
                         "channel_override": {
                             "type": "object",
@@ -458,6 +463,15 @@ fn apply_channel_settings_patch(
         validate_stream_mode(channel_type, stream_mode)?;
         config.insert("stream_mode".into(), json!(stream_mode));
         changes.push("stream_mode".to_string());
+    }
+    if let Some(api_base_url) = &patch.api_base_url {
+        ensure_supported(
+            channel_type,
+            "api_base_url",
+            matches!(channel_type, ChannelType::Slack),
+        )?;
+        config.insert("api_base_url".into(), json!(api_base_url.trim()));
+        changes.push("api_base_url".to_string());
     }
     if update_string_array(
         config,
@@ -1060,6 +1074,47 @@ mod tests {
         assert_eq!(
             updated["config"]["channel_overrides"]["chan-1"]["model_provider"],
             "anthropic"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_channel_settings_updates_slack_api_base_url() {
+        let service = Arc::new(RecordingChannelService::new());
+        let store = Arc::new(MemoryChannelStore::new(vec![stored_channel(
+            "slack-main",
+            "slack",
+            json!({
+                "bot_token": "xoxb-secret",
+                "app_token": "xapp-secret",
+                "api_base_url": "https://slack.com/api",
+                "allowlist": []
+            }),
+        )]));
+        let tool = UpdateChannelSettingsTool::new(
+            service.clone() as Arc<dyn ChannelService>,
+            Some(store as Arc<dyn ChannelStore>),
+        );
+
+        tool.execute(json!({
+            "account_id": "slack-main",
+            "settings": {
+                "api_base_url": "https://proxy.example/api"
+            }
+        }))
+        .await
+        .expect("slack api_base_url update");
+
+        let updated = service
+            .updated
+            .lock()
+            .await
+            .clone()
+            .expect("captured update payload");
+        assert_eq!(updated["config"]["bot_token"], "xoxb-secret");
+        assert_eq!(updated["config"]["app_token"], "xapp-secret");
+        assert_eq!(
+            updated["config"]["api_base_url"],
+            "https://proxy.example/api"
         );
     }
 
