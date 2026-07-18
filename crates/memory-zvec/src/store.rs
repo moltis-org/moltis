@@ -566,18 +566,6 @@ mod tests {
         (collection, dir)
     }
 
-    fn make_search_result(id: &str, score: f32) -> SearchResult {
-        SearchResult {
-            chunk_id: id.into(),
-            path: "test/path.md".into(),
-            source: "test".into(),
-            start_line: 1,
-            end_line: 5,
-            score,
-            text: String::new(),
-        }
-    }
-
     // ── Cache tests ──
 
     #[tokio::test]
@@ -763,76 +751,10 @@ mod tests {
         let _ = std::fs::remove_file(&cache_path);
     }
 
-    // ── Merge function tests ──
-
-    #[test]
-    fn test_merge_weighted_both_empty() {
-        let result = search::merge_weighted(&[], &[], 0.7, 0.3);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_merge_weighted_vector_only() {
-        let vec_results = vec![make_search_result("a", 0.9), make_search_result("b", 0.8)];
-        let result = search::merge_weighted(&vec_results, &[], 0.7, 0.3);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].chunk_id, "a");
-        assert_eq!(result[1].chunk_id, "b");
-        assert!(result[0].score > result[1].score);
-    }
-
-    #[test]
-    fn test_merge_weighted_keyword_only() {
-        let kw_results = vec![make_search_result("x", 0.5), make_search_result("y", 0.3)];
-        let result = search::merge_weighted(&[], &kw_results, 0.7, 0.3);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].chunk_id, "x");
-        assert_eq!(result[1].chunk_id, "y");
-    }
-
-    #[test]
-    fn test_merge_weighted_overlapping_ids() {
-        let vec_results = vec![make_search_result("shared", 0.9)];
-        let kw_results = vec![make_search_result("shared", 0.5)];
-        let result = search::merge_weighted(&vec_results, &kw_results, 0.7, 0.3);
-        assert_eq!(result.len(), 1);
-        assert!(
-            (result[0].score - (0.9 * 0.7 + 0.5 * 0.3)).abs() < 1e-6,
-            "overlapping chunk must get combined weighted score"
-        );
-    }
-
-    #[test]
-    fn test_merge_rrf_both_empty() {
-        let result = search::merge_rrf(&[], &[], 1.0, 1.0, 60);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_merge_rrf_vector_only() {
-        let vec_results = vec![make_search_result("a", 0.0), make_search_result("b", 0.0)];
-        let result = search::merge_rrf(&vec_results, &[], 1.0, 0.0, 60);
-        assert_eq!(result.len(), 2);
-    }
-
-    #[test]
-    fn test_merge_rrf_keyword_only() {
-        let kw_results = vec![make_search_result("k1", 0.0), make_search_result("k2", 0.0)];
-        let result = search::merge_rrf(&[], &kw_results, 0.0, 1.0, 60);
-        assert_eq!(result.len(), 2);
-    }
-
-    #[test]
-    fn test_merge_rrf_overlapping_ids() {
-        let vec_results = vec![make_search_result("shared", 0.0)];
-        let kw_results = vec![make_search_result("shared", 0.0)];
-        let result = search::merge_rrf(&vec_results, &kw_results, 1.0, 1.0, 60);
-        assert_eq!(result.len(), 1, "overlapping chunk must be deduplicated");
-        assert!(
-            result[0].score > 0.0,
-            "overlapping chunk must get combined RRF score"
-        );
-    }
+    // merge_weighted / merge_rrf unit coverage lives in moltis-memory's
+    // `search::tests` module so it runs regardless of which backend is
+    // compiled. The zvec backend exercises them end-to-end via
+    // `hybrid_search` in the tests below.
 
     // ── Disk usage tests ──
 
@@ -1182,23 +1104,6 @@ mod tests {
         drop(store);
     }
 
-    // ── RRF vs weighted produce different rankings ──
-
-    #[test]
-    fn test_rrf_vs_weighted_produce_different_rankings() {
-        let vec_results = vec![
-            make_search_result("c1", 0.95),
-            make_search_result("c2", 0.1),
-        ];
-        let kw_results = vec![
-            make_search_result("c2", 10.0),
-            make_search_result("c1", 0.5),
-        ];
-
-        let weighted = search::merge_weighted(&vec_results, &kw_results, 0.7, 0.3);
-        let rrf = search::merge_rrf(&vec_results, &kw_results, 0.7, 0.3, 5);
-
-        assert_eq!(weighted[0].chunk_id, "c2");
-        assert_eq!(rrf[0].chunk_id, "c1");
-    }
+    // RRF vs weighted divergence is covered in moltis-memory's `search::tests`,
+    // which runs without the zvec feature enabled.
 }

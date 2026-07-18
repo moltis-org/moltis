@@ -537,13 +537,7 @@ impl MemoryStore for SqliteMemoryStore {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::{
-            schema::run_migrations,
-            search::{merge_rrf, merge_weighted},
-        },
-    };
+    use {super::*, crate::schema::run_migrations};
 
     async fn setup() -> SqliteMemoryStore {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
@@ -841,97 +835,6 @@ mod tests {
         }
     }
 
-    fn make_search_result(id: &str, score: f32) -> SearchResult {
-        SearchResult {
-            chunk_id: id.into(),
-            path: "test.md".into(),
-            source: "daily".into(),
-            start_line: 1,
-            end_line: 5,
-            score,
-            text: String::new(),
-        }
-    }
-
-    #[test]
-    fn test_merge_weighted_deduplication() {
-        let vec_results = vec![make_search_result("c1", 0.9), make_search_result("c2", 0.5)];
-        let kw_results = vec![make_search_result("c1", 0.8), make_search_result("c3", 0.7)];
-
-        let merged = merge_weighted(&vec_results, &kw_results, 0.7, 0.3);
-
-        // c1 should have combined score: 0.9*0.7 + 0.8*0.3 = 0.63 + 0.24 = 0.87
-        let c1 = merged.iter().find(|r| r.chunk_id == "c1").unwrap();
-        assert!((c1.score - 0.87).abs() < 1e-5);
-
-        let c2 = merged.iter().find(|r| r.chunk_id == "c2").unwrap();
-        assert!((c2.score - 0.35).abs() < 1e-5);
-
-        let c3 = merged.iter().find(|r| r.chunk_id == "c3").unwrap();
-        assert!((c3.score - 0.21).abs() < 1e-5);
-
-        assert!(merged[0].score >= merged[1].score);
-        assert!(merged[1].score >= merged[2].score);
-    }
-
-    #[test]
-    fn test_merge_weighted_empty() {
-        let merged = merge_weighted(&[], &[], 0.7, 0.3);
-        assert!(merged.is_empty());
-    }
-
-    #[test]
-    fn test_merge_rrf_deduplication() {
-        let vec_results = vec![make_search_result("c1", 0.9), make_search_result("c2", 0.5)];
-        let kw_results = vec![make_search_result("c1", 0.8), make_search_result("c3", 0.7)];
-
-        let merged = merge_rrf(&vec_results, &kw_results, 0.7, 0.3, 5);
-
-        let c1_count = merged.iter().filter(|r| r.chunk_id == "c1").count();
-        assert_eq!(c1_count, 1, "c1 should be deduplicated");
-
-        assert_eq!(merged.len(), 3);
-
-        for i in 0..merged.len() - 1 {
-            assert!(
-                merged[i].score >= merged[i + 1].score,
-                "results should be sorted descending by score"
-            );
-        }
-    }
-
-    #[test]
-    fn test_merge_rrf_empty() {
-        let merged = merge_rrf(&[], &[], 0.7, 0.3, 5);
-        assert!(merged.is_empty());
-    }
-
-    #[test]
-    fn test_merge_rrf_single_source() {
-        let vec_results = vec![make_search_result("c1", 0.9), make_search_result("c2", 0.5)];
-        let merged = merge_rrf(&vec_results, &[], 0.7, 0.3, 5);
-        assert_eq!(merged.len(), 2);
-        assert!(merged[0].score > merged[1].score);
-    }
-
-    #[test]
-    fn test_rrf_vs_weighted_produce_different_rankings() {
-        let vec_results = vec![
-            make_search_result("c1", 0.95),
-            make_search_result("c2", 0.1),
-        ];
-        let kw_results = vec![
-            make_search_result("c2", 10.0),
-            make_search_result("c1", 0.5),
-        ];
-
-        let weighted = merge_weighted(&vec_results, &kw_results, 0.7, 0.3);
-        let rrf = merge_rrf(&vec_results, &kw_results, 0.7, 0.3, 5);
-
-        // Weighted: c2 = 0.1*0.7 + 10.0*0.3 = 3.07, c1 = 0.95*0.7 + 0.5*0.3 = 0.815
-        assert_eq!(weighted[0].chunk_id, "c2");
-
-        // RRF: c1 is rank 0 in vector (high weight), rank 1 in keyword
-        assert_eq!(rrf[0].chunk_id, "c1");
-    }
+    // merge_weighted / merge_rrf unit coverage lives in `search::tests` so it
+    // runs in plain `cargo test -p moltis-memory` regardless of backend.
 }
