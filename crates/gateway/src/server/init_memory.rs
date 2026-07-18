@@ -203,7 +203,7 @@ pub(crate) async fn init_memory_system(
             .embedding_dimension
             .or_else(|| embedder.as_ref().map(|e| e.dimensions() as u32));
         match embedding_dimension {
-            Some(dim) => match try_init_zvec(mem_cfg, data_dir, dim) {
+            Some(dim) => match try_init_zvec(mem_cfg, data_dir, dim).await {
                 Ok(store) => {
                     return build_memory_runtime_from_store(mem_cfg, data_dir, embedder, store)
                         .await;
@@ -310,7 +310,7 @@ fn validate_memory_backend(backend: moltis_config::MemoryBackend) {
 /// are responsible for falling back to the built-in backend when no dimension
 /// can be resolved.
 #[cfg(feature = "zvec")]
-fn try_init_zvec(
+async fn try_init_zvec(
     cfg: &moltis_config::schema::MemoryEmbeddingConfig,
     data_dir: &FsPath,
     embedding_dimension: u32,
@@ -329,20 +329,38 @@ fn try_init_zvec(
     let store = moltis_memory_zvec::ZvecMemoryStore::with_cache(collection, cache)
         .with_cache_dimension(dim)
         .with_collection_disk_path(&collection_path);
-    if let Err(e) = store.optimize() {
-        tracing::warn!("zvec: initial optimize failed: {e}");
-    }
+
     let zvec_collection = store.collection_arc();
+
+    // zvec's HNSW optimize is a blocking C call that can take several seconds
+    // on a large existing collection. Run it on the blocking pool so we don't
+    // stall the Tokio runtime thread (and every other task sharing it) during
+    // server startup.
+    let collection_for_init = Arc::clone(&zvec_collection);
+    match tokio::task::spawn_blocking(move || collection_for_init.optimize()).await {
+        Ok(Ok(())) => {},
+        Ok(Err(e)) => tracing::warn!("zvec: initial optimize failed: {e}"),
+        Err(join_err) => tracing::warn!("zvec: initial optimize task panicked: {join_err}"),
+    }
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
         interval.tick().await;
         loop {
             interval.tick().await;
-            if let Err(e) = zvec_collection.optimize() {
-                tracing::warn!("zvec: periodic optimize failed: {e}");
+            // Same blocking-C-call concern as the initial optimize: run on the
+            // blocking pool so the periodic task never stalls the runtime thread.
+            let collection_for_periodic = Arc::clone(&zvec_collection);
+            match tokio::task::spawn_blocking(move || collection_for_periodic.optimize()).await {
+                Ok(Ok(())) => {},
+                Ok(Err(e)) => tracing::warn!("zvec: periodic optimize failed: {e}"),
+                Err(join_err) => {
+                    tracing::warn!("zvec: periodic optimize task panicked: {join_err}")
+                },
             }
         }
     });
+
     tracing::info!("using zvec memory backend");
     Ok(Box::new(store))
 }
