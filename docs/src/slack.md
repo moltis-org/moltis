@@ -87,6 +87,7 @@ offered = ["slack"]
 |-------|----------|---------|-------------|
 | `bot_token` | **yes** | — | Bot user OAuth token (`xoxb-...`) |
 | `app_token` | **yes**\* | — | App-level token for Socket Mode (`xapp-...`). \*Required for `socket_mode`. |
+| `api_base_url` | no | `"https://slack.com/api"` | Slack Web API base URL. Override only for Slack-compatible proxies, mock servers, or gateways. |
 | `connection_mode` | no | `"socket_mode"` | Connection method: `"socket_mode"` or `"events_api"` |
 | `signing_secret` | no\* | — | Signing secret for Events API request verification. \*Required for `events_api`. |
 | `dm_policy` | no | `"allowlist"` | Who can DM the bot: `"open"`, `"allowlist"`, or `"disabled"` |
@@ -116,6 +117,7 @@ offered = ["slack"]
 [channels.slack.my-bot]
 bot_token = "xoxb-..."
 app_token = "xapp-..."
+api_base_url = "https://slack.com/api"
 connection_mode = "socket_mode"
 dm_policy = "allowlist"
 group_policy = "open"
@@ -151,6 +153,25 @@ signing_secret = "abc123..."
 
 This requires your Moltis instance to be reachable from the internet (or use
 [Tailscale Funnel](configuration.md#tailscale-integration)).
+
+### Slack-Compatible Proxies
+
+Moltis normally talks to Slack at `https://slack.com/api`. For testing, local
+development, or Slack-compatible gateways, set `api_base_url`:
+
+```toml
+[channels.slack.proxy]
+bot_token = "xoxb-proxy-token"
+app_token = "xapp-proxy-token"
+api_base_url = "https://proxy.example/api"
+connection_mode = "socket_mode"
+```
+
+For Socket Mode, Moltis calls `apps.connections.open` on this endpoint and
+connects to the WebSocket URL returned by that API.
+
+If using a proxy, ensure it supports Slack's native streaming methods before
+setting `stream_mode = "native"`.
 
 ## Access Control
 

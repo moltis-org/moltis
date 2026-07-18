@@ -385,6 +385,8 @@ offered = ["slack"]
 [channels.slack.my-bot]
 bot_token = "xoxb-..."
 app_token = "xapp-..."
+# Optional. Defaults to Slack; set only for Slack-compatible proxies/gateways.
+api_base_url = "https://slack.com/api"
 dm_policy = "allowlist"
 allowlist = ["U123456789"]
 ```

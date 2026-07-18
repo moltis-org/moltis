@@ -84,6 +84,7 @@ export interface ChannelConfig {
 	// Slack
 	bot_token?: string;
 	app_token?: string;
+	api_base_url?: string;
 	connection_mode?: string;
 	group_policy?: string;
 	signing_secret?: string;

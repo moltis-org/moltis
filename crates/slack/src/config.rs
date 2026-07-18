@@ -10,6 +10,8 @@ use {
     serde::{Deserialize, Serialize, ser::SerializeStruct},
 };
 
+use crate::client::DEFAULT_SLACK_API_BASE_URL;
+
 /// Per-channel model/provider override.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChannelOverride {
@@ -64,6 +66,9 @@ pub struct SlackAccountConfig {
     /// Required when `connection_mode` is `socket_mode`.
     #[serde(serialize_with = "secret_serde::serialize_secret")]
     pub app_token: Secret<String>,
+
+    /// Slack Web API base URL.
+    pub api_base_url: String,
 
     /// How this account connects to Slack.
     pub connection_mode: ConnectionMode,
@@ -129,6 +134,7 @@ impl std::fmt::Debug for SlackAccountConfig {
         f.debug_struct("SlackAccountConfig")
             .field("bot_token", &"[REDACTED]")
             .field("app_token", &"[REDACTED]")
+            .field("api_base_url", &self.api_base_url)
             .field("connection_mode", &self.connection_mode)
             .field(
                 "signing_secret",
@@ -156,6 +162,7 @@ impl Default for SlackAccountConfig {
         Self {
             bot_token: Secret::new(String::new()),
             app_token: Secret::new(String::new()),
+            api_base_url: DEFAULT_SLACK_API_BASE_URL.to_string(),
             connection_mode: ConnectionMode::SocketMode,
             signing_secret: None,
             dm_policy: DmPolicy::Allowlist,
@@ -235,7 +242,7 @@ pub struct RedactedConfig<'a>(pub &'a SlackAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 11; // always-present fields
+        let mut count = 12; // always-present fields
         count += c.signing_secret.is_some() as usize;
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
@@ -245,6 +252,7 @@ impl Serialize for RedactedConfig<'_> {
         let mut s = serializer.serialize_struct("SlackAccountConfig", count)?;
         s.serialize_field("bot_token", secret_serde::REDACTED)?;
         s.serialize_field("app_token", secret_serde::REDACTED)?;
+        s.serialize_field("api_base_url", &c.api_base_url)?;
         s.serialize_field("connection_mode", &c.connection_mode)?;
         if c.signing_secret.is_some() {
             s.serialize_field("signing_secret", secret_serde::REDACTED)?;
@@ -320,6 +328,7 @@ mod tests {
         let cfg: SlackAccountConfig = serde_json::from_value(json).unwrap();
         assert_eq!(cfg.bot_token.expose_secret(), "xoxb-test-token");
         assert_eq!(cfg.app_token.expose_secret(), "xapp-test-token");
+        assert_eq!(cfg.api_base_url, DEFAULT_SLACK_API_BASE_URL);
         assert_eq!(cfg.dm_policy, DmPolicy::Open);
         assert_eq!(cfg.group_policy, GroupPolicy::Allowlist);
         assert_eq!(cfg.mention_mode, MentionMode::Always);
@@ -379,6 +388,7 @@ mod tests {
         assert_eq!(cfg.edit_throttle_ms, 500);
         assert!(cfg.thread_replies);
         assert_eq!(cfg.mention_mode, MentionMode::Mention);
+        assert_eq!(cfg.api_base_url, DEFAULT_SLACK_API_BASE_URL);
         assert!(cfg.channel_overrides.is_empty());
         assert!(cfg.user_overrides.is_empty());
     }
@@ -421,6 +431,7 @@ mod tests {
         assert_eq!(redacted["bot_token"], "[REDACTED]");
         assert_eq!(redacted["app_token"], "[REDACTED]");
         assert_eq!(redacted["signing_secret"], "[REDACTED]");
+        assert_eq!(redacted["api_base_url"], DEFAULT_SLACK_API_BASE_URL);
         // Non-secret fields preserved
         assert_eq!(redacted["model"], "gpt-4o");
         assert!(redacted["thread_replies"].is_boolean());
@@ -437,6 +448,24 @@ mod tests {
         let cfg = SlackAccountConfig::default();
         let redacted = serde_json::to_value(RedactedConfig(&cfg)).unwrap();
         assert!(redacted.get("signing_secret").is_none());
+    }
+
+    #[test]
+    fn custom_api_base_url_round_trips_and_redacts() {
+        let json = serde_json::json!({
+            "bot_token": "xoxb-test",
+            "app_token": "xapp-test",
+            "api_base_url": "https://proxy.example/api",
+        });
+        let cfg: SlackAccountConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.api_base_url, "https://proxy.example/api");
+
+        let value = serde_json::to_value(&cfg).unwrap();
+        let cfg2: SlackAccountConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(cfg2.api_base_url, "https://proxy.example/api");
+
+        let redacted = serde_json::to_value(RedactedConfig(&cfg2)).unwrap();
+        assert_eq!(redacted["api_base_url"], "https://proxy.example/api");
     }
 
     #[test]
