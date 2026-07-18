@@ -559,6 +559,9 @@ fn is_disallowed_slack_api_ip(ip: &IpAddr) -> bool {
                 || (octets[0] == 100 && (64..=127).contains(&octets[1]))
         },
         IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_disallowed_slack_api_ip(&IpAddr::V4(v4));
+            }
             let first = v6.segments()[0];
             v6.is_loopback()
                 || v6.is_unspecified()
@@ -1199,6 +1202,37 @@ mod tests {
             }))
             .await
             .expect_err("private Slack api_base_url should be rejected");
+
+        assert!(err.to_string().contains("private or local IP"));
+    }
+
+    #[tokio::test]
+    async fn update_channel_settings_rejects_ipv4_mapped_slack_api_base_url() {
+        let service = Arc::new(RecordingChannelService::new());
+        let store = Arc::new(MemoryChannelStore::new(vec![stored_channel(
+            "slack-main",
+            "slack",
+            json!({
+                "bot_token": "xoxb-secret",
+                "app_token": "xapp-secret",
+                "api_base_url": "https://slack.com/api",
+                "allowlist": []
+            }),
+        )]));
+        let tool = UpdateChannelSettingsTool::new(
+            service as Arc<dyn ChannelService>,
+            Some(store as Arc<dyn ChannelStore>),
+        );
+
+        let err = tool
+            .execute(json!({
+                "account_id": "slack-main",
+                "settings": {
+                    "api_base_url": "http://[::ffff:169.254.169.254]/latest/meta-data"
+                }
+            }))
+            .await
+            .expect_err("IPv4-mapped private Slack api_base_url should be rejected");
 
         assert!(err.to_string().contains("private or local IP"));
     }

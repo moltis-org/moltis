@@ -51,6 +51,9 @@ fn is_disallowed_ip(ip: &IpAddr) -> bool {
                 || is_cgnat(*v4)
         },
         IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_disallowed_ip(&IpAddr::V4(v4));
+            }
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
@@ -119,6 +122,7 @@ mod tests {
         assert!(normalize_slack_api_base_url("http://169.254.169.254/api").is_err());
         assert!(normalize_slack_api_base_url("http://10.0.0.1/api").is_err());
         assert!(normalize_slack_api_base_url("http://[fd00::1]/api").is_err());
+        assert!(normalize_slack_api_base_url("http://[::ffff:169.254.169.254]/api").is_err());
     }
 
     #[test]
