@@ -455,8 +455,14 @@ fn disk_usage_for_stem(stem_path: &Path) -> u64 {
             .to_str()
             .map(|name| name.starts_with(stem))
             .unwrap_or(false);
-        if matches && entry.metadata().map(|m| m.is_file()).unwrap_or(false) {
-            total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+        if !matches {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.is_file() {
+            total += meta.len();
         }
     }
     total
