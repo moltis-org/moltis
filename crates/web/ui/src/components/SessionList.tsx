@@ -55,8 +55,33 @@ function channelSessionType(s: Session): ChannelType | null {
 	}
 }
 
-function formatHHMM(epochMs: number): string {
-	return new Date(epochMs).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function startOfLocalDay(date: Date): number {
+	return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+export function formatSessionTimestamp(epochMs: number, nowMs = Date.now()): string {
+	const date = new Date(epochMs);
+	const now = new Date(nowMs);
+	if (!(Number.isFinite(date.getTime()) && Number.isFinite(now.getTime()))) return "";
+
+	const daysAgo = Math.round((startOfLocalDay(now) - startOfLocalDay(date)) / MILLISECONDS_PER_DAY);
+	if (daysAgo === 0) {
+		return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+	}
+	if (daysAgo === 1) {
+		return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(-1, "day");
+	}
+	if (daysAgo > 1 && daysAgo < 7) {
+		return date.toLocaleDateString(undefined, { weekday: "long" });
+	}
+
+	return date.toLocaleDateString(undefined, {
+		month: "short",
+		day: "numeric",
+		...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+	});
 }
 
 // ── Icon component (renders SVG icon into a ref) ────────────
@@ -239,7 +264,7 @@ function SessionItem({ session, activeKey, depth, keyMap, refreshing }: SessionI
 					)}
 					{ts > 0 && (
 						<span className="session-time" title={new Date(ts).toLocaleString()}>
-							{formatHHMM(ts)}
+							{formatSessionTimestamp(ts)}
 						</span>
 					)}
 				</div>

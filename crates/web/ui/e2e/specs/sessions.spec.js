@@ -78,6 +78,62 @@ test.describe("Session management", () => {
 		await expect(items).not.toHaveCount(0);
 	});
 
+	test("session list distinguishes today from older dates", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		const expected = await page.evaluate(() => {
+			const store = window.__moltis_stores?.sessionStore;
+			if (!store) throw new Error("session store unavailable");
+
+			const timestampForDaysAgo = (daysAgo, hour) => {
+				const date = new Date();
+				date.setDate(date.getDate() - daysAgo);
+				date.setHours(hour, 30, 0, 0);
+				return date.getTime();
+			};
+			const timestamps = {
+				today: timestampForDaysAgo(0, 9),
+				yesterday: timestampForDaysAgo(1, 10),
+				weekday: timestampForDaysAgo(3, 11),
+				older: timestampForDaysAgo(10, 12),
+			};
+
+			for (const [key, updatedAt] of Object.entries(timestamps)) {
+				store.upsert({
+					key: `e2e:date-label:${key}`,
+					label: `Date label ${key}`,
+					createdAt: updatedAt,
+					updatedAt,
+				});
+			}
+
+			const olderDate = new Date(timestamps.older);
+			const now = new Date();
+			return {
+				today: new Date(timestamps.today).toLocaleTimeString(undefined, {
+					hour: "2-digit",
+					minute: "2-digit",
+				}),
+				yesterday: new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(-1, "day"),
+				weekday: new Date(timestamps.weekday).toLocaleDateString(undefined, { weekday: "long" }),
+				older: olderDate.toLocaleDateString(undefined, {
+					month: "short",
+					day: "numeric",
+					...(olderDate.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+				}),
+			};
+		});
+
+		for (const [key, label] of Object.entries(expected)) {
+			await expect(
+				page.locator(`#sessionList .session-item[data-session-key="e2e:date-label:${key}"] .session-time`),
+			).toHaveText(label);
+		}
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("sessions sidebar uses search and add button row", async ({ page }) => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
