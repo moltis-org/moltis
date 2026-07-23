@@ -1,4 +1,9 @@
-use std::{collections::HashMap, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::SystemTime,
+};
 
 use {
     async_trait::async_trait,
@@ -484,6 +489,28 @@ impl ExternalAgentChatService {
         Some(self.send_external(params.clone(), session_key, kind).await)
     }
 
+    /// Resolve the directory the configured `context_command` should run in for
+    /// this session: the session worktree when present, else the bound project
+    /// directory. Returns `None` when no project is bound, in which case the
+    /// command inherits the server process's current directory.
+    async fn resolve_context_working_dir(&self, session_key: &str) -> Option<PathBuf> {
+        let entry = self.session_metadata.get(session_key).await?;
+        let pid = entry.project_id?;
+        let val = self
+            .state
+            .services
+            .project
+            .get(serde_json::json!({ "id": pid }))
+            .await
+            .ok()?;
+        let dir = val.get("directory").and_then(|v| v.as_str())?;
+        let worktree = entry.worktree_branch.as_ref().and_then(|_| {
+            let wt = Path::new(dir).join(".moltis-worktrees").join(session_key);
+            wt.exists().then_some(wt)
+        });
+        Some(worktree.unwrap_or_else(|| PathBuf::from(dir)))
+    }
+
     async fn send_external(
         &self,
         params: Value,
@@ -537,9 +564,10 @@ impl ExternalAgentChatService {
         )
         .await;
 
+        let context_working_dir = self.resolve_context_working_dir(&session_key).await;
         let context_command_output = moltis_common::context_command::run_context_command(
             self.state.config.chat.context_command.as_deref(),
-            None,
+            context_working_dir.as_deref(),
         )
         .await;
         let context = context_from_history_with_project_context(&history, context_command_output);
@@ -796,7 +824,7 @@ impl ExternalAgentChatService {
             .read(&session_key)
             .await
             .unwrap_or_default();
-        let context = context_from_history(&history);
+        let context = context_from_history_with_project_context(&history, None);
         let messages: Vec<Value> = context
             .recent_turns
             .iter()

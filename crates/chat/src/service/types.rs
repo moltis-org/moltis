@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -537,12 +537,17 @@ impl LiveChatService {
         self.session_key_for(conn_id).await
     }
 
-    /// Resolve the project context prompt section for a session.
+    /// Resolve the project context prompt section and effective working
+    /// directory for a session.
+    ///
+    /// The working directory is the session worktree when present, otherwise
+    /// the bound project directory; it is `None` when no project is bound. It
+    /// is used to run the configured `context_command` in the expected place.
     pub(in crate::service) async fn resolve_project_context(
         &self,
         session_key: &str,
         conn_id: Option<&str>,
-    ) -> Option<String> {
+    ) -> (Option<String>, Option<PathBuf>) {
         let project_id = if let Some(cid) = conn_id {
             self.state.active_project_id(cid).await
         } else {
@@ -558,22 +563,30 @@ impl LiveChatService {
                 .and_then(|e| e.project_id),
         };
 
-        let pid = project_id?;
-        let val = self
+        let Some(pid) = project_id else {
+            return (None, None);
+        };
+        let Ok(val) = self
             .state
             .project_service()
             .get(serde_json::json!({"id": pid}))
             .await
-            .ok()?;
-        let dir = val.get("directory").and_then(|v| v.as_str())?;
+        else {
+            return (None, None);
+        };
+        let Some(dir) = val.get("directory").and_then(|v| v.as_str()) else {
+            return (None, None);
+        };
         let files = match moltis_projects::context::load_context_files(Path::new(dir)) {
             Ok(f) => f,
             Err(e) => {
                 warn!("failed to load project context: {e}");
-                return None;
+                return (None, None);
             },
         };
-        let project: moltis_projects::Project = serde_json::from_value(val.clone()).ok()?;
+        let Ok(project) = serde_json::from_value::<moltis_projects::Project>(val.clone()) else {
+            return (None, None);
+        };
         let worktree_dir = self
             .session_metadata
             .get(session_key)
@@ -587,12 +600,15 @@ impl LiveChatService {
                     None
                 }
             });
+        // The command runs in the session worktree when present, else the
+        // project root — matching where the operator's scripts expect to be.
+        let working_dir = worktree_dir.clone().unwrap_or_else(|| PathBuf::from(dir));
         let ctx = moltis_projects::ProjectContext {
             project,
             context_files: files,
             worktree_dir,
         };
-        Some(ctx.to_prompt_section())
+        (Some(ctx.to_prompt_section()), Some(working_dir))
     }
 
     /// Resolve all dynamic prompt context for a turn.
@@ -601,13 +617,13 @@ impl LiveChatService {
         session_key: &str,
         conn_id: Option<&str>,
     ) -> Option<String> {
-        let (project_context, command_context) = tokio::join!(
-            self.resolve_project_context(session_key, conn_id),
-            moltis_common::context_command::run_context_command(
-                self.config.chat.context_command.as_deref(),
-                None,
-            ),
-        );
+        let (project_context, working_dir) =
+            self.resolve_project_context(session_key, conn_id).await;
+        let command_context = moltis_common::context_command::run_context_command(
+            self.config.chat.context_command.as_deref(),
+            working_dir.as_deref(),
+        )
+        .await;
         merge_context_sections(project_context, command_context)
     }
 }
@@ -625,6 +641,7 @@ pub(in crate::service) fn merge_context_sections(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use {
         super::{

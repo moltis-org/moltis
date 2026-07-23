@@ -18,6 +18,9 @@ tracing        = { workspace = true }
 url            = { workspace = true }
 uuid           = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [features]
 default = []
 metrics = ["dep:moltis-metrics"]

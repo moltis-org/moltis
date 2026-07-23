@@ -286,6 +286,8 @@ port = {port}                           # Port number (auto-generated for this i
                                       #   "frozen-at-session-start" - Freeze the first MEMORY.md snapshot per session
 # workspace_file_max_chars = 32000  # Optional: per-file prompt cap for AGENTS.md / TOOLS.md before truncation.
 # context_command = ""              # Optional command run before each turn; stdout is appended to prompt context.
+                                    #   Runs in the active project/worktree dir when set, else the server cwd.
+                                    #   Times out after 30s; stdout capped at 32,000 bytes.
 # priority_models = ["claude-opus-4-5", "gpt-5.6-sol", "gemini-3-flash"]  # Optional: models to pin first in selectors
 
 # ── Compaction ─────────────────────────────────────────────────────────────
