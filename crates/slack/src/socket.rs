@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use {
     secrecy::ExposeSecret,
@@ -11,7 +11,7 @@ use moltis_channels::{
     gating::{DmPolicy, GroupPolicy, is_allowed},
     message_log::MessageLogEntry,
     otp::{
-        OtpInitResult, OtpVerifyResult, approve_sender_via_otp, emit_otp_challenge,
+        OTP_TTL, OtpInitResult, OtpVerifyResult, approve_sender_via_otp, emit_otp_challenge,
         emit_otp_resolution,
     },
     plugin::{
@@ -29,7 +29,6 @@ use crate::{
 };
 
 const OTP_CHALLENGE_MSG: &str = "To use this bot, please enter the verification code.\n\nAsk the bot owner for the code; it is visible in the web UI under Channels > Senders.\n\nThe code expires in 5 minutes.";
-const OTP_TTL: Duration = Duration::from_secs(300);
 
 /// State stored in the Socket Mode listener for callback access.
 #[derive(Clone)]
@@ -716,6 +715,9 @@ async fn handle_otp_flow(
             }
         };
 
+        #[cfg(feature = "metrics")]
+        record_otp_verification(&result);
+
         match result {
             OtpVerifyResult::Approved => {
                 approve_sender_via_otp(
@@ -800,6 +802,12 @@ async fn handle_otp_flow(
 
     match init_result {
         OtpInitResult::Created(code) => {
+            #[cfg(feature = "metrics")]
+            moltis_metrics::counter!(
+                moltis_metrics::channels::OTP_CHALLENGES_TOTAL,
+                moltis_metrics::labels::CHANNEL => "slack"
+            )
+            .increment(1);
             send_otp_status(accounts, account_id, channel_id, OTP_CHALLENGE_MSG).await;
             let expires_at = std::time::SystemTime::now()
                 .checked_add(OTP_TTL)
@@ -820,6 +828,23 @@ async fn handle_otp_flow(
         },
         OtpInitResult::AlreadyPending | OtpInitResult::LockedOut => {},
     }
+}
+
+#[cfg(feature = "metrics")]
+fn record_otp_verification(result: &OtpVerifyResult) {
+    let label = match result {
+        OtpVerifyResult::Approved => "approved",
+        OtpVerifyResult::WrongCode { .. } => "wrong_code",
+        OtpVerifyResult::LockedOut => "locked_out",
+        OtpVerifyResult::Expired => "expired",
+        OtpVerifyResult::NoPending => return,
+    };
+    moltis_metrics::counter!(
+        moltis_metrics::channels::OTP_VERIFICATIONS_TOTAL,
+        moltis_metrics::labels::CHANNEL => "slack",
+        "result" => label
+    )
+    .increment(1);
 }
 
 async fn send_otp_status(

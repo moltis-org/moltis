@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
-    time::Duration,
 };
 
 use {
@@ -16,7 +15,7 @@ use moltis_channels::{
     gating::{DmPolicy, GroupPolicy, is_allowed},
     message_log::{MessageLog, MessageLogEntry},
     otp::{
-        OtpChallengeInfo, OtpInitResult, OtpVerifyResult, approve_sender_via_otp,
+        OTP_TTL, OtpChallengeInfo, OtpInitResult, OtpVerifyResult, approve_sender_via_otp,
         emit_otp_challenge, emit_otp_resolution,
     },
     plugin::{
@@ -44,7 +43,23 @@ fn unix_now() -> i64 {
 }
 
 const OTP_CHALLENGE_MSG: &str = "To use this bot, please enter the verification code.\n\nAsk the bot owner for the code; it is visible in the web UI under Channels > Senders.\n\nThe code expires in 5 minutes.";
-const OTP_TTL: Duration = Duration::from_secs(300);
+
+#[cfg(feature = "metrics")]
+fn record_otp_verification(result: &OtpVerifyResult) {
+    let label = match result {
+        OtpVerifyResult::Approved => "approved",
+        OtpVerifyResult::WrongCode { .. } => "wrong_code",
+        OtpVerifyResult::LockedOut => "locked_out",
+        OtpVerifyResult::Expired => "expired",
+        OtpVerifyResult::NoPending => return,
+    };
+    moltis_metrics::counter!(
+        moltis_metrics::channels::OTP_VERIFICATIONS_TOTAL,
+        moltis_metrics::labels::CHANNEL => "msteams",
+        "result" => label
+    )
+    .increment(1);
+}
 
 fn policy_allowed(
     config: &MsTeamsAccountConfig,
@@ -621,6 +636,9 @@ impl MsTeamsPlugin {
                 }
             };
 
+            #[cfg(feature = "metrics")]
+            record_otp_verification(&result);
+
             match result {
                 OtpVerifyResult::Approved => {
                     approve_sender_via_otp(
@@ -629,7 +647,7 @@ impl MsTeamsPlugin {
                         account_id,
                         peer_id,
                         peer_id,
-                        Some(peer_id),
+                        sender_name.or(Some(peer_id)),
                     )
                     .await;
                     self.send_otp_status(
@@ -662,7 +680,7 @@ impl MsTeamsPlugin {
                         ChannelType::MsTeams,
                         account_id,
                         peer_id,
-                        Some(peer_id),
+                        sender_name.or(Some(peer_id)),
                         "locked_out",
                     )
                     .await;
@@ -679,7 +697,7 @@ impl MsTeamsPlugin {
                         ChannelType::MsTeams,
                         account_id,
                         peer_id,
-                        Some(peer_id),
+                        sender_name.or(Some(peer_id)),
                         "expired",
                     )
                     .await;
@@ -706,6 +724,12 @@ impl MsTeamsPlugin {
 
         match init_result {
             OtpInitResult::Created(code) => {
+                #[cfg(feature = "metrics")]
+                moltis_metrics::counter!(
+                    moltis_metrics::channels::OTP_CHALLENGES_TOTAL,
+                    moltis_metrics::labels::CHANNEL => "msteams"
+                )
+                .increment(1);
                 self.send_otp_status(account_id, chat_id, OTP_CHALLENGE_MSG)
                     .await;
                 let expires_at = std::time::SystemTime::now()

@@ -285,6 +285,24 @@ fn auto_join_allowlist_uses_existing_user_and_room_allowlists() {
 }
 
 #[test]
+fn auto_join_allowlist_with_empty_allowlists_denies_all() {
+    let cfg = MatrixAccountConfig {
+        auto_join: AutoJoinPolicy::Allowlist,
+        room_policy: GroupPolicy::Open,
+        user_allowlist: vec![],
+        room_allowlist: vec![],
+        ..Default::default()
+    };
+
+    assert!(!should_auto_join_invite(
+        &cfg,
+        "@mallory:example.org",
+        "!any:example.org",
+        false,
+    ));
+}
+
+#[test]
 fn auto_join_never_bypasses_room_allowlist() {
     let cfg = MatrixAccountConfig {
         auto_join: AutoJoinPolicy::Always,

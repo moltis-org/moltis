@@ -291,7 +291,7 @@ picker list from `moltis.toml`.
 | `mention_mode` | no | `"mention"` | When the bot responds in rooms: `"always"`, `"mention"`, or `"none"` |
 | `room_allowlist` | no | `[]` | Matrix room IDs or aliases allowed to interact with the bot |
 | `user_allowlist` | no | `[]` | Matrix user IDs allowed to DM the bot |
-| `auto_join` | no | `"always"` | Invite handling: `"always"`, `"allowlist"`, or `"off"` |
+| `auto_join` | no | `"always"` | Invite handling: `"always"`, `"allowlist"`, or `"off"`. With `"allowlist"`, invites are accepted only when the inviter is on `user_allowlist` or the room is on `room_allowlist`; empty allowlists deny all invites |
 | `model` | no | — | Override the default model for this account |
 | `model_provider` | no | — | Provider for the overridden model |
 | `stream_mode` | no | `"edit_in_place"` | How streaming replies are sent: `"edit_in_place"` or `"off"` |

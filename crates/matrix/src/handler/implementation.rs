@@ -621,8 +621,10 @@ fn should_auto_join_invite(
         AutoJoinPolicy::Always => true,
         AutoJoinPolicy::Off => false,
         AutoJoinPolicy::Allowlist => {
-            gating::is_allowed(inviter_id, &config.user_allowlist)
-                || gating::is_allowed(room_id, &config.room_allowlist)
+            (!config.user_allowlist.is_empty()
+                && gating::is_allowed(inviter_id, &config.user_allowlist))
+                || (!config.room_allowlist.is_empty()
+                    && gating::is_allowed(room_id, &config.room_allowlist))
         },
     }
 }
