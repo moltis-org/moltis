@@ -21,7 +21,7 @@ use moltis_channels::{
 };
 
 use crate::{
-    client::slack_client_for_base_url,
+    client::validated_slack_client_for_base_url,
     config::SlackAccountConfig,
     state::{AccountState, AccountStateMap},
 };
@@ -48,7 +48,7 @@ pub async fn register_events_api_account(
         ));
     }
 
-    let client = Arc::new(slack_client_for_base_url(&config.api_base_url)?);
+    let client = Arc::new(validated_slack_client_for_base_url(&config.api_base_url).await?);
 
     // Verify the bot token and get the bot user ID.
     let bot_token = SlackApiToken::new(SlackApiTokenValue::from(bot_token_str));

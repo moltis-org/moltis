@@ -2,9 +2,22 @@ use slack_morphism::prelude::*;
 
 use moltis_channels::{
     Error as ChannelError, Result as ChannelResult, normalize_slack_api_base_url,
+    validate_slack_api_base_url,
 };
 
 pub const DEFAULT_SLACK_API_BASE_URL: &str = "https://slack.com/api";
+
+/// Build a Slack client after full base-URL validation, including DNS
+/// resolution of hostname targets against the SSRF policy.
+///
+/// Use this at account registration. Hot paths whose config already passed
+/// registration can use the cheaper [`slack_client_for_base_url`].
+pub async fn validated_slack_client_for_base_url(
+    api_base_url: &str,
+) -> ChannelResult<SlackClient<SlackClientHyperHttpsConnector>> {
+    validate_slack_api_base_url(api_base_url).await?;
+    slack_client_for_base_url(api_base_url)
+}
 
 pub fn slack_client_for_base_url(
     api_base_url: &str,

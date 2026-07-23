@@ -36,5 +36,5 @@ pub use {
         web_session_channel_binding,
     },
     registry::{ChannelRegistry, RegistryOutboundRouter},
-    slack_api_url::normalize_slack_api_base_url,
+    slack_api_url::{normalize_slack_api_base_url, validate_slack_api_base_url},
 };

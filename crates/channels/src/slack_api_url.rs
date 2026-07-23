@@ -3,11 +3,19 @@
 //! `api_base_url` is attacker-influenceable config that the server turns into
 //! outbound HTTP (and WebSocket) requests, so it is an SSRF vector. By default we
 //! reject localhost and private/loopback/link-local/CGNAT/unique-local targets.
+//! [`normalize_slack_api_base_url`] checks syntax and literal-IP hosts;
+//! [`validate_slack_api_base_url`] additionally resolves DNS hostnames and
+//! applies the same policy to every resolved address, so a name like
+//! `proxy.internal` pointing at a private or metadata address is rejected too.
 //!
 //! Operators who deliberately front Slack with an internal proxy can opt specific
 //! hosts back in via the `MOLTIS_SLACK_API_BASE_URL_ALLOWLIST` env var
 //! (comma-separated exact hosts). Cloud metadata addresses stay blocked even when
 //! allowlisted, since no legitimate Slack base URL resolves there.
+//!
+//! Known limitation: DNS is checked when the config is validated (account
+//! registration / config save), not re-pinned at connect time, so a record that
+//! is rebound afterwards is not re-checked on every request.
 
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -38,6 +46,41 @@ pub fn normalize_slack_api_base_url(api_base_url: &str) -> Result<String> {
     }
     validate_host(&parsed, host_allowlist())?;
     Ok(trimmed.to_string())
+}
+
+/// Normalize and validate a Slack Web API base URL, additionally resolving DNS
+/// hostnames and rejecting any that resolve to private, local, or
+/// cloud-metadata addresses.
+///
+/// Use this at trust boundaries (account registration, config save). Hot paths
+/// whose config already passed validation can use the cheaper
+/// [`normalize_slack_api_base_url`]. Fails closed: a host that does not resolve
+/// is rejected.
+pub async fn validate_slack_api_base_url(api_base_url: &str) -> Result<String> {
+    let normalized = normalize_slack_api_base_url(api_base_url)?;
+    let parsed = Url::parse(&normalized).map_err(|e| {
+        Error::invalid_input(format!("Slack api_base_url must be an absolute URL: {e}"))
+    })?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| Error::invalid_input("Slack api_base_url must include a host"))?;
+    let normalized_host = normalize_host(host);
+    if normalized_host.parse::<IpAddr>().is_ok() {
+        // Literal IPs were fully checked by `normalize_slack_api_base_url`.
+        return Ok(normalized);
+    }
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let resolved: Vec<IpAddr> = tokio::net::lookup_host((normalized_host.as_str(), port))
+        .await
+        .map_err(|e| {
+            Error::invalid_input(format!(
+                "Slack api_base_url host {normalized_host} did not resolve: {e}"
+            ))
+        })?
+        .map(|addr| addr.ip())
+        .collect();
+    check_resolved_ips(&normalized_host, &resolved, host_allowlist())?;
+    Ok(normalized)
 }
 
 /// The process-wide allowlist, parsed once from the environment.
@@ -100,6 +143,33 @@ fn validate_host(url: &Url, allowlist: &[String]) -> Result<()> {
         return Err(Error::invalid_input(format!(
             "Slack api_base_url must not target private or local IP {ip}"
         )));
+    }
+    Ok(())
+}
+
+/// Apply the SSRF policy to a hostname's resolved addresses.
+///
+/// Cloud-metadata addresses are rejected even for allowlisted hosts; private
+/// and local addresses are rejected unless the host is allowlisted. An empty
+/// resolution set is rejected so validation fails closed.
+fn check_resolved_ips(host: &str, ips: &[IpAddr], allowlist: &[String]) -> Result<()> {
+    if ips.is_empty() {
+        return Err(Error::invalid_input(format!(
+            "Slack api_base_url host {host} did not resolve to any address"
+        )));
+    }
+    let host_allowlisted = allowlist.iter().any(|entry| entry == host);
+    for ip in ips {
+        if is_cloud_metadata_ip(ip) {
+            return Err(Error::invalid_input(format!(
+                "Slack api_base_url host {host} resolves to the cloud metadata address {ip}"
+            )));
+        }
+        if !host_allowlisted && is_disallowed_ip(ip) {
+            return Err(Error::invalid_input(format!(
+                "Slack api_base_url host {host} resolves to private or local IP {ip}"
+            )));
+        }
     }
     Ok(())
 }
@@ -215,5 +285,74 @@ mod tests {
     fn normalize_rejects_non_http_scheme() {
         assert!(normalize_slack_api_base_url("ftp://slack.com/api").is_err());
         assert!(normalize_slack_api_base_url("not-a-url").is_err());
+    }
+
+    fn check_resolved(host: &str, ips: &[&str], allowlist: &[&str]) -> Result<()> {
+        let ips: Vec<IpAddr> = ips.iter().map(|ip| ip.parse().unwrap()).collect();
+        let allow: Vec<String> = allowlist
+            .iter()
+            .map(|entry| normalize_host(entry))
+            .collect();
+        check_resolved_ips(host, &ips, &allow)
+    }
+
+    #[test]
+    fn hostname_resolving_to_private_ip_rejected_by_default() {
+        assert!(check_resolved("proxy.internal", &["127.0.0.1"], &[]).is_err());
+        assert!(check_resolved("proxy.internal", &["10.0.0.5"], &[]).is_err());
+        assert!(check_resolved("proxy.internal", &["fe80::1"], &[]).is_err());
+        // One private address among public ones still rejects.
+        assert!(check_resolved("proxy.internal", &["93.184.216.34", "192.168.1.1"], &[]).is_err());
+    }
+
+    #[test]
+    fn hostname_resolving_to_public_ips_passes() {
+        assert!(check_resolved("slack.com", &["3.122.0.1", "2600:1f18::1"], &[]).is_ok());
+    }
+
+    #[test]
+    fn allowlisted_hostname_may_resolve_to_private_ip() {
+        assert!(check_resolved("proxy.internal", &["10.0.0.5"], &["proxy.internal"]).is_ok());
+        // Allowlisting one host does not open others.
+        assert!(check_resolved("other.internal", &["10.0.0.5"], &["proxy.internal"]).is_err());
+    }
+
+    #[test]
+    fn hostname_resolving_to_metadata_rejected_even_when_allowlisted() {
+        assert!(
+            check_resolved("proxy.internal", &["169.254.169.254"], &["proxy.internal"]).is_err()
+        );
+        assert!(check_resolved("proxy.internal", &["fd00:ec2::254"], &["proxy.internal"]).is_err());
+        assert!(
+            check_resolved("proxy.internal", &["::ffff:169.254.169.254"], &[
+                "proxy.internal"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn empty_resolution_fails_closed() {
+        assert!(check_resolved("proxy.internal", &[], &[]).is_err());
+        assert!(check_resolved("proxy.internal", &[], &["proxy.internal"]).is_err());
+    }
+
+    #[tokio::test]
+    async fn validate_rejects_literal_private_ips_without_dns() {
+        assert!(
+            validate_slack_api_base_url("http://127.0.0.1/api")
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_slack_api_base_url("http://169.254.169.254/api")
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_slack_api_base_url("http://localhost/api")
+                .await
+                .is_err()
+        );
     }
 }
