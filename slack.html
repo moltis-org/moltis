@@ -313,7 +313,21 @@ connection_mode = &#x22;socket_mode&#x22;"><code><span class="line"><span style=
 connects to the WebSocket URL returned by that API.</p>
 <p>The endpoint must be a public HTTP(S) URL. Localhost, private-network,
 link-local, and other non-public IP targets are rejected because Slack API calls
-carry the bot token.</p>
+carry the bot token. Hostnames are resolved via DNS when the account starts, and
+every resolved address is checked against the same policy — a DNS name pointing
+at a private or cloud-metadata address is rejected, and a hostname that fails to
+resolve is rejected too (validation fails closed).</p>
+<h4 id="allowing-internal-hosts">Allowing internal hosts</h4>
+<p>If you deliberately front Slack with a proxy on an internal host, an operator can
+allow specific hosts back in with the <code>MOLTIS_SLACK_API_BASE_URL_ALLOWLIST</code>
+environment variable — a comma-separated list of exact hostnames or IPs:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="sh" data-code="MOLTIS_SLACK_API_BASE_URL_ALLOWLIST=&#x22;proxy.internal,127.0.0.1&#x22;"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">MOLTIS_SLACK_API_BASE_URL_ALLOWLIST</span><span style="color:#D32F2F;--shiki-dark:#F97583">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"proxy.internal,127.0.0.1"</span></span></code></pre>
+<p>Only hosts on this list bypass the private-address guard, and matching is on the
+exact host (so <code>localhost</code> and <code>127.0.0.1</code> must each be listed if you want both).
+The allowlist is intentionally an environment variable, not a web-editable
+setting, so this SSRF exception stays under operator control. Cloud metadata
+addresses (<code>169.254.169.254</code>, <code>fd00:ec2::254</code>) remain blocked even when
+allowlisted, including when an allowlisted hostname resolves to one.</p>
 <p>If using a proxy, ensure it supports Slack’s native streaming methods before
 setting <code>stream_mode = "native"</code>.</p>
 <h2 id="access-control">Access Control</h2>
