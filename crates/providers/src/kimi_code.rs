@@ -3,7 +3,7 @@
 //! Authentication uses the Kimi device-flow OAuth (same as kimi-cli).
 //! The API is OpenAI-compatible at `https://api.kimi.com/coding/v1`.
 
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
 use {
     async_trait::async_trait,
@@ -19,7 +19,9 @@ use {
         SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage_from_payload,
         parse_tool_calls, process_openai_sse_line, to_openai_tools,
     },
-    moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
+    moltis_agents::model::{
+        ChatMessage, CompletionResponse, LlmProvider, ReasoningEffort, StreamEvent,
+    },
 };
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -44,6 +46,7 @@ pub struct KimiCodeProvider {
     client: &'static reqwest::Client,
     base_url: String,
     auth_mode: AuthMode,
+    reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl KimiCodeProvider {
@@ -56,6 +59,7 @@ impl KimiCodeProvider {
             auth_mode: AuthMode::OAuthTokenStore {
                 token_store: TokenStore::new(),
             },
+            reasoning_effort: None,
         }
     }
 
@@ -66,6 +70,7 @@ impl KimiCodeProvider {
             client: crate::shared_http_client(),
             base_url,
             auth_mode: AuthMode::ApiKey { api_key },
+            reasoning_effort: None,
         }
     }
 
@@ -77,6 +82,12 @@ impl KimiCodeProvider {
         match &self.auth_mode {
             AuthMode::ApiKey { api_key } => Ok(api_key.expose_secret().clone()),
             AuthMode::OAuthTokenStore { .. } => self.get_valid_oauth_token().await,
+        }
+    }
+
+    fn apply_reasoning_effort(&self, body: &mut serde_json::Value) {
+        if self.reasoning_effort.is_some() {
+            body["reasoning_effort"] = serde_json::json!("max");
         }
     }
 
@@ -179,9 +190,11 @@ pub fn has_stored_tokens() -> bool {
 
 /// Known Kimi Code models.
 pub const KIMI_CODE_MODELS: &[(&str, &str)] = &[
+    ("kimi-k3", "Kimi K3"),
+    ("kimi-k2.7-code-highspeed", "Kimi K2.7 Code Highspeed"),
     ("kimi-for-coding", "Kimi For Coding"),
-    ("kimi-k2.5", "Kimi K2.5"),
     ("kimi-k2.6", "Kimi K2.6"),
+    ("kimi-k2.5", "Kimi K2.5"),
 ];
 
 // ── LlmProvider impl ────────────────────────────────────────────────────────
@@ -213,6 +226,7 @@ impl LlmProvider for KimiCodeProvider {
             "model": self.model,
             "messages": openai_messages,
         });
+        self.apply_reasoning_effort(&mut body);
 
         if !tools.is_empty() {
             body["tools"] = serde_json::Value::Array(to_openai_tools(tools, true));
@@ -308,6 +322,7 @@ impl LlmProvider for KimiCodeProvider {
                 "stream": true,
                 "stream_options": { "include_usage": true },
             });
+            self.apply_reasoning_effort(&mut body);
 
             if !tools.is_empty() {
                 body["tools"] = serde_json::Value::Array(to_openai_tools(&tools, true));
@@ -435,6 +450,30 @@ impl LlmProvider for KimiCodeProvider {
             }
         })
     }
+
+    fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        self.reasoning_effort
+    }
+
+    fn with_reasoning_effort(
+        self: Arc<Self>,
+        effort: ReasoningEffort,
+    ) -> Option<Arc<dyn LlmProvider>> {
+        Some(Arc::new(Self {
+            model: self.model.clone(),
+            client: self.client,
+            base_url: self.base_url.clone(),
+            auth_mode: match &self.auth_mode {
+                AuthMode::OAuthTokenStore { .. } => AuthMode::OAuthTokenStore {
+                    token_store: TokenStore::new(),
+                },
+                AuthMode::ApiKey { api_key } => AuthMode::ApiKey {
+                    api_key: Secret::new(api_key.expose_secret().clone()),
+                },
+            },
+            reasoning_effort: Some(effort),
+        }))
+    }
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -455,15 +494,36 @@ mod tests {
     async fn start_mock_with_capture(
         response_body: serde_json::Value,
     ) -> (String, Arc<Mutex<Vec<CapturedRequest>>>) {
+        start_mock_with_capture_handler(move || axum::Json(response_body.clone())).await
+    }
+
+    async fn start_mock_sse_with_capture(
+        response_body: &'static str,
+    ) -> (String, Arc<Mutex<Vec<CapturedRequest>>>) {
+        start_mock_with_capture_handler(move || {
+            (
+                [(http::header::CONTENT_TYPE, "text/event-stream")],
+                response_body,
+            )
+        })
+        .await
+    }
+
+    async fn start_mock_with_capture_handler<R, F>(
+        response: F,
+    ) -> (String, Arc<Mutex<Vec<CapturedRequest>>>)
+    where
+        R: axum::response::IntoResponse + Send + 'static,
+        F: Fn() -> R + Clone + Send + Sync + 'static,
+    {
         let captured: Arc<Mutex<Vec<CapturedRequest>>> = Arc::new(Mutex::new(Vec::new()));
         let captured_clone = captured.clone();
-        let resp_body = response_body.clone();
 
         let app = Router::new().route(
             "/chat/completions",
             post(move |req: Request| {
                 let cap = captured_clone.clone();
-                let resp = resp_body.clone();
+                let response = response.clone();
                 async move {
                     let headers: Vec<(String, String)> = req
                         .headers()
@@ -480,7 +540,7 @@ mod tests {
 
                     cap.lock().unwrap().push(CapturedRequest { headers, body });
 
-                    axum::Json(resp)
+                    response()
                 }
             }),
         );
@@ -712,6 +772,52 @@ mod tests {
         assert_eq!(tools_arr.len(), 1);
         assert_eq!(tools_arr[0]["type"], "function");
         assert_eq!(tools_arr[0]["function"]["name"], "read_file");
+    }
+
+    #[tokio::test]
+    async fn complete_sends_reasoning_effort_as_max() {
+        let (base_url, captured) = start_mock_with_capture(mock_completion_response()).await;
+        let provider = Arc::new(KimiCodeProvider::new_with_api_key(
+            Secret::new("sk-kimi".into()),
+            "kimi-k3".into(),
+            base_url,
+        ))
+        .with_reasoning_effort(ReasoningEffort::Low)
+        .unwrap();
+
+        provider
+            .complete(&[ChatMessage::user("hi")], &[])
+            .await
+            .unwrap();
+
+        let reqs = captured.lock().unwrap();
+        let body = reqs[0].body.as_ref().unwrap();
+        assert_eq!(body["reasoning_effort"], "max");
+    }
+
+    #[tokio::test]
+    async fn stream_sends_reasoning_effort_as_max() {
+        use futures::StreamExt as _;
+
+        let (base_url, captured) = start_mock_sse_with_capture("data: [DONE]\n\n").await;
+        let provider = Arc::new(KimiCodeProvider::new_with_api_key(
+            Secret::new("sk-kimi".into()),
+            "kimi-k2.7-code-highspeed".into(),
+            base_url,
+        ))
+        .with_reasoning_effort(ReasoningEffort::High)
+        .unwrap();
+
+        let events: Vec<StreamEvent> = provider
+            .stream_with_tools(vec![ChatMessage::user("hi")], vec![])
+            .collect()
+            .await;
+        assert!(matches!(events.last(), Some(StreamEvent::Done(_))));
+
+        let reqs = captured.lock().unwrap();
+        let body = reqs[0].body.as_ref().unwrap();
+        assert_eq!(body["reasoning_effort"], "max");
+        assert_eq!(body["stream"], true);
     }
 
     #[tokio::test]

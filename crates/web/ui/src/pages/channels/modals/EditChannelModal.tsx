@@ -46,6 +46,7 @@ export function EditChannelModal(): VNode | null {
 	const editMatrixOtpCooldown = useSignal("300");
 	const editSignalAccount = useSignal("");
 	const editSignalHttpUrl = useSignal("http://127.0.0.1:8080");
+	const editSlackApiBaseUrl = useSignal("https://slack.com/api");
 	const editChannelNamePatterns = useSignal<string[]>([]);
 	const editCategoryAllowlist = useSignal<string[]>([]);
 	const editAdvancedConfigPatch = useSignal("");
@@ -73,6 +74,7 @@ export function EditChannelModal(): VNode | null {
 		editMatrixOtpCooldown.value = String(ch?.config?.otp_cooldown_secs || 300);
 		editSignalAccount.value = (ch?.config?.account as string) || "";
 		editSignalHttpUrl.value = (ch?.config?.http_url as string) || "http://127.0.0.1:8080";
+		editSlackApiBaseUrl.value = (ch?.config?.api_base_url as string) || "https://slack.com/api";
 		editChannelNamePatterns.value = (ch?.config?.channel_name_patterns || []) as string[];
 		editCategoryAllowlist.value = (ch?.config?.category_allowlist || []) as string[];
 		editAdvancedConfigPatch.value = "";
@@ -95,6 +97,7 @@ export function EditChannelModal(): VNode | null {
 	const isDiscord = chType === ChannelType.Discord;
 	const isWhatsApp = chType === ChannelType.WhatsApp;
 	const isTelegram = chType === ChannelType.Telegram;
+	const isSlack = chType === ChannelType.Slack;
 	const isMatrix = chType === ChannelType.Matrix;
 	const isNostr = chType === ChannelType.Nostr;
 	const isSignal = chType === ChannelType.Signal;
@@ -187,6 +190,9 @@ export function EditChannelModal(): VNode | null {
 		if (isDiscord) {
 			updateConfig.channel_name_patterns = editChannelNamePatterns.value;
 			updateConfig.category_allowlist = editCategoryAllowlist.value;
+		}
+		if (isSlack) {
+			updateConfig.api_base_url = editSlackApiBaseUrl.value.trim() || "https://slack.com/api";
 		}
 		addChannelCredentials(updateConfig, form);
 		addModelToConfig(updateConfig);
@@ -375,6 +381,27 @@ export function EditChannelModal(): VNode | null {
 							Only respond in channels under these Discord categories. Combined with name patterns via OR.
 						</div>
 					</>
+				)}
+				{isSlack && (
+					<div className="flex flex-col gap-1">
+						<label className="text-xs text-[var(--muted)]">Slack API Base URL</label>
+						<input
+							type="url"
+							className="channel-input w-full"
+							value={editSlackApiBaseUrl.value}
+							onInput={(e) => {
+								editSlackApiBaseUrl.value = targetValue(e);
+							}}
+							placeholder="https://slack.com/api"
+							autoComplete="off"
+							autoCapitalize="none"
+							autoCorrect="off"
+							spellcheck={false}
+						/>
+						<div className="text-xs text-[var(--muted)]">
+							Use Slack's default endpoint unless you use a Slack-compatible proxy or test gateway.
+						</div>
+					</div>
 				)}
 				{isNostr && (
 					<>

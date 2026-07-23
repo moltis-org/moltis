@@ -25,6 +25,18 @@ async function waitForOnboardingStepLoaded(page) {
 	await expect(page.getByText("Scanning OpenClaw installation…", { exact: true })).not.toBeVisible({
 		timeout: 10_000,
 	});
+	await expect(page.getByText("Checking voice providers…", { exact: true })).not.toBeVisible({
+		timeout: 10_000,
+	});
+	await expect(page.getByText("Loading summary…", { exact: true })).not.toBeVisible({
+		timeout: 10_000,
+	});
+}
+
+async function waitForOnboardingWsOpen(page) {
+	await expect
+		.poll(() => page.evaluate(() => window.__moltis_state?.ws?.readyState === WebSocket.OPEN).catch(() => false))
+		.toBe(true);
 }
 
 async function visibleOnboardingHeadingText(page) {
@@ -228,6 +240,51 @@ async function moveToChannelStep(page) {
 async function advanceVisibleOnboardingStep(page) {
 	if (await clickFirstVisibleButton(page, { name: "Skip for now", exact: true })) return true;
 	return clickFirstVisibleButton(page, { name: "Continue", exact: true });
+}
+
+async function moveToSummaryStep(page) {
+	const summaryHeading = page.getByRole("heading", { name: "Setup Summary", exact: true });
+	for (let i = 0; i < 50; i++) {
+		await waitForOnboardingStepLoaded(page);
+		if (await isVisible(summaryHeading)) return true;
+
+		if (await maybeSkipOpenClawImport(page)) continue;
+		if (await maybeSkipAuth(page)) continue;
+		if (await maybeCompleteIdentity(page)) continue;
+		if (await advanceVisibleOnboardingStep(page)) continue;
+		break;
+	}
+	return isVisible(summaryHeading);
+}
+
+async function mockOnboardingExternalAgents(page, agents) {
+	await page.addInitScript((externalAgentsListPayload) => {
+		if (window.__onboardingExternalAgentE2EPatched) return;
+		window.__onboardingExternalAgentE2EPatched = true;
+		const originalSend = WebSocket.prototype.send;
+
+		function respond(socket, id, payload) {
+			queueMicrotask(() => {
+				const event = new MessageEvent("message", {
+					data: JSON.stringify({ type: "res", id, ok: true, payload }),
+				});
+				if (typeof socket.onmessage === "function") socket.onmessage(event);
+			});
+		}
+
+		WebSocket.prototype.send = function (payload) {
+			try {
+				const parsed = JSON.parse(payload);
+				if (parsed?.method === "external_agents.list") {
+					respond(this, parsed.id, externalAgentsListPayload);
+					return;
+				}
+			} catch {
+				// Let non-JSON WebSocket traffic pass through unchanged.
+			}
+			return originalSend.call(this, payload);
+		};
+	}, agents);
 }
 
 async function moveToRemoteAccessStep(page) {
@@ -511,6 +568,52 @@ test.describe("Onboarding wizard", () => {
 		await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
 	});
 
+	test("summary shows installed ACP agents", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockOnboardingExternalAgents(page, [
+			{ kind: "codex", name: "Codex", installed: true, isAcp: false, version: null },
+			{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null },
+			{ kind: "acp-gemini", name: "ACP: Gemini", installed: false, isAcp: true, version: null },
+		]);
+
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+		await waitForOnboardingWsOpen(page);
+		expect(await moveToSummaryStep(page)).toBeTruthy();
+
+		const acpRow = page.locator(".rounded-md.border", {
+			has: page.locator(".text-sm.font-medium").filter({ hasText: /^ACP Agents$/ }),
+		});
+		await expect(acpRow).toBeVisible();
+		await expect(acpRow.getByText("ACP: Copilot", { exact: true })).toBeVisible();
+		await expect(acpRow.getByText("ACP: Gemini", { exact: true })).toHaveCount(0);
+		await expect(acpRow.getByText("Codex", { exact: true })).toHaveCount(0);
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("LLM step shows detected ACP agents before provider choices", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockOnboardingExternalAgents(page, [
+			{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null },
+			{ kind: "acp-gemini", name: "ACP: Gemini", installed: false, isAcp: true, version: null },
+			{ kind: "codex", name: "Codex", installed: true, isAcp: false, version: null },
+		]);
+
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+		await waitForOnboardingWsOpen(page);
+		expect(await moveToLlmStep(page)).toBeTruthy();
+
+		const acpPanel = page.locator(".rounded-md.border").filter({ hasText: "Detected ACP agents" });
+		await expect(acpPanel).toBeVisible();
+		await expect(acpPanel.getByText("ACP: Copilot", { exact: true })).toBeVisible();
+		await expect(acpPanel.getByText("ACP: Gemini", { exact: true })).toHaveCount(0);
+		await expect(acpPanel.getByText("Codex", { exact: true })).toHaveCount(0);
+		await expect(acpPanel.getByText(/you can skip LLM setup/)).toBeVisible();
+		await expect(page.getByRole("button", { name: "Skip for now", exact: true })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("mobile onboarding layout avoids horizontal overflow", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.setViewportSize({ width: 375, height: 812 });
@@ -639,7 +742,7 @@ test.describe("Onboarding wizard", () => {
 			if (markerIdx < 0) throw new Error("onboarding-app.js marker not found in script URL");
 			const prefix = appUrl.slice(0, markerIdx);
 			const state = await import(`${prefix}js/state.js`);
-			const wsOpen = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+			const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
 			state.setConnected(true);
 			state.setWs({
 				readyState: wsOpen,
@@ -729,7 +832,7 @@ test.describe("Onboarding wizard", () => {
 				const marker = "js/onboarding-app.js";
 				const prefix = appUrl.slice(0, appUrl.indexOf(marker));
 				const state = await import(`${prefix}js/state.js`);
-				const wsOpen = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+				const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
 				state.setConnected(true);
 				state.setWs({
 					readyState: wsOpen,
@@ -834,7 +937,7 @@ test.describe("Onboarding wizard", () => {
 				const marker = "js/onboarding-app.js";
 				const prefix = appUrl.slice(0, appUrl.indexOf(marker));
 				const state = await import(`${prefix}js/state.js`);
-				const wsOpen = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+				const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
 				state.setConnected(true);
 				state.setWs({
 					readyState: wsOpen,
@@ -1000,7 +1103,7 @@ test.describe("Onboarding wizard", () => {
 			if (markerIdx < 0) throw new Error("onboarding-app.js marker not found in script URL");
 			const prefix = appUrl.slice(0, markerIdx);
 			const state = await import(`${prefix}js/state.js`);
-			const wsOpen = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+			const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
 			window.__matrixOnboardingAddRequest = null;
 			state.setConnected(true);
 			state.setWs({
@@ -1111,6 +1214,97 @@ test.describe("Onboarding wizard", () => {
 			test.skip(true, "all API-key providers are pre-configured; cannot test key source hint");
 			return;
 		}
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("moonshot configuration surfaces Kimi K3 in model selection", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.route("**/api/auth/status", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ authenticated: true, setup_required: false, localhost_only: true }),
+			});
+		});
+
+		await page.addInitScript(() => {
+			const rpcPayloads = {
+				connect: { type: "hello-ok" },
+				"providers.available": [
+					{
+						name: "moonshot",
+						displayName: "Moonshot",
+						authType: "api-key",
+						configured: false,
+						defaultBaseUrl: "https://api.moonshot.ai/v1",
+						baseUrl: "https://api.moonshot.ai/v1",
+						requiresModel: false,
+					},
+				],
+				"providers.validate_key": {
+					valid: true,
+					models: [
+						{ id: "kimi-k3", displayName: "Kimi K3", provider: "moonshot", supportsTools: true },
+						{
+							id: "kimi-k2.7-code-highspeed",
+							displayName: "Kimi K2.7 Code Highspeed",
+							provider: "moonshot",
+							supportsTools: true,
+						},
+					],
+				},
+				"models.test": { ok: true },
+			};
+
+			class FakeWebSocket {
+				static CONNECTING = 0;
+				static OPEN = 1;
+				static CLOSING = 2;
+				static CLOSED = 3;
+
+				readyState = FakeWebSocket.CONNECTING;
+				onopen = null;
+				onmessage = null;
+				onclose = null;
+
+				constructor() {
+					queueMicrotask(() => {
+						this.readyState = FakeWebSocket.OPEN;
+						this.onopen?.({});
+					});
+				}
+
+				send(raw) {
+					const request = JSON.parse(raw || "{}");
+					const payload = rpcPayloads[request.method] || {};
+					const response = { type: "res", id: request.id, ok: true, payload };
+					queueMicrotask(() => this.onmessage?.({ data: JSON.stringify(response) }));
+				}
+
+				close() {
+					this.readyState = FakeWebSocket.CLOSED;
+					this.onclose?.({});
+				}
+			}
+
+			window.WebSocket = FakeWebSocket;
+		});
+
+		await page.goto("/onboarding");
+		await moveToLlmStep(page);
+		await page.getByRole("button", { name: /All providers/ }).click();
+
+		const moonshotRow = page
+			.locator(".onboarding-card .rounded-md.border")
+			.filter({ has: page.getByText("Moonshot", { exact: true }) })
+			.first();
+		await moonshotRow.getByRole("button", { name: "Configure", exact: true }).click();
+		await moonshotRow.locator('input[type="password"]').fill("sk-test-moonshot");
+		await moonshotRow.getByRole("button", { name: "Save", exact: true }).click();
+
+		await expect(moonshotRow.getByText("Select preferred models", { exact: true })).toBeVisible();
+		await expect(moonshotRow.getByText("Kimi K3", { exact: true })).toBeVisible();
+		await expect(moonshotRow.getByText("kimi-k3", { exact: true })).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -1257,7 +1451,7 @@ test.describe("Onboarding wizard", () => {
 			if (markerIdx < 0) throw new Error("onboarding-app.js marker not found in script URL");
 			const prefix = appUrl.slice(0, markerIdx);
 			const state = await import(`${prefix}js/state.js`);
-			const wsOpen = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+			const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
 			window.__voiceOnboardingSaveSettingsRequest = null;
 			state.setConnected(true);
 			state.setWs({

@@ -20,7 +20,7 @@ use crate::{
         UserContent, decode_tool_call_arguments_from_str, push_capped_provider_raw_event,
     },
     response_sanitizer::{clean_response, recover_tool_calls_from_content},
-    tool_arg_validator::validate_tool_args,
+    tool_arg_validator::{coerce_scalar_args, validate_tool_args},
     tool_loop_detector::ToolCallFingerprint,
     tool_parsing::{
         looks_like_failed_tool_call, new_synthetic_tool_call_id, parse_tool_calls_from_text,
@@ -731,6 +731,7 @@ pub async fn run_agent_loop_streaming_with_limits(
                     Some(reason)
                 } else if let Some(ref t) = tool {
                     let schema = t.parameters_schema();
+                    coerce_scalar_args(&schema, &mut args);
                     match validate_tool_args(&schema, &args) {
                         Ok(()) => None,
                         Err(e) => {
@@ -795,6 +796,7 @@ pub async fn run_agent_loop_streaming_with_limits(
                                 args = v;
                                 if let Some(ref tool) = tool {
                                     let schema = tool.parameters_schema();
+                                    coerce_scalar_args(&schema, &mut args);
                                     if let Err(e) = validate_tool_args(&schema, &args) {
                                         let err_str = e.to_llm_error_message(&tc_name);
                                         warn!(

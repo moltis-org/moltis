@@ -40,6 +40,7 @@ mod memory_commands;
 #[cfg(feature = "netbird")]
 mod netbird_commands;
 mod node_commands;
+mod providers_commands;
 mod sandbox_commands;
 mod service_commands;
 #[cfg(feature = "tailscale")]
@@ -137,6 +138,11 @@ enum Commands {
     },
     /// List available models.
     Models,
+    /// Provider diagnostics and inspection.
+    Providers {
+        #[command(subcommand)]
+        action: providers_commands::ProviderAction,
+    },
     /// Interactive onboarding wizard.
     Onboard,
     /// Config validation and migration.
@@ -495,6 +501,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Some(Commands::Channels { action }) => channel_commands::handle_channels(action).await,
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
+        Some(Commands::Providers { action }) => providers_commands::handle_providers(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
         Some(Commands::Browser { action }) => browser_commands::handle_browser(action),
         Some(Commands::Data { action }) => data_commands::handle_data(action).await,
@@ -618,6 +625,16 @@ async fn handle_skills(action: SkillAction) -> anyhow::Result<()> {
 mod tests {
     use crate::default_telemetry_filter;
 
+    fn manifest_includes_feature(manifest: &str, feature: &str, dependency: &str) -> bool {
+        let Some(start) = manifest.find(&format!("{feature} = [")) else {
+            return false;
+        };
+        let Some(end) = manifest[start..].find("]\n") else {
+            return false;
+        };
+        manifest[start..start + end].contains(&format!("\"{dependency}\""))
+    }
+
     #[test]
     fn default_telemetry_filter_quiets_noisy_targets() {
         let filter = default_telemetry_filter("info").to_string();
@@ -626,5 +643,44 @@ mod tests {
         assert!(filter.contains("matrix_sdk=warn"));
         assert!(filter.contains("matrix_sdk_base=warn"));
         assert!(filter.contains("matrix_sdk_crypto=error"));
+    }
+
+    #[test]
+    fn default_builds_include_all_provider_features() {
+        let cli_manifest =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+                .unwrap_or_default();
+        let gateway_manifest = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../gateway/Cargo.toml"
+        ))
+        .unwrap_or_default();
+        let providers_manifest = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../providers/Cargo.toml"
+        ))
+        .unwrap_or_default();
+
+        for provider_feature in [
+            "provider-github-copilot",
+            "provider-kimi-code",
+            "provider-openai-codex",
+        ] {
+            assert!(manifest_includes_feature(
+                &cli_manifest,
+                "full",
+                provider_feature
+            ));
+            assert!(manifest_includes_feature(
+                &gateway_manifest,
+                "default",
+                provider_feature
+            ));
+            assert!(manifest_includes_feature(
+                &providers_manifest,
+                "default",
+                provider_feature
+            ));
+        }
     }
 }

@@ -69,6 +69,10 @@ impl AnthropicProvider {
         }
     }
 
+    fn messages_url(&self) -> String {
+        format!("{}/v1/messages", self.base_url.trim_end_matches('/'))
+    }
+
     #[must_use]
     pub fn with_cache_retention(mut self, cache_retention: moltis_config::CacheRetention) -> Self {
         self.cache_retention = cache_retention;
@@ -141,7 +145,7 @@ impl AnthropicProvider {
 
         let http_resp = self
             .client
-            .post(format!("{}/v1/messages", self.base_url))
+            .post(self.messages_url())
             .header("x-api-key", self.api_key.expose_secret())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -779,7 +783,7 @@ impl LlmProvider for AnthropicProvider {
 
         let http_resp = self
             .client
-            .post(format!("{}/v1/messages", self.base_url))
+            .post(self.messages_url())
             .header("x-api-key", self.api_key.expose_secret())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -926,7 +930,7 @@ impl LlmProvider for AnthropicProvider {
 
             let resp = match self
                 .client
-                .post(format!("{}/v1/messages", self.base_url))
+                .post(self.messages_url())
                 .header("x-api-key", self.api_key.expose_secret())
                 .header("anthropic-version", "2023-06-01")
                 .header("content-type", "application/json")

@@ -101,6 +101,7 @@ struct ChannelSettingsPatch {
     reply_to_message: Option<bool>,
     thread_replies: Option<bool>,
     stream_mode: Option<ChannelSettingsStreamMode>,
+    api_base_url: Option<String>,
     allowlist_add: Vec<String>,
     allowlist_remove: Vec<String>,
     group_allowlist_add: Vec<String>,
@@ -255,6 +256,10 @@ impl AgentTool for UpdateChannelSettingsTool {
                             "type": "string",
                             "enum": ["edit_in_place", "native", "off"],
                             "description": "Supported by Telegram (`edit_in_place`, `off`) and Slack (`edit_in_place`, `native`, `off`)."
+                        },
+                        "api_base_url": {
+                            "type": "string",
+                            "description": "Slack Web API base URL. Defaults to https://slack.com/api; set only for Slack-compatible proxies, mock servers, or gateways. Supported by Slack."
                         },
                         "channel_override": {
                             "type": "object",
@@ -458,6 +463,17 @@ fn apply_channel_settings_patch(
         validate_stream_mode(channel_type, stream_mode)?;
         config.insert("stream_mode".into(), json!(stream_mode));
         changes.push("stream_mode".to_string());
+    }
+    if let Some(api_base_url) = &patch.api_base_url {
+        ensure_supported(
+            channel_type,
+            "api_base_url",
+            matches!(channel_type, ChannelType::Slack),
+        )?;
+        let api_base_url = moltis_channels::normalize_slack_api_base_url(api_base_url)
+            .map_err(|e| anyhow!("{e}"))?;
+        config.insert("api_base_url".into(), json!(api_base_url));
+        changes.push("api_base_url".to_string());
     }
     if update_string_array(
         config,
@@ -1061,6 +1077,109 @@ mod tests {
             updated["config"]["channel_overrides"]["chan-1"]["model_provider"],
             "anthropic"
         );
+    }
+
+    #[tokio::test]
+    async fn update_channel_settings_updates_slack_api_base_url() {
+        let service = Arc::new(RecordingChannelService::new());
+        let store = Arc::new(MemoryChannelStore::new(vec![stored_channel(
+            "slack-main",
+            "slack",
+            json!({
+                "bot_token": "xoxb-secret",
+                "app_token": "xapp-secret",
+                "api_base_url": "https://slack.com/api",
+                "allowlist": []
+            }),
+        )]));
+        let tool = UpdateChannelSettingsTool::new(
+            service.clone() as Arc<dyn ChannelService>,
+            Some(store as Arc<dyn ChannelStore>),
+        );
+
+        tool.execute(json!({
+            "account_id": "slack-main",
+            "settings": {
+                "api_base_url": "https://proxy.example/api"
+            }
+        }))
+        .await
+        .expect("slack api_base_url update");
+
+        let updated = service
+            .updated
+            .lock()
+            .await
+            .clone()
+            .expect("captured update payload");
+        assert_eq!(updated["config"]["bot_token"], "xoxb-secret");
+        assert_eq!(updated["config"]["app_token"], "xapp-secret");
+        assert_eq!(
+            updated["config"]["api_base_url"],
+            "https://proxy.example/api"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_channel_settings_rejects_private_slack_api_base_url() {
+        let service = Arc::new(RecordingChannelService::new());
+        let store = Arc::new(MemoryChannelStore::new(vec![stored_channel(
+            "slack-main",
+            "slack",
+            json!({
+                "bot_token": "xoxb-secret",
+                "app_token": "xapp-secret",
+                "api_base_url": "https://slack.com/api",
+                "allowlist": []
+            }),
+        )]));
+        let tool = UpdateChannelSettingsTool::new(
+            service as Arc<dyn ChannelService>,
+            Some(store as Arc<dyn ChannelStore>),
+        );
+
+        let err = tool
+            .execute(json!({
+                "account_id": "slack-main",
+                "settings": {
+                    "api_base_url": "http://10.0.0.1/api"
+                }
+            }))
+            .await
+            .expect_err("private Slack api_base_url should be rejected");
+
+        assert!(err.to_string().contains("private or local IP"));
+    }
+
+    #[tokio::test]
+    async fn update_channel_settings_rejects_ipv4_mapped_slack_api_base_url() {
+        let service = Arc::new(RecordingChannelService::new());
+        let store = Arc::new(MemoryChannelStore::new(vec![stored_channel(
+            "slack-main",
+            "slack",
+            json!({
+                "bot_token": "xoxb-secret",
+                "app_token": "xapp-secret",
+                "api_base_url": "https://slack.com/api",
+                "allowlist": []
+            }),
+        )]));
+        let tool = UpdateChannelSettingsTool::new(
+            service as Arc<dyn ChannelService>,
+            Some(store as Arc<dyn ChannelStore>),
+        );
+
+        let err = tool
+            .execute(json!({
+                "account_id": "slack-main",
+                "settings": {
+                    "api_base_url": "http://[::ffff:169.254.169.254]/latest/meta-data"
+                }
+            }))
+            .await
+            .expect_err("IPv4-mapped private Slack api_base_url should be rejected");
+
+        assert!(err.to_string().contains("cloud metadata address"));
     }
 
     #[tokio::test]

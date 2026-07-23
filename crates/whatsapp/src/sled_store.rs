@@ -9,16 +9,22 @@ use std::{fmt::Write, path::Path, sync::atomic::AtomicI32};
 
 use {
     async_trait::async_trait,
+    bytes::Bytes,
     serde::{Serialize, de::DeserializeOwned},
+    tracing::{debug, info, warn},
     wacore::{
         appstate::{hash::HashState, processor::AppStateMutationMAC},
         store::{
-            error::{Result, StoreError, db_err},
+            error::{Result, StoreError},
             traits::*,
         },
     },
-    wacore_binary::jid::Jid,
 };
+
+/// Wrap a sled error as a `StoreError::Database`.
+fn db_err(e: sled::Error) -> StoreError {
+    StoreError::Database(Box::new(e))
+}
 
 /// Hex-encode bytes without pulling in the `hex` crate.
 fn hex_encode(bytes: &[u8]) -> String {
@@ -44,26 +50,42 @@ pub struct SledStore {
     mutation_mac_indexes: sled::Tree,
     device_data: sled::Tree,
     device_id: AtomicI32,
-    skdm_recipients: sled::Tree,
     lid_mappings: sled::Tree,
     pn_mappings: sled::Tree,
     device_list_records: sled::Tree,
-    sender_key_forget_marks: sled::Tree,
+    sender_key_devices: sled::Tree,
     base_keys: sled::Tree,
     tc_tokens: sled::Tree,
     sent_messages: sled::Tree,
+    msg_secrets: sled::Tree,
 }
 
 fn json_err(e: serde_json::Error) -> StoreError {
-    StoreError::Serialization(e.to_string())
+    StoreError::Serialization(Box::new(e))
 }
 
 fn postcard_err(e: postcard::Error) -> StoreError {
-    StoreError::Serialization(e.to_string())
+    StoreError::Serialization(Box::new(e))
 }
 
 /// Format tag prefixed to every encoded record.
 const FORMAT_POSTCARD: u8 = 0x01;
+
+/// Key prefix for all sender-key-device rows of a group (`<group>\0`).
+/// `\0` cannot appear in a JID, so the prefix is unambiguous.
+fn sender_key_device_prefix(group_jid: &str) -> Vec<u8> {
+    let mut p = Vec::with_capacity(group_jid.len() + 1);
+    p.extend_from_slice(group_jid.as_bytes());
+    p.push(0);
+    p
+}
+
+/// Full row key for a (group, device) pair: `<group>\0<device>`.
+fn sender_key_device_key(group_jid: &str, device_jid: &str) -> Vec<u8> {
+    let mut k = sender_key_device_prefix(group_jid);
+    k.extend_from_slice(device_jid.as_bytes());
+    k
+}
 
 fn encode_persistent<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     let body = postcard::to_allocvec(value).map_err(postcard_err)?;
@@ -106,14 +128,14 @@ impl SledStore {
             mutation_mac_indexes: db.open_tree("mutation_mac_indexes")?,
             device_data: db.open_tree("device_data")?,
             device_id: AtomicI32::new(id_val),
-            skdm_recipients: db.open_tree("skdm_recipients")?,
             lid_mappings: db.open_tree("lid_mappings")?,
             pn_mappings: db.open_tree("pn_mappings")?,
             device_list_records: db.open_tree("device_list_records")?,
-            sender_key_forget_marks: db.open_tree("sender_key_forget_marks")?,
+            sender_key_devices: db.open_tree("sender_key_devices")?,
             base_keys: db.open_tree("base_keys")?,
             tc_tokens: db.open_tree("tc_tokens")?,
             sent_messages: db.open_tree("sent_messages")?,
+            msg_secrets: db.open_tree("msg_secrets")?,
             db,
         })
     }
@@ -132,12 +154,12 @@ impl SignalStore for SledStore {
         Ok(())
     }
 
-    async fn load_identity(&self, address: &str) -> Result<Option<Vec<u8>>> {
+    async fn load_identity(&self, address: &str) -> Result<Option<[u8; 32]>> {
         Ok(self
             .identities
             .get(address.as_bytes())
             .map_err(db_err)?
-            .map(|v| v.to_vec()))
+            .and_then(|v| v.as_ref().try_into().ok()))
     }
 
     async fn delete_identity(&self, address: &str) -> Result<()> {
@@ -145,12 +167,12 @@ impl SignalStore for SledStore {
         Ok(())
     }
 
-    async fn get_session(&self, address: &str) -> Result<Option<Vec<u8>>> {
+    async fn get_session(&self, address: &str) -> Result<Option<Bytes>> {
         Ok(self
             .sessions
             .get(address.as_bytes())
             .map_err(db_err)?
-            .map(|v| v.to_vec()))
+            .map(|v| Bytes::copy_from_slice(&v)))
     }
 
     async fn put_session(&self, address: &str, session: &[u8]) -> Result<()> {
@@ -174,15 +196,29 @@ impl SignalStore for SledStore {
         Ok(())
     }
 
-    async fn load_prekey(&self, id: u32) -> Result<Option<Vec<u8>>> {
+    async fn load_prekey(&self, id: u32) -> Result<Option<Bytes>> {
         match self.prekeys.get(id.to_le_bytes()).map_err(db_err)? {
             Some(v) => {
                 let (record, _uploaded): (Vec<u8>, bool) =
                     serde_json::from_slice(&v).map_err(json_err)?;
-                Ok(Some(record))
+                Ok(Some(Bytes::from(record)))
             },
             None => Ok(None),
         }
+    }
+
+    async fn mark_prekeys_uploaded(&self, ids: &[u32]) -> Result<()> {
+        for id in ids {
+            if let Some(v) = self.prekeys.get(id.to_le_bytes()).map_err(db_err)? {
+                let (record, _uploaded): (Vec<u8>, bool) =
+                    serde_json::from_slice(&v).map_err(json_err)?;
+                let val = serde_json::to_vec(&(record, true)).map_err(json_err)?;
+                self.prekeys
+                    .insert(id.to_le_bytes(), val.as_slice())
+                    .map_err(db_err)?;
+            }
+        }
+        Ok(())
     }
 
     async fn remove_prekey(&self, id: u32) -> Result<()> {
@@ -360,6 +396,23 @@ impl AppSyncStore for SledStore {
         Ok(())
     }
 
+    async fn clear_mutation_macs(&self, name: &str) -> Result<()> {
+        let prefix = format!("{name}:");
+        for tree in [&self.mutation_macs, &self.mutation_mac_indexes] {
+            let mut keys_to_remove = Vec::new();
+            for entry in tree.iter() {
+                let (k, _) = entry.map_err(db_err)?;
+                if String::from_utf8_lossy(&k).starts_with(&prefix) {
+                    keys_to_remove.push(k);
+                }
+            }
+            for key in keys_to_remove {
+                tree.remove(key).map_err(db_err)?;
+            }
+        }
+        Ok(())
+    }
+
     async fn get_latest_sync_key_id(&self) -> Result<Option<Vec<u8>>> {
         Ok(self
             .sync_keys
@@ -370,47 +423,161 @@ impl AppSyncStore for SledStore {
 }
 
 // ============================================================================
+// MsgSecretStore
+// ============================================================================
+
+/// Composite row key `chat\0sender\0msg_id` (`\0` cannot appear in JIDs/ids).
+fn msg_secret_key(chat: &str, sender: &str, msg_id: &str) -> Vec<u8> {
+    let mut k = Vec::with_capacity(chat.len() + sender.len() + msg_id.len() + 2);
+    k.extend_from_slice(chat.as_bytes());
+    k.push(0);
+    k.extend_from_slice(sender.as_bytes());
+    k.push(0);
+    k.extend_from_slice(msg_id.as_bytes());
+    k
+}
+
+#[async_trait]
+impl MsgSecretStore for SledStore {
+    async fn put_msg_secrets(&self, entries: Vec<MsgSecretEntry>) -> Result<usize> {
+        let count = entries.len();
+        for entry in entries {
+            let key = msg_secret_key(&entry.chat, &entry.sender, &entry.msg_id);
+            let (expires_at, message_ts) =
+                match self.msg_secrets.get(key.as_slice()).map_err(db_err)? {
+                    Some(v) => {
+                        let (_, existing_exp, existing_ts): (Vec<u8>, i64, i64) =
+                            decode_persistent(&v)?;
+                        (
+                            merge_msg_secret_expiry(existing_exp, entry.expires_at),
+                            merge_msg_secret_message_ts(existing_ts, entry.message_ts),
+                        )
+                    },
+                    None => (entry.expires_at, entry.message_ts),
+                };
+            let val = encode_persistent(&(entry.secret, expires_at, message_ts))?;
+            self.msg_secrets
+                .insert(key, val.as_slice())
+                .map_err(db_err)?;
+        }
+        Ok(count)
+    }
+
+    async fn get_msg_secret(
+        &self,
+        chat: &str,
+        sender: &str,
+        msg_id: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        match self
+            .msg_secrets
+            .get(msg_secret_key(chat, sender, msg_id))
+            .map_err(db_err)?
+        {
+            Some(v) => {
+                let (secret, ..): (Vec<u8>, i64, i64) = decode_persistent(&v)?;
+                Ok(Some(secret))
+            },
+            None => Ok(None),
+        }
+    }
+
+    async fn get_msg_secret_with_ts(
+        &self,
+        chat: &str,
+        sender: &str,
+        msg_id: &str,
+    ) -> Result<Option<(Vec<u8>, i64)>> {
+        match self
+            .msg_secrets
+            .get(msg_secret_key(chat, sender, msg_id))
+            .map_err(db_err)?
+        {
+            Some(v) => {
+                let (secret, _, message_ts): (Vec<u8>, i64, i64) = decode_persistent(&v)?;
+                Ok(Some((secret, message_ts)))
+            },
+            None => Ok(None),
+        }
+    }
+
+    async fn delete_expired_msg_secrets(&self, cutoff_timestamp: i64) -> Result<u32> {
+        let mut count = 0u32;
+        let mut keys_to_remove = Vec::new();
+        for entry in self.msg_secrets.iter() {
+            let (k, v) = entry.map_err(db_err)?;
+            let (_, expires_at, _): (Vec<u8>, i64, i64) = decode_persistent(&v)?;
+            if expires_at != 0 && expires_at <= cutoff_timestamp {
+                keys_to_remove.push(k);
+            }
+        }
+        for key in keys_to_remove {
+            self.msg_secrets.remove(key).map_err(db_err)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+}
+
+// ============================================================================
 // ProtocolStore
 // ============================================================================
 
 #[async_trait]
 impl ProtocolStore for SledStore {
-    async fn get_skdm_recipients(&self, group_jid: &str) -> Result<Vec<Jid>> {
-        match self
-            .skdm_recipients
-            .get(group_jid.as_bytes())
-            .map_err(db_err)?
-        {
-            // Stored as Vec<String> for serialization, parse back to Jid.
-            Some(v) => {
-                let strings: Vec<String> = decode_persistent(&v)?;
-                Ok(strings.into_iter().filter_map(|s| s.parse().ok()).collect())
-            },
-            None => Ok(Vec::new()),
+    async fn get_sender_key_devices(&self, group_jid: &str) -> Result<Vec<(String, bool)>> {
+        let prefix = sender_key_device_prefix(group_jid);
+        let mut result = Vec::new();
+        for entry in self.sender_key_devices.scan_prefix(&prefix) {
+            let (k, v) = entry.map_err(db_err)?;
+            let device = String::from_utf8_lossy(&k[prefix.len()..]).into_owned();
+            result.push((device, v.first() == Some(&1u8)));
         }
+        Ok(result)
     }
 
-    async fn add_skdm_recipients(&self, group_jid: &str, device_jids: &[Jid]) -> Result<()> {
-        let mut current: Vec<String> = match self
-            .skdm_recipients
-            .get(group_jid.as_bytes())
-            .map_err(db_err)?
-        {
-            Some(v) => decode_persistent(&v)?,
-            None => Vec::new(),
-        };
-        current.extend(device_jids.iter().map(|j| j.to_string()));
-        let val = encode_persistent(&current)?;
-        self.skdm_recipients
-            .insert(group_jid.as_bytes(), val.as_slice())
-            .map_err(db_err)?;
+    async fn set_sender_key_status(&self, group_jid: &str, entries: &[(&str, bool)]) -> Result<()> {
+        for (device_jid, has_key) in entries {
+            let key = sender_key_device_key(group_jid, device_jid);
+            self.sender_key_devices
+                .insert(key, &[u8::from(*has_key)])
+                .map_err(db_err)?;
+        }
         Ok(())
     }
 
-    async fn clear_skdm_recipients(&self, group_jid: &str) -> Result<()> {
-        self.skdm_recipients
-            .remove(group_jid.as_bytes())
-            .map_err(db_err)?;
+    async fn clear_sender_key_devices(&self, group_jid: &str) -> Result<()> {
+        let prefix = sender_key_device_prefix(group_jid);
+        let mut keys_to_remove = Vec::new();
+        for entry in self.sender_key_devices.scan_prefix(&prefix) {
+            let (k, _) = entry.map_err(db_err)?;
+            keys_to_remove.push(k);
+        }
+        for key in keys_to_remove {
+            self.sender_key_devices.remove(key).map_err(db_err)?;
+        }
+        Ok(())
+    }
+
+    async fn delete_sender_key_device_rows(&self, device_jids: &[&str]) -> Result<()> {
+        let mut keys_to_remove = Vec::new();
+        for entry in self.sender_key_devices.iter() {
+            let (k, _) = entry.map_err(db_err)?;
+            let key_str = String::from_utf8_lossy(&k);
+            if let Some((_, device)) = key_str.split_once('\0')
+                && device_jids.contains(&device)
+            {
+                keys_to_remove.push(k);
+            }
+        }
+        for key in keys_to_remove {
+            self.sender_key_devices.remove(key).map_err(db_err)?;
+        }
+        Ok(())
+    }
+
+    async fn clear_all_sender_key_devices(&self) -> Result<()> {
+        self.sender_key_devices.clear().map_err(db_err)?;
         Ok(())
     }
 
@@ -479,7 +646,10 @@ impl ProtocolStore for SledStore {
     }
 
     async fn update_device_list(&self, record: DeviceListRecord) -> Result<()> {
-        let val = encode_persistent(&record)?;
+        // JSON, not postcard: `DeviceListRecord.raw_id` is marked
+        // `skip_serializing_if`, which postcard (non-self-describing) cannot
+        // round-trip. JSON also tolerates future field additions.
+        let val = serde_json::to_vec(&record).map_err(json_err)?;
         self.device_list_records
             .insert(record.user.as_bytes(), val.as_slice())
             .map_err(db_err)?;
@@ -492,36 +662,32 @@ impl ProtocolStore for SledStore {
             .get(user.as_bytes())
             .map_err(db_err)?
         {
-            Some(v) => Ok(Some(decode_persistent(&v)?)),
+            // Device lists are a re-fetchable usync cache: records persisted
+            // by older releases (pre-`raw_id` postcard layout) no longer
+            // decode, so treat them as missing and let usync repopulate.
+            Some(v) => match decode_persistent(&v) {
+                Ok(record) => Ok(Some(record)),
+                Err(e) => {
+                    debug!(
+                        user,
+                        error = %e,
+                        "evicting undecodable device-list record; usync repopulates it"
+                    );
+                    self.device_list_records
+                        .remove(user.as_bytes())
+                        .map_err(db_err)?;
+                    Ok(None)
+                },
+            },
             None => Ok(None),
         }
     }
 
-    async fn mark_forget_sender_key(&self, group_jid: &str, participant: &str) -> Result<()> {
-        let key = format!("{group_jid}:{participant}");
-        self.sender_key_forget_marks
-            .insert(key.as_bytes(), &[1u8])
+    async fn delete_devices(&self, user: &str) -> Result<()> {
+        self.device_list_records
+            .remove(user.as_bytes())
             .map_err(db_err)?;
         Ok(())
-    }
-
-    async fn consume_forget_marks(&self, group_jid: &str) -> Result<Vec<String>> {
-        let prefix = format!("{group_jid}:");
-        let mut participants = Vec::new();
-        let mut keys_to_remove = Vec::new();
-
-        for entry in self.sender_key_forget_marks.iter() {
-            let (k, _) = entry.map_err(db_err)?;
-            let key_str = String::from_utf8_lossy(&k);
-            if let Some(participant) = key_str.strip_prefix(&prefix) {
-                participants.push(participant.to_string());
-                keys_to_remove.push(k);
-            }
-        }
-        for key in keys_to_remove {
-            self.sender_key_forget_marks.remove(key).map_err(db_err)?;
-        }
-        Ok(participants)
     }
 
     // --- TcToken Storage ---
@@ -622,6 +788,82 @@ impl ProtocolStore for SledStore {
 // DeviceStore
 // ============================================================================
 
+/// Persisted layout of `wacore::store::Device` as of whatsapp-rust 0.5.
+///
+/// postcard is not self-describing, so records written before 0.6 fail to
+/// decode once `Device` gained trailing fields (`server_has_prekeys`,
+/// `nct_salt`, `server_cert_chain`). Losing this record would drop the
+/// WhatsApp pairing and force a QR re-scan, so `load()` falls back to this
+/// shim and upgrades the record in place. Field order, types and serde
+/// attributes must match 0.5 exactly.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LegacyDevice05 {
+    pn: Option<wacore_binary::jid::Jid>,
+    lid: Option<wacore_binary::jid::Jid>,
+    registration_id: u32,
+    #[serde(with = "wacore::store::device::key_pair_serde")]
+    noise_key: wacore::libsignal::protocol::KeyPair,
+    #[serde(with = "wacore::store::device::key_pair_serde")]
+    identity_key: wacore::libsignal::protocol::KeyPair,
+    #[serde(with = "wacore::store::device::key_pair_serde")]
+    signed_pre_key: wacore::libsignal::protocol::KeyPair,
+    signed_pre_key_id: u32,
+    #[serde(with = "serde_big_array::BigArray")]
+    signed_pre_key_signature: [u8; 64],
+    adv_secret_key: [u8; 32],
+    #[serde(with = "wacore::store::device::account_serde", default)]
+    account: Option<std::sync::Arc<waproto::whatsapp::AdvSignedDeviceIdentity>>,
+    push_name: String,
+    app_version_primary: u32,
+    app_version_secondary: u32,
+    app_version_tertiary: u32,
+    app_version_last_fetched_ms: i64,
+    #[serde(default)]
+    edge_routing_info: Option<Vec<u8>>,
+    #[serde(default)]
+    props_hash: Option<String>,
+    #[serde(default)]
+    next_pre_key_id: u32,
+}
+
+impl From<LegacyDevice05> for wacore::store::Device {
+    fn from(legacy: LegacyDevice05) -> Self {
+        Self {
+            pn: legacy.pn,
+            lid: legacy.lid,
+            registration_id: legacy.registration_id,
+            noise_key: legacy.noise_key,
+            identity_key: legacy.identity_key,
+            signed_pre_key: legacy.signed_pre_key,
+            signed_pre_key_id: legacy.signed_pre_key_id,
+            signed_pre_key_signature: legacy.signed_pre_key_signature,
+            adv_secret_key: legacy.adv_secret_key,
+            account: legacy.account,
+            push_name: legacy.push_name,
+            app_version_primary: legacy.app_version_primary,
+            app_version_secondary: legacy.app_version_secondary,
+            app_version_tertiary: legacy.app_version_tertiary,
+            app_version_last_fetched_ms: legacy.app_version_last_fetched_ms,
+            device_props: Default::default(),
+            client_profile: Default::default(),
+            edge_routing_info: legacy.edge_routing_info,
+            props_hash: legacy.props_hash,
+            next_pre_key_id: legacy.next_pre_key_id,
+            first_unupload_pre_key_id: 0,
+            server_has_prekeys: false,
+            nct_salt: None,
+            nct_salt_sync_seen: false,
+            server_cert_chain: None,
+            login_counter: 0,
+            // 0.5-era records predate the migration flag. `false` is the safe
+            // default: PN wire addressing delivers for both populations, and a
+            // migrated account re-learns the flag from the primary's mapping
+            // sync on the next connect.
+            lid_migrated: false,
+        }
+    }
+}
+
 #[async_trait]
 impl DeviceStore for SledStore {
     async fn save(&self, device: &wacore::store::Device) -> Result<()> {
@@ -633,9 +875,27 @@ impl DeviceStore for SledStore {
     }
 
     async fn load(&self) -> Result<Option<wacore::store::Device>> {
-        match self.device_data.get(b"device").map_err(db_err)? {
-            Some(v) => Ok(Some(decode_persistent(&v)?)),
-            None => Ok(None),
+        let Some(v) = self.device_data.get(b"device").map_err(db_err)? else {
+            return Ok(None);
+        };
+        match decode_persistent::<wacore::store::Device>(&v) {
+            Ok(device) => Ok(Some(device)),
+            Err(primary) => {
+                // Pre-0.6 record: decode with the legacy shim and upgrade the
+                // stored bytes so subsequent loads use the current layout.
+                let legacy = decode_persistent::<LegacyDevice05>(&v).map_err(|fallback| {
+                    warn!(
+                        primary = %primary,
+                        fallback = %fallback,
+                        "device record failed both the current and the legacy 0.5 decode"
+                    );
+                    fallback
+                })?;
+                let device: wacore::store::Device = legacy.into();
+                self.save(&device).await?;
+                info!("migrated a pre-0.6 device record to the current layout");
+                Ok(Some(device))
+            },
         }
     }
 
@@ -679,7 +939,7 @@ mod tests {
             .await
             .unwrap();
         let loaded = store.load_identity("test@s.whatsapp.net").await.unwrap();
-        assert_eq!(loaded, Some(key.to_vec()));
+        assert_eq!(loaded, Some(key));
 
         store.delete_identity("test@s.whatsapp.net").await.unwrap();
         assert!(
@@ -697,7 +957,7 @@ mod tests {
         let data = b"session-data";
         store.put_session("addr", data).await.unwrap();
         let loaded = store.get_session("addr").await.unwrap();
-        assert_eq!(loaded, Some(data.to_vec()));
+        assert_eq!(loaded, Some(Bytes::from_static(data)));
         assert!(store.has_session("addr").await.unwrap());
         assert!(!store.has_session("missing").await.unwrap());
     }
@@ -717,7 +977,10 @@ mod tests {
         let store = temp_store();
         store.store_prekey(1, b"pk1", false).await.unwrap();
         store.store_prekey(2, b"pk2", true).await.unwrap();
-        assert_eq!(store.load_prekey(1).await.unwrap(), Some(b"pk1".to_vec()));
+        assert_eq!(
+            store.load_prekey(1).await.unwrap(),
+            Some(Bytes::from_static(b"pk1"))
+        );
         store.remove_prekey(1).await.unwrap();
         assert!(store.load_prekey(1).await.unwrap().is_none());
     }
@@ -809,25 +1072,89 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skdm_recipients() {
+    async fn sender_key_devices() {
         let store = temp_store();
-        let recips = store.get_skdm_recipients("group1").await.unwrap();
-        assert!(recips.is_empty());
+        assert!(
+            store
+                .get_sender_key_devices("group1@g.us")
+                .await
+                .unwrap()
+                .is_empty()
+        );
 
         store
-            .add_skdm_recipients("group1", &[
-                "dev1@s.whatsapp.net".parse().unwrap(),
-                "dev2@s.whatsapp.net".parse().unwrap(),
+            .set_sender_key_status("group1@g.us", &[
+                ("dev1:1@s.whatsapp.net", true),
+                ("dev2:2@s.whatsapp.net", false),
             ])
             .await
             .unwrap();
-        let recips = store.get_skdm_recipients("group1").await.unwrap();
-        assert_eq!(recips.len(), 2);
+        // Same device in another group must not leak into group1 queries.
+        store
+            .set_sender_key_status("group2@g.us", &[("dev1:1@s.whatsapp.net", true)])
+            .await
+            .unwrap();
 
-        store.clear_skdm_recipients("group1").await.unwrap();
+        let mut devices = store.get_sender_key_devices("group1@g.us").await.unwrap();
+        devices.sort();
+        assert_eq!(devices, vec![
+            ("dev1:1@s.whatsapp.net".to_string(), true),
+            ("dev2:2@s.whatsapp.net".to_string(), false),
+        ]);
+
+        // Delete one device's rows across all groups.
+        store
+            .delete_sender_key_device_rows(&["dev1:1@s.whatsapp.net"])
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .get_sender_key_devices("group1@g.us")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
         assert!(
             store
-                .get_skdm_recipients("group1")
+                .get_sender_key_devices("group2@g.us")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        store.clear_sender_key_devices("group1@g.us").await.unwrap();
+        assert!(
+            store
+                .get_sender_key_devices("group1@g.us")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_all_sender_key_devices_wipes_every_group() {
+        let store = temp_store();
+        store
+            .set_sender_key_status("group1@g.us", &[("dev1:1@s.whatsapp.net", true)])
+            .await
+            .unwrap();
+        store
+            .set_sender_key_status("group2@g.us", &[("dev2:2@s.whatsapp.net", true)])
+            .await
+            .unwrap();
+        store.clear_all_sender_key_devices().await.unwrap();
+        assert!(
+            store
+                .get_sender_key_devices("group1@g.us")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            store
+                .get_sender_key_devices("group2@g.us")
                 .await
                 .unwrap()
                 .is_empty()
@@ -884,6 +1211,7 @@ mod tests {
             }],
             timestamp: 1000,
             phash: None,
+            raw_id: None,
         };
         store.update_device_list(record).await.unwrap();
         let loaded = store.get_devices("user1").await.unwrap();
@@ -906,6 +1234,7 @@ mod tests {
                     }],
                     timestamp: 1234,
                     phash: None,
+                    raw_id: None,
                 })
                 .await
                 .unwrap();
@@ -924,20 +1253,51 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forget_marks() {
+    async fn legacy_device_record_migrates_on_load() {
         let store = temp_store();
+        let mut rng = rand::rng();
+
+        // Simulate a device record persisted by the whatsapp-rust 0.5 build:
+        // same leading fields, no 0.6 trailing fields.
+        let legacy = LegacyDevice05 {
+            pn: Some(wacore_binary::jid::Jid::pn("15551234567")),
+            lid: None,
+            registration_id: 42,
+            noise_key: wacore::libsignal::protocol::KeyPair::generate(&mut rng),
+            identity_key: wacore::libsignal::protocol::KeyPair::generate(&mut rng),
+            signed_pre_key: wacore::libsignal::protocol::KeyPair::generate(&mut rng),
+            signed_pre_key_id: 1,
+            signed_pre_key_signature: [7u8; 64],
+            adv_secret_key: [9u8; 32],
+            account: None,
+            push_name: "Moltis".into(),
+            app_version_primary: 2,
+            app_version_secondary: 3000,
+            app_version_tertiary: 1,
+            app_version_last_fetched_ms: 1000,
+            edge_routing_info: None,
+            props_hash: None,
+            next_pre_key_id: 5,
+        };
+        let bytes = encode_persistent(&legacy).unwrap();
         store
-            .mark_forget_sender_key("group1", "user_a")
-            .await
+            .device_data
+            .insert(b"device", bytes.as_slice())
             .unwrap();
-        store
-            .mark_forget_sender_key("group1", "user_b")
-            .await
-            .unwrap();
-        let marks = store.consume_forget_marks("group1").await.unwrap();
-        assert_eq!(marks.len(), 2);
-        let marks = store.consume_forget_marks("group1").await.unwrap();
-        assert!(marks.is_empty());
+
+        // Load must fall back to the legacy shim, not lose the pairing.
+        let device = store.load().await.unwrap().unwrap();
+        assert_eq!(device.registration_id, 42);
+        assert_eq!(device.push_name, "Moltis");
+        assert_eq!(device.next_pre_key_id, 5);
+        assert_eq!(device.signed_pre_key_signature, [7u8; 64]);
+        assert!(!device.server_has_prekeys);
+        assert!(device.server_cert_chain.is_none());
+
+        // The record is upgraded in place: it now decodes as the current
+        // format without the fallback.
+        let raw = store.device_data.get(b"device").unwrap().unwrap();
+        decode_persistent::<wacore::store::Device>(&raw).unwrap();
     }
 
     #[tokio::test]
@@ -961,9 +1321,9 @@ mod tests {
         {
             let store = SledStore::open(dir.path()).unwrap();
             let identity = store.load_identity("test@s.whatsapp.net").await.unwrap();
-            assert_eq!(identity, Some(vec![1u8; 32]));
+            assert_eq!(identity, Some([1u8; 32]));
             let session = store.get_session("addr").await.unwrap();
-            assert_eq!(session, Some(b"session-data".to_vec()));
+            assert_eq!(session, Some(Bytes::from_static(b"session-data")));
             let id = store.create().await.unwrap();
             assert_eq!(id, 1); // counter persisted
         }

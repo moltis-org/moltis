@@ -140,8 +140,10 @@ fn normalise_datetime(raw: &str) -> String {
     if raw.len() == 8 && raw.chars().all(|c| c.is_ascii_digit()) {
         // DATE value: YYYYMMDD -> YYYY-MM-DD
         format!("{}-{}-{}", &raw[..4], &raw[4..6], &raw[6..8])
-    } else if raw.len() >= 15 && raw.contains('T') {
+    } else if raw.len() >= 15 && raw.is_ascii() && raw.contains('T') {
         // DATETIME value: YYYYMMDDTHHMMSS -> YYYY-MM-DDTHH:MM:SS
+        // (require ASCII, like the DATE branch above, so the fixed byte-index
+        // slicing below cannot land inside a multi-byte UTF-8 char and panic)
         let date_part = &raw[..8];
         let time_part = &raw[9..];
         let date = format!(
@@ -234,6 +236,15 @@ mod tests {
             normalise_datetime("20250615T100000Z"),
             "2025-06-15T10:00:00"
         );
+    }
+
+    #[test]
+    fn normalise_datetime_non_ascii_does_not_panic() {
+        // A malformed DATETIME (>=15 bytes, contains 'T') with a multi-byte
+        // char straddling a fixed byte-slice boundary must not panic; it is
+        // returned as-is like any other unrecognized value.
+        let raw = "2025061\u{e9}T00:00:00"; // 'é' straddles byte index 8
+        assert_eq!(normalise_datetime(raw), raw);
     }
 
     #[test]

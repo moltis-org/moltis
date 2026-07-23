@@ -154,16 +154,29 @@ port = {port}                           # Port number (auto-generated for this i
 # policy.allow = []                            # Restrict to only these tools (empty = all allowed)
 # [providers.anthropic.model_overrides.claude-opus-4-6]
 # context_window = 1_000_000                   # Provider-scoped model override
+# For a MiniMax Anthropic-compatible endpoint, keep the `/anthropic` suffix:
+# base_url = "https://api.minimax.io/anthropic" # Use https://api.minimaxi.com/anthropic for China
+# models = ["MiniMax-M3", "MiniMax-M2.7"]
+# alias = "minimax-anthropic"
 
 # ── OpenAI ────────────────────────────────────────────────────
 # [providers.openai]
 # enabled = true
 # api_key = "sk-..."                          # Or set OPENAI_API_KEY env var
-# models = ["gpt-5.3", "gpt-5.2"]            # Preferred models shown first
+# models = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]  # Preferred models shown first
 # fetch_models = true
 # stream_transport = "sse"                     # "sse" | "websocket" | "auto"
 # base_url = "https://api.openai.com/v1"     # API endpoint (change for Azure, etc.)
 # alias = "openai"
+
+# ── MiniMax ────────────────────────────────────────────────────
+# [providers.minimax]
+# enabled = true
+# api_key = "..."                             # Or set MINIMAX_API_KEY
+# models = ["MiniMax-M3", "MiniMax-M2.7"]
+# fetch_models = false                         # MiniMax uses the static model catalog by default
+# base_url = "https://api.minimax.io/v1"     # OpenAI-compatible global endpoint
+# For China, use "https://api.minimaxi.com/v1".
 
 # ── Google Gemini ─────────────────────────────────────────────
 # [providers.gemini]
@@ -224,7 +237,7 @@ port = {port}                           # Port number (auto-generated for this i
 # [providers.moonshot]
 # enabled = true
 # api_key = "..."                             # Or set MOONSHOT_API_KEY env var
-# models = ["kimi-k2.5"]                      # Preferred models shown first
+# models = ["kimi-k3", "kimi-k2.7-code-highspeed", "kimi-k2.6"]  # Preferred models shown first
 # base_url = "https://api.moonshot.ai/v1"
 # alias = "moonshot"
 
@@ -273,7 +286,7 @@ port = {port}                           # Port number (auto-generated for this i
                                       #   "frozen-at-session-start" - Freeze the first MEMORY.md snapshot per session
 # workspace_file_max_chars = 32000  # Optional: per-file prompt cap for AGENTS.md / TOOLS.md before truncation.
 # context_command = ""              # Optional command run before each turn; stdout is appended to prompt context.
-# priority_models = ["claude-opus-4-5", "gpt-5.2", "gemini-3-flash"]  # Optional: models to pin first in selectors
+# priority_models = ["claude-opus-4-5", "gpt-5.6-sol", "gemini-3-flash"]  # Optional: models to pin first in selectors
 
 # ── Compaction ─────────────────────────────────────────────────────────────
 # Strategy used to shrink a session when its context window fills up, or when
@@ -688,7 +701,10 @@ port = {port}                           # Port number (auto-generated for this i
 # Moltis acts as orchestrator; the CLI agent owns its own context window.
 
 [external_agents]
-# enabled = false                   # Enable external agent bridge
+# enabled = true                    # Auto-detect installed external agents for chat session selection
+# Set enabled = false to opt out of all external-agent discovery.
+# Default detection trusts Moltis' PATH. Use absolute binary paths below when
+# you want to pin which executable Moltis may launch after a user selects it.
 
 # Per-agent configuration (key = agent kind)
 # [external_agents.agents.claude-code]
@@ -704,9 +720,76 @@ port = {port}                           # Port number (auto-generated for this i
 # binary = "codex"
 # args = ["app-server"]
 
+# Generic manual ACP server for advanced/custom CLIs not listed below.
+# If Moltis is missing a named default for an ACP agent, check the official
+# catalog for the agent's current launch command and configure it here:
+# https://agentclientprotocol.com/get-started/agents
 # [external_agents.agents.acp]
 # binary = "/path/to/acp-agent"
+# args = ["--stdio"]
+
+# Named ACP agents are auto-detected by default when their binaries are on PATH.
+# Add entries only to override binary paths, args, env, working_dir, or timeout.
+# [external_agents.agents.acp-copilot]
+# binary = "copilot"
+# args = ["--acp"]
+
+# [external_agents.agents.acp-codex]
+# binary = "codex-acp"              # Zed Codex ACP adapter
 # args = []
+
+# Claude ACP uses the adapter at https://github.com/agentclientprotocol/claude-agent-acp
+# Plain `claude` is not an ACP server; install @agentclientprotocol/claude-agent-acp
+# and ensure `claude-agent-acp` is on PATH or use an absolute binary path here.
+# [external_agents.agents.acp-claude]
+# binary = "claude-agent-acp"
+# args = []
+
+# [external_agents.agents.acp-pi]
+# binary = "pi-acp"
+# args = []
+
+# [external_agents.agents.acp-opencode]
+# binary = "opencode"
+# args = ["acp"]
+
+# [external_agents.agents.acp-gemini]
+# binary = "gemini"
+# args = ["--experimental-acp"]
+
+# [external_agents.agents.acp-augment]
+# binary = "auggie"
+# args = ["--acp"]
+
+# [external_agents.agents.acp-kiro]
+# binary = "kiro-cli"
+# args = ["acp"]
+
+# [external_agents.agents.acp-openclaw]
+# binary = "openclaw"
+# args = ["acp"]
+
+# [external_agents.agents.acp-openhands]
+# binary = "openhands"
+# args = ["acp"]
+
+# [external_agents.agents.acp-kimi]
+# binary = "kimi"
+# args = ["acp"]
+
+# [external_agents.agents.acp-stakpak]
+# binary = "stakpak"
+# args = ["acp"]
+
+# [external_agents.agents.acp-fast-agent]
+# binary = "fast-agent-acp"
+# args = []
+
+# Cursor also supports ACP with `agent acp`, but `agent` is too generic to
+# auto-detect safely. Configure it manually via the generic ACP entry if needed.
+# [external_agents.agents.acp]
+# binary = "/absolute/path/to/cursor/agent"
+# args = ["acp"]
 
 # [external_agents.agents.opencode]
 # binary = "opencode"
@@ -721,6 +804,26 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [channels]
 # offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]
+
+# Example Slack account. api_base_url defaults to Slack; set it only for
+# Slack-compatible proxies, mock servers, or gateways.
+# [channels.slack.my-bot]
+# bot_token = "xoxb-..."
+# app_token = "xapp-..."
+# api_base_url = "https://slack.com/api"
+# dm_policy = "allowlist"
+# allowlist = []
+# otp_self_approval = true
+# otp_cooldown_secs = 300
+
+# Example Microsoft Teams account.
+# [channels.msteams.my-bot]
+# app_id = "00000000-0000-0000-0000-000000000000"
+# app_password = "..."
+# dm_policy = "allowlist"
+# allowlist = []
+# otp_self_approval = true
+# otp_cooldown_secs = 300
 
 # See docs or defaults.toml for full channel configuration examples
 # (WhatsApp, Telegram, Teams, Discord, Slack, Matrix, Nostr, Signal).

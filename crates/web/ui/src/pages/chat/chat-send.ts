@@ -138,7 +138,7 @@ export async function buildChatMessage(
 	seq: number,
 	displayText?: string,
 ): Promise<{ params: ChatSendParams; el: HTMLElement | null }> {
-	const userText = displayText !== undefined ? displayText : text;
+	const userText = displayText === undefined ? text : displayText;
 	const attachments = hasPendingAttachments() ? getPendingAttachments() : [];
 	const images = attachments.filter((attachment): attachment is PendingImageAttachment => Boolean(attachment.dataUrl));
 	const documents = attachments.filter((attachment) => !attachment.dataUrl);

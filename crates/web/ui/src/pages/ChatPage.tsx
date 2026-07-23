@@ -433,7 +433,7 @@ function wireFullContextCopyButton(
 	copyBtn: HTMLElement,
 	messages: ContextMessage[],
 	llmOutputs: any[],
-	llmOutputPanel: HTMLElement,
+	isLlmOutputVisible: () => boolean,
 ): void {
 	copyBtn.addEventListener("click", () => {
 		const lines = messages.map((m) => {
@@ -445,8 +445,8 @@ function wireFullContextCopyButton(
 		});
 		const contextText = lines.join("\n");
 		let copyText = contextText;
-		const llmOutputVisible = llmOutputPanel && !llmOutputPanel.classList.contains("hidden");
-		if (llmOutputVisible) copyText = `LLM output:\n${JSON.stringify(llmOutputs, null, 2)}\n\nContext:\n${contextText}`;
+		if (isLlmOutputVisible())
+			copyText = `LLM output:\n${JSON.stringify(llmOutputs, null, 2)}\n\nContext:\n${contextText}`;
 		copyToClipboard(copyText, "", "").then((ok) => {
 			if (!ok) return;
 			copyBtn.textContent = "Copied!";
@@ -489,12 +489,14 @@ function buildFullContextLlmOutputPanel(llmOutputs: any[]): HTMLElement {
 	return panel;
 }
 
-function wireFullContextLlmOutputToggle(button: HTMLElement, panel: HTMLElement): void {
+function wireFullContextLlmOutputToggle(button: HTMLElement, panel: HTMLElement): () => boolean {
+	let visible = false;
 	button.addEventListener("click", () => {
-		const hidden = panel.classList.contains("hidden");
-		panel.classList.toggle("hidden", !hidden);
-		button.textContent = hidden ? "Hide LLM output" : "LLM output";
+		visible = !visible;
+		panel.classList.toggle("hidden", !visible);
+		button.textContent = visible ? "Hide LLM output" : "LLM output";
 	});
+	return () => visible;
 }
 
 function refreshFullContextMemory(refreshBtn: HTMLButtonElement): void {
@@ -526,9 +528,9 @@ function refreshFullContextPanel(): void {
 		const llmOutputs = res.payload.llmOutputs || [];
 		const llmOutputPanel = buildFullContextLlmOutputPanel(llmOutputs);
 		const header = buildFullContextHeaderRow(res.payload, refreshFullContextMemory);
-		wireFullContextCopyButton(header.copyBtn, messages, llmOutputs, llmOutputPanel);
+		const isLlmOutputVisible = wireFullContextLlmOutputToggle(header.llmOutputBtn, llmOutputPanel);
+		wireFullContextCopyButton(header.copyBtn, messages, llmOutputs, isLlmOutputVisible);
 		wireFullContextDownloadButton(header.downloadBtn, messages);
-		wireFullContextLlmOutputToggle(header.llmOutputBtn, llmOutputPanel);
 		panel.appendChild(header.headerRow);
 		panel.appendChild(llmOutputPanel);
 		for (let i = 0; i < messages.length; i++) panel.appendChild(renderContextMessage(messages[i], i));
@@ -841,8 +843,8 @@ const chatPageHTML =
 	'<div id="projectCombo" class="model-combo hidden"><button id="projectComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-folder" style="flex-shrink:0;"></span><span id="projectComboLabel">No project</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="projectDropdown" class="model-dropdown hidden"><div id="projectDropdownList" class="model-dropdown-list"></div></div></div>' +
 	'<div id="sessionNameMount" class="ml-auto flex items-center min-w-0"></div>' +
 	'<div id="sessionHeaderToolbarMount" class="flex items-center gap-1.5"></div>' +
-	'<button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle sandbox mode"><span class="icon icon-md icon-lock shrink-0"></span><span id="sandboxLabel">sandboxed</span></button>' +
-	'<div class="chat-badge-desktop-only" style="position:relative;display:inline-block"><button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Sandbox image"><span class="icon icon-md icon-cube shrink-0"></span><span id="sandboxImageLabel" class="max-w-[120px] truncate">ubuntu:25.10</span></button><div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div>' +
+	'<button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle sandbox mode"><span class="icon icon-md icon-lock shrink-0"></span><span id="sandboxLabel">direct</span></button>' +
+	'<div class="chat-badge-desktop-only" style="position:relative;display:inline-block"><button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Sandbox image"><span class="icon icon-md icon-cube shrink-0"></span><span id="sandboxImageLabel" class="max-w-[120px] truncate">unavailable</span></button><div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div>' +
 	'<button id="mcpToggleBtn" class="chat-badge-desktop-only text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle MCP tools for this session"><span class="icon icon-md icon-link shrink-0"></span><span id="mcpToggleLabel">MCP</span></button>' +
 	'<button id="debugPanelBtn" class="chat-badge-desktop-only text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show context debug info"><span class="icon icon-md icon-wrench shrink-0"></span><span id="debugPanelLabel">Debug</span></button>' +
 	'<button id="fullContextBtn" class="chat-badge-desktop-only text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show full LLM context (system prompt + history)"><span class="icon icon-md icon-document shrink-0"></span><span id="fullContextLabel">Context</span></button>' +

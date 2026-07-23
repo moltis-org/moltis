@@ -1,12 +1,6 @@
-//! GitHub Copilot provider.
-//!
-//! Authentication uses the GitHub device-flow OAuth to obtain a GitHub token,
-//! then exchanges it for a short-lived Copilot API token via
-//! `https://api.github.com/copilot_internal/v2/token`.
-//!
-//! The Copilot API itself is OpenAI-compatible (`/chat/completions`).
+use std::{pin::Pin, sync::mpsc, time::Duration};
 
-use std::{collections::HashSet, pin::Pin, sync::mpsc, time::Duration};
+use super::catalog::default_model_catalog;
 
 use {
     async_trait::async_trait,
@@ -14,15 +8,23 @@ use {
     moltis_oauth::{OAuthTokens, TokenStore},
     secrecy::{ExposeSecret, Secret},
     tokio_stream::Stream,
-    tracing::{debug, trace, warn},
+    tracing::{debug, info, trace, warn},
 };
 
 use {
-    super::super::openai_compat::{
-        ResponsesStreamState, SseLineResult, StreamingToolState, finalize_responses_stream,
-        finalize_stream, parse_openai_compat_usage_from_payload, parse_responses_completion,
-        parse_tool_calls, process_openai_sse_line, process_responses_sse_line,
-        split_responses_instructions_and_input, to_openai_tools, to_responses_api_tools,
+    super::{
+        super::openai_compat::{
+            ResponsesStreamState, SseLineResult, StreamingToolState, finalize_responses_stream,
+            finalize_stream, parse_openai_compat_usage_from_payload, parse_responses_completion,
+            parse_tool_calls, process_openai_sse_line, process_responses_sse_line,
+            split_responses_instructions_and_input, to_openai_tools, to_responses_api_tools,
+        },
+        diagnostics::{
+            CopilotTokenResponse, completion_to_stream_events, is_responses_api_required_error,
+            log_copilot_chat_error, log_copilot_request, log_copilot_response,
+        },
+        discovery::parse_models_payload,
+        endpoints::{CopilotEndpoint, endpoint_from_cached_metadata, endpoint_from_metadata},
     },
     moltis_agents::model::{
         ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage,
@@ -30,9 +32,6 @@ use {
     },
 };
 
-// ── Constants ────────────────────────────────────────────────────────────────
-
-/// GitHub OAuth app client ID for Copilot (VS Code's public client ID).
 const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 
 const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
@@ -42,12 +41,8 @@ const COPILOT_API_BASE: &str = "https://api.individual.githubcopilot.com";
 
 const PROVIDER_NAME: &str = "github-copilot";
 
-/// Required headers for the Copilot chat completions API.
-/// The API rejects requests without `Editor-Version`.
-const EDITOR_VERSION: &str = "vscode/1.96.2";
-const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
-
-// ── Device flow types ────────────────────────────────────────────────────────
+pub(super) const EDITOR_VERSION: &str = "vscode/1.96.2";
+pub(super) const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.26.7";
 
 #[derive(Debug, serde::Deserialize)]
 pub struct DeviceCodeResponse {
@@ -63,52 +58,46 @@ struct GithubTokenResponse {
     error: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
-struct CopilotTokenResponse {
-    token: Secret<String>,
-    expires_at: u64,
-    /// Enterprise accounts return a proxy endpoint hostname (e.g.
-    /// `proxy.enterprise.githubcopilot.com`). When present, all API
-    /// requests must be routed through `https://{proxy_ep}/…` and chat
-    /// completions must use `stream: true`.
-    #[serde(rename = "proxy-ep")]
-    proxy_ep: Option<String>,
-}
-
-impl std::fmt::Debug for CopilotTokenResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CopilotTokenResponse")
-            .field("token", &"[REDACTED]")
-            .field("expires_at", &self.expires_at)
-            .field("proxy_ep", &self.proxy_ep)
-            .finish()
-    }
-}
-
-/// Resolved authentication: a valid Copilot API token plus the base URL to
-/// use for API requests (may differ for enterprise vs individual accounts).
-struct CopilotAuth {
+pub(super) struct CopilotAuth {
     token: Secret<String>,
     base_url: String,
-    /// `true` when the endpoint is an enterprise proxy that only supports
-    /// streaming chat completions.
     is_enterprise: bool,
 }
 
-// ── Provider ─────────────────────────────────────────────────────────────────
-
 pub struct GitHubCopilotProvider {
     model: String,
+    model_capabilities: super::super::ModelCapabilities,
     client: &'static reqwest::Client,
     token_store: TokenStore,
 }
 
 impl GitHubCopilotProvider {
     pub fn new(model: String) -> Self {
+        let model_capabilities = super::super::ModelCapabilities::infer(&model);
+        let mut model_capabilities = model_capabilities;
+        if let Some(context_window) =
+            super::super::model_capabilities::context_window_fallback_for_model(
+                super::super::model_capabilities::ContextWindowFallbackScope::GitHubCopilot,
+                &model,
+            )
+        {
+            model_capabilities.context_window = context_window;
+        }
         Self {
             model,
+            model_capabilities,
             client: crate::shared_http_client(),
             token_store: TokenStore::new(),
+        }
+    }
+
+    pub fn new_with_capabilities(
+        model: String,
+        capabilities: super::super::ModelCapabilities,
+    ) -> Self {
+        Self {
+            model_capabilities: capabilities,
+            ..Self::new(model)
         }
     }
 
@@ -169,9 +158,22 @@ impl GitHubCopilotProvider {
         }
     }
 
-    /// Get a valid Copilot API token and resolved base URL.
     async fn get_copilot_auth(&self) -> anyhow::Result<CopilotAuth> {
         fetch_copilot_auth_with_fallback(self.client, &self.token_store).await
+    }
+
+    async fn refresh_copilot_auth_after_misdirected(&self) -> anyhow::Result<Option<CopilotAuth>> {
+        let Some(token_store) = token_store_with_provider_tokens(&self.token_store) else {
+            return Ok(None);
+        };
+        warn!(
+            "github-copilot individual endpoint returned 421; refreshing cached API token metadata"
+        );
+        if let Err(error) = token_store.delete("github-copilot-api") {
+            warn!(%error, "failed to delete cached github-copilot API token before refresh");
+        }
+        let auth = fetch_copilot_auth(self.client, &token_store).await?;
+        Ok(auth.is_enterprise.then_some(auth))
     }
 }
 
@@ -208,69 +210,26 @@ pub fn has_stored_tokens() -> bool {
     found
 }
 
-/// Known Copilot models.
-/// The list is intentionally broad; if a model isn't available for the user's
-/// plan Copilot will return an error.
-pub const COPILOT_MODELS: &[(&str, &str)] = &[
-    ("gpt-4o", "GPT-4o (Copilot)"),
-    ("gpt-4.1", "GPT-4.1 (Copilot)"),
-    ("gpt-4.1-mini", "GPT-4.1 Mini (Copilot)"),
-    ("gpt-4.1-nano", "GPT-4.1 Nano (Copilot)"),
-    ("gpt-5.4", "GPT-5.4 (Copilot)"),
-    ("gpt-5.4-pro", "GPT-5.4 Pro (Copilot)"),
-    ("gpt-5.2-pro", "GPT-5.2 Pro (Copilot)"),
-    ("o1", "o1 (Copilot)"),
-    ("o1-mini", "o1-mini (Copilot)"),
-    ("o3-mini", "o3-mini (Copilot)"),
-    ("claude-sonnet-4", "Claude Sonnet 4 (Copilot)"),
-    ("gemini-2.0-flash", "Gemini 2.0 Flash (Copilot)"),
-];
-
-/// Build a [`CopilotAuth`] from an `account_id` value that may contain a
-/// proxy-ep hostname persisted from a previous token exchange.
-fn copilot_auth_from_parts(token: Secret<String>, proxy_ep: Option<&str>) -> CopilotAuth {
-    match proxy_ep.filter(|s| !s.is_empty()) {
-        Some(ep) => {
-            let ep = ep.trim();
-            // Reject anything that isn't a plain hostname to prevent SSRF via
-            // crafted proxy-ep values (e.g. internal IPs, @-redirects).
-            if !ep
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
-            {
-                warn!(proxy_ep = %ep, "ignoring malformed proxy-ep, falling back to individual endpoint");
-                return CopilotAuth {
-                    token,
-                    base_url: COPILOT_API_BASE.to_string(),
-                    is_enterprise: false,
-                };
-            }
-            // Reject bare IP addresses (v4/v6) to prevent SSRF against cloud
-            // metadata services, loopback, and RFC-1918 ranges.
-            if ep.parse::<std::net::IpAddr>().is_ok() {
-                warn!(proxy_ep = %ep, "ignoring IP-address proxy-ep, falling back to individual endpoint");
-                return CopilotAuth {
-                    token,
-                    base_url: COPILOT_API_BASE.to_string(),
-                    is_enterprise: false,
-                };
-            }
-            debug!(proxy_ep = %ep, "using enterprise proxy endpoint");
-            CopilotAuth {
-                token,
-                base_url: format!("https://{ep}"),
-                is_enterprise: true,
-            }
-        },
-        None => CopilotAuth {
+fn copilot_auth_from_parts(
+    token: Secret<String>,
+    endpoint: Option<CopilotEndpoint>,
+) -> CopilotAuth {
+    if let Some(endpoint) = endpoint {
+        return CopilotAuth {
             token,
-            base_url: COPILOT_API_BASE.to_string(),
-            is_enterprise: false,
-        },
+            base_url: endpoint.base_url,
+            is_enterprise: endpoint.is_enterprise,
+        };
+    }
+
+    CopilotAuth {
+        token,
+        base_url: COPILOT_API_BASE.to_string(),
+        is_enterprise: false,
     }
 }
 
-async fn fetch_copilot_auth(
+pub(super) async fn fetch_copilot_auth(
     client: &reqwest::Client,
     token_store: &TokenStore,
 ) -> anyhow::Result<CopilotAuth> {
@@ -280,7 +239,7 @@ async fn fetch_copilot_auth(
 
     // The `access_token` stored is the GitHub user token.
     // We exchange it for a short-lived Copilot API token and cache it.
-    // The proxy-ep (if any) is persisted in the `account_id` field.
+    // Endpoint metadata is persisted in the `account_id` field.
     if let Some(copilot_tokens) = token_store.load("github-copilot-api")
         && let Some(expires_at) = copilot_tokens.expires_at
     {
@@ -290,9 +249,53 @@ async fn fetch_copilot_auth(
             .as_secs();
         if now + 60 < expires_at {
             let token = copilot_tokens.access_token.clone();
-            let proxy_ep = copilot_tokens.account_id.as_deref();
-            return Ok(copilot_auth_from_parts(token, proxy_ep));
+            let endpoint_metadata = copilot_tokens.account_id.as_deref();
+            let endpoint = endpoint_from_cached_metadata(endpoint_metadata);
+            let endpoint_metadata_valid = endpoint.is_some();
+            let endpoint_metadata_present =
+                endpoint_metadata.is_some_and(|value| !value.trim().is_empty());
+            debug!(
+                token_source = "cache",
+                cached_token_expires_at = expires_at,
+                cached_endpoint_metadata = ?endpoint_metadata,
+                cached_endpoint_metadata_present = endpoint_metadata_present,
+                cached_endpoint_metadata_valid = endpoint_metadata_valid,
+                "using cached github-copilot API token"
+            );
+
+            if endpoint_metadata_valid {
+                let auth = copilot_auth_from_parts(token, endpoint);
+                info!(
+                    token_source = "cache",
+                    endpoint = %auth.base_url,
+                    enterprise = auth.is_enterprise,
+                    endpoint_metadata_present,
+                    endpoint_metadata_valid,
+                    "github-copilot authentication resolved"
+                );
+                return Ok(auth);
+            }
+
+            debug!(
+                token_source = "exchange",
+                cached_token_expires_at = expires_at,
+                cached_endpoint_metadata = ?endpoint_metadata,
+                cached_endpoint_metadata_present = endpoint_metadata_present,
+                "cached github-copilot API token lacks valid endpoint metadata"
+            );
         }
+
+        debug!(
+            token_source = "exchange",
+            cached_token_expires_at = expires_at,
+            cached_endpoint_metadata = ?copilot_tokens.account_id,
+            "cached github-copilot API token is expired or near expiry"
+        );
+    } else {
+        debug!(
+            token_source = "exchange",
+            "no cached github-copilot API token"
+        );
     }
 
     let resp = client
@@ -309,26 +312,58 @@ async fn fetch_copilot_auth(
         .send()
         .await?;
 
+    log_copilot_response(&resp, "token_exchange", Some(COPILOT_TOKEN_URL), None);
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
         anyhow::bail!("Copilot token exchange failed: {body}");
     }
 
-    let copilot_resp: CopilotTokenResponse = resp.json().await?;
+    let response_body = resp.text().await?;
+    let copilot_resp: CopilotTokenResponse =
+        serde_json::from_str(&response_body).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to parse Copilot token exchange response: {error} (response_bytes={})",
+                response_body.len()
+            )
+        })?;
+    let endpoint_api = copilot_resp
+        .endpoints
+        .as_ref()
+        .and_then(|endpoints| endpoints.api.as_deref());
+    let endpoint = endpoint_from_metadata(endpoint_api, copilot_resp.proxy_ep.as_deref());
+    let endpoint_metadata_valid = endpoint.is_some();
+    debug!(
+        token_source = "exchange",
+        endpoint_api = ?endpoint_api,
+        proxy_ep = ?copilot_resp.proxy_ep,
+        endpoint_metadata_valid,
+        expires_at = copilot_resp.expires_at,
+        sku = ?copilot_resp.sku,
+        "received github-copilot API token metadata"
+    );
     let _ = token_store.save("github-copilot-api", &OAuthTokens {
         access_token: copilot_resp.token.clone(),
         refresh_token: None,
         id_token: None,
-        // NOTE: account_id is repurposed here to persist the enterprise
-        // proxy-ep hostname so it can be recovered from the token cache.
-        account_id: copilot_resp.proxy_ep.clone(),
+        // NOTE: account_id is repurposed here to persist the API endpoint
+        // metadata so it can be recovered from the token cache.
+        account_id: endpoint
+            .as_ref()
+            .map(|endpoint| endpoint.cache_value.clone())
+            .or_else(|| Some(COPILOT_API_BASE.to_string())),
         expires_at: Some(copilot_resp.expires_at),
     });
 
-    Ok(copilot_auth_from_parts(
-        copilot_resp.token,
-        copilot_resp.proxy_ep.as_deref(),
-    ))
+    let auth = copilot_auth_from_parts(copilot_resp.token, endpoint);
+    info!(
+        token_source = "exchange",
+        endpoint = %auth.base_url,
+        enterprise = auth.is_enterprise,
+        endpoint_metadata_present = endpoint_api.is_some() || copilot_resp.proxy_ep.is_some(),
+        endpoint_metadata_valid,
+        "github-copilot authentication resolved"
+    );
+    Ok(auth)
 }
 
 async fn fetch_copilot_auth_with_fallback(
@@ -341,111 +376,19 @@ async fn fetch_copilot_auth_with_fallback(
     fetch_copilot_auth(client, &token_store).await
 }
 
-pub fn default_model_catalog() -> Vec<super::super::DiscoveredModel> {
-    super::super::catalog_to_discovered(COPILOT_MODELS, 3)
-}
-
-fn normalize_display_name(model_id: &str, display_name: Option<&str>) -> String {
-    let normalized = display_name
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(model_id);
-    if normalized == model_id {
-        model_id.to_string()
-    } else {
-        normalized.to_string()
-    }
-}
-
-fn is_likely_model_id(model_id: &str) -> bool {
-    if model_id.is_empty() || model_id.len() > 120 {
-        return false;
-    }
-    if model_id.chars().any(char::is_whitespace) {
-        return false;
-    }
-    model_id
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
-}
-
-fn parse_model_entry(entry: &serde_json::Value) -> Option<super::super::DiscoveredModel> {
-    let obj = entry.as_object()?;
-    let model_id = obj
-        .get("id")
-        .or_else(|| obj.get("slug"))
-        .or_else(|| obj.get("model"))
-        .and_then(serde_json::Value::as_str)?;
-
-    if !is_likely_model_id(model_id) {
-        return None;
-    }
-
-    let display_name = obj
-        .get("display_name")
-        .or_else(|| obj.get("displayName"))
-        .or_else(|| obj.get("name"))
-        .or_else(|| obj.get("title"))
-        .and_then(serde_json::Value::as_str);
-
-    let created_at = obj.get("created").and_then(serde_json::Value::as_i64);
-
-    Some(
-        super::super::DiscoveredModel::new(
-            model_id,
-            normalize_display_name(model_id, display_name),
-        )
-        .with_created_at(created_at),
-    )
-}
-
-fn collect_candidate_arrays<'a>(
-    value: &'a serde_json::Value,
-    out: &mut Vec<&'a serde_json::Value>,
-) {
-    match value {
-        serde_json::Value::Array(items) => out.extend(items),
-        serde_json::Value::Object(map) => {
-            for key in ["models", "data", "items", "results", "available"] {
-                if let Some(nested) = map.get(key) {
-                    collect_candidate_arrays(nested, out);
-                }
-            }
-        },
-        _ => {},
-    }
-}
-
-fn parse_models_payload(value: &serde_json::Value) -> Vec<super::super::DiscoveredModel> {
-    let mut candidates = Vec::new();
-    collect_candidate_arrays(value, &mut candidates);
-
-    let mut models = Vec::new();
-    let mut seen = HashSet::new();
-    for entry in candidates {
-        if let Some(model) = parse_model_entry(entry)
-            && seen.insert(model.id.clone())
-        {
-            models.push(model);
-        }
-    }
-
-    // Sort by created_at descending (newest first). Models without a
-    // timestamp are placed after those with one, preserving relative order.
-    models.sort_by(|a, b| match (a.created_at, b.created_at) {
-        (Some(a_ts), Some(b_ts)) => b_ts.cmp(&a_ts), // newest first
-        (Some(_), None) => std::cmp::Ordering::Less, // timestamp before no-timestamp
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
-
-    models
-}
-
 async fn fetch_models_from_api(
     client: &reqwest::Client,
     auth: &CopilotAuth,
 ) -> anyhow::Result<Vec<super::super::DiscoveredModel>> {
+    log_copilot_request(
+        "models",
+        &auth.base_url,
+        None,
+        Some(auth.is_enterprise),
+        false,
+        None,
+        None,
+    );
     let response = client
         .get(format!("{}/models", auth.base_url))
         .header(
@@ -457,6 +400,12 @@ async fn fetch_models_from_api(
         .header("User-Agent", COPILOT_USER_AGENT)
         .send()
         .await?;
+    log_copilot_response(
+        &response,
+        "models",
+        Some(&auth.base_url),
+        Some(auth.is_enterprise),
+    );
     let status = response.status();
     let body = response.text().await?;
     if !status.is_success() {
@@ -553,14 +502,15 @@ async fn collect_streamed_completion(
         body["tools"] = serde_json::Value::Array(to_openai_tools(tools, true));
     }
 
-    debug!(
-        model = %model,
-        messages_count = messages.len(),
-        tools_count = tools.len(),
-        "github-copilot enterprise complete (streaming) request"
+    log_copilot_request(
+        "enterprise_chat_completions",
+        &auth.base_url,
+        Some(model),
+        Some(auth.is_enterprise),
+        true,
+        Some(messages.len()),
+        Some(tools.len()),
     );
-    trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot enterprise request body");
-
     let http_resp = client
         .post(format!("{}/chat/completions", auth.base_url))
         .header(
@@ -574,6 +524,12 @@ async fn collect_streamed_completion(
         .send()
         .await?;
 
+    log_copilot_response(
+        &http_resp,
+        "enterprise_chat_completions",
+        Some(&auth.base_url),
+        Some(auth.is_enterprise),
+    );
     let status = http_resp.status();
     if !status.is_success() {
         let retry_after_ms = super::super::retry_after_ms_from_headers(http_resp.headers());
@@ -588,7 +544,6 @@ async fn collect_streamed_completion(
         );
     }
 
-    // Parse the SSE stream into events, then assemble a CompletionResponse.
     let mut byte_stream = http_resp.bytes_stream();
     let mut buf = String::new();
     let mut state = StreamingToolState::default();
@@ -630,7 +585,6 @@ async fn collect_streamed_completion(
         }
     }
 
-    // Process any trailing data in the buffer.
     let line = buf.trim();
     if !line.is_empty()
         && let Some(data) = line
@@ -687,6 +641,15 @@ async fn collect_streamed_responses_completion(
         body["tool_choice"] = serde_json::json!("auto");
     }
 
+    log_copilot_request(
+        "enterprise_responses",
+        &auth.base_url,
+        Some(model),
+        Some(auth.is_enterprise),
+        true,
+        Some(messages.len()),
+        Some(tools.len()),
+    );
     let http_resp = client
         .post(format!("{}/responses", auth.base_url))
         .header(
@@ -700,6 +663,12 @@ async fn collect_streamed_responses_completion(
         .send()
         .await?;
 
+    log_copilot_response(
+        &http_resp,
+        "enterprise_responses",
+        Some(&auth.base_url),
+        Some(auth.is_enterprise),
+    );
     let status = http_resp.status();
     if !status.is_success() {
         let retry_after_ms = super::super::retry_after_ms_from_headers(http_resp.headers());
@@ -756,7 +725,6 @@ async fn collect_streamed_responses_completion(
         }
     }
 
-    // Process any trailing data in the buffer.
     let line = buf.trim();
     if !line.is_empty()
         && let Some(data) = line
@@ -837,23 +805,6 @@ fn stream_events_to_completion(events: Vec<StreamEvent>) -> CompletionResponse {
     }
 }
 
-// ── Responses API helpers ────────────────────────────────────────────────────
-
-/// Returns `true` if the given model is known to require the Responses API
-/// (`/responses`) instead of Chat Completions (`/chat/completions`).
-fn needs_responses_api(model: &str) -> bool {
-    let m = model.to_ascii_lowercase();
-    m.starts_with("gpt-5.4") || m == "gpt-5.2-pro" || m.starts_with("codex-")
-}
-
-/// Returns `true` if an error body from the Chat Completions API indicates
-/// that the model only supports the Responses API.
-fn is_responses_api_required_error(body: &str) -> bool {
-    let lower = body.to_ascii_lowercase();
-    lower.contains("unsupported_api_for_model")
-        || lower.contains("not accessible via the /chat/completions")
-}
-
 // ── LlmProvider impl ────────────────────────────────────────────────────────
 
 #[async_trait]
@@ -867,7 +818,11 @@ impl LlmProvider for GitHubCopilotProvider {
     }
 
     fn supports_tools(&self) -> bool {
-        super::super::supports_tools_for_model(&self.model)
+        self.model_capabilities.tools
+    }
+
+    fn context_window(&self) -> u32 {
+        self.model_capabilities.context_window
     }
 
     async fn complete(
@@ -875,7 +830,7 @@ impl LlmProvider for GitHubCopilotProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        if needs_responses_api(&self.model) {
+        if self.model_capabilities.requires_responses_api {
             return self.complete_responses(messages, tools).await;
         }
 
@@ -899,14 +854,15 @@ impl LlmProvider for GitHubCopilotProvider {
             body["tools"] = serde_json::Value::Array(to_openai_tools(tools, true));
         }
 
-        debug!(
-            model = %self.model,
-            messages_count = messages.len(),
-            tools_count = tools.len(),
-            "github-copilot complete request"
+        log_copilot_request(
+            "chat_completions",
+            &auth.base_url,
+            Some(&self.model),
+            Some(auth.is_enterprise),
+            false,
+            Some(messages.len()),
+            Some(tools.len()),
         );
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot request body");
-
         let http_resp = self
             .client
             .post(format!("{}/chat/completions", auth.base_url))
@@ -921,10 +877,30 @@ impl LlmProvider for GitHubCopilotProvider {
             .send()
             .await?;
 
+        log_copilot_response(
+            &http_resp,
+            "chat_completions",
+            Some(&auth.base_url),
+            Some(auth.is_enterprise),
+        );
         let status = http_resp.status();
         if !status.is_success() {
             let retry_after_ms = super::super::retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
+
+            if status == reqwest::StatusCode::MISDIRECTED_REQUEST
+                && !auth.is_enterprise
+                && let Some(refreshed_auth) = self.refresh_copilot_auth_after_misdirected().await?
+            {
+                return collect_streamed_completion(
+                    self.client,
+                    &refreshed_auth,
+                    &self.model,
+                    messages,
+                    tools,
+                )
+                .await;
+            }
 
             // Fallback: if the model requires Responses API, retry with it.
             if status == reqwest::StatusCode::BAD_REQUEST
@@ -978,7 +954,7 @@ impl LlmProvider for GitHubCopilotProvider {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-        if needs_responses_api(&self.model) {
+        if self.model_capabilities.requires_responses_api {
             return self.stream_responses_api(messages, tools);
         }
         self.stream_chat_completions(messages, tools)
@@ -1019,14 +995,15 @@ impl GitHubCopilotProvider {
             body["tool_choice"] = serde_json::json!("auto");
         }
 
-        debug!(
-            model = %self.model,
-            messages_count = messages.len(),
-            tools_count = tools.len(),
-            "github-copilot complete_responses request"
+        log_copilot_request(
+            "responses",
+            &auth.base_url,
+            Some(&self.model),
+            Some(auth.is_enterprise),
+            false,
+            Some(messages.len()),
+            Some(tools.len()),
         );
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot responses request body");
-
         let http_resp = self
             .client
             .post(format!("{}/responses", auth.base_url))
@@ -1041,10 +1018,29 @@ impl GitHubCopilotProvider {
             .send()
             .await?;
 
+        log_copilot_response(
+            &http_resp,
+            "responses",
+            Some(&auth.base_url),
+            Some(auth.is_enterprise),
+        );
         let status = http_resp.status();
         if !status.is_success() {
             let retry_after_ms = super::super::retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
+            if status == reqwest::StatusCode::MISDIRECTED_REQUEST
+                && !auth.is_enterprise
+                && let Some(refreshed_auth) = self.refresh_copilot_auth_after_misdirected().await?
+            {
+                return collect_streamed_responses_completion(
+                    self.client,
+                    &refreshed_auth,
+                    &self.model,
+                    messages,
+                    tools,
+                )
+                .await;
+            }
             warn!(status = %status, body = %body_text, "github-copilot responses API error");
             anyhow::bail!(
                 "{}",
@@ -1076,8 +1072,8 @@ impl GitHubCopilotProvider {
                 }
             };
 
-            let (instructions, input) =
-                split_responses_instructions_and_input(messages);
+            let original_messages = messages.clone();
+            let (instructions, input) = split_responses_instructions_and_input(messages);
 
             let mut body = serde_json::json!({
                 "model": self.model,
@@ -1092,13 +1088,15 @@ impl GitHubCopilotProvider {
                 body["tool_choice"] = serde_json::json!("auto");
             }
 
-            debug!(
-                model = %self.model,
-                tools_count = tools.len(),
-                "github-copilot stream_responses_api request"
+            log_copilot_request(
+                "stream_responses_api",
+                &auth.base_url,
+                Some(&self.model),
+                Some(auth.is_enterprise),
+                true,
+                Some(input.len()),
+                Some(tools.len()),
             );
-            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot responses stream request body");
-
             let resp = match self
                 .client
                 .post(format!("{}/responses", auth.base_url))
@@ -1111,10 +1109,44 @@ impl GitHubCopilotProvider {
                 .await
             {
                 Ok(r) => {
+                    log_copilot_response(
+                        &r,
+                        "responses",
+                        Some(&auth.base_url),
+                        Some(auth.is_enterprise),
+                    );
                     if let Err(e) = r.error_for_status_ref() {
                         let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
                         let retry_after_ms = super::super::retry_after_ms_from_headers(r.headers());
                         let body_text = r.text().await.unwrap_or_default();
+                        if status == reqwest::StatusCode::MISDIRECTED_REQUEST.as_u16()
+                            && !auth.is_enterprise
+                        {
+                            match self.refresh_copilot_auth_after_misdirected().await {
+                                Ok(Some(refreshed_auth)) => {
+                                    match collect_streamed_responses_completion(
+                                        self.client,
+                                        &refreshed_auth,
+                                        &self.model,
+                                        &original_messages,
+                                        &tools,
+                                    )
+                                    .await
+                                    {
+                                        Ok(completion) => for event in completion_to_stream_events(completion) {
+                                            yield event;
+                                        },
+                                        Err(error) => yield StreamEvent::Error(error.to_string()),
+                                    }
+                                    return;
+                                },
+                                Ok(None) => {},
+                                Err(error) => {
+                                    yield StreamEvent::Error(error.to_string());
+                                    return;
+                                },
+                            }
+                        }
                         yield StreamEvent::Error(super::super::with_retry_after_marker(
                             format!("HTTP {status}: {body_text}"),
                             retry_after_ms,
@@ -1233,14 +1265,15 @@ impl GitHubCopilotProvider {
                 body["tools"] = serde_json::Value::Array(to_openai_tools(&tools, true));
             }
 
-            debug!(
-                model = %self.model,
-                messages_count = openai_messages.len(),
-                tools_count = tools.len(),
-                "github-copilot stream_with_tools request"
+            log_copilot_request(
+                "stream_chat_completions",
+                &auth.base_url,
+                Some(&self.model),
+                Some(auth.is_enterprise),
+                true,
+                Some(openai_messages.len()),
+                Some(tools.len()),
             );
-            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot stream request body");
-
             let resp = match self
                 .client
                 .post(format!("{}/chat/completions", auth.base_url))
@@ -1253,10 +1286,28 @@ impl GitHubCopilotProvider {
                 .await
             {
                 Ok(r) => {
+                    log_copilot_response(
+                        &r,
+                        "stream_chat_completions",
+                        Some(&auth.base_url),
+                        Some(auth.is_enterprise),
+                    );
                     if let Err(e) = r.error_for_status_ref() {
                         let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
                         let retry_after_ms = super::super::retry_after_ms_from_headers(r.headers());
+                        let response_url = r.url().to_string();
                         let body_text = r.text().await.unwrap_or_default();
+
+                        log_copilot_chat_error(
+                            "stream_chat_completions",
+                            &auth.base_url,
+                            &response_url,
+                            &self.model,
+                            auth.is_enterprise,
+                            true,
+                            status,
+                            &body_text,
+                        );
 
                         // Fallback: if this is an unsupported API error,
                         // switch to Responses API streaming.

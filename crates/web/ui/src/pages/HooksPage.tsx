@@ -253,7 +253,7 @@ function HookCard({ hook }: { hook: Hook }): VNode {
 					) : null}
 
 					<div className="flex flex-col gap-1">
-						{hook.source !== "builtin" ? (
+						{hook.source === "builtin" ? null : (
 							<div className="flex items-center gap-1 border-b border-[var(--border)] px-1">
 								<button
 									className={
@@ -282,7 +282,7 @@ function HookCard({ hook }: { hook: Hook }): VNode {
 									Source
 								</button>
 							</div>
-						) : null}
+						)}
 						{hook.source === "builtin" ? (
 							<div
 								className="skill-body-md text-sm bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius-sm)] p-3 overflow-y-auto"
@@ -315,14 +315,14 @@ function HookCard({ hook }: { hook: Hook }): VNode {
 					</div>
 
 					<div className="flex items-center gap-2">
-						{hook.source !== "builtin" ? (
+						{hook.source === "builtin" ? null : (
 							<button
 								className={`provider-btn provider-btn-sm ${hook.enabled ? "provider-btn-secondary" : ""}`}
 								onClick={handleEnableDisable}
 							>
 								{hook.enabled ? "Disable" : "Enable"}
 							</button>
-						) : null}
+						)}
 						{dirty.value ? (
 							<button className="provider-btn provider-btn-sm" onClick={handleSave} disabled={saving.value}>
 								{saving.value ? "Saving\u2026" : "Save"}

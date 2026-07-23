@@ -462,7 +462,7 @@ export function clearAllSessions(): Promise<{ ok: boolean; skipped?: boolean; ca
 		return Promise.resolve({ ok: true, skipped: true });
 	}
 	return confirmDialog(
-		`Delete ${count} session${count !== 1 ? "s" : ""}? Main, channel-bound, and cron sessions will be kept.`,
+		`Delete ${count} session${count === 1 ? "" : "s"}? Main, channel-bound, and cron sessions will be kept.`,
 	).then((yes) => {
 		if (!yes) return { ok: false, cancelled: true };
 		return sendRpc("sessions.clear_all", {}).then((res) => {

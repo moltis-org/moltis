@@ -16,7 +16,7 @@ use {
 use {
     moltis_agents::{
         AgentRunError, UserContent,
-        model::{AgentToolControls, values_to_chat_messages},
+        model::{AgentToolControls, values_to_chat_messages_with_tool_result_limit},
         prompt::{
             PromptRuntimeContext, build_system_prompt_minimal_runtime_details,
             build_system_prompt_with_session_runtime_details,
@@ -866,7 +866,10 @@ pub(crate) async fn run_with_tools(
         .insert(session_key.to_string(), event_forwarder);
 
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
-    let chat_history = values_to_chat_messages(history_raw);
+    let chat_history = values_to_chat_messages_with_tool_result_limit(
+        history_raw,
+        persona.config.tools.max_tool_result_bytes,
+    );
 
     let hist = if chat_history.is_empty() {
         None
@@ -972,6 +975,7 @@ pub(crate) async fn run_with_tools(
                 session_key,
                 &persona.config.chat.compaction,
                 Some(&*provider_ref),
+                persona.config.tools.max_tool_result_bytes,
             )
             .await
             {
@@ -1016,7 +1020,10 @@ pub(crate) async fn run_with_tools(
 
                     // Reload compacted history and retry.
                     let compacted_history_raw = store.read(session_key).await.unwrap_or_default();
-                    let compacted_chat = values_to_chat_messages(&compacted_history_raw);
+                    let compacted_chat = values_to_chat_messages_with_tool_result_limit(
+                        &compacted_history_raw,
+                        persona.config.tools.max_tool_result_bytes,
+                    );
                     let retry_hist = if compacted_chat.is_empty() {
                         None
                     } else {

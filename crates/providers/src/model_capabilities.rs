@@ -57,55 +57,87 @@ pub fn context_window_for_model_with_config(
     context_window_for_model_inner(model_id)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContextWindowFallbackScope {
+    Generic,
+    OpenAiCodex,
+    GitHubCopilot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextWindowFallback {
+    Exact(&'static str, u32),
+    Prefix(&'static str, u32),
+}
+
+impl ContextWindowFallback {
+    fn context_window_for(self, model_id: &str) -> Option<u32> {
+        match self {
+            Self::Exact(id, window) => (id == model_id).then_some(window),
+            Self::Prefix(prefix, window) => model_id.starts_with(prefix).then_some(window),
+        }
+    }
+}
+
+const GENERIC_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
+    ContextWindowFallback::Exact("gpt-5.6", 1_050_000),
+    ContextWindowFallback::Exact("gpt-5.6-luna", 1_050_000),
+    ContextWindowFallback::Exact("gpt-5.6-sol", 1_050_000),
+    ContextWindowFallback::Exact("gpt-5.6-terra", 1_050_000),
+    ContextWindowFallback::Prefix("codestral", 256_000),
+    ContextWindowFallback::Prefix("gemini-", 1_000_000),
+    ContextWindowFallback::Exact("MiniMax-M3", 1_000_000),
+    ContextWindowFallback::Prefix("MiniMax-", 204_800),
+    ContextWindowFallback::Prefix("gpt-4", 128_000),
+    ContextWindowFallback::Prefix("gpt-5", 128_000),
+    ContextWindowFallback::Prefix("mistral-large", 128_000),
+    ContextWindowFallback::Exact("kimi-k3", 1_000_000),
+    ContextWindowFallback::Prefix("kimi-k2.7-code", 256_000),
+    ContextWindowFallback::Exact("kimi-k2.6", 256_000),
+    ContextWindowFallback::Prefix("kimi-", 128_000),
+    ContextWindowFallback::Prefix("glm-", 128_000),
+    ContextWindowFallback::Prefix("qwen3", 128_000),
+    ContextWindowFallback::Prefix("o3", 200_000),
+    ContextWindowFallback::Prefix("o4-mini", 200_000),
+];
+
+const OPENAI_CODEX_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
+    ContextWindowFallback::Exact("gpt-5.6", 372_000),
+    ContextWindowFallback::Exact("gpt-5.6-luna", 372_000),
+    ContextWindowFallback::Exact("gpt-5.6-sol", 372_000),
+    ContextWindowFallback::Exact("gpt-5.6-terra", 372_000),
+    ContextWindowFallback::Prefix("gpt-5", 200_000),
+];
+
+const GITHUB_COPILOT_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
+    ContextWindowFallback::Exact("claude-fable-5", 1_000_000),
+    ContextWindowFallback::Exact("claude-opus-4.6", 1_000_000),
+    ContextWindowFallback::Exact("claude-opus-4.7", 1_000_000),
+    ContextWindowFallback::Exact("claude-opus-4.8", 1_000_000),
+    ContextWindowFallback::Exact("claude-sonnet-4.6", 1_000_000),
+    ContextWindowFallback::Exact("claude-sonnet-5", 1_000_000),
+];
+
+pub(crate) fn context_window_fallback_for_model(
+    scope: ContextWindowFallbackScope,
+    model_id: &str,
+) -> Option<u32> {
+    let model_id = capability_model_id(model_id);
+    let scoped = match scope {
+        ContextWindowFallbackScope::Generic => &[][..],
+        ContextWindowFallbackScope::OpenAiCodex => OPENAI_CODEX_CONTEXT_WINDOW_FALLBACKS,
+        ContextWindowFallbackScope::GitHubCopilot => GITHUB_COPILOT_CONTEXT_WINDOW_FALLBACKS,
+    };
+    scoped
+        .iter()
+        .chain(GENERIC_CONTEXT_WINDOW_FALLBACKS.iter())
+        .find_map(|fallback| fallback.context_window_for(model_id))
+}
+
 /// Inner heuristic — kept private so callers go through the public wrappers.
 fn context_window_for_model_inner(model_id: &str) -> u32 {
-    let model_id = capability_model_id(model_id);
-    // Codestral has the largest window at 256k.
-    if model_id.starts_with("codestral") {
-        return 256_000;
-    }
-    // Claude models: 200k.
-    if model_id.starts_with("claude-") {
-        return 200_000;
-    }
-    // OpenAI o3/o4-mini: 200k.
-    if model_id.starts_with("o3") || model_id.starts_with("o4-mini") {
-        return 200_000;
-    }
-    // GPT-4o, GPT-4-turbo, GPT-5 series: 128k.
-    if model_id.starts_with("gpt-4") || model_id.starts_with("gpt-5") {
-        return 128_000;
-    }
-    // Mistral Large: 128k.
-    if model_id.starts_with("mistral-large") {
-        return 128_000;
-    }
-    // Gemini: 1M context.
-    if model_id.starts_with("gemini-") {
-        return 1_000_000;
-    }
-    // Kimi K2.5: 128k.
-    if model_id.starts_with("kimi-") {
-        return 128_000;
-    }
-    // MiniMax M2/M2.1/M2.5/M2.7: 204,800.
-    if model_id.starts_with("MiniMax-") {
-        return 204_800;
-    }
-    // Z.AI GLM-4-32B: 128k.
-    if model_id == "glm-4-32b-0414-128k" {
-        return 128_000;
-    }
-    // Z.AI GLM-5/4.7/4.6/4.5 series: 128k.
-    if model_id.starts_with("glm-") {
-        return 128_000;
-    }
-    // Qwen3 series (Qwen3, Qwen3-Coder): 128k.
-    if model_id.starts_with("qwen3") {
-        return 128_000;
-    }
-    // Default fallback.
-    200_000
+    context_window_fallback_for_model(ContextWindowFallbackScope::Generic, model_id)
+        .unwrap_or(200_000)
 }
 
 /// Returns `false` for model IDs that are clearly not chat-completion models
@@ -212,6 +244,10 @@ pub fn supports_vision_for_model(model_id: &str) -> bool {
     let id = capability_model_id(model_id);
 
     // ── Known text-only models ──────────────────────────────────────
+    if id.starts_with("MiniMax-M2.7") {
+        return false;
+    }
+
     // Code-focused models
     if id.starts_with("codestral") {
         return false;
@@ -276,6 +312,10 @@ pub fn supports_reasoning_for_model(model_id: &str) -> bool {
     if id.starts_with("grok-3") || id.starts_with("grok-4") {
         return true;
     }
+    // Kimi K3 uses the top-level reasoning_effort field; K2.7 Code also has thinking mode.
+    if id == "kimi-k3" || id.starts_with("kimi-k2.7-code") {
+        return true;
+    }
     false
 }
 
@@ -284,8 +324,10 @@ pub fn supports_reasoning_for_model(model_id: &str) -> bool {
 /// Populated at registration time from the pattern-matching heuristics.
 /// Carried on `ModelInfo` so downstream code can check capabilities
 /// without a provider instance or re-running the heuristic.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct ModelCapabilities {
+    /// Maximum supported context window in tokens.
+    pub context_window: u32,
     /// Supports chat/text-generation requests.
     pub text_generation: bool,
     /// Supports OpenAI-style function/tool calling.
@@ -294,6 +336,21 @@ pub struct ModelCapabilities {
     pub vision: bool,
     /// Supports extended thinking / reasoning effort.
     pub reasoning: bool,
+    /// Must be called through the OpenAI Responses API instead of Chat Completions.
+    pub requires_responses_api: bool,
+}
+
+impl Default for ModelCapabilities {
+    fn default() -> Self {
+        Self {
+            context_window: 200_000,
+            text_generation: false,
+            tools: false,
+            vision: false,
+            reasoning: false,
+            requires_responses_api: false,
+        }
+    }
 }
 
 impl ModelCapabilities {
@@ -301,10 +358,12 @@ impl ModelCapabilities {
     #[must_use]
     pub fn infer(model_id: &str) -> Self {
         Self {
+            context_window: context_window_for_model(model_id),
             text_generation: is_chat_capable_model(model_id),
             tools: supports_tools_for_model(model_id),
             vision: supports_vision_for_model(model_id),
             reasoning: supports_reasoning_for_model(model_id),
+            requires_responses_api: false,
         }
     }
 }
@@ -335,20 +394,19 @@ mod tests {
             context_window_for_model("claude-sonnet-4-20250514"),
             200_000
         );
-        assert_eq!(
-            context_window_for_model("claude-opus-4-5-20251101"),
-            200_000
-        );
         assert_eq!(context_window_for_model("gpt-4o"), 128_000);
-        assert_eq!(context_window_for_model("gpt-4o-mini"), 128_000);
-        assert_eq!(context_window_for_model("gpt-4-turbo"), 128_000);
-        assert_eq!(context_window_for_model("o3"), 200_000);
-        assert_eq!(context_window_for_model("o3-mini"), 200_000);
-        assert_eq!(context_window_for_model("o4-mini"), 200_000);
+        assert_eq!(context_window_for_model("gpt-5.6-sol"), 1_050_000);
         assert_eq!(context_window_for_model("codestral-latest"), 256_000);
-        assert_eq!(context_window_for_model("mistral-large-latest"), 128_000);
         assert_eq!(context_window_for_model("gemini-2.0-flash"), 1_000_000);
+        assert_eq!(context_window_for_model("kimi-k3"), 1_000_000);
+        assert_eq!(
+            context_window_for_model("kimi-k2.7-code-highspeed"),
+            256_000
+        );
+        assert_eq!(context_window_for_model("kimi-k2.6"), 256_000);
         assert_eq!(context_window_for_model("kimi-k2.5"), 128_000);
+        assert_eq!(context_window_for_model("MiniMax-M3"), 1_000_000);
+        assert_eq!(context_window_for_model("MiniMax-M2.7"), 204_800);
         // Z.AI GLM models
         assert_eq!(context_window_for_model("glm-5"), 128_000);
         assert_eq!(context_window_for_model("glm-4.7"), 128_000);
@@ -360,6 +418,43 @@ mod tests {
             context_window_for_model("custom-openrouter::openai/gpt-5.2"),
             128_000
         );
+    }
+
+    #[test]
+    fn context_window_preserves_family_fallbacks() {
+        assert_eq!(context_window_for_model("codestral-2508"), 256_000);
+        assert_eq!(context_window_for_model("gemini-1.5-pro"), 1_000_000);
+        assert_eq!(context_window_for_model("gemini-2.5-pro"), 1_000_000);
+        assert_eq!(context_window_for_model("MiniMax-M2.1"), 204_800);
+        assert_eq!(context_window_for_model("gpt-4.1"), 128_000);
+        assert_eq!(context_window_for_model("gpt-5.3"), 128_000);
+        assert_eq!(context_window_for_model("mistral-large-2411"), 128_000);
+        assert_eq!(context_window_for_model("kimi-k2.6-lite"), 128_000);
+        assert_eq!(context_window_for_model("glm-5-turbo"), 128_000);
+        assert_eq!(context_window_for_model("qwen3-next"), 128_000);
+    }
+
+    #[test]
+    fn codex_context_window_scope_preserves_gpt5_fallbacks() {
+        assert_eq!(
+            context_window_fallback_for_model(
+                ContextWindowFallbackScope::OpenAiCodex,
+                "gpt-5.6-sol"
+            ),
+            Some(372_000)
+        );
+        assert_eq!(
+            context_window_fallback_for_model(ContextWindowFallbackScope::OpenAiCodex, "gpt-5.4"),
+            Some(200_000)
+        );
+        assert_eq!(
+            context_window_fallback_for_model(
+                ContextWindowFallbackScope::OpenAiCodex,
+                "gpt-5.3-codex-spark",
+            ),
+            Some(200_000)
+        );
+        assert_eq!(context_window_for_model("gpt-5.4"), 128_000);
     }
 
     #[test]
@@ -395,6 +490,9 @@ mod tests {
         // GPT-5 supports vision
         assert!(supports_vision_for_model("gpt-5.2-codex"));
 
+        // MiniMax M3 supports image inputs.
+        assert!(supports_vision_for_model("MiniMax-M3"));
+
         // o3/o4 series supports vision
         assert!(supports_vision_for_model("o3"));
         assert!(supports_vision_for_model("o3-mini"));
@@ -426,6 +524,7 @@ mod tests {
         // Unknown models default to vision support (better to try and fail
         // with an API error than to silently strip images)
         assert!(supports_vision_for_model("some-unknown-model"));
+        assert!(supports_vision_for_model("kimi-k3"));
         assert!(supports_vision_for_model("kimi-k2.5"));
     }
 
@@ -443,6 +542,10 @@ mod tests {
         assert!(!supports_vision_for_model("glm-5"));
         assert!(!supports_vision_for_model("glm-4.7"));
         assert!(!supports_vision_for_model("glm-4.5"));
+
+        // MiniMax M2.7 accepts text input only.
+        assert!(!supports_vision_for_model("MiniMax-M2.7"));
+        assert!(!supports_vision_for_model("MiniMax-M2.7-highspeed"));
     }
 
     #[test]
@@ -575,6 +678,8 @@ mod tests {
         assert!(supports_reasoning_for_model("gpt-5"));
         assert!(supports_reasoning_for_model("gpt-5-mini"));
         assert!(supports_reasoning_for_model("gpt-5.2"));
+        assert!(supports_reasoning_for_model("kimi-k3"));
+        assert!(supports_reasoning_for_model("kimi-k2.7-code-highspeed"));
         // xAI Grok reasoning models
         assert!(supports_reasoning_for_model("grok-3"));
         assert!(supports_reasoning_for_model("grok-3-latest"));

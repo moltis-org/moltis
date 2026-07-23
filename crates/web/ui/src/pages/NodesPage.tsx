@@ -403,7 +403,7 @@ function NodeTelemetry({ telemetry }: { telemetry?: TelemetryData }): VNode | nu
 	if (telemetry.stale) parts.push(<span className="text-yellow-500">(stale)</span>);
 	return (
 		<div className="mt-1.5 flex flex-col gap-1">
-			{telemetry.cpuUsage != null ? <TelemetryBar label="CPU" value={telemetry.cpuUsage} max={100} /> : null}
+			{telemetry.cpuUsage == null ? null : <TelemetryBar label="CPU" value={telemetry.cpuUsage} max={100} />}
 			{telemetry.memTotal != null && telemetry.memAvailable != null ? (
 				<TelemetryBar label="MEM" value={telemetry.memTotal - telemetry.memAvailable} max={telemetry.memTotal} />
 			) : null}
@@ -635,7 +635,7 @@ function RemoteExecStatusCard(): VNode {
 					</div>
 					<div className={`${doctorTest.value.reachable ? "text-green-500" : "text-red-500"} mt-1`}>
 						{doctorTest.value.reachable ? "Reachable" : "Unreachable"}
-						{doctorTest.value.exit_code != null ? ` (exit ${doctorTest.value.exit_code})` : ""}
+						{doctorTest.value.exit_code == null ? "" : ` (exit ${doctorTest.value.exit_code})`}
 					</div>
 					{doctorTest.value.failure_hint ? (
 						<div className="mt-1 text-[11px] text-[var(--text-muted)]">Hint: {doctorTest.value.failure_hint}</div>

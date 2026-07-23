@@ -62,6 +62,43 @@ fn configured_secret(secret: &Option<Secret<String>>) -> bool {
         .is_some_and(|secret| !secret.expose_secret().is_empty())
 }
 
+fn sandbox_container_prefix_from_config(config: &moltis_config::MoltisConfig) -> String {
+    config
+        .tools
+        .exec
+        .sandbox
+        .container_prefix
+        .clone()
+        .unwrap_or_else(|| "moltis-sandbox".to_string())
+}
+
+fn browser_container_prefix_from_config(config: &moltis_config::MoltisConfig) -> String {
+    let _ = config;
+    "moltis-browser".to_string()
+}
+
+fn managed_container_prefixes(config: &moltis_config::MoltisConfig) -> Vec<String> {
+    let sandbox_prefix = sandbox_container_prefix_from_config(config);
+    let browser_prefix = browser_container_prefix_from_config(config);
+    if sandbox_prefix == browser_prefix {
+        vec![sandbox_prefix]
+    } else {
+        vec![sandbox_prefix, browser_prefix]
+    }
+}
+
+fn browser_image_repository(config: &moltis_config::MoltisConfig) -> Option<String> {
+    let image = config.tools.browser.sandbox_image.trim();
+    let (repo, _) = image.rsplit_once(':').unwrap_or((image, "latest"));
+    (!repo.is_empty()).then(|| repo.to_string())
+}
+
+fn managed_container_name(config: &moltis_config::MoltisConfig, name: &str) -> bool {
+    managed_container_prefixes(config)
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
 #[derive(serde::Deserialize)]
 pub struct SandboxSharedHomeUpdateRequest {
     enabled: bool,
@@ -725,9 +762,12 @@ pub async fn api_cached_images_handler() -> impl IntoResponse {
     let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
         &config.tools.exec.sandbox.backend,
     );
+    let extra_repositories = browser_image_repository(&config)
+        .into_iter()
+        .collect::<Vec<_>>();
     let (cached, sandbox) = tokio::join!(
         builder.list_cached(),
-        moltis_tools::sandbox::list_sandbox_images(),
+        moltis_tools::sandbox::list_moltis_images(&extra_repositories),
     );
 
     let mut images: Vec<serde_json::Value> = Vec::new();
@@ -751,11 +791,19 @@ pub async fn api_cached_images_handler() -> impl IntoResponse {
     match sandbox {
         Ok(list) => {
             for img in list {
+                let kind = if extra_repositories
+                    .iter()
+                    .any(|repo| img.tag.starts_with(repo))
+                {
+                    "browser"
+                } else {
+                    "sandbox"
+                };
                 images.push(serde_json::json!({
                     "tag": img.tag,
                     "size": img.size,
                     "created": img.created,
-                    "kind": "sandbox",
+                    "kind": kind,
                 }));
             }
         },
@@ -987,13 +1035,24 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
         }));
     }
     #[cfg(target_os = "macos")]
-    if moltis_tools::sandbox::is_cli_available("container") {
-        backends.push(serde_json::json!({
-            "id": "apple-container",
-            "label": "Apple Container (VM)",
-            "kind": "local",
-            "available": true,
-        }));
+    {
+        if moltis_tools::sandbox::is_cli_available("container") {
+            backends.push(serde_json::json!({
+                "id": "apple-container",
+                "label": "Apple Container (VM)",
+                "kind": "local",
+                "available": true,
+            }));
+        } else {
+            backends.push(serde_json::json!({
+                "id": "apple-container",
+                "label": "Apple Container (VM)",
+                "kind": "local",
+                "available": false,
+                "installHint": "Recommended on macOS. Apple Container is VM-isolated and much faster than Docker for sandbox startup.",
+                "installCommand": "brew install container && container system start",
+            }));
+        }
     }
     #[cfg(target_os = "linux")]
     if moltis_tools::sandbox::firecracker_bin_available(
@@ -1258,19 +1317,10 @@ WORKDIR /home/sandbox\n"
 
 // ── Containers ───────────────────────────────────────────────────────────────
 
-pub async fn api_list_containers_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let prefix = state
-        .gateway
-        .sandbox_router
-        .as_ref()
-        .map(|r| {
-            r.config()
-                .container_prefix
-                .clone()
-                .unwrap_or_else(|| "moltis-sandbox".to_string())
-        })
-        .unwrap_or_else(|| "moltis-sandbox".to_string());
-    match moltis_tools::sandbox::list_running_containers(&prefix).await {
+pub async fn api_list_containers_handler() -> impl IntoResponse {
+    let config = moltis_config::discover_and_load();
+    let prefixes = managed_container_prefixes(&config);
+    match moltis_tools::sandbox::list_running_containers_for_prefixes(&prefixes).await {
         Ok(containers) => Json(serde_json::json!({ "containers": containers })).into_response(),
         Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1280,22 +1330,9 @@ pub async fn api_list_containers_handler(State(state): State<AppState>) -> impl 
     }
 }
 
-pub async fn api_stop_container_handler(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> impl IntoResponse {
-    let prefix = state
-        .gateway
-        .sandbox_router
-        .as_ref()
-        .map(|r| {
-            r.config()
-                .container_prefix
-                .clone()
-                .unwrap_or_else(|| "moltis-sandbox".to_string())
-        })
-        .unwrap_or_else(|| "moltis-sandbox".to_string());
-    if !name.starts_with(&prefix) {
+pub async fn api_stop_container_handler(Path(name): Path<String>) -> impl IntoResponse {
+    let config = moltis_config::discover_and_load();
+    if !managed_container_name(&config, &name) {
         return api_error_response(
             StatusCode::FORBIDDEN,
             SANDBOX_CONTAINER_PREFIX_MISMATCH,
@@ -1312,22 +1349,9 @@ pub async fn api_stop_container_handler(
     }
 }
 
-pub async fn api_remove_container_handler(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> impl IntoResponse {
-    let prefix = state
-        .gateway
-        .sandbox_router
-        .as_ref()
-        .map(|r| {
-            r.config()
-                .container_prefix
-                .clone()
-                .unwrap_or_else(|| "moltis-sandbox".to_string())
-        })
-        .unwrap_or_else(|| "moltis-sandbox".to_string());
-    if !name.starts_with(&prefix) {
+pub async fn api_remove_container_handler(Path(name): Path<String>) -> impl IntoResponse {
+    let config = moltis_config::discover_and_load();
+    if !managed_container_name(&config, &name) {
         return api_error_response(
             StatusCode::FORBIDDEN,
             SANDBOX_CONTAINER_PREFIX_MISMATCH,
@@ -1344,26 +1368,22 @@ pub async fn api_remove_container_handler(
     }
 }
 
-pub async fn api_clean_all_containers_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let prefix = state
-        .gateway
-        .sandbox_router
-        .as_ref()
-        .map(|r| {
-            r.config()
-                .container_prefix
-                .clone()
-                .unwrap_or_else(|| "moltis-sandbox".to_string())
-        })
-        .unwrap_or_else(|| "moltis-sandbox".to_string());
-    match moltis_tools::sandbox::clean_all_containers(&prefix).await {
-        Ok(removed) => Json(serde_json::json!({ "ok": true, "removed": removed })).into_response(),
-        Err(e) => api_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            SANDBOX_CONTAINERS_CLEAN_FAILED,
-            e.to_string(),
-        ),
+pub async fn api_clean_all_containers_handler() -> impl IntoResponse {
+    let config = moltis_config::discover_and_load();
+    let mut removed = 0usize;
+    for prefix in managed_container_prefixes(&config) {
+        match moltis_tools::sandbox::clean_all_containers(&prefix).await {
+            Ok(count) => removed += count,
+            Err(e) => {
+                return api_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    SANDBOX_CONTAINERS_CLEAN_FAILED,
+                    e.to_string(),
+                );
+            },
+        }
     }
+    Json(serde_json::json!({ "ok": true, "removed": removed })).into_response()
 }
 
 pub async fn api_disk_usage_handler() -> impl IntoResponse {

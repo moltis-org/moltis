@@ -14,10 +14,14 @@ use moltis_channels::{
     Result as ChannelResult,
     gating::{DmPolicy, GroupPolicy, is_allowed},
     message_log::{MessageLog, MessageLogEntry},
+    otp::{
+        OTP_TTL, OtpChallengeInfo, OtpInitResult, OtpVerifyResult, approve_sender_via_otp,
+        emit_otp_challenge, emit_otp_resolution,
+    },
     plugin::{
         ChannelAttachment, ChannelHealthSnapshot, ChannelMessageKind, ChannelMessageMeta,
-        ChannelOutbound, ChannelPlugin, ChannelReplyTarget, ChannelStatus, ChannelStreamOutbound,
-        ChannelThreadContext, ChannelType, ThreadMessage,
+        ChannelOtpProvider, ChannelOutbound, ChannelPlugin, ChannelReplyTarget, ChannelStatus,
+        ChannelStreamOutbound, ChannelThreadContext, ChannelType, ThreadMessage,
     },
 };
 
@@ -36,6 +40,50 @@ fn unix_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+const OTP_CHALLENGE_MSG: &str = "To use this bot, please enter the verification code.\n\nAsk the bot owner for the code; it is visible in the web UI under Channels > Senders.\n\nThe code expires in 5 minutes.";
+
+#[cfg(feature = "metrics")]
+fn record_otp_verification(result: &OtpVerifyResult) {
+    let label = match result {
+        OtpVerifyResult::Approved => "approved",
+        OtpVerifyResult::WrongCode { .. } => "wrong_code",
+        OtpVerifyResult::LockedOut => "locked_out",
+        OtpVerifyResult::Expired => "expired",
+        OtpVerifyResult::NoPending => return,
+    };
+    moltis_metrics::counter!(
+        moltis_metrics::channels::OTP_VERIFICATIONS_TOTAL,
+        moltis_metrics::labels::CHANNEL => "msteams",
+        "result" => label
+    )
+    .increment(1);
+}
+
+fn policy_allowed(
+    config: &MsTeamsAccountConfig,
+    is_group: bool,
+    chat_id: &str,
+    peer_id: &str,
+) -> bool {
+    if is_group {
+        match config.group_policy {
+            GroupPolicy::Open => true,
+            GroupPolicy::Allowlist => {
+                !config.group_allowlist.is_empty() && is_allowed(chat_id, &config.group_allowlist)
+            },
+            GroupPolicy::Disabled => false,
+        }
+    } else {
+        match config.dm_policy {
+            DmPolicy::Open => true,
+            DmPolicy::Allowlist => {
+                !config.allowlist.is_empty() && is_allowed(peer_id, &config.allowlist)
+            },
+            DmPolicy::Disabled => false,
+        }
+    }
 }
 
 /// Microsoft Teams channel plugin.
@@ -107,11 +155,27 @@ impl MsTeamsPlugin {
         let parsed: MsTeamsAccountConfig = serde_json::from_value(config)?;
         let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accounts.get_mut(account_id) {
+            state
+                .otp
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .set_cooldown(parsed.otp_cooldown_secs);
             state.config = parsed;
             Ok(())
         } else {
             Err(ChannelError::unknown_account(account_id))
         }
+    }
+
+    pub fn pending_otp_challenges(&self, account_id: &str) -> Vec<OtpChallengeInfo> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .map(|s| {
+                let otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                otp.list_pending()
+            })
+            .unwrap_or_default()
     }
 
     /// Acquire an authenticated token for Graph API calls on behalf of the given account.
@@ -289,19 +353,7 @@ impl MsTeamsPlugin {
         let effective_mention_mode =
             resolve_mention_mode(&config, team_id.as_deref(), channel_id.as_deref());
 
-        let policy_allowed = if is_group {
-            match config.group_policy {
-                GroupPolicy::Open => true,
-                GroupPolicy::Allowlist => is_allowed(&chat_id, &config.group_allowlist),
-                GroupPolicy::Disabled => false,
-            }
-        } else {
-            match config.dm_policy {
-                DmPolicy::Open => true,
-                DmPolicy::Allowlist => is_allowed(&peer_id, &config.allowlist),
-                DmPolicy::Disabled => false,
-            }
-        };
+        let policy_allowed = policy_allowed(&config, is_group, &chat_id, &peer_id);
         let mention_allowed = if is_group {
             match effective_mention_mode {
                 moltis_channels::gating::MentionMode::Always => true,
@@ -352,6 +404,17 @@ impl MsTeamsPlugin {
         }
 
         if !access_granted {
+            if !is_group && config.dm_policy == DmPolicy::Allowlist && config.otp_self_approval {
+                self.handle_otp_flow(
+                    account_id,
+                    &peer_id,
+                    sender_name.as_deref(),
+                    text.as_deref().unwrap_or_default(),
+                    &chat_id,
+                    event_sink.as_deref(),
+                )
+                .await;
+            }
             return Ok(());
         }
 
@@ -535,6 +598,174 @@ impl MsTeamsPlugin {
         Ok(())
     }
 
+    async fn handle_otp_flow(
+        &self,
+        account_id: &str,
+        peer_id: &str,
+        sender_name: Option<&str>,
+        text: &str,
+        chat_id: &str,
+        event_sink: Option<&dyn ChannelEventSink>,
+    ) {
+        let has_pending = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            accounts
+                .get(account_id)
+                .map(|s| {
+                    let otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                    otp.has_pending(peer_id)
+                })
+                .unwrap_or(false)
+        };
+
+        if has_pending {
+            let body = text.trim();
+            let is_code = body.len() == 6 && body.chars().all(|c| c.is_ascii_digit());
+            if !is_code {
+                return;
+            }
+
+            let result = {
+                let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+                match accounts.get(account_id) {
+                    Some(s) => {
+                        let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                        otp.verify(peer_id, body)
+                    },
+                    None => return,
+                }
+            };
+
+            #[cfg(feature = "metrics")]
+            record_otp_verification(&result);
+
+            match result {
+                OtpVerifyResult::Approved => {
+                    approve_sender_via_otp(
+                        event_sink,
+                        ChannelType::MsTeams,
+                        account_id,
+                        peer_id,
+                        peer_id,
+                        sender_name.or(Some(peer_id)),
+                    )
+                    .await;
+                    self.send_otp_status(
+                        account_id,
+                        chat_id,
+                        "Verified! You now have access to this bot.",
+                    )
+                    .await;
+                },
+                OtpVerifyResult::WrongCode { attempts_left } => {
+                    let msg = format!(
+                        "Incorrect code. {attempts_left} attempt{} remaining.",
+                        if attempts_left == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    );
+                    self.send_otp_status(account_id, chat_id, &msg).await;
+                },
+                OtpVerifyResult::LockedOut => {
+                    self.send_otp_status(
+                        account_id,
+                        chat_id,
+                        "Too many failed attempts. Please try again later.",
+                    )
+                    .await;
+                    emit_otp_resolution(
+                        event_sink,
+                        ChannelType::MsTeams,
+                        account_id,
+                        peer_id,
+                        sender_name.or(Some(peer_id)),
+                        "locked_out",
+                    )
+                    .await;
+                },
+                OtpVerifyResult::Expired => {
+                    self.send_otp_status(
+                        account_id,
+                        chat_id,
+                        "Your code has expired. Send any message to get a new one.",
+                    )
+                    .await;
+                    emit_otp_resolution(
+                        event_sink,
+                        ChannelType::MsTeams,
+                        account_id,
+                        peer_id,
+                        sender_name.or(Some(peer_id)),
+                        "expired",
+                    )
+                    .await;
+                },
+                OtpVerifyResult::NoPending => {},
+            }
+            return;
+        }
+
+        let init_result = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            match accounts.get(account_id) {
+                Some(s) => {
+                    let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                    otp.initiate(
+                        peer_id,
+                        Some(peer_id.to_string()),
+                        sender_name.map(String::from),
+                    )
+                },
+                None => return,
+            }
+        };
+
+        match init_result {
+            OtpInitResult::Created(code) => {
+                #[cfg(feature = "metrics")]
+                moltis_metrics::counter!(
+                    moltis_metrics::channels::OTP_CHALLENGES_TOTAL,
+                    moltis_metrics::labels::CHANNEL => "msteams"
+                )
+                .increment(1);
+                self.send_otp_status(account_id, chat_id, OTP_CHALLENGE_MSG)
+                    .await;
+                let expires_at = std::time::SystemTime::now()
+                    .checked_add(OTP_TTL)
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or_default();
+                emit_otp_challenge(
+                    event_sink,
+                    ChannelType::MsTeams,
+                    account_id,
+                    peer_id,
+                    Some(peer_id),
+                    sender_name,
+                    code,
+                    expires_at,
+                )
+                .await;
+            },
+            OtpInitResult::AlreadyPending | OtpInitResult::LockedOut => {},
+        }
+    }
+
+    async fn send_otp_status(&self, account_id: &str, chat_id: &str, text: &str) {
+        if let Err(error) = self
+            .outbound
+            .send_text(account_id, chat_id, text, None)
+            .await
+        {
+            warn!(
+                account_id,
+                chat_id, "failed to send Teams OTP status: {error}"
+            );
+        }
+    }
+
     /// Handle conversationUpdate activities (welcome cards).
     async fn handle_conversation_update(
         &self,
@@ -687,7 +918,7 @@ impl ChannelPlugin for MsTeamsPlugin {
         let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         accounts.insert(account_id.to_string(), AccountState {
             account_id: account_id.to_string(),
-            config: cfg,
+            config: cfg.clone(),
             message_log: self.message_log.clone(),
             event_sink: self.event_sink.clone(),
             http,
@@ -696,6 +927,7 @@ impl ChannelPlugin for MsTeamsPlugin {
             service_urls: Arc::new(RwLock::new(HashMap::new())),
             jwt_validator,
             welcomed_conversations: Arc::new(RwLock::new(HashSet::new())),
+            otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(cfg.otp_cooldown_secs)),
         });
         Ok(())
     }
@@ -783,6 +1015,16 @@ impl ChannelPlugin for MsTeamsPlugin {
 
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
         Some(self)
+    }
+
+    fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
+        Some(self)
+    }
+}
+
+impl ChannelOtpProvider for MsTeamsPlugin {
+    fn pending_otp_challenges(&self, account_id: &str) -> Vec<OtpChallengeInfo> {
+        MsTeamsPlugin::pending_otp_challenges(self, account_id)
     }
 }
 
@@ -878,6 +1120,22 @@ mod tests {
         moltis_channels::{InboundMode, plugin::ChannelType},
     };
 
+    fn test_account_state(config: MsTeamsAccountConfig) -> AccountState {
+        AccountState {
+            account_id: "test".into(),
+            config,
+            message_log: None,
+            event_sink: None,
+            http: reqwest::Client::new(),
+            token_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            graph_token_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            service_urls: Arc::new(RwLock::new(HashMap::new())),
+            jwt_validator: None,
+            welcomed_conversations: Arc::new(RwLock::new(HashSet::new())),
+            otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(300)),
+        }
+    }
+
     #[test]
     fn descriptor_coherence() {
         let plugin = MsTeamsPlugin::new();
@@ -887,11 +1145,76 @@ mod tests {
         assert_eq!(desc.display_name, "Microsoft Teams");
         assert_eq!(desc.capabilities.inbound_mode, InboundMode::Webhook);
 
-        // OTP: MsTeams does NOT implement ChannelOtpProvider
-        assert!(!desc.capabilities.supports_otp);
-        assert!(plugin.as_otp_provider().is_none());
+        // OTP: MsTeams implements ChannelOtpProvider
+        assert!(desc.capabilities.supports_otp);
+        assert!(plugin.as_otp_provider().is_some());
 
         // Threads: MsTeams now implements ChannelThreadContext
         assert!(plugin.thread_context().is_some());
+    }
+
+    #[test]
+    fn empty_dm_allowlist_denies_all() {
+        let cfg = MsTeamsAccountConfig {
+            dm_policy: DmPolicy::Allowlist,
+            allowlist: vec![],
+            ..Default::default()
+        };
+        assert!(!policy_allowed(&cfg, false, "dm-chat", "user-id"));
+    }
+
+    #[test]
+    fn empty_group_allowlist_denies_all() {
+        let cfg = MsTeamsAccountConfig {
+            group_policy: GroupPolicy::Allowlist,
+            group_allowlist: vec![],
+            ..Default::default()
+        };
+        assert!(!policy_allowed(&cfg, true, "group-chat", "user-id"));
+    }
+
+    #[test]
+    fn removing_last_allowlist_entry_denies_access() {
+        let mut cfg = MsTeamsAccountConfig {
+            dm_policy: DmPolicy::Allowlist,
+            allowlist: vec!["user-id".into()],
+            ..Default::default()
+        };
+        assert!(policy_allowed(&cfg, false, "dm-chat", "user-id"));
+        cfg.allowlist.clear();
+        assert!(!policy_allowed(&cfg, false, "dm-chat", "user-id"));
+
+        let mut group_cfg = MsTeamsAccountConfig {
+            group_policy: GroupPolicy::Allowlist,
+            group_allowlist: vec!["group-chat".into()],
+            ..Default::default()
+        };
+        assert!(policy_allowed(&group_cfg, true, "group-chat", "user-id"));
+        group_cfg.group_allowlist.clear();
+        assert!(!policy_allowed(&group_cfg, true, "group-chat", "user-id"));
+    }
+
+    #[test]
+    fn pending_otp_challenges_are_exposed_via_provider_trait() {
+        let plugin = MsTeamsPlugin::new();
+        {
+            let mut map = plugin.accounts.write().unwrap();
+            map.insert(
+                "test".into(),
+                test_account_state(MsTeamsAccountConfig::default()),
+            );
+        }
+
+        {
+            let map = plugin.accounts.read().unwrap();
+            let state = map.get("test").unwrap();
+            let mut otp = state.otp.lock().unwrap();
+            otp.initiate("user-id", Some("user-id".into()), Some("Alice".into()));
+        }
+
+        let provider = plugin.as_otp_provider().unwrap();
+        let pending = provider.pending_otp_challenges("test");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].peer_id, "user-id");
     }
 }

@@ -12,9 +12,10 @@ use {
 use moltis_channels::{
     ChannelConfigView, Error as ChannelError, Result as ChannelResult,
     message_log::MessageLog,
+    otp::OtpChallengeInfo,
     plugin::{
-        ChannelEventSink, ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus,
-        ChannelStreamOutbound, ChannelThreadContext,
+        ChannelEventSink, ChannelHealthSnapshot, ChannelOtpProvider, ChannelOutbound,
+        ChannelPlugin, ChannelStatus, ChannelStreamOutbound, ChannelThreadContext,
     },
 };
 
@@ -50,6 +51,17 @@ impl SlackPlugin {
     pub fn with_event_sink(mut self, sink: Arc<dyn ChannelEventSink>) -> Self {
         self.event_sink = Some(sink);
         self
+    }
+
+    pub fn pending_otp_challenges(&self, account_id: &str) -> Vec<OtpChallengeInfo> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .map(|s| {
+                let otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                otp.list_pending()
+            })
+            .unwrap_or_default()
     }
 
     /// Ingest an Events API webhook request.
@@ -236,6 +248,11 @@ impl ChannelPlugin for SlackPlugin {
         let parsed: SlackAccountConfig = serde_json::from_value(config)?;
         let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accounts.get_mut(account_id) {
+            state
+                .otp
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .set_cooldown(parsed.otp_cooldown_secs);
             state.config = parsed;
             Ok(())
         } else {
@@ -257,6 +274,10 @@ impl ChannelPlugin for SlackPlugin {
 
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
         Some(&self.outbound)
+    }
+
+    fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
+        Some(self)
     }
 
     fn channel_webhook_verifier(
@@ -300,10 +321,29 @@ impl ChannelStatus for SlackPlugin {
     }
 }
 
+impl ChannelOtpProvider for SlackPlugin {
+    fn pending_otp_challenges(&self, account_id: &str) -> Vec<OtpChallengeInfo> {
+        SlackPlugin::pending_otp_challenges(self, account_id)
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
+    use {super::*, tokio_util::sync::CancellationToken};
+
+    fn test_account_state(config: SlackAccountConfig) -> crate::state::AccountState {
+        crate::state::AccountState {
+            account_id: "test".into(),
+            config,
+            message_log: None,
+            event_sink: None,
+            cancel: CancellationToken::new(),
+            bot_user_id: Some("Ubot".into()),
+            pending_threads: HashMap::new(),
+            otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(300)),
+        }
+    }
 
     #[test]
     fn plugin_id_and_name() {
@@ -389,14 +429,72 @@ mod tests {
         assert!(desc.capabilities.supports_threads);
         assert!(plugin.thread_context().is_some());
 
-        // OTP: Slack does NOT implement ChannelOtpProvider
-        assert!(!desc.capabilities.supports_otp);
-        assert!(plugin.as_otp_provider().is_none());
+        // OTP: Slack implements ChannelOtpProvider
+        assert!(desc.capabilities.supports_otp);
+        assert!(plugin.as_otp_provider().is_some());
 
         // Reactions: Slack supports reactions
         assert!(desc.capabilities.supports_reactions);
 
         // Interactive: Slack supports interactive messages
         assert!(desc.capabilities.supports_interactive);
+    }
+
+    #[test]
+    fn update_account_config_preserves_otp_state() {
+        let plugin = SlackPlugin::new();
+        {
+            let mut map = plugin.accounts.write().unwrap();
+            map.insert(
+                "test".into(),
+                test_account_state(SlackAccountConfig::default()),
+            );
+        }
+
+        {
+            let map = plugin.accounts.read().unwrap();
+            let state = map.get("test").unwrap();
+            let mut otp = state.otp.lock().unwrap();
+            otp.initiate("U123", Some("alice".into()), None);
+        }
+
+        plugin
+            .update_account_config(
+                "test",
+                serde_json::json!({
+                    "bot_token": "xoxb-test",
+                    "app_token": "xapp-test",
+                    "otp_cooldown_secs": 60,
+                }),
+            )
+            .unwrap();
+
+        let pending = plugin.pending_otp_challenges("test");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].peer_id, "U123");
+    }
+
+    #[test]
+    fn pending_otp_challenges_are_exposed_via_provider_trait() {
+        let plugin = SlackPlugin::new();
+        {
+            let mut map = plugin.accounts.write().unwrap();
+            map.insert(
+                "test".into(),
+                test_account_state(SlackAccountConfig::default()),
+            );
+        }
+
+        {
+            let map = plugin.accounts.read().unwrap();
+            let state = map.get("test").unwrap();
+            let mut otp = state.otp.lock().unwrap();
+            otp.initiate("U123", Some("alice".into()), None);
+        }
+
+        let provider = plugin.as_otp_provider().unwrap();
+        let pending = provider.pending_otp_challenges("test");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].peer_id, "U123");
     }
 }

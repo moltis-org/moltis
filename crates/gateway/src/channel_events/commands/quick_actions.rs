@@ -55,7 +55,10 @@ pub(in crate::channel_events) async fn handle_btw(
     // Read recent session history for context (last ~20 messages).
     let context_msgs = if let Some(ref store) = state.services.session_store {
         let history = store.read(session_key).await.unwrap_or_default();
-        let chat_msgs = moltis_agents::model::values_to_chat_messages(&history);
+        let chat_msgs = moltis_agents::model::values_to_chat_messages_with_tool_result_limit(
+            &history,
+            state.config.tools.max_tool_result_bytes,
+        );
         let tail_start = chat_msgs.len().saturating_sub(20);
         chat_msgs[tail_start..].to_vec()
     } else {
@@ -431,7 +434,7 @@ pub(in crate::channel_events) async fn handle_insights(
             lines.push(String::new());
             lines.push("By provider:".to_string());
             let mut providers: Vec<_> = provider_totals.into_iter().collect();
-            providers.sort_by(|a, b| (b.1.0 + b.1.1).cmp(&(a.1.0 + a.1.1)));
+            providers.sort_by_key(|entry| std::cmp::Reverse(entry.1.0 + entry.1.1));
             for (provider, (input, output, completions)) in &providers {
                 lines.push(format!(
                     "  {provider}: {completions} completions, {} tokens ({input} in / {output} out)",
@@ -462,7 +465,7 @@ pub(in crate::channel_events) async fn handle_insights(
 
                 // Top 5 most-used skills by read_count
                 let mut by_reads: Vec<_> = usage.iter().collect();
-                by_reads.sort_by(|a, b| b.1.read_count.cmp(&a.1.read_count));
+                by_reads.sort_by_key(|entry| std::cmp::Reverse(entry.1.read_count));
                 if by_reads.iter().any(|(_, e)| e.read_count > 0) {
                     lines.push("  Most activated:".to_string());
                     for (name, entry) in by_reads.iter().take(5) {

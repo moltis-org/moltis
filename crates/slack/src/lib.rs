@@ -5,6 +5,7 @@
 //! policies, and dispatches messages to the chat session.
 
 pub mod channel_webhook_verifier;
+pub mod client;
 pub mod commands;
 pub mod config;
 pub mod markdown;

@@ -15,6 +15,7 @@ pub mod message_log;
 pub mod otp;
 pub mod plugin;
 pub mod registry;
+pub mod slack_api_url;
 pub mod store;
 
 pub use {
@@ -35,4 +36,5 @@ pub use {
         web_session_channel_binding,
     },
     registry::{ChannelRegistry, RegistryOutboundRouter},
+    slack_api_url::{normalize_slack_api_base_url, validate_slack_api_base_url},
 };

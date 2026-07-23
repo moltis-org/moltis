@@ -84,6 +84,7 @@ export interface ChannelConfig {
 	// Slack
 	bot_token?: string;
 	app_token?: string;
+	api_base_url?: string;
 	connection_mode?: string;
 	group_policy?: string;
 	signing_secret?: string;
@@ -322,11 +323,11 @@ function MatrixOwnershipCard({ channel, matrixStatus }: MatrixOwnershipCardProps
 	const modeTitle =
 		ownershipIssue === "approval_required"
 			? "Ownership approval required"
-			: ownershipIssue !== "none"
-				? "Moltis ownership blocked"
-				: ownershipMode === "moltis_owned"
+			: ownershipIssue === "none"
+				? ownershipMode === "moltis_owned"
 					? "Managed by Moltis"
-					: "User-managed in Element";
+					: "User-managed in Element"
+				: "Moltis ownership blocked";
 	const modeText =
 		ownershipIssue === "approval_required"
 			? "This existing Matrix account can already chat, but Matrix needs one browser approval before Moltis can take over encryption ownership. Open the approval page, approve the reset, then retry ownership setup."
@@ -564,6 +565,7 @@ function ChannelCard({ channel: ch }: ChannelCardProps): VNode {
 							href={`https://t.me/${ch.account_id}`}
 							target="_blank"
 							className="text-xs text-[var(--accent)] underline"
+							rel="noopener"
 						>
 							t.me/{ch.account_id}
 						</a>

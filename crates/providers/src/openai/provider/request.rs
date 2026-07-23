@@ -935,6 +935,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn kimi_reasoning_effort_always_maps_to_max() {
+        for effort in [
+            moltis_agents::model::ReasoningEffort::Minimal,
+            moltis_agents::model::ReasoningEffort::Low,
+            moltis_agents::model::ReasoningEffort::Medium,
+            moltis_agents::model::ReasoningEffort::High,
+            moltis_agents::model::ReasoningEffort::ExtraHigh,
+        ] {
+            let mut p = provider("kimi-k3", "moonshot", "https://api.moonshot.ai/v1")
+                .with_capabilities(OpenAiProviderCapabilities {
+                    reasoning_effort_policy: ReasoningEffortPolicy::KimiMax,
+                    ..OpenAiProviderCapabilities::DEFAULT
+                });
+            p.reasoning_effort = Some(effort);
+            assert_eq!(p.reasoning_effort_str(), Some("max"));
+        }
+    }
+
     // ── Wire-format tests: verify serialized request body (issue #810) ──
 
     /// Kimi router with strict_tools=false must NOT emit `"strict": true` in

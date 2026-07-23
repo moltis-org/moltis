@@ -14,6 +14,14 @@ export interface ProviderInfo {
 	[key: string]: unknown;
 }
 
+export interface ExternalAgentInfo {
+	kind: string;
+	name: string;
+	installed: boolean;
+	isAcp: boolean;
+	version?: string | null;
+}
+
 export interface ModelSelectorRow {
 	id: string;
 	displayName: string;

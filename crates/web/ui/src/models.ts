@@ -5,7 +5,61 @@ import { t } from "./i18n";
 import { showModelNotice } from "./pages/ChatPage";
 import * as S from "./state";
 import { modelStore, REASONING_SEP } from "./stores/model-store";
+import { sessionStore } from "./stores/session-store";
 import type { ModelInfo } from "./types";
+
+interface ExternalAgentInfo {
+	kind: string;
+	name: string;
+	installed: boolean;
+	isAcp?: boolean;
+}
+
+let installedExternalAgents: ExternalAgentInfo[] = [];
+
+function installedAcpAgents(): ExternalAgentInfo[] {
+	return installedExternalAgents.filter((agent) => agent.isAcp);
+}
+
+function activeExternalAgent(): ExternalAgentInfo | null {
+	const kind = sessionStore.activeSession.value?.external_agent_kind || "";
+	if (!kind) return null;
+	return installedExternalAgents.find((agent) => agent.kind === kind) || null;
+}
+
+export function updateModelComboAvailability(): void {
+	if (!(S.modelComboBtn && S.modelComboLabel)) return;
+	const acpAgent = activeExternalAgent();
+	const disabled = Boolean(acpAgent?.isAcp);
+	(S.modelComboBtn as HTMLButtonElement).disabled = disabled;
+	S.modelComboBtn.setAttribute("aria-disabled", disabled ? "true" : "false");
+	S.modelComboBtn.title = disabled ? `${acpAgent?.name || "ACP agent"} controls model selection` : "";
+	if (disabled) {
+		closeModelDropdown();
+		S.modelComboLabel.textContent = acpAgent?.name || "ACP agent";
+		S.modelComboLabel.title = "Model selection is controlled by the selected ACP agent";
+		return;
+	}
+	const model = modelStore.selectedModel.value;
+	if (model) updateModelComboLabel(model);
+	else updateAcpOnlyModelComboLabel();
+}
+
+function refreshAcpAgents(): Promise<void> {
+	return sendRpc<ExternalAgentInfo[]>("external_agents.list", {})
+		.then((res) => {
+			installedExternalAgents = res?.ok ? (res.payload || []).filter((agent) => agent.installed) : [];
+		})
+		.catch(() => {
+			installedExternalAgents = [];
+		});
+}
+
+function updateAcpOnlyModelComboLabel(): void {
+	if (!(S.modelComboLabel && modelStore.models.value.length === 0 && installedAcpAgents().length > 0)) return;
+	S.modelComboLabel.textContent = "ACP agent";
+	S.modelComboLabel.title = "Using an ACP agent selected in the session header";
+}
 
 function setSessionModel(sessionKey: string, modelId: string): void {
 	sendRpc("sessions.patch", { key: sessionKey, model: modelId });
@@ -35,12 +89,14 @@ function updateModelComboLabel(model: ModelInfo): void {
 }
 
 export function fetchModels(): Promise<void> {
-	return modelStore.fetch().then(() => {
+	return Promise.all([modelStore.fetch(), refreshAcpAgents()]).then(() => {
 		// Dual-write to state.js for backward compat
 		S.setModels(modelStore.models.value);
 		S.setSelectedModelId(modelStore.selectedModelId.value);
 		const model = modelStore.selectedModel.value;
 		if (model) updateModelComboLabel(model);
+		else updateAcpOnlyModelComboLabel();
+		updateModelComboAvailability();
 
 		// If the dropdown is currently open, re-render to reflect updated flags
 		// (for example when a model becomes unsupported via a WS event).
@@ -64,6 +120,7 @@ export function selectModel(m: ModelInfo): void {
 }
 
 export function openModelDropdown(): void {
+	if ((S.modelComboBtn as HTMLButtonElement | null)?.disabled) return;
 	if (!S.modelDropdown) return;
 	S.modelDropdown.classList.remove("hidden");
 	(S.modelSearchInput as HTMLInputElement).value = "";
@@ -140,6 +197,25 @@ export function renderModelList(query: string): void {
 	if (filtered.length === 0) {
 		const empty = document.createElement("div");
 		empty.className = "model-dropdown-empty";
+		const acpAgents = installedAcpAgents();
+		if (allModels.length === 0 && acpAgents.length > 0) {
+			empty.textContent = "No LLM models configured. ACP agents are selected from the session header.";
+			S.modelDropdownList.appendChild(empty);
+			acpAgents.forEach((agent) => {
+				const item = document.createElement("div");
+				item.className = "model-dropdown-item model-dropdown-item-unsupported";
+				const label = document.createElement("span");
+				label.className = "model-item-label";
+				label.textContent = agent.name;
+				item.appendChild(label);
+				const meta = document.createElement("span");
+				meta.className = "model-item-meta";
+				meta.textContent = "ACP agent";
+				item.appendChild(meta);
+				S.modelDropdownList?.appendChild(item);
+			});
+			return;
+		}
 		empty.textContent = t("common:labels.noMatchingModels");
 		S.modelDropdownList.appendChild(empty);
 		return;
@@ -178,6 +254,7 @@ export function bindModelComboEvents(): void {
 	if (!(S.modelComboBtn && S.modelSearchInput && S.modelDropdownList && S.modelCombo)) return;
 
 	S.modelComboBtn.addEventListener("click", () => {
+		if ((S.modelComboBtn as HTMLButtonElement | null)?.disabled) return;
 		if (S.modelDropdown?.classList.contains("hidden")) {
 			openModelDropdown();
 		} else {

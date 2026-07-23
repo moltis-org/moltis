@@ -1142,14 +1142,24 @@ impl SkillsService for NoopSkillsService {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, serial_test::serial};
+    use {super::*, serial_test::serial, std::path::PathBuf};
 
-    struct ConfigDirGuard;
+    struct ConfigDirGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
 
     impl Drop for ConfigDirGuard {
         fn drop(&mut self) {
             moltis_config::clear_config_dir();
         }
+    }
+
+    fn set_test_config_dir(path: PathBuf) -> ConfigDirGuard {
+        let guard = ConfigDirGuard {
+            _lock: crate::config_override_test_lock(),
+        };
+        moltis_config::set_config_dir(path);
+        guard
     }
 
     #[test]
@@ -1170,8 +1180,7 @@ mod tests {
     #[serial]
     async fn disabling_one_bundled_skill_does_not_disable_category() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        moltis_config::set_config_dir(dir.path().to_path_buf());
-        let _guard = ConfigDirGuard;
+        let _guard = set_test_config_dir(dir.path().to_path_buf());
 
         let service = NoopSkillsService;
         let result = service
@@ -1206,8 +1215,7 @@ mod tests {
     #[serial]
     async fn bundled_category_toggle_preserves_individual_disables() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        moltis_config::set_config_dir(dir.path().to_path_buf());
-        let _guard = ConfigDirGuard;
+        let _guard = set_test_config_dir(dir.path().to_path_buf());
 
         let service = NoopSkillsService;
         service

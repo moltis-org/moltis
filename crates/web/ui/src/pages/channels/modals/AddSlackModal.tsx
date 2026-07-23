@@ -20,6 +20,7 @@ export function AddSlackModal(): VNode {
 	const accountDraft = useSignal("");
 	const botTokenDraft = useSignal("");
 	const appTokenDraft = useSignal("");
+	const apiBaseUrlDraft = useSignal("");
 	const connectionMode = useSignal("socket_mode");
 	const signingSecretDraft = useSignal("");
 	const advancedConfigPatch = useSignal("");
@@ -65,6 +66,9 @@ export function AddSlackModal(): VNode {
 		if (connectionMode.value === "events_api") {
 			addConfig.signing_secret = signingSecretDraft.value.trim();
 		}
+		if (apiBaseUrlDraft.value.trim()) {
+			addConfig.api_base_url = apiBaseUrlDraft.value.trim();
+		}
 		if (addModel.value) {
 			addConfig.model = addModel.value;
 			const found = modelsSig.value.find((x) => x.id === addModel.value);
@@ -82,6 +86,7 @@ export function AddSlackModal(): VNode {
 				accountDraft.value = "";
 				botTokenDraft.value = "";
 				appTokenDraft.value = "";
+				apiBaseUrlDraft.value = "";
 				signingSecretDraft.value = "";
 				connectionMode.value = "socket_mode";
 				advancedConfigPatch.value = "";
@@ -211,6 +216,24 @@ export function AddSlackModal(): VNode {
 						/>
 					</>
 				)}
+				<label className="text-xs text-[var(--muted)]">Slack API Base URL</label>
+				<input
+					data-field="apiBaseUrl"
+					type="url"
+					placeholder="https://slack.com/api"
+					className="channel-input"
+					value={apiBaseUrlDraft.value}
+					onInput={(e) => {
+						apiBaseUrlDraft.value = targetValue(e);
+					}}
+					autoComplete="off"
+					autoCapitalize="none"
+					autoCorrect="off"
+					spellcheck={false}
+				/>
+				<div className="text-xs text-[var(--muted)] -mt-2">
+					Leave blank for Slack. Set this only for Slack-compatible proxies or test gateways.
+				</div>
 				<label className="text-xs text-[var(--muted)]">Group/Channel Policy</label>
 				<select data-field="groupPolicy" className="channel-select">
 					<option value="open">Open (respond in any channel)</option>

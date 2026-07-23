@@ -8,21 +8,28 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 use {
     futures::StreamExt,
-    moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent, ToolCall},
+    moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall},
     moltis_providers::openai::OpenAiProvider,
     secrecy::{ExposeSecret, Secret},
 };
 
 const MOONSHOT_BASE_URL: &str = "https://api.moonshot.ai/v1";
-const TEST_MODEL: &str = "kimi-k2.5";
+const TEST_MODEL: &str = "kimi-k3";
 
 /// Known Moonshot models we catalog. Keep in sync with `MOONSHOT_MODELS` in
 /// `crates/providers/src/lib.rs`.
-const KNOWN_MODELS: &[&str] = &["kimi-k2.5", "kimi-k2.6"];
+const KNOWN_MODELS: &[&str] = &[
+    "kimi-k3",
+    "kimi-k2.7-code-highspeed",
+    "kimi-k2.6",
+    "kimi-k2.5",
+];
+
+const TRANSIENT_RETRY_DELAYS: [u64; 3] = [5, 15, 30];
 
 fn api_key() -> Secret<String> {
     let key = std::env::var("MOONSHOT_API_KEY")
@@ -37,6 +44,92 @@ fn make_provider(model: &str) -> OpenAiProvider {
         MOONSHOT_BASE_URL.to_string(),
         "moonshot".to_string(),
     )
+}
+
+fn is_transient_provider_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("http 429")
+        || message.contains("too many requests")
+        || message.contains("engine_overloaded_error")
+        || message.contains("http 503")
+}
+
+async fn wait_before_retry(attempt: usize, operation: &str, error: &str) {
+    let delay = TRANSIENT_RETRY_DELAYS[attempt];
+    eprintln!("retrying Moonshot {operation} after transient provider error in {delay}s: {error}");
+    tokio::time::sleep(Duration::from_secs(delay)).await;
+}
+
+async fn complete_with_retries(
+    provider: &OpenAiProvider,
+    messages: &[ChatMessage],
+    tools: &[serde_json::Value],
+) -> CompletionResponse {
+    for attempt in 0..=TRANSIENT_RETRY_DELAYS.len() {
+        match provider.complete(messages, tools).await {
+            Ok(response) => return response,
+            Err(error)
+                if attempt < TRANSIENT_RETRY_DELAYS.len()
+                    && is_transient_provider_error(&error.to_string()) =>
+            {
+                wait_before_retry(attempt, "completion", &error.to_string()).await;
+            },
+            Err(error) => panic!("Moonshot completion should succeed: {error:#}"),
+        }
+    }
+
+    unreachable!("bounded retry loop returns or panics")
+}
+
+async fn probe_with_retries(provider: &OpenAiProvider) -> anyhow::Result<()> {
+    for attempt in 0..=TRANSIENT_RETRY_DELAYS.len() {
+        match provider.probe().await {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if attempt < TRANSIENT_RETRY_DELAYS.len()
+                    && is_transient_provider_error(&error.to_string()) =>
+            {
+                wait_before_retry(attempt, "probe", &error.to_string()).await;
+            },
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("bounded retry loop returns or returns an error")
+}
+
+async fn stream_with_retries(
+    provider: &OpenAiProvider,
+    messages: Vec<ChatMessage>,
+    tools: Vec<serde_json::Value>,
+) -> Vec<StreamEvent> {
+    for attempt in 0..=TRANSIENT_RETRY_DELAYS.len() {
+        let mut events = Vec::new();
+        let mut stream = provider.stream_with_tools(messages.clone(), tools.clone());
+        let mut retry_error = None;
+
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::Error(error)
+                    if attempt < TRANSIENT_RETRY_DELAYS.len()
+                        && is_transient_provider_error(&error) =>
+                {
+                    retry_error = Some(error);
+                    break;
+                },
+                event => events.push(event),
+            }
+        }
+
+        if let Some(error) = retry_error {
+            wait_before_retry(attempt, "stream", &error).await;
+            continue;
+        }
+
+        return events;
+    }
+
+    unreachable!("bounded retry loop returns or panics")
 }
 
 /// Tool schema in moltis-internal flat format.
@@ -72,10 +165,7 @@ async fn system_prompt_is_received_non_streaming() {
         ChatMessage::user("What is 2+2?"),
     ];
 
-    let response = p
-        .complete(&messages, &[])
-        .await
-        .expect("non-streaming completion should succeed");
+    let response = complete_with_retries(&p, &messages, &[]).await;
 
     let text = response.text.expect("response must contain text");
     assert!(
@@ -105,11 +195,11 @@ async fn system_prompt_is_received_streaming() {
         ChatMessage::user("What is 3+3?"),
     ];
 
-    let mut stream = p.stream_with_tools(messages, vec![]);
+    let events = stream_with_retries(&p, messages, vec![]).await;
     let mut full_text = String::new();
     let mut saw_done = false;
 
-    while let Some(event) = stream.next().await {
+    for event in events {
         match event {
             StreamEvent::Delta(chunk) => full_text.push_str(&chunk),
             StreamEvent::Done(usage) => {
@@ -143,10 +233,7 @@ async fn tool_call_round_trip_non_streaming() {
         "What's the weather like in Tokyo? You must use the get_weather tool to answer.",
     )];
 
-    let response = p
-        .complete(&messages, &tools)
-        .await
-        .expect("completion with tools should succeed");
+    let response = complete_with_retries(&p, &messages, &tools).await;
 
     assert!(
         !response.tool_calls.is_empty(),
@@ -174,12 +261,12 @@ async fn tool_call_round_trip_streaming() {
         "What's the weather in Paris? You must use the get_weather tool.",
     )];
 
-    let mut stream = p.stream_with_tools(messages, tools);
+    let events = stream_with_retries(&p, messages, tools).await;
     let mut saw_tool_start = false;
     let mut saw_done = false;
     let mut tool_name = String::new();
 
-    while let Some(event) = stream.next().await {
+    for event in events {
         match event {
             StreamEvent::ToolCallStart { name, .. } => {
                 saw_tool_start = true;
@@ -219,14 +306,14 @@ async fn multi_turn_tool_use_streaming() {
     let messages = vec![ChatMessage::user(
         "What's the weather in London? You must use the get_weather tool.",
     )];
-    let mut stream = p.stream_with_tools(messages, tools.clone());
+    let events = stream_with_retries(&p, messages, tools.clone()).await;
 
     let mut tool_calls: Vec<(String, String, String)> = Vec::new(); // (id, name, args)
     let mut current_tool_args = String::new();
     let mut current_tool_id = String::new();
     let mut current_tool_name = String::new();
 
-    while let Some(event) = stream.next().await {
+    for event in events {
         match event {
             StreamEvent::ToolCallStart { id, name, .. } => {
                 current_tool_id = id;
@@ -248,7 +335,6 @@ async fn multi_turn_tool_use_streaming() {
             _ => {},
         }
     }
-    drop(stream);
 
     assert!(!tool_calls.is_empty(), "should call get_weather");
     let (tc_id, tc_name, tc_args) = &tool_calls[0];
@@ -272,25 +358,40 @@ async fn multi_turn_tool_use_streaming() {
         ChatMessage::tool(tc_id, r#"{"temperature": 15, "condition": "cloudy"}"#),
     ];
 
-    match p.complete(&messages, &tools).await {
+    match complete_moonshot_multi_turn(&p, &messages, &tools).await {
         Ok(response) => {
             let text = response.text.expect("should have text response");
             assert!(!text.is_empty(), "final response should not be empty");
         },
-        Err(e) => {
-            let err_str = e.to_string();
-            if err_str.contains("reasoning_content is missing") {
-                // Known limitation: ChatMessage doesn't carry reasoning_content.
-                // In production, the gateway preserves raw JSON across turns.
-                eprintln!(
-                    "multi-turn 400 (expected): Moonshot requires reasoning_content \
-                     from step 1 but ChatMessage doesn't carry it"
-                );
-            } else {
-                panic!("unexpected error in multi-turn: {e}");
-            }
+        Err(e) if e.to_string().contains("reasoning_content is missing") => {
+            eprintln!(
+                "multi-turn 400 (expected): Moonshot requires reasoning_content \
+                 from step 1 but ChatMessage doesn't carry it"
+            );
         },
+        Err(e) => panic!("unexpected error in multi-turn: {e}"),
     }
+}
+
+async fn complete_moonshot_multi_turn(
+    provider: &OpenAiProvider,
+    messages: &[ChatMessage],
+    tools: &[serde_json::Value],
+) -> anyhow::Result<CompletionResponse> {
+    for attempt in 0..=TRANSIENT_RETRY_DELAYS.len() {
+        match provider.complete(messages, tools).await {
+            Ok(response) => return Ok(response),
+            Err(error)
+                if attempt < TRANSIENT_RETRY_DELAYS.len()
+                    && is_transient_provider_error(&error.to_string()) =>
+            {
+                wait_before_retry(attempt, "multi-turn completion", &error.to_string()).await;
+            },
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("bounded retry loop returns or returns an error")
 }
 
 // ── Probe ────────────────────────────────────────────────────────────────────
@@ -300,7 +401,7 @@ async fn multi_turn_tool_use_streaming() {
 #[ignore]
 async fn probe_succeeds() {
     let p = make_provider(TEST_MODEL);
-    p.probe()
+    probe_with_retries(&p)
         .await
         .expect("probe should succeed against live Moonshot API");
 }
@@ -313,12 +414,12 @@ async fn probe_succeeds() {
 async fn stream_emits_delta_and_done() {
     let p = make_provider(TEST_MODEL);
     let messages = vec![ChatMessage::user("Say hello in one word.")];
-    let mut stream = p.stream(messages);
+    let events = stream_with_retries(&p, messages, vec![]).await;
 
     let mut saw_delta = false;
     let mut saw_done = false;
 
-    while let Some(event) = stream.next().await {
+    for event in events {
         match event {
             StreamEvent::Delta(_) => saw_delta = true,
             StreamEvent::Done(_) => {
@@ -345,7 +446,7 @@ async fn catalog_models_are_live() {
 
     for &model_id in KNOWN_MODELS {
         let p = make_provider(model_id);
-        match p.probe().await {
+        match probe_with_retries(&p).await {
             Ok(()) => alive.push(model_id),
             Err(e) => dead.push((model_id, e.to_string())),
         }

@@ -595,7 +595,10 @@ fn should_auto_join_invite(
         let dm_allowed = match config.dm_policy {
             DmPolicy::Disabled => false,
             DmPolicy::Open => true,
-            DmPolicy::Allowlist => gating::is_allowed(inviter_id, &config.user_allowlist),
+            DmPolicy::Allowlist => {
+                !config.user_allowlist.is_empty()
+                    && gating::is_allowed(inviter_id, &config.user_allowlist)
+            },
         };
         if !dm_allowed {
             return false;
@@ -618,8 +621,10 @@ fn should_auto_join_invite(
         AutoJoinPolicy::Always => true,
         AutoJoinPolicy::Off => false,
         AutoJoinPolicy::Allowlist => {
-            gating::is_allowed(inviter_id, &config.user_allowlist)
-                || gating::is_allowed(room_id, &config.room_allowlist)
+            (!config.user_allowlist.is_empty()
+                && gating::is_allowed(inviter_id, &config.user_allowlist))
+                || (!config.room_allowlist.is_empty()
+                    && gating::is_allowed(room_id, &config.room_allowlist))
         },
     }
 }

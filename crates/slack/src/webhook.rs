@@ -21,6 +21,7 @@ use moltis_channels::{
 };
 
 use crate::{
+    client::validated_slack_client_for_base_url,
     config::SlackAccountConfig,
     state::{AccountState, AccountStateMap},
 };
@@ -47,9 +48,7 @@ pub async fn register_events_api_account(
         ));
     }
 
-    let client = Arc::new(SlackClient::new(SlackClientHyperConnector::new().map_err(
-        |e| moltis_channels::Error::unavailable(format!("hyper connector: {e}")),
-    )?));
+    let client = Arc::new(validated_slack_client_for_base_url(&config.api_base_url).await?);
 
     // Verify the bot token and get the bot user ID.
     let bot_token = SlackApiToken::new(SlackApiTokenValue::from(bot_token_str));
@@ -67,6 +66,8 @@ pub async fn register_events_api_account(
 
     let cancel = tokio_util::sync::CancellationToken::new();
 
+    let otp_cooldown_secs = config.otp_cooldown_secs;
+
     {
         let mut accts = accounts.write().unwrap_or_else(|e| e.into_inner());
         accts.insert(account_id.to_string(), AccountState {
@@ -77,6 +78,7 @@ pub async fn register_events_api_account(
             cancel,
             bot_user_id: Some(bot_user_id),
             pending_threads: std::collections::HashMap::new(),
+            otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(otp_cooldown_secs)),
         });
     }
 
@@ -727,6 +729,7 @@ mod tests {
                 cancel: tokio_util::sync::CancellationToken::new(),
                 bot_user_id: Some("B123".to_string()),
                 pending_threads: std::collections::HashMap::new(),
+                otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
             });
         }
 
@@ -756,6 +759,7 @@ mod tests {
                 cancel: tokio_util::sync::CancellationToken::new(),
                 bot_user_id: Some("B123".to_string()),
                 pending_threads: std::collections::HashMap::new(),
+                otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
             });
         }
 
@@ -790,6 +794,7 @@ mod tests {
                 cancel: tokio_util::sync::CancellationToken::new(),
                 bot_user_id: Some("B123".to_string()),
                 pending_threads: std::collections::HashMap::new(),
+                otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
             });
         }
 

@@ -1,7 +1,7 @@
 //! Full gateway preparation: config loading, migration, service wiring,
 //! background task spawning, and the composed axum application.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 #[cfg(any(feature = "msteams", feature = "telephony"))]
 use moltis_channels::ChannelPlugin;
@@ -70,6 +70,26 @@ fn telephony_webhook_url(
         "{}/api/channels/telephony/{account_id}/{endpoint}",
         base_url.trim_end_matches('/')
     ))
+}
+
+/// Whether an inbound call should be rejected under the account's DM policy.
+///
+/// An empty allowlist with an explicit `Allowlist` policy means "deny
+/// everyone" — not "allow everyone" (`is_allowed()` treats empty lists as
+/// open, so the empty case is short-circuited here).
+#[cfg(feature = "telephony")]
+fn inbound_call_rejected(
+    policy: moltis_channels::gating::DmPolicy,
+    caller: &str,
+    allowlist: &[String],
+) -> bool {
+    match policy {
+        moltis_channels::gating::DmPolicy::Disabled => true,
+        moltis_channels::gating::DmPolicy::Allowlist => {
+            allowlist.is_empty() || !moltis_channels::gating::is_allowed(caller, allowlist)
+        },
+        moltis_channels::gating::DmPolicy::Open => false,
+    }
 }
 
 #[cfg(feature = "telephony")]
@@ -241,7 +261,7 @@ pub async fn prepare_gateway(
             "/api/channels/msteams/{account_id}/webhook",
             axum::routing::post(
                 move |axum::extract::Path(account_id): axum::extract::Path<String>,
-                      axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+                      axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
                       headers: axum::http::HeaderMap,
                       body: axum::body::Bytes| {
                     let teams_plugin = Arc::clone(&teams_plugin_for_webhook);
@@ -721,17 +741,11 @@ pub async fn prepare_gateway(
                                         .and_then(|call_id| manager.get_call(&call_id));
                                     if let Some(config_view) = plugin_guard.account_config(&account_id)
                                     {
-                                        let policy = config_view.dm_policy();
-                                        let rejected = match policy {
-                                            moltis_channels::gating::DmPolicy::Disabled => true,
-                                            moltis_channels::gating::DmPolicy::Allowlist => {
-                                                !moltis_channels::gating::is_allowed(
-                                                    &caller,
-                                                    config_view.allowlist(),
-                                                )
-                                            },
-                                            moltis_channels::gating::DmPolicy::Open => false,
-                                        };
+                                        let rejected = inbound_call_rejected(
+                                            config_view.dm_policy(),
+                                            &caller,
+                                            config_view.allowlist(),
+                                        );
                                         if rejected {
                                             tracing::info!(account_id = %account_id, caller = %caller, "rejecting Telnyx inbound call");
                                             let _ = provider.hangup_call(provider_call_id).await;
@@ -825,7 +839,7 @@ pub async fn prepare_gateway(
                                 return (StatusCode::BAD_REQUEST, "invalid webhook body").into_response();
                             },
                         };
-                        let params: HashMap<String, String> =
+                        let params: std::collections::HashMap<String, String> =
                             url::form_urlencoded::parse(body_str.as_bytes())
                                 .map(|(k, v)| (k.to_string(), v.to_string()))
                                 .collect();
@@ -886,20 +900,10 @@ pub async fn prepare_gateway(
                             use moltis_channels::ChannelPlugin as _;
                             if let Some(config_view) = plugin_guard.account_config(&account_id) {
                                 let policy = config_view.dm_policy();
-                                match policy {
-                                    moltis_channels::gating::DmPolicy::Disabled => {
-                                        tracing::info!(account_id = %account_id, caller = %caller, "rejecting inbound call: inbound_policy=disabled");
-                                        let twiml = provider.build_hangup_response();
-                                        return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/xml")], twiml).into_response();
-                                    },
-                                    moltis_channels::gating::DmPolicy::Allowlist => {
-                                        if !moltis_channels::gating::is_allowed(caller, config_view.allowlist()) {
-                                            tracing::info!(account_id = %account_id, caller = %caller, "rejecting inbound call: not on allowlist");
-                                            let twiml = provider.build_hangup_response();
-                                            return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/xml")], twiml).into_response();
-                                        }
-                                    },
-                                    moltis_channels::gating::DmPolicy::Open => {},
+                                if inbound_call_rejected(policy.clone(), caller, config_view.allowlist()) {
+                                    tracing::info!(account_id = %account_id, caller = %caller, policy = ?policy, "rejecting inbound call");
+                                    let twiml = provider.build_hangup_response();
+                                    return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/xml")], twiml).into_response();
                                 }
                             }
                         }

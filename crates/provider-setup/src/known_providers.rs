@@ -192,7 +192,7 @@ pub fn known_providers() -> Vec<KnownProvider> {
             display_name: "Moonshot",
             auth_type: AuthType::ApiKey,
             env_key: Some("MOONSHOT_API_KEY"),
-            default_base_url: Some("https://api.moonshot.cn/v1"),
+            default_base_url: Some("https://api.moonshot.ai/v1"),
             requires_model: false,
             key_optional: false,
             local_only: false,

@@ -17,7 +17,7 @@ permissions: {}
 env:
   CARGO_TERM_COLOR: always
   # Must match rust-toolchain.toml (single source of truth for the nightly pin).
-  NIGHTLY_TOOLCHAIN: nightly-2025-12-27
+  NIGHTLY_TOOLCHAIN: nightly-2026-06-20
 
 jobs:
   local-validation:
@@ -102,10 +102,13 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
-      - uses: biomejs/setup-biome@29711cbb52afee00eb13aeb30636592f9edc0088 # v2.7.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          version: "2.4.6"
-      - run: biome ci crates/web/ui/src/ crates/web/ui/e2e/
+          node-version: 24
+          cache: npm
+          cache-dependency-path: crates/web/ui/package-lock.json
+      - run: npm ci --ignore-scripts --prefix crates/web/ui
+      - run: ./crates/web/ui/node_modules/.bin/biome ci crates/web/ui/src/ crates/web/ui/e2e/
       - run: ./scripts/i18n-check.sh
 
   fmt:
@@ -137,7 +140,9 @@ jobs:
     name: Rust CI (clippy + test)
     if: ${{ github.event_name != 'pull_request' }}
     needs: [fmt, biome]
-    runs-on: [self-hosted, Linux, X64]
+    # Temporarily use GitHub-hosted runners while self-hosted runners are offline.
+    # Restore to [self-hosted, Linux, X64] when they are connected again.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     container:
@@ -310,6 +315,7 @@ jobs:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
+          use_pypi: true
 
   e2e:
     name: E2E Tests
@@ -351,6 +357,9 @@ jobs:
         timeout-minutes: 20
         run: cargo build --bin moltis
 
+      - name: Reclaim Rust build disk for E2E
+        run: bash ./scripts/cleanup-e2e-build-artifacts.sh
+
       - name: Cache Playwright browsers
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -366,6 +375,7 @@ jobs:
         working-directory: crates/web/ui
         env:
           CI: "true"
+          MOLTIS_BINARY: ${{ github.workspace }}/target/e2e-bin/moltis
         run: ./e2e/run-ci.sh
 
       - name: Upload test results
@@ -495,7 +505,9 @@ jobs:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     continue-on-error: true
     needs: [fmt, biome]
-    runs-on: [self-hosted, Linux, X64]
+    # Temporarily use GitHub-hosted runners while self-hosted runners are offline.
+    # Restore to [self-hosted, Linux, X64] when they are connected again.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     container:

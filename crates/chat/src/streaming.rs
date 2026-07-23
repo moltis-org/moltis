@@ -16,7 +16,10 @@ use {
 use {
     moltis_agents::{
         ChatMessage, UserContent,
-        model::{StreamEvent, push_capped_provider_raw_event, values_to_chat_messages},
+        model::{
+            StreamEvent, push_capped_provider_raw_event,
+            values_to_chat_messages_with_tool_result_limit,
+        },
         prompt::{PromptRuntimeContext, build_system_prompt_minimal_runtime_details},
     },
     moltis_sessions::store::SessionStore,
@@ -210,7 +213,10 @@ pub(crate) async fn run_streaming(
     let mut messages: Vec<ChatMessage> = Vec::new();
     messages.push(ChatMessage::system(system_prompt));
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
-    messages.extend(values_to_chat_messages(history_raw));
+    messages.extend(values_to_chat_messages_with_tool_result_limit(
+        history_raw,
+        persona.config.tools.max_tool_result_bytes,
+    ));
     messages.push(ChatMessage::User {
         content: effective_user_content,
         name: sender_name,

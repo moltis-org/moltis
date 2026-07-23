@@ -648,11 +648,11 @@ export function showModelDownloadProgress(model: { id: string; displayName: stri
 		}
 		if (p.downloaded != null) {
 			const downloadedMb = (p.downloaded / (1024 * 1024)).toFixed(1);
-			if (p.total != null) {
+			if (p.total == null) {
+				progressText.textContent = `${downloadedMb} MB downloaded`;
+			} else {
 				const totalMb = (p.total / (1024 * 1024)).toFixed(1);
 				progressText.textContent = `${downloadedMb} MB / ${totalMb} MB`;
-			} else {
-				progressText.textContent = `${downloadedMb} MB downloaded`;
 			}
 		}
 	});
@@ -719,11 +719,11 @@ function selectLocalModel(model: LocalModelInfo, provider: ProviderInfo): void {
 		}
 		if (p.downloaded != null) {
 			const downloadedMb = (p.downloaded / (1024 * 1024)).toFixed(1);
-			if (p.total != null) {
+			if (p.total == null) {
+				progressText.textContent = `${downloadedMb} MB downloaded`;
+			} else {
 				const totalMb = (p.total / (1024 * 1024)).toFixed(1);
 				progressText.textContent = `${downloadedMb} MB / ${totalMb} MB`;
-			} else {
-				progressText.textContent = `${downloadedMb} MB downloaded`;
 			}
 		}
 	});

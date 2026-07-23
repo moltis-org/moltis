@@ -22,7 +22,7 @@ import { ProviderStep } from "./onboarding/steps/ProviderStep";
 import { RemoteAccessStep } from "./onboarding/steps/RemoteAccessStep";
 import { SkillsStep } from "./onboarding/steps/SkillsStep";
 import { VoiceStep } from "./onboarding/steps/VoiceStep";
-import type { IdentityInfo } from "./onboarding/types";
+import type { ExternalAgentInfo, IdentityInfo } from "./onboarding/types";
 import { fetchVoiceProviders } from "./voice-utils";
 
 // ── Step indicator ──────────────────────────────────────────
@@ -155,6 +155,7 @@ interface SummaryData {
 	voice: SummaryVoice | null;
 	sandbox: { backend?: string } | null;
 	skills: SummarySkills | null;
+	externalAgents: ExternalAgentInfo[];
 }
 
 // ── SummaryStep ─────────────────────────────────────────────
@@ -180,61 +181,69 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 			} | null;
 			const voiceEnabled = getGon("voice_enabled") === true;
 
-			const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes, skillsRes] = await Promise.all([
-				(
-					sendRpc("providers.available", {}) as Promise<{
-						ok?: boolean;
-						payload?: SummaryProvider[];
-					}>
-				).catch(() => null),
-				(
-					fetchChannelStatus() as Promise<{
-						ok?: boolean;
-						payload?: { channels?: SummaryChannel[] };
-					}>
-				).catch(() => null),
-				fetch("/api/tailscale/status")
-					.then((r) =>
-						r.ok
-							? (r.json() as Promise<{
-									tailscale_up?: boolean;
-									installed?: boolean;
-								}>)
-							: null,
+			const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes, skillsRes, externalAgentsRes] =
+				await Promise.all([
+					(
+						sendRpc("providers.available", {}) as Promise<{
+							ok?: boolean;
+							payload?: SummaryProvider[];
+						}>
+					).catch(() => null),
+					(
+						fetchChannelStatus() as Promise<{
+							ok?: boolean;
+							payload?: { channels?: SummaryChannel[] };
+						}>
+					).catch(() => null),
+					fetch("/api/tailscale/status")
+						.then((r) =>
+							r.ok
+								? (r.json() as Promise<{
+										tailscale_up?: boolean;
+										installed?: boolean;
+									}>)
+								: null,
+						)
+						.catch(() => null),
+					voiceEnabled
+						? (
+								fetchVoiceProviders() as Promise<{
+									ok?: boolean;
+									payload?: SummaryVoice;
+								}>
+							).catch(() => null)
+						: Promise.resolve(null),
+					fetch(
+						"/api/bootstrap?include_channels=false&include_sessions=false&include_models=false&include_projects=false&include_counts=false&include_identity=false",
 					)
-					.catch(() => null),
-				voiceEnabled
-					? (
-							fetchVoiceProviders() as Promise<{
-								ok?: boolean;
-								payload?: SummaryVoice;
-							}>
-						).catch(() => null)
-					: Promise.resolve(null),
-				fetch(
-					"/api/bootstrap?include_channels=false&include_sessions=false&include_models=false&include_projects=false&include_counts=false&include_identity=false",
-				)
-					.then((r) =>
-						r.ok
-							? (r.json() as Promise<{
-									sandbox?: { backend?: string };
-								}>)
-							: null,
-					)
-					.catch(() => null),
-				(
-					sendRpc("skills.bundled.categories", {}) as Promise<{
-						ok?: boolean;
-						payload?: { categories?: { name: string; count: number; enabled: boolean }[]; total_skills?: number };
-					}>
-				).catch(() => null),
-			]);
+						.then((r) =>
+							r.ok
+								? (r.json() as Promise<{
+										sandbox?: { backend?: string };
+									}>)
+								: null,
+						)
+						.catch(() => null),
+					(
+						sendRpc("skills.bundled.categories", {}) as Promise<{
+							ok?: boolean;
+							payload?: { categories?: { name: string; count: number; enabled: boolean }[]; total_skills?: number };
+						}>
+					).catch(() => null),
+					(
+						sendRpc("external_agents.list", {}) as Promise<{
+							ok?: boolean;
+							payload?: ExternalAgentInfo[];
+						}>
+					).catch(() => null),
+				]);
 
 			if (cancelled) return;
 
 			const skillsCats = skillsRes?.ok ? skillsRes.payload?.categories || [] : [];
 			const skillsTotal = skillsRes?.ok ? skillsRes.payload?.total_skills || 0 : 0;
 			const skillsEnabledCats = skillsCats.filter((c) => c.enabled);
+			const externalAgents = externalAgentsRes?.ok ? externalAgentsRes.payload || [] : [];
 
 			setData({
 				identity,
@@ -254,6 +263,7 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 							totalSkills: skillsTotal,
 						}
 					: null,
+				externalAgents,
 			});
 			setLoading(false);
 		}
@@ -275,6 +285,9 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 
 	const activeModel = localStorage.getItem("moltis-model");
 	const configuredProviders = data.providers.filter((p) => p.configured);
+	const installedAcpAgents = data.externalAgents.filter((agent) => agent.installed && agent.isAcp);
+	const hasConfiguredLlm = configuredProviders.length > 0;
+	const hasAcpOnlyAgent = !hasConfiguredLlm && installedAcpAgents.length > 0;
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -302,8 +315,11 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 				</SummaryRow>
 
 				{/* LLMs */}
-				<SummaryRow icon={configuredProviders.length > 0 ? <CheckIcon /> : <ErrorIcon />} label="LLMs">
-					{configuredProviders.length > 0 ? (
+				<SummaryRow
+					icon={hasConfiguredLlm ? <CheckIcon /> : hasAcpOnlyAgent ? <InfoIcon /> : <ErrorIcon />}
+					label="LLMs"
+				>
+					{hasConfiguredLlm ? (
 						<div className="flex flex-col gap-1">
 							<div className="flex flex-wrap gap-1">
 								{configuredProviders.map((p) => (
@@ -318,8 +334,28 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 								</div>
 							) : null}
 						</div>
+					) : hasAcpOnlyAgent ? (
+						<span>No LLM providers configured; ACP agents are available for chat.</span>
 					) : (
 						<span className="text-[var(--error)]">No LLM providers configured</span>
+					)}
+				</SummaryRow>
+
+				{/* ACP Agents */}
+				<SummaryRow icon={installedAcpAgents.length > 0 ? <CheckIcon /> : <InfoIcon />} label="ACP Agents">
+					{installedAcpAgents.length > 0 ? (
+						<div className="flex flex-col gap-1">
+							<div className="flex flex-wrap gap-1">
+								{installedAcpAgents.map((agent) => (
+									<span key={agent.kind} className="provider-item-badge configured">
+										{agent.name}
+									</span>
+								))}
+							</div>
+							<div>Available in each chat session's external-agent selector.</div>
+						</div>
+					) : (
+						<>No ACP agents detected on PATH</>
 					)}
 				</SummaryRow>
 
@@ -424,7 +460,7 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 				</SummaryRow>
 
 				{/* Tailscale (hidden if feature not compiled) */}
-				{data.tailscale !== null ? (
+				{data.tailscale === null ? null : (
 					<SummaryRow
 						icon={
 							data.tailscale?.tailscale_up ? <CheckIcon /> : data.tailscale?.installed ? <WarnIcon /> : <InfoIcon />
@@ -444,7 +480,7 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 							<>Not installed. Install Tailscale for secure remote access.</>
 						)}
 					</SummaryRow>
-				) : null}
+				)}
 
 				{/* Voice (hidden if not enabled) */}
 				{data.voiceEnabled ? (

@@ -228,7 +228,7 @@ function RepositoriesTab(): VNode {
 					}}
 				/>
 				<button type="button" className="provider-btn" onClick={installCustom} disabled={installingRepo.value !== null}>
-					{installingRepo.value !== null ? "Installing\u2026" : "Install"}
+					{installingRepo.value === null ? "Install" : "Installing\u2026"}
 				</button>
 			</div>
 

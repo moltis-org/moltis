@@ -15,12 +15,24 @@ This creates a service definition and starts it immediately:
 |----------|-------------|-------------|
 | macOS | `~/Library/LaunchAgents/org.moltis.gateway.plist` | launchd (user agent) |
 | Linux | `~/.config/systemd/user/moltis.service` | systemd (user unit) |
+| Linux containers without systemd | `~/.moltis/moltis-service-supervisor.sh` | portable user supervisor |
 
-Both configurations:
+The launchd and systemd configurations:
 
 - **Start on boot** (`RunAtLoad` / `WantedBy=default.target`)
 - **Restart on failure** with a 10-second cooldown
 - **Log to** `~/.moltis/moltis.log`
+
+On Linux, Moltis first uses `systemd --user` when it is available. Some
+development containers, including Coder/devbox environments, do not run systemd
+or provide the SysV `service` command. In those environments, `moltis service
+install` falls back to a small user-owned supervisor script in `~/.moltis/`.
+The fallback starts Moltis in the background, records pid files, supports
+`status`, `stop`, `restart`, and restarts Moltis after crashes.
+
+The portable supervisor is tied to the current container session. If the
+workspace container is recreated, configure your devbox/Coder startup hook to
+run `moltis service restart` after installing Moltis.
 
 ### Options
 

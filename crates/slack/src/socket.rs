@@ -10,16 +10,25 @@ use moltis_channels::{
     config_view::ChannelConfigView,
     gating::{DmPolicy, GroupPolicy, is_allowed},
     message_log::MessageLogEntry,
+    otp::{
+        OTP_TTL, OtpInitResult, OtpVerifyResult, approve_sender_via_otp, emit_otp_challenge,
+        emit_otp_resolution,
+    },
     plugin::{
-        ChannelEvent, ChannelMessageKind, ChannelMessageMeta, ChannelReplyTarget, ChannelType,
+        ChannelEvent, ChannelEventSink, ChannelMessageKind, ChannelMessageMeta, ChannelOutbound,
+        ChannelReplyTarget, ChannelType,
     },
 };
 
 use crate::{
+    client::validated_slack_client_for_base_url,
     config::SlackAccountConfig,
     markdown::strip_mentions,
+    outbound::SlackOutbound,
     state::{AccountState, AccountStateMap},
 };
+
+const OTP_CHALLENGE_MSG: &str = "To use this bot, please enter the verification code.\n\nAsk the bot owner for the code; it is visible in the web UI under Channels > Senders.\n\nThe code expires in 5 minutes.";
 
 /// State stored in the Socket Mode listener for callback access.
 #[derive(Clone)]
@@ -37,7 +46,7 @@ pub async fn start_socket_mode(
     config: SlackAccountConfig,
     accounts: AccountStateMap,
     message_log: Option<Arc<dyn moltis_channels::message_log::MessageLog>>,
-    event_sink: Option<Arc<dyn moltis_channels::ChannelEventSink>>,
+    event_sink: Option<Arc<dyn ChannelEventSink>>,
 ) -> moltis_channels::Result<()> {
     let bot_token_str = config.bot_token.expose_secret().clone();
     let app_token_str = config.app_token.expose_secret().clone();
@@ -53,9 +62,7 @@ pub async fn start_socket_mode(
         ));
     }
 
-    let client = Arc::new(SlackClient::new(SlackClientHyperConnector::new().map_err(
-        |e| moltis_channels::Error::unavailable(format!("hyper connector: {e}")),
-    )?));
+    let client = Arc::new(validated_slack_client_for_base_url(&config.api_base_url).await?);
 
     // Verify the bot token and get the bot user ID.
     let bot_token = SlackApiToken::new(SlackApiTokenValue::from(bot_token_str));
@@ -70,6 +77,8 @@ pub async fn start_socket_mode(
 
     let cancel = tokio_util::sync::CancellationToken::new();
 
+    let otp_cooldown_secs = config.otp_cooldown_secs;
+
     {
         let mut accts = accounts.write().unwrap_or_else(|e| e.into_inner());
         accts.insert(account_id.to_string(), AccountState {
@@ -80,6 +89,7 @@ pub async fn start_socket_mode(
             cancel: cancel.clone(),
             bot_user_id: Some(bot_user_id),
             pending_threads: std::collections::HashMap::new(),
+            otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(otp_cooldown_secs)),
         });
     }
 
@@ -513,6 +523,18 @@ pub(crate) async fn handle_inbound(
             account_id,
             user_id, channel_id, "slack message denied by access control"
         );
+        if is_dm && config.dm_policy == DmPolicy::Allowlist && config.otp_self_approval {
+            handle_otp_flow(
+                accounts,
+                account_id,
+                user_id,
+                username.as_deref(),
+                text,
+                channel_id,
+                event_sink.as_deref(),
+            )
+            .await;
+        }
         return;
     }
 
@@ -639,15 +661,206 @@ pub(crate) fn check_access(
     if is_dm {
         match dm_policy {
             DmPolicy::Open => true,
-            DmPolicy::Allowlist => is_allowed(user_id, user_allowlist),
+            DmPolicy::Allowlist => {
+                !user_allowlist.is_empty() && is_allowed(user_id, user_allowlist)
+            },
             DmPolicy::Disabled => false,
         }
     } else {
         match group_policy {
             GroupPolicy::Open => true,
-            GroupPolicy::Allowlist => is_allowed(channel_id, channel_allowlist),
+            GroupPolicy::Allowlist => {
+                !channel_allowlist.is_empty() && is_allowed(channel_id, channel_allowlist)
+            },
             GroupPolicy::Disabled => false,
         }
+    }
+}
+
+async fn handle_otp_flow(
+    accounts: &AccountStateMap,
+    account_id: &str,
+    user_id: &str,
+    username: Option<&str>,
+    text: &str,
+    channel_id: &str,
+    event_sink: Option<&dyn ChannelEventSink>,
+) {
+    let has_pending = {
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+        accts
+            .get(account_id)
+            .map(|s| {
+                let otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                otp.has_pending(user_id)
+            })
+            .unwrap_or(false)
+    };
+
+    if has_pending {
+        let body = text.trim();
+        let is_code = body.len() == 6 && body.chars().all(|c| c.is_ascii_digit());
+        if !is_code {
+            return;
+        }
+
+        let result = {
+            let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+            match accts.get(account_id) {
+                Some(s) => {
+                    let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                    otp.verify(user_id, body)
+                },
+                None => return,
+            }
+        };
+
+        #[cfg(feature = "metrics")]
+        record_otp_verification(&result);
+
+        match result {
+            OtpVerifyResult::Approved => {
+                approve_sender_via_otp(
+                    event_sink,
+                    ChannelType::Slack,
+                    account_id,
+                    user_id,
+                    user_id,
+                    username,
+                )
+                .await;
+                send_otp_status(
+                    accounts,
+                    account_id,
+                    channel_id,
+                    "Verified! You now have access to this bot.",
+                )
+                .await;
+            },
+            OtpVerifyResult::WrongCode { attempts_left } => {
+                let msg = format!(
+                    "Incorrect code. {attempts_left} attempt{} remaining.",
+                    if attempts_left == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                );
+                send_otp_status(accounts, account_id, channel_id, &msg).await;
+            },
+            OtpVerifyResult::LockedOut => {
+                send_otp_status(
+                    accounts,
+                    account_id,
+                    channel_id,
+                    "Too many failed attempts. Please try again later.",
+                )
+                .await;
+                emit_otp_resolution(
+                    event_sink,
+                    ChannelType::Slack,
+                    account_id,
+                    user_id,
+                    username,
+                    "locked_out",
+                )
+                .await;
+            },
+            OtpVerifyResult::Expired => {
+                send_otp_status(
+                    accounts,
+                    account_id,
+                    channel_id,
+                    "Your code has expired. Send any message to get a new one.",
+                )
+                .await;
+                emit_otp_resolution(
+                    event_sink,
+                    ChannelType::Slack,
+                    account_id,
+                    user_id,
+                    username,
+                    "expired",
+                )
+                .await;
+            },
+            OtpVerifyResult::NoPending => {},
+        }
+        return;
+    }
+
+    let init_result = {
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+        match accts.get(account_id) {
+            Some(s) => {
+                let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                otp.initiate(user_id, username.map(String::from), None)
+            },
+            None => return,
+        }
+    };
+
+    match init_result {
+        OtpInitResult::Created(code) => {
+            #[cfg(feature = "metrics")]
+            moltis_metrics::counter!(
+                moltis_metrics::channels::OTP_CHALLENGES_TOTAL,
+                moltis_metrics::labels::CHANNEL => "slack"
+            )
+            .increment(1);
+            send_otp_status(accounts, account_id, channel_id, OTP_CHALLENGE_MSG).await;
+            let expires_at = std::time::SystemTime::now()
+                .checked_add(OTP_TTL)
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or_default();
+            emit_otp_challenge(
+                event_sink,
+                ChannelType::Slack,
+                account_id,
+                user_id,
+                username,
+                None,
+                code,
+                expires_at,
+            )
+            .await;
+        },
+        OtpInitResult::AlreadyPending | OtpInitResult::LockedOut => {},
+    }
+}
+
+#[cfg(feature = "metrics")]
+fn record_otp_verification(result: &OtpVerifyResult) {
+    let label = match result {
+        OtpVerifyResult::Approved => "approved",
+        OtpVerifyResult::WrongCode { .. } => "wrong_code",
+        OtpVerifyResult::LockedOut => "locked_out",
+        OtpVerifyResult::Expired => "expired",
+        OtpVerifyResult::NoPending => return,
+    };
+    moltis_metrics::counter!(
+        moltis_metrics::channels::OTP_VERIFICATIONS_TOTAL,
+        moltis_metrics::labels::CHANNEL => "slack",
+        "result" => label
+    )
+    .increment(1);
+}
+
+async fn send_otp_status(
+    accounts: &AccountStateMap,
+    account_id: &str,
+    channel_id: &str,
+    text: &str,
+) {
+    let outbound = SlackOutbound {
+        accounts: Arc::clone(accounts),
+    };
+    if let Err(e) = outbound.send_text(account_id, channel_id, text, None).await {
+        warn!(
+            account_id,
+            channel_id, "failed to send slack OTP status: {e}"
+        );
     }
 }
 
@@ -686,6 +899,19 @@ mod tests {
             &DmPolicy::Allowlist,
             &GroupPolicy::Open,
             &["U123".to_string()],
+            &[],
+        ));
+    }
+
+    #[test]
+    fn empty_dm_allowlist_denies_all() {
+        assert!(!check_access(
+            true,
+            "U123",
+            "D456",
+            &DmPolicy::Allowlist,
+            &GroupPolicy::Open,
+            &[],
             &[],
         ));
     }
@@ -735,6 +961,43 @@ mod tests {
             &GroupPolicy::Allowlist,
             &[],
             &["C456".to_string()],
+        ));
+    }
+
+    #[test]
+    fn empty_channel_allowlist_denies_all() {
+        assert!(!check_access(
+            false,
+            "U123",
+            "C456",
+            &DmPolicy::Allowlist,
+            &GroupPolicy::Allowlist,
+            &[],
+            &[],
+        ));
+    }
+
+    #[test]
+    fn removing_last_allowlist_entry_denies_access() {
+        let mut allowlist = vec!["U123".to_string()];
+        assert!(check_access(
+            true,
+            "U123",
+            "D456",
+            &DmPolicy::Allowlist,
+            &GroupPolicy::Open,
+            &allowlist,
+            &[],
+        ));
+        allowlist.clear();
+        assert!(!check_access(
+            true,
+            "U123",
+            "D456",
+            &DmPolicy::Allowlist,
+            &GroupPolicy::Open,
+            &allowlist,
+            &[],
         ));
     }
 

@@ -918,12 +918,13 @@ test.describe("Chat input and slash commands", () => {
 		// Toggle the LLM output panel visible and immediately click copy to
 		// minimize the window for a maybeRefreshFullContext() race.
 		await llmOutputBtn.click();
+		await expect(panel.getByRole("button", { name: "Hide LLM output", exact: true })).toBeVisible();
 		const llmOutput = panel.locator("#fullContextLlmOutput");
 		await expect(llmOutput).toBeVisible();
 		const llmOutputText = (await llmOutput.textContent()) || "";
 		expect(llmOutputText).not.toBe("");
 
-		await copyBtn.click();
+		await panel.getByRole("button", { name: "Copy", exact: true }).click();
 		const copied = await page.evaluate(() => window.__copiedText);
 		expect(copied).toContain("LLM output:\n");
 		expect(copied).toContain("\n\nContext:\n");

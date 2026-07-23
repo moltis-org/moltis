@@ -251,11 +251,11 @@ export function handleLocalLlmDownload(payload: LocalLlmDownloadPayload): void {
 
 	if (payload.downloaded != null && textEl) {
 		const downloadedMb = (payload.downloaded / (1024 * 1024)).toFixed(1);
-		if (payload.total != null) {
+		if (payload.total == null) {
+			textEl.textContent = `${downloadedMb} MB`;
+		} else {
 			const totalMb = (payload.total / (1024 * 1024)).toFixed(1);
 			textEl.textContent = `${downloadedMb} / ${totalMb} MB`;
-		} else {
-			textEl.textContent = `${downloadedMb} MB`;
 		}
 	}
 }

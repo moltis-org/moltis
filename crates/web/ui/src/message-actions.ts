@@ -144,7 +144,7 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 		const forkPoint = Number.isInteger(ctx.messageIndex) ? (ctx.messageIndex as number) + 1 : undefined;
 		sendRpc("sessions.fork", {
 			key: sessionKey,
-			...(forkPoint !== undefined ? { forkPoint } : {}),
+			...(forkPoint === undefined ? {} : { forkPoint }),
 		}).then((res) => {
 			if (res.ok) {
 				showToast("Forked into new session", "success");

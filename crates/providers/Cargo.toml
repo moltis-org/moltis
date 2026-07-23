@@ -5,17 +5,24 @@ repository.workspace = true
 version.workspace    = true
 
 [features]
-default                 = ["metrics", "provider-async-openai", "provider-genai"]
-local-llm               = ["dep:directories", "dep:encoding_rs", "dep:llama-cpp-2", "dep:sysinfo"]
-local-llm-cuda          = ["llama-cpp-2/cuda", "local-llm"]
-local-llm-metal         = ["llama-cpp-2/metal", "local-llm"]
-local-llm-vulkan        = ["llama-cpp-2/vulkan", "local-llm"]
-metrics                 = ["dep:moltis-metrics"]
-provider-async-openai   = ["dep:async-openai"]
-provider-genai          = ["dep:genai"]
+default = [
+  "metrics",
+  "provider-async-openai",
+  "provider-genai",
+  "provider-github-copilot",
+  "provider-kimi-code",
+  "provider-openai-codex",
+]
+local-llm = ["dep:directories", "dep:encoding_rs", "dep:llama-cpp-2", "dep:sysinfo"]
+local-llm-cuda = ["llama-cpp-2/cuda", "local-llm"]
+local-llm-metal = ["llama-cpp-2/metal", "local-llm"]
+local-llm-vulkan = ["llama-cpp-2/vulkan", "local-llm"]
+metrics = ["dep:moltis-metrics"]
+provider-async-openai = ["dep:async-openai"]
+provider-genai = ["dep:genai"]
 provider-github-copilot = ["dep:moltis-oauth"]
-provider-kimi-code      = ["dep:moltis-oauth"]
-provider-openai-codex   = ["dep:base64", "dep:moltis-oauth"]
+provider-kimi-code = ["dep:moltis-oauth"]
+provider-openai-codex = ["dep:base64", "dep:moltis-oauth"]
 
 [dependencies]
 anyhow            = { workspace = true }

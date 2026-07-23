@@ -4,7 +4,7 @@ use std::{
 };
 
 use {
-    secrecy::{ExposeSecret, Secret},
+    secrecy::Secret,
     tracing::{debug, info, warn},
 };
 
@@ -788,6 +788,8 @@ pub(super) async fn complete_startup(
         }
         #[cfg(feature = "wasm")]
         {
+            use secrecy::ExposeSecret;
+
             let wasm_limits = sandbox_router
                 .config()
                 .wasm_tool_limits

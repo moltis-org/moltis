@@ -19,6 +19,7 @@ use moltis_channels::{
 use moltis_common::types::ReplyPayload;
 
 use crate::{
+    client::{slack_api_method_url, slack_client_for_base_url},
     config::StreamMode,
     markdown::{SLACK_MAX_MESSAGE_LEN, chunk_message, markdown_to_slack},
     state::AccountStateMap,
@@ -46,10 +47,7 @@ impl SlackOutbound {
         let token_str = state.config.bot_token.expose_secret().clone();
         let token = SlackApiToken::new(SlackApiTokenValue::from(token_str));
 
-        let client = SlackClient::new(
-            SlackClientHyperConnector::new()
-                .map_err(|e| ChannelError::unavailable(format!("hyper connector: {e}")))?,
-        );
+        let client = slack_client_for_base_url(&state.config.api_base_url)?;
 
         Ok((client, token))
     }
@@ -75,15 +73,6 @@ impl SlackOutbound {
             .map(|(_, ts)| ts.clone())
     }
 
-    /// Get the edit throttle duration for streaming.
-    fn get_edit_throttle(&self, account_id: &str) -> Duration {
-        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-        accounts
-            .get(account_id)
-            .map(|s| Duration::from_millis(s.config.edit_throttle_ms))
-            .unwrap_or(Duration::from_millis(500))
-    }
-
     /// Get the stream mode for the given account.
     fn get_stream_mode(&self, account_id: &str) -> StreamMode {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
@@ -93,13 +82,29 @@ impl SlackOutbound {
             .unwrap_or_default()
     }
 
-    /// Get the raw bot token string for API calls not covered by slack-morphism.
-    fn get_bot_token(&self, account_id: &str) -> ChannelResult<String> {
+    /// Get the edit throttle duration for edit-in-place streaming.
+    fn get_edit_throttle(&self, account_id: &str) -> Duration {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .map(|s| Duration::from_millis(s.config.edit_throttle_ms))
+            .unwrap_or(Duration::from_millis(500))
+    }
+
+    /// Get native streaming settings in one account lookup.
+    fn get_native_stream_config(
+        &self,
+        account_id: &str,
+    ) -> ChannelResult<(String, String, Duration)> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         let state = accounts
             .get(account_id)
             .ok_or_else(|| ChannelError::unknown_account(account_id))?;
-        Ok(state.config.bot_token.expose_secret().clone())
+        Ok((
+            state.config.bot_token.expose_secret().clone(),
+            state.config.api_base_url.clone(),
+            Duration::from_millis(state.config.edit_throttle_ms),
+        ))
     }
 
     /// Native Slack streaming using chat.startStream/appendStream/stopStream.
@@ -110,11 +115,11 @@ impl SlackOutbound {
         thread_ts: Option<&str>,
         stream: &mut StreamReceiver,
     ) -> ChannelResult<()> {
-        let bot_token = self.get_bot_token(account_id)?;
+        let (bot_token, api_base_url, throttle) = self.get_native_stream_config(account_id)?;
         let http = moltis_common::http_client::build_default_http_client();
-        let throttle = self.get_edit_throttle(account_id);
 
-        let stream_id = start_native_stream(&http, &bot_token, to, thread_ts).await?;
+        let stream_id =
+            start_native_stream(&http, &api_base_url, &bot_token, to, thread_ts).await?;
 
         let mut pending = String::new();
         let mut last_append = tokio::time::Instant::now();
@@ -128,8 +133,14 @@ impl SlackOutbound {
                     if last_append.elapsed() >= throttle {
                         let text = markdown_to_slack(&std::mem::take(&mut pending));
                         if !text.is_empty()
-                            && let Err(e) =
-                                append_native_stream(&http, &bot_token, &stream_id, &text).await
+                            && let Err(e) = append_native_stream(
+                                &http,
+                                &api_base_url,
+                                &bot_token,
+                                &stream_id,
+                                &text,
+                            )
+                            .await
                         {
                             debug!(account_id, to, "chat.appendStream failed (will retry): {e}");
                             // Put the text back for next attempt.
@@ -150,13 +161,15 @@ impl SlackOutbound {
         // Flush any remaining text.
         if !pending.is_empty() {
             let text = markdown_to_slack(&pending);
-            if let Err(e) = append_native_stream(&http, &bot_token, &stream_id, &text).await {
+            if let Err(e) =
+                append_native_stream(&http, &api_base_url, &bot_token, &stream_id, &text).await
+            {
                 warn!(account_id, to, "final chat.appendStream failed: {e}");
             }
         }
 
         // Finalize the stream.
-        if let Err(e) = stop_native_stream(&http, &bot_token, &stream_id).await {
+        if let Err(e) = stop_native_stream(&http, &api_base_url, &bot_token, &stream_id).await {
             warn!(account_id, to, "chat.stopStream failed: {e}");
         }
 
@@ -650,6 +663,7 @@ impl ChannelOutbound for SlackOutbound {
 /// Returns `(stream_id, channel)` on success.
 async fn start_native_stream(
     http: &reqwest::Client,
+    api_base_url: &str,
     bot_token: &str,
     channel: &str,
     thread_ts: Option<&str>,
@@ -660,7 +674,7 @@ async fn start_native_stream(
     }
 
     let resp = http
-        .post("https://slack.com/api/chat.startStream")
+        .post(slack_api_method_url(api_base_url, "chat.startStream")?)
         .bearer_auth(bot_token)
         .json(&body)
         .send()
@@ -691,6 +705,7 @@ async fn start_native_stream(
 /// Append text to a native Slack stream via `chat.appendStream`.
 async fn append_native_stream(
     http: &reqwest::Client,
+    api_base_url: &str,
     bot_token: &str,
     stream_id: &str,
     text: &str,
@@ -701,7 +716,7 @@ async fn append_native_stream(
     });
 
     let resp = http
-        .post("https://slack.com/api/chat.appendStream")
+        .post(slack_api_method_url(api_base_url, "chat.appendStream")?)
         .bearer_auth(bot_token)
         .json(&body)
         .send()
@@ -729,13 +744,14 @@ async fn append_native_stream(
 /// Finalize a native Slack stream via `chat.stopStream`.
 async fn stop_native_stream(
     http: &reqwest::Client,
+    api_base_url: &str,
     bot_token: &str,
     stream_id: &str,
 ) -> ChannelResult<()> {
     let body = serde_json::json!({ "stream_id": stream_id });
 
     let resp = http
-        .post("https://slack.com/api/chat.stopStream")
+        .post(slack_api_method_url(api_base_url, "chat.stopStream")?)
         .bearer_auth(bot_token)
         .json(&body)
         .send()

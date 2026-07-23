@@ -87,6 +87,7 @@ offered = ["slack"]
 |-------|----------|---------|-------------|
 | `bot_token` | **yes** | — | Bot user OAuth token (`xoxb-...`) |
 | `app_token` | **yes**\* | — | App-level token for Socket Mode (`xapp-...`). \*Required for `socket_mode`. |
+| `api_base_url` | no | `"https://slack.com/api"` | Slack Web API base URL. Override only for Slack-compatible proxies, mock servers, or gateways. |
 | `connection_mode` | no | `"socket_mode"` | Connection method: `"socket_mode"` or `"events_api"` |
 | `signing_secret` | no\* | — | Signing secret for Events API request verification. \*Required for `events_api`. |
 | `dm_policy` | no | `"allowlist"` | Who can DM the bot: `"open"`, `"allowlist"`, or `"disabled"` |
@@ -94,6 +95,8 @@ offered = ["slack"]
 | `mention_mode` | no | `"mention"` | When the bot responds in channels: `"always"`, `"mention"`, or `"none"` |
 | `allowlist` | no | `[]` | Slack user IDs allowed to DM the bot (when `dm_policy = "allowlist"`) |
 | `channel_allowlist` | no | `[]` | Slack channel IDs allowed to interact with the bot |
+| `otp_self_approval` | no | `true` | Enable OTP self-approval for non-allowlisted DM users |
+| `otp_cooldown_secs` | no | `300` | Cooldown after failed OTP attempts |
 | `model` | no | — | Override the default model for this channel |
 | `model_provider` | no | — | Provider for the overridden model |
 | `stream_mode` | no | `"edit_in_place"` | Streaming mode: `"edit_in_place"`, `"native"`, or `"off"` |
@@ -116,12 +119,15 @@ offered = ["slack"]
 [channels.slack.my-bot]
 bot_token = "xoxb-..."
 app_token = "xapp-..."
+api_base_url = "https://slack.com/api"
 connection_mode = "socket_mode"
 dm_policy = "allowlist"
 group_policy = "open"
 mention_mode = "mention"
 allowlist = ["U0123456789", "U9876543210"]
 channel_allowlist = ["C0123456789"]
+otp_self_approval = true
+otp_cooldown_secs = 300
 model = "claude-sonnet-4-20250514"
 model_provider = "anthropic"
 stream_mode = "edit_in_place"
@@ -152,6 +158,49 @@ signing_secret = "abc123..."
 This requires your Moltis instance to be reachable from the internet (or use
 [Tailscale Funnel](configuration.md#tailscale-integration)).
 
+### Slack-Compatible Proxies
+
+Moltis normally talks to Slack at `https://slack.com/api`. For testing, local
+development, or Slack-compatible gateways, set `api_base_url`:
+
+```toml
+[channels.slack.proxy]
+bot_token = "xoxb-proxy-token"
+app_token = "xapp-proxy-token"
+api_base_url = "https://proxy.example/api"
+connection_mode = "socket_mode"
+```
+
+For Socket Mode, Moltis calls `apps.connections.open` on this endpoint and
+connects to the WebSocket URL returned by that API.
+
+The endpoint must be a public HTTP(S) URL. Localhost, private-network,
+link-local, and other non-public IP targets are rejected because Slack API calls
+carry the bot token. Hostnames are resolved via DNS when the account starts, and
+every resolved address is checked against the same policy — a DNS name pointing
+at a private or cloud-metadata address is rejected, and a hostname that fails to
+resolve is rejected too (validation fails closed).
+
+#### Allowing internal hosts
+
+If you deliberately front Slack with a proxy on an internal host, an operator can
+allow specific hosts back in with the `MOLTIS_SLACK_API_BASE_URL_ALLOWLIST`
+environment variable — a comma-separated list of exact hostnames or IPs:
+
+```sh
+MOLTIS_SLACK_API_BASE_URL_ALLOWLIST="proxy.internal,127.0.0.1"
+```
+
+Only hosts on this list bypass the private-address guard, and matching is on the
+exact host (so `localhost` and `127.0.0.1` must each be listed if you want both).
+The allowlist is intentionally an environment variable, not a web-editable
+setting, so this SSRF exception stays under operator control. Cloud metadata
+addresses (`169.254.169.254`, `fd00:ec2::254`) remain blocked even when
+allowlisted, including when an allowlisted hostname resolves to one.
+
+If using a proxy, ensure it supports Slack's native streaming methods before
+setting `stream_mode = "native"`.
+
 ## Access Control
 
 Slack uses the same gating system as Telegram, Discord, and other channels.
@@ -160,16 +209,21 @@ Slack uses the same gating system as Telegram, Discord, and other channels.
 
 | Value | Behavior |
 |-------|----------|
-| `"allowlist"` | Only users listed in `allowlist` can DM (default) |
+| `"allowlist"` | Only users listed in `allowlist` can DM (default). If the allowlist is empty, unknown users receive an OTP challenge when `otp_self_approval = true`. |
 | `"open"` | Anyone in the workspace can DM the bot |
 | `"disabled"` | DMs are silently ignored |
+
+When `dm_policy = "allowlist"` and `otp_self_approval = true`, unknown DM users
+receive a verification prompt. The PIN is visible to the bot owner in the web UI
+under **Channels → Senders**. After a correct PIN reply, Moltis adds the sender's
+Slack user ID, such as `U0123456789`, to the account allowlist.
 
 ### Group Policy
 
 | Value | Behavior |
 |-------|----------|
 | `"open"` | Bot responds in any channel it's invited to (default) |
-| `"allowlist"` | Only channels listed in `channel_allowlist` are allowed |
+| `"allowlist"` | Only channels listed in `channel_allowlist` are allowed. An empty channel allowlist denies all channels. |
 | `"disabled"` | Channel messages are silently ignored |
 
 ### Mention Mode

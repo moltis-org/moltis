@@ -570,15 +570,17 @@ pub(crate) async fn compact_session(
     session_key: &str,
     config: &moltis_config::CompactionConfig,
     provider: Option<&dyn moltis_agents::model::LlmProvider>,
+    max_tool_result_bytes: usize,
 ) -> error::Result<compaction_run::CompactionOutcome> {
     let history = store
         .read(session_key)
         .await
         .map_err(|source| error::Error::external("failed to read session history", source))?;
 
-    let mut outcome = compaction_run::run_compaction(&history, config, provider)
-        .await
-        .map_err(|e| error::Error::message(e.to_string()))?;
+    let mut outcome =
+        compaction_run::run_compaction(&history, config, provider, max_tool_result_bytes)
+            .await
+            .map_err(|e| error::Error::message(e.to_string()))?;
 
     // Enforce summary budget discipline on the compacted history.
     outcome.history = compress_summary_in_history(outcome.history);
@@ -589,4 +591,124 @@ pub(crate) async fn compact_session(
         .map_err(|source| error::Error::external("failed to replace compacted history", source))?;
 
     Ok(outcome)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use async_trait::async_trait;
+
+    use super::*;
+
+    struct RecordingStreamOutbound {
+        streams_final_replies: bool,
+        receives_progress_deltas: bool,
+        events: Arc<Mutex<Vec<moltis_channels::StreamEvent>>>,
+    }
+
+    #[async_trait]
+    impl moltis_channels::ChannelStreamOutbound for RecordingStreamOutbound {
+        async fn send_stream(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _reply_to: Option<&str>,
+            mut stream: moltis_channels::StreamReceiver,
+        ) -> moltis_channels::Result<()> {
+            while let Some(event) = stream.recv().await {
+                self.events.lock().await.push(event.clone());
+                if matches!(
+                    event,
+                    moltis_channels::StreamEvent::Done | moltis_channels::StreamEvent::Error(_)
+                ) {
+                    break;
+                }
+            }
+            Ok(())
+        }
+
+        async fn is_stream_enabled(&self, _account_id: &str) -> bool {
+            true
+        }
+
+        async fn streams_final_replies(&self, _account_id: &str) -> bool {
+            self.streams_final_replies
+        }
+
+        async fn receives_progress_deltas(&self, _account_id: &str) -> bool {
+            self.receives_progress_deltas
+        }
+    }
+
+    fn channel_target() -> moltis_channels::ChannelReplyTarget {
+        moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "bot".into(),
+            chat_id: "chat".into(),
+            message_id: Some("msg".into()),
+            thread_id: None,
+        }
+    }
+
+    fn dispatcher_with(outbound: Arc<RecordingStreamOutbound>) -> ChannelStreamDispatcher {
+        ChannelStreamDispatcher {
+            outbound,
+            targets: vec![channel_target()],
+            workers: Vec::new(),
+            tasks: Vec::new(),
+            completed: Arc::new(Mutex::new(HashSet::new())),
+            started: false,
+            sent_final_delta: false,
+        }
+    }
+
+    fn event_kinds(events: &[moltis_channels::StreamEvent]) -> Vec<&'static str> {
+        events
+            .iter()
+            .map(|event| match event {
+                moltis_channels::StreamEvent::Delta(_) => "delta",
+                moltis_channels::StreamEvent::ProgressDelta(_) => "progress",
+                moltis_channels::StreamEvent::Done => "done",
+                moltis_channels::StreamEvent::Error(_) => "error",
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn streams_without_final_delivery_do_not_complete_targets() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingStreamOutbound {
+            streams_final_replies: false,
+            receives_progress_deltas: true,
+            events: Arc::clone(&events),
+        });
+        let mut dispatcher = dispatcher_with(outbound);
+
+        dispatcher.send_progress_delta("progress").await;
+        dispatcher.send_delta("final").await;
+        dispatcher.finish().await;
+
+        let events = events.lock().await;
+        assert_eq!(event_kinds(&events), vec!["progress", "delta", "done"]);
+        assert!(dispatcher.completed_target_keys().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn final_stream_workers_receive_progress_and_final_deltas_and_complete_targets() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingStreamOutbound {
+            streams_final_replies: true,
+            receives_progress_deltas: true,
+            events: Arc::clone(&events),
+        });
+        let mut dispatcher = dispatcher_with(outbound);
+
+        dispatcher.send_progress_delta("progress").await;
+        dispatcher.send_delta("final").await;
+        dispatcher.finish().await;
+
+        let events = events.lock().await;
+        assert_eq!(event_kinds(&events), vec!["progress", "delta", "done"]);
+        assert_eq!(dispatcher.completed_target_keys().await.len(), 1);
+    }
 }

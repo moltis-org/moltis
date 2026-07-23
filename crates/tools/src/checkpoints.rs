@@ -161,7 +161,7 @@ impl CheckpointManager {
             .filter_map(|line| serde_json::from_str(line).ok())
             .filter(|turn: &TurnRecord| session_key.is_none_or(|sk| turn.session_key == sk))
             .collect();
-        turns.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        turns.sort_by_key(|turn| std::cmp::Reverse(turn.created_at));
         turns.truncate(limit);
         Ok(turns)
     }
@@ -215,11 +215,7 @@ fn cleanup_blocking(base_dir: &Path) -> Result<usize> {
                 let orig_len = turn.checkpoint_ids.len();
                 let mut new_ids = Vec::new();
                 let mut new_paths = Vec::new();
-                for (id, path) in turn
-                    .checkpoint_ids
-                    .into_iter()
-                    .zip(turn.source_paths.into_iter())
-                {
+                for (id, path) in turn.checkpoint_ids.into_iter().zip(turn.source_paths) {
                     if !removed_ids.contains(&id) {
                         new_ids.push(id);
                         new_paths.push(path);

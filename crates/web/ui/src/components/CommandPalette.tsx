@@ -11,6 +11,7 @@ import { t } from "../i18n";
 import { navigate, sessionPath } from "../router";
 import { buildCommands, type Command, closePalette, paletteOpen } from "../stores/command-store";
 import { sessionStore } from "../stores/session-store";
+import { targetValue } from "../typed-events";
 
 // ── Types ───────────────────────────────────────��────────────
 
@@ -261,7 +262,7 @@ export function CommandPalette(): VNode | null {
 						autocomplete="off"
 						placeholder={t("common:actions.search") || "Search\u2026"}
 						value={query}
-						onInput={(e: Event) => setQuery((e.target as HTMLInputElement).value)}
+						onInput={(e: Event) => setQuery(targetValue(e))}
 					/>
 					<kbd class="cmd-palette-kbd">esc</kbd>
 				</div>

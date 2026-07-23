@@ -6,7 +6,7 @@
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output},
 };
 
 use {
@@ -56,6 +56,60 @@ impl<T> ContextExt<T> for Option<T> {
     {
         self.ok_or_else(|| Error::LaunchFailed(f().into()))
     }
+}
+
+fn command_display(program: &str, args: &[String]) -> String {
+    std::iter::once(program.to_string())
+        .chain(args.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn output_tail(bytes: &[u8], max_chars: usize) -> String {
+    let text = String::from_utf8_lossy(bytes).trim().to_string();
+    if text.chars().count() <= max_chars {
+        return text;
+    }
+    let tail = text
+        .chars()
+        .rev()
+        .take(max_chars)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    format!("...{tail}")
+}
+
+fn status_display(output: &Output) -> String {
+    output.status.code().map_or_else(
+        || output.status.to_string(),
+        |code| format!("exit code {code}"),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn apple_container_command_snapshot(args: &[&str]) -> String {
+    match Command::new("container").args(args).output() {
+        Ok(output) => format!(
+            "status={}, stdout={}, stderr={}",
+            status_display(&output),
+            output_tail(&output.stdout, 1200),
+            output_tail(&output.stderr, 1200)
+        ),
+        Err(error) => format!("failed to run `container {}`: {error}", args.join(" ")),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn log_apple_container_diagnostics(context: &str) {
+    warn!(
+        context,
+        version = %apple_container_command_snapshot(&["--version"]),
+        system_status = %apple_container_command_snapshot(&["system", "status"]),
+        images = %apple_container_command_snapshot(&["image", "ls"]),
+        "Apple Container diagnostics"
+    );
 }
 
 fn browser_container_name_prefix(container_prefix: &str) -> String {
@@ -1217,6 +1271,23 @@ pub fn cleanup_stale_browser_containers(container_prefix: &str) -> Result<usize>
 pub fn ensure_image(image: &str) -> Result<()> {
     let backend = detect_backend()?;
 
+    #[cfg(target_os = "macos")]
+    if backend == ContainerBackend::AppleContainer
+        && moltis_config::apple_container_marked_unhealthy()
+    {
+        if is_docker_available() {
+            warn!(
+                image,
+                "Apple Container marked unhealthy after an earlier failure; using Docker for browser image"
+            );
+            return ensure_image_with_backend(ContainerBackend::Docker, image);
+        }
+        return Err(Error::LaunchFailed(
+            "Apple Container is marked unhealthy after an earlier failure and Docker is unavailable"
+                .to_string(),
+        ));
+    }
+
     // Try primary backend first
     let result = ensure_image_with_backend(backend, image);
 
@@ -1224,7 +1295,10 @@ pub fn ensure_image(image: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     if result.is_err() && backend == ContainerBackend::AppleContainer && is_docker_available() {
         if let Err(ref e) = result {
+            moltis_config::mark_apple_container_unhealthy();
+            log_apple_container_diagnostics("browser image pull fallback");
             warn!(
+                image,
                 error = %e,
                 "Apple Container image pull failed, falling back to Docker"
             );
@@ -1258,22 +1332,63 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
 
     info!(image, backend = cli, "pulling browser container image");
 
-    let output = match backend {
+    let pull_args = match backend {
         ContainerBackend::Docker | ContainerBackend::Podman => {
-            Command::new(cli).args(["pull", image]).output()
+            vec!["pull".to_string(), image.to_string()]
         },
         #[cfg(target_os = "macos")]
         ContainerBackend::AppleContainer => {
-            Command::new(cli).args(["image", "pull", image]).output()
+            vec![
+                "image".to_string(),
+                "pull".to_string(),
+                "--progress".to_string(),
+                "plain".to_string(),
+                "--max-concurrent-downloads".to_string(),
+                "1".to_string(),
+                "--platform".to_string(),
+                "linux/arm64".to_string(),
+                image.to_string(),
+            ]
         },
+    };
+    let command = command_display(cli, &pull_args);
+    debug!(image, backend = cli, command = %command, "running browser image pull command");
+
+    #[cfg(target_os = "macos")]
+    let _apple_container_lock = (backend == ContainerBackend::AppleContainer)
+        .then(moltis_config::apple_container_operation_lock);
+
+    #[cfg(target_os = "macos")]
+    if backend == ContainerBackend::AppleContainer
+        && moltis_config::apple_container_marked_unhealthy()
+    {
+        return Err(Error::LaunchFailed(
+            "Apple Container is marked unhealthy after an earlier failure".to_string(),
+        ));
     }
-    .context("failed to pull image")?;
+
+    let output = Command::new(cli)
+        .args(&pull_args)
+        .output()
+        .context("failed to pull image")?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout_tail = output_tail(&output.stdout, 4000);
+        let stderr_tail = output_tail(&output.stderr, 4000);
+        warn!(
+            image,
+            backend = cli,
+            command = %command,
+            status = %status_display(&output),
+            stdout_tail = %stdout_tail,
+            stderr_tail = %stderr_tail,
+            "browser container image pull command failed"
+        );
         return Err(Error::LaunchFailed(format!(
-            "failed to pull browser image: {}",
-            stderr.trim()
+            "failed to pull browser image with `{command}`: status={}, stderr={}, stdout={}",
+            status_display(&output),
+            stderr_tail,
+            stdout_tail
         )));
     }
 

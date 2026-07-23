@@ -596,6 +596,7 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 	const [botToken, setBotToken] = useState("");
 	const [connectionMode, setConnectionMode] = useState("socket_mode");
 	const [appToken, setAppToken] = useState("");
+	const [apiBaseUrl, setApiBaseUrl] = useState("");
 	const [signingSecret, setSigningSecret] = useState("");
 	const [dmPolicy, setDmPolicy] = useState("allowlist");
 	const [allowlist, setAllowlist] = useState("");
@@ -641,6 +642,7 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 		};
 		if (connectionMode === "socket_mode") config.app_token = appToken.trim();
 		if (connectionMode === "events_api") config.signing_secret = signingSecret.trim();
+		if (apiBaseUrl.trim()) config.api_base_url = apiBaseUrl.trim();
 		Object.assign(config, advancedPatch.value);
 		(
 			addChannel("slack", accountId.trim(), config) as Promise<{
@@ -762,6 +764,24 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 					/>
 				</div>
 			)}
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block">Slack API Base URL</label>
+				<input
+					type="url"
+					className="provider-key-input w-full"
+					value={apiBaseUrl}
+					onInput={(e) => setApiBaseUrl(targetValue(e))}
+					placeholder="https://slack.com/api"
+					autoComplete="off"
+					autoCapitalize="none"
+					autoCorrect="off"
+					spellcheck={false}
+					name="slack_api_base_url"
+				/>
+				<div className="text-xs text-[var(--muted)] mt-1">
+					Leave blank for Slack. Set this only for Slack-compatible proxies or test gateways.
+				</div>
+			</div>
 			<div>
 				<label className="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
 				<select

@@ -16,6 +16,7 @@ pub use chat::{ChatMessage, ContentPart, UserContent};
 mod convert;
 pub use convert::{
     extract_tool_call_metadata, provider_values_to_chat_messages, values_to_chat_messages,
+    values_to_chat_messages_with_tool_result_limit,
 };
 
 mod stream;
@@ -629,6 +630,220 @@ mod tests {
         assert!(matches!(&msgs[1], ChatMessage::Assistant { .. }));
         assert!(matches!(&msgs[2], ChatMessage::Tool { .. }));
         assert!(matches!(&msgs[3], ChatMessage::Assistant { .. }));
+    }
+
+    #[test]
+    fn convert_caps_persisted_string_tool_result_when_limit_is_set() {
+        let values = vec![
+            serde_json::json!({"role": "user", "content": "search"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "Grep", "arguments": "{}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_1",
+                "tool_name": "Grep",
+                "success": true,
+                "result": "x".repeat(200)
+            }),
+        ];
+
+        let msgs = values_to_chat_messages_with_tool_result_limit(&values, 32);
+
+        match &msgs[2] {
+            ChatMessage::Tool { content, .. } => {
+                assert!(content.starts_with(&"x".repeat(32)));
+                assert!(content.contains("[truncated"));
+                assert!(content.contains("200 bytes total"));
+                assert!(content.len() < 96);
+            },
+            other => panic!("expected tool message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_caps_persisted_structured_tool_result_when_limit_is_set() {
+        let values = vec![
+            serde_json::json!({"role": "user", "content": "run command"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "exec", "arguments": "{}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_1",
+                "tool_name": "exec",
+                "success": true,
+                "result": {"stdout": "x".repeat(200), "exit_code": 0}
+            }),
+        ];
+
+        let msgs = values_to_chat_messages_with_tool_result_limit(&values, 64);
+
+        match &msgs[2] {
+            ChatMessage::Tool { content, .. } => {
+                assert!(content.contains("[truncated"));
+                assert!(content.contains("bytes total"));
+                assert!(!content.contains(&"x".repeat(200)));
+                assert!(content.len() < 140);
+            },
+            other => panic!("expected tool message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_caps_persisted_tool_error_when_limit_is_set() {
+        let values = vec![
+            serde_json::json!({"role": "user", "content": "run command"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "exec", "arguments": "{}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_1",
+                "tool_name": "exec",
+                "success": false,
+                "error": "boom".repeat(100)
+            }),
+        ];
+
+        let msgs = values_to_chat_messages_with_tool_result_limit(&values, 40);
+
+        match &msgs[2] {
+            ChatMessage::Tool { content, .. } => {
+                assert!(content.starts_with("Error: boom"));
+                assert!(content.contains("[truncated"));
+                assert!(!content.contains(&"boom".repeat(100)));
+            },
+            other => panic!("expected tool message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_caps_persisted_tool_role_content_when_limit_is_set() {
+        let values = vec![
+            serde_json::json!({"role": "user", "content": "search"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "Grep", "arguments": "{}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "z".repeat(200)
+            }),
+        ];
+
+        let msgs = values_to_chat_messages_with_tool_result_limit(&values, 24);
+
+        match &msgs[2] {
+            ChatMessage::Tool { content, .. } => {
+                assert!(content.starts_with(&"z".repeat(24)));
+                assert!(content.contains("[truncated"));
+                assert!(content.contains("200 bytes total"));
+            },
+            other => panic!("expected tool message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_tool_result_limit_preserves_char_boundaries() {
+        let values = vec![
+            serde_json::json!({"role": "user", "content": "search"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "Grep", "arguments": "{}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_1",
+                "tool_name": "Grep",
+                "success": true,
+                "result": "é".repeat(100)
+            }),
+        ];
+
+        let msgs = values_to_chat_messages_with_tool_result_limit(&values, 3);
+
+        match &msgs[2] {
+            ChatMessage::Tool { content, .. } => {
+                assert!(content.starts_with('é'));
+                assert!(content.contains("[truncated"));
+                assert!(content.contains("200 bytes total"));
+            },
+            other => panic!("expected tool message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_tool_result_limit_preserves_orphan_filtering() {
+        let values = vec![
+            serde_json::json!({"role": "user", "content": "run ls"}),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_orphan",
+                "tool_name": "exec",
+                "success": true,
+                "result": "x".repeat(200)
+            }),
+            serde_json::json!({"role": "assistant", "content": "done"}),
+        ];
+
+        let msgs = values_to_chat_messages_with_tool_result_limit(&values, 32);
+
+        assert_eq!(msgs.len(), 2);
+        assert!(matches!(&msgs[0], ChatMessage::User { .. }));
+        assert!(matches!(&msgs[1], ChatMessage::Assistant { .. }));
+    }
+
+    #[test]
+    fn provider_conversion_preserves_tool_result_without_session_limit() {
+        let values = vec![
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "Grep", "arguments": "{}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_1",
+                "tool_name": "Grep",
+                "success": true,
+                "result": "x".repeat(200)
+            }),
+        ];
+
+        let msgs = provider_values_to_chat_messages(&values);
+
+        match &msgs[1] {
+            ChatMessage::Tool { content, .. } => assert_eq!(content, &"x".repeat(200)),
+            other => panic!("expected tool message, got {other:?}"),
+        }
     }
 
     #[test]

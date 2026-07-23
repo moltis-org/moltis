@@ -1,10 +1,10 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use {
-    moltis_channels::{ChannelEventSink, message_log::MessageLog},
+    moltis_channels::{ChannelEventSink, message_log::MessageLog, otp::OtpState},
     tokio_util::sync::CancellationToken,
 };
 
@@ -25,4 +25,5 @@ pub struct AccountState {
     /// Pending thread timestamps keyed by `channel_id:user_id`.
     /// Used to route replies into the correct thread.
     pub pending_threads: HashMap<String, String>,
+    pub otp: Mutex<OtpState>,
 }
