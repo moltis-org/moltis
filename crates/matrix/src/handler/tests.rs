@@ -390,6 +390,23 @@ fn dm_invite_allowlist_checks_user_allowlist() {
 }
 
 #[test]
+fn dm_invite_empty_allowlist_denies_all() {
+    let cfg = MatrixAccountConfig {
+        auto_join: AutoJoinPolicy::Always,
+        dm_policy: DmPolicy::Allowlist,
+        user_allowlist: vec![],
+        ..Default::default()
+    };
+
+    assert!(!should_auto_join_invite(
+        &cfg,
+        "@mallory:example.org",
+        "!dm:example.org",
+        true,
+    ));
+}
+
+#[test]
 fn dm_invite_open_policy_allows_any_user() {
     let cfg = MatrixAccountConfig {
         auto_join: AutoJoinPolicy::Always,

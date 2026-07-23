@@ -227,7 +227,7 @@ All allowlist fields across all channels share the same matching behavior:
 
 ### OTP Self-Approval
 
-Channels that support OTP (Telegram, Discord, Matrix, WhatsApp) allow non-allowlisted
+Channels that support OTP (Telegram, Microsoft Teams, Slack, Discord, Matrix, WhatsApp) allow non-allowlisted
 users to self-approve by entering a 6-digit code. The code appears in the web UI
 under **Channels > Senders**. See each channel's page for details.
 
