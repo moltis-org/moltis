@@ -127,6 +127,12 @@ pub struct SlackAccountConfig {
     /// Per-user model/provider overrides (user_id -> override).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub user_overrides: HashMap<String, UserOverride>,
+
+    /// Enable OTP self-approval for non-allowlisted DM users.
+    pub otp_self_approval: bool,
+
+    /// Cooldown in seconds after failed OTP attempts.
+    pub otp_cooldown_secs: u64,
 }
 
 impl std::fmt::Debug for SlackAccountConfig {
@@ -153,6 +159,8 @@ impl std::fmt::Debug for SlackAccountConfig {
             .field("thread_replies", &self.thread_replies)
             .field("channel_overrides", &self.channel_overrides)
             .field("user_overrides", &self.user_overrides)
+            .field("otp_self_approval", &self.otp_self_approval)
+            .field("otp_cooldown_secs", &self.otp_cooldown_secs)
             .finish()
     }
 }
@@ -178,6 +186,8 @@ impl Default for SlackAccountConfig {
             thread_replies: true,
             channel_overrides: HashMap::new(),
             user_overrides: HashMap::new(),
+            otp_self_approval: true,
+            otp_cooldown_secs: 300,
         }
     }
 }
@@ -242,7 +252,7 @@ pub struct RedactedConfig<'a>(pub &'a SlackAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 12; // always-present fields
+        let mut count = 14; // always-present fields
         count += c.signing_secret.is_some() as usize;
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
@@ -280,6 +290,8 @@ impl Serialize for RedactedConfig<'_> {
         if !c.user_overrides.is_empty() {
             s.serialize_field("user_overrides", &c.user_overrides)?;
         }
+        s.serialize_field("otp_self_approval", &c.otp_self_approval)?;
+        s.serialize_field("otp_cooldown_secs", &c.otp_cooldown_secs)?;
         s.end()
     }
 }
@@ -387,6 +399,8 @@ mod tests {
         assert_eq!(cfg.stream_mode, StreamMode::EditInPlace);
         assert_eq!(cfg.edit_throttle_ms, 500);
         assert!(cfg.thread_replies);
+        assert!(cfg.otp_self_approval);
+        assert_eq!(cfg.otp_cooldown_secs, 300);
         assert_eq!(cfg.mention_mode, MentionMode::Mention);
         assert_eq!(cfg.api_base_url, DEFAULT_SLACK_API_BASE_URL);
         assert!(cfg.channel_overrides.is_empty());
@@ -441,6 +455,24 @@ mod tests {
         assert_eq!(storage["bot_token"], "xoxb-secret");
         assert_eq!(storage["app_token"], "xapp-secret");
         assert_eq!(storage["signing_secret"], "sign-secret");
+    }
+
+    #[test]
+    fn otp_fields_round_trip() {
+        let json = serde_json::json!({
+            "bot_token": "xoxb-test",
+            "app_token": "xapp-test",
+            "otp_self_approval": false,
+            "otp_cooldown_secs": 60,
+        });
+        let cfg: SlackAccountConfig = serde_json::from_value(json).unwrap();
+        assert!(!cfg.otp_self_approval);
+        assert_eq!(cfg.otp_cooldown_secs, 60);
+
+        let value = serde_json::to_value(&cfg).unwrap();
+        let cfg2: SlackAccountConfig = serde_json::from_value(value).unwrap();
+        assert!(!cfg2.otp_self_approval);
+        assert_eq!(cfg2.otp_cooldown_secs, 60);
     }
 
     #[test]

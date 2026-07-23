@@ -95,6 +95,8 @@ offered = ["slack"]
 | `mention_mode` | no | `"mention"` | When the bot responds in channels: `"always"`, `"mention"`, or `"none"` |
 | `allowlist` | no | `[]` | Slack user IDs allowed to DM the bot (when `dm_policy = "allowlist"`) |
 | `channel_allowlist` | no | `[]` | Slack channel IDs allowed to interact with the bot |
+| `otp_self_approval` | no | `true` | Enable OTP self-approval for non-allowlisted DM users |
+| `otp_cooldown_secs` | no | `300` | Cooldown after failed OTP attempts |
 | `model` | no | — | Override the default model for this channel |
 | `model_provider` | no | — | Provider for the overridden model |
 | `stream_mode` | no | `"edit_in_place"` | Streaming mode: `"edit_in_place"`, `"native"`, or `"off"` |
@@ -124,6 +126,8 @@ group_policy = "open"
 mention_mode = "mention"
 allowlist = ["U0123456789", "U9876543210"]
 channel_allowlist = ["C0123456789"]
+otp_self_approval = true
+otp_cooldown_secs = 300
 model = "claude-sonnet-4-20250514"
 model_provider = "anthropic"
 stream_mode = "edit_in_place"
@@ -185,16 +189,21 @@ Slack uses the same gating system as Telegram, Discord, and other channels.
 
 | Value | Behavior |
 |-------|----------|
-| `"allowlist"` | Only users listed in `allowlist` can DM (default) |
+| `"allowlist"` | Only users listed in `allowlist` can DM (default). If the allowlist is empty, unknown users receive an OTP challenge when `otp_self_approval = true`. |
 | `"open"` | Anyone in the workspace can DM the bot |
 | `"disabled"` | DMs are silently ignored |
+
+When `dm_policy = "allowlist"` and `otp_self_approval = true`, unknown DM users
+receive a verification prompt. The PIN is visible to the bot owner in the web UI
+under **Channels → Senders**. After a correct PIN reply, Moltis adds the sender's
+Slack user ID, such as `U0123456789`, to the account allowlist.
 
 ### Group Policy
 
 | Value | Behavior |
 |-------|----------|
 | `"open"` | Bot responds in any channel it's invited to (default) |
-| `"allowlist"` | Only channels listed in `channel_allowlist` are allowed |
+| `"allowlist"` | Only channels listed in `channel_allowlist` are allowed. An empty channel allowlist denies all channels. |
 | `"disabled"` | Channel messages are silently ignored |
 
 ### Mention Mode

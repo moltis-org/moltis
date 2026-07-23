@@ -66,6 +66,8 @@ pub async fn register_events_api_account(
 
     let cancel = tokio_util::sync::CancellationToken::new();
 
+    let otp_cooldown_secs = config.otp_cooldown_secs;
+
     {
         let mut accts = accounts.write().unwrap_or_else(|e| e.into_inner());
         accts.insert(account_id.to_string(), AccountState {
@@ -76,6 +78,7 @@ pub async fn register_events_api_account(
             cancel,
             bot_user_id: Some(bot_user_id),
             pending_threads: std::collections::HashMap::new(),
+            otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(otp_cooldown_secs)),
         });
     }
 
@@ -726,6 +729,7 @@ mod tests {
                 cancel: tokio_util::sync::CancellationToken::new(),
                 bot_user_id: Some("B123".to_string()),
                 pending_threads: std::collections::HashMap::new(),
+                otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
             });
         }
 
@@ -755,6 +759,7 @@ mod tests {
                 cancel: tokio_util::sync::CancellationToken::new(),
                 bot_user_id: Some("B123".to_string()),
                 pending_threads: std::collections::HashMap::new(),
+                otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
             });
         }
 
@@ -789,6 +794,7 @@ mod tests {
                 cancel: tokio_util::sync::CancellationToken::new(),
                 bot_user_id: Some("B123".to_string()),
                 pending_threads: std::collections::HashMap::new(),
+                otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
             });
         }
 
