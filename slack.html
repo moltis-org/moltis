@@ -214,7 +214,19 @@ offered = [&#x22;slack&#x22;]"><code><span class="line"><span style="color:#2429
 
 
 
-<table><thead><tr><th>Field</th><th>Required</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>bot_token</code></td><td><strong>yes</strong></td><td>—</td><td>Bot user OAuth token (<code>xoxb-...</code>)</td></tr><tr><td><code>app_token</code></td><td><strong>yes</strong>*</td><td>—</td><td>App-level token for Socket Mode (<code>xapp-...</code>). *Required for <code>socket_mode</code>.</td></tr><tr><td><code>api_base_url</code></td><td>no</td><td><code>"https://slack.com/api"</code></td><td>Slack Web API base URL. Override only for Slack-compatible proxies, mock servers, or gateways.</td></tr><tr><td><code>connection_mode</code></td><td>no</td><td><code>"socket_mode"</code></td><td>Connection method: <code>"socket_mode"</code> or <code>"events_api"</code></td></tr><tr><td><code>signing_secret</code></td><td>no*</td><td>—</td><td>Signing secret for Events API request verification. *Required for <code>events_api</code>.</td></tr><tr><td><code>dm_policy</code></td><td>no</td><td><code>"allowlist"</code></td><td>Who can DM the bot: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>group_policy</code></td><td>no</td><td><code>"open"</code></td><td>Who can talk to the bot in channels: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>mention_mode</code></td><td>no</td><td><code>"mention"</code></td><td>When the bot responds in channels: <code>"always"</code>, <code>"mention"</code>, or <code>"none"</code></td></tr><tr><td><code>allowlist</code></td><td>no</td><td><code>[]</code></td><td>Slack user IDs allowed to DM the bot (when <code>dm_policy = "allowlist"</code>)</td></tr><tr><td><code>channel_allowlist</code></td><td>no</td><td><code>[]</code></td><td>Slack channel IDs allowed to interact with the bot</td></tr><tr><td><code>model</code></td><td>no</td><td>—</td><td>Override the default model for this channel</td></tr><tr><td><code>model_provider</code></td><td>no</td><td>—</td><td>Provider for the overridden model</td></tr><tr><td><code>stream_mode</code></td><td>no</td><td><code>"edit_in_place"</code></td><td>Streaming mode: <code>"edit_in_place"</code>, <code>"native"</code>, or <code>"off"</code></td></tr><tr><td><code>edit_throttle_ms</code></td><td>no</td><td><code>500</code></td><td>Minimum milliseconds between streaming edit updates</td></tr><tr><td><code>thread_replies</code></td><td>no</td><td><code>true</code></td><td>Reply in threads</td></tr><tr><td><code>channel_overrides</code></td><td>no</td><td><code>{}</code></td><td>Per-channel model/provider overrides (see below)</td></tr><tr><td><code>user_overrides</code></td><td>no</td><td><code>{}</code></td><td>Per-user model/provider overrides (see below)</td></tr></tbody></table>
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Field</th><th>Required</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>bot_token</code></td><td><strong>yes</strong></td><td>—</td><td>Bot user OAuth token (<code>xoxb-...</code>)</td></tr><tr><td><code>app_token</code></td><td><strong>yes</strong>*</td><td>—</td><td>App-level token for Socket Mode (<code>xapp-...</code>). *Required for <code>socket_mode</code>.</td></tr><tr><td><code>api_base_url</code></td><td>no</td><td><code>"https://slack.com/api"</code></td><td>Slack Web API base URL. Override only for Slack-compatible proxies, mock servers, or gateways.</td></tr><tr><td><code>connection_mode</code></td><td>no</td><td><code>"socket_mode"</code></td><td>Connection method: <code>"socket_mode"</code> or <code>"events_api"</code></td></tr><tr><td><code>signing_secret</code></td><td>no*</td><td>—</td><td>Signing secret for Events API request verification. *Required for <code>events_api</code>.</td></tr><tr><td><code>dm_policy</code></td><td>no</td><td><code>"allowlist"</code></td><td>Who can DM the bot: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>group_policy</code></td><td>no</td><td><code>"open"</code></td><td>Who can talk to the bot in channels: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>mention_mode</code></td><td>no</td><td><code>"mention"</code></td><td>When the bot responds in channels: <code>"always"</code>, <code>"mention"</code>, or <code>"none"</code></td></tr><tr><td><code>allowlist</code></td><td>no</td><td><code>[]</code></td><td>Slack user IDs allowed to DM the bot (when <code>dm_policy = "allowlist"</code>)</td></tr><tr><td><code>channel_allowlist</code></td><td>no</td><td><code>[]</code></td><td>Slack channel IDs allowed to interact with the bot</td></tr><tr><td><code>otp_self_approval</code></td><td>no</td><td><code>true</code></td><td>Enable OTP self-approval for non-allowlisted DM users</td></tr><tr><td><code>otp_cooldown_secs</code></td><td>no</td><td><code>300</code></td><td>Cooldown after failed OTP attempts</td></tr><tr><td><code>model</code></td><td>no</td><td>—</td><td>Override the default model for this channel</td></tr><tr><td><code>model_provider</code></td><td>no</td><td>—</td><td>Provider for the overridden model</td></tr><tr><td><code>stream_mode</code></td><td>no</td><td><code>"edit_in_place"</code></td><td>Streaming mode: <code>"edit_in_place"</code>, <code>"native"</code>, or <code>"off"</code></td></tr><tr><td><code>edit_throttle_ms</code></td><td>no</td><td><code>500</code></td><td>Minimum milliseconds between streaming edit updates</td></tr><tr><td><code>thread_replies</code></td><td>no</td><td><code>true</code></td><td>Reply in threads</td></tr><tr><td><code>channel_overrides</code></td><td>no</td><td><code>{}</code></td><td>Per-channel model/provider overrides (see below)</td></tr><tr><td><code>user_overrides</code></td><td>no</td><td><code>{}</code></td><td>Per-user model/provider overrides (see below)</td></tr></tbody></table>
 <aside class="admonition admonition-important"><div class="admonition-title">Allowlist values are strings</div><div class="admonition-body"><p>All allowlist entries must be <strong>strings</strong>. Use Slack user IDs like<br><code>["U0123456789"]</code>. Matching is case-insensitive and supports glob wildcards.</p></div></aside>
 <h3 id="full-example">Full Example</h3>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels]
@@ -230,6 +242,8 @@ group_policy = &#x22;open&#x22;
 mention_mode = &#x22;mention&#x22;
 allowlist = [&#x22;U0123456789&#x22;, &#x22;U9876543210&#x22;]
 channel_allowlist = [&#x22;C0123456789&#x22;]
+otp_self_approval = true
+otp_cooldown_secs = 300
 model = &#x22;claude-sonnet-4-20250514&#x22;
 model_provider = &#x22;anthropic&#x22;
 stream_mode = &#x22;edit_in_place&#x22;
@@ -256,6 +270,8 @@ model_provider = &#x22;anthropic&#x22;"><code><span class="line"><span style="co
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">mention_mode </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "mention"</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">allowlist </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"U0123456789"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "U9876543210"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">channel_allowlist </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"C0123456789"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">otp_self_approval </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">otp_cooldown_secs </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 300</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">model </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "claude-sonnet-4-20250514"</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">model_provider </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "anthropic"</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">stream_mode </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "edit_in_place"</span></span>
@@ -324,7 +340,11 @@ setting <code>stream_mode = "native"</code>.</p>
 
 
 
-<table><thead><tr><th>Value</th><th>Behavior</th></tr></thead><tbody><tr><td><code>"allowlist"</code></td><td>Only users listed in <code>allowlist</code> can DM (default)</td></tr><tr><td><code>"open"</code></td><td>Anyone in the workspace can DM the bot</td></tr><tr><td><code>"disabled"</code></td><td>DMs are silently ignored</td></tr></tbody></table>
+<table><thead><tr><th>Value</th><th>Behavior</th></tr></thead><tbody><tr><td><code>"allowlist"</code></td><td>Only users listed in <code>allowlist</code> can DM (default). If the allowlist is empty, unknown users receive an OTP challenge when <code>otp_self_approval = true</code>.</td></tr><tr><td><code>"open"</code></td><td>Anyone in the workspace can DM the bot</td></tr><tr><td><code>"disabled"</code></td><td>DMs are silently ignored</td></tr></tbody></table>
+<p>When <code>dm_policy = "allowlist"</code> and <code>otp_self_approval = true</code>, unknown DM users
+receive a verification prompt. The PIN is visible to the bot owner in the web UI
+under <strong>Channels → Senders</strong>. After a correct PIN reply, Moltis adds the sender’s
+Slack user ID, such as <code>U0123456789</code>, to the account allowlist.</p>
 <h3 id="group-policy">Group Policy</h3>
 
 
@@ -347,7 +367,7 @@ setting <code>stream_mode = "native"</code>.</p>
 
 
 
-<table><thead><tr><th>Value</th><th>Behavior</th></tr></thead><tbody><tr><td><code>"open"</code></td><td>Bot responds in any channel it’s invited to (default)</td></tr><tr><td><code>"allowlist"</code></td><td>Only channels listed in <code>channel_allowlist</code> are allowed</td></tr><tr><td><code>"disabled"</code></td><td>Channel messages are silently ignored</td></tr></tbody></table>
+<table><thead><tr><th>Value</th><th>Behavior</th></tr></thead><tbody><tr><td><code>"open"</code></td><td>Bot responds in any channel it’s invited to (default)</td></tr><tr><td><code>"allowlist"</code></td><td>Only channels listed in <code>channel_allowlist</code> are allowed. An empty channel allowlist denies all channels.</td></tr><tr><td><code>"disabled"</code></td><td>Channel messages are silently ignored</td></tr></tbody></table>
 <h3 id="mention-mode">Mention Mode</h3>
 
 

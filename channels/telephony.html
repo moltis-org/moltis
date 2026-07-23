@@ -72,7 +72,7 @@ provider has complete credentials.</p>
 enabled = true                         # Enable phone calls globally
 provider = &#x22;twilio&#x22;                    # twilio | telnyx | plivo
 inbound_policy = &#x22;disabled&#x22;            # disabled | allowlist | open
-allowlist = [&#x22;+15559876543&#x22;]           # Allowed inbound callers (E.164)
+allowlist = [&#x22;+15559876543&#x22;]           # Allowed inbound callers (E.164); empty list denies all calls
 max_duration_secs = 3600               # Max call duration (default: 1 hour)
 
 [phone.twilio]
@@ -89,7 +89,7 @@ webhook_url = &#x22;https://your-domain.com&#x22;"><code><span class="line"><spa
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">enabled </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">                         # Enable phone calls globally</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">provider </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "twilio"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">                    # twilio | telnyx | plivo</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">inbound_policy </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "disabled"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">            # disabled | allowlist | open</span></span>
-<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">allowlist </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"+15559876543"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]           </span><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Allowed inbound callers (E.164)</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">allowlist </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"+15559876543"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]           </span><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Allowed inbound callers (E.164); empty list denies all calls</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">max_duration_secs </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 3600</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">               # Max call duration (default: 1 hour)</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">phone</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">twilio</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
@@ -193,7 +193,7 @@ moltis voice-call setup"><code><span class="line"><span style="color:#6F42C1;--s
 <h2 id="security">Security</h2>
 <ul>
 <li><strong>Webhook verification</strong>: Twilio webhooks are verified using HMAC-SHA1 signature validation; Plivo and Telnyx verification are used when their signature credentials are configured</li>
-<li><strong>Inbound access control</strong>: Phone numbers can be restricted via allowlist</li>
+<li><strong>Inbound access control</strong>: Phone numbers can be restricted via allowlist. With <code>inbound_policy = "allowlist"</code>, an empty allowlist rejects all inbound calls</li>
 <li><strong>Credential storage</strong>: Provider credentials are stored in the credential store when configured from Settings > Phone</li>
 <li><strong>Max duration</strong>: Calls are automatically terminated after the configured max duration</li>
 </ul>

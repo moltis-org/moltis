@@ -533,7 +533,19 @@ moltis_llm_input_tokens_total{provider=&#x22;anthropic-personal&#x22;, model=&#x
 
 
 
-<table><thead><tr><th>Metric</th><th>Type</th><th>Labels</th><th>Description</th></tr></thead><tbody><tr><td><code>moltis_channels_active</code></td><td>Gauge</td><td>—</td><td>Loaded channel plugins</td></tr><tr><td><code>moltis_channel_messages_received_total</code></td><td>Counter</td><td>channel</td><td>Inbound messages</td></tr><tr><td><code>moltis_channel_messages_sent_total</code></td><td>Counter</td><td>channel</td><td>Outbound messages</td></tr></tbody></table>
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Metric</th><th>Type</th><th>Labels</th><th>Description</th></tr></thead><tbody><tr><td><code>moltis_channels_active</code></td><td>Gauge</td><td>—</td><td>Loaded channel plugins</td></tr><tr><td><code>moltis_channel_messages_received_total</code></td><td>Counter</td><td>channel</td><td>Inbound messages</td></tr><tr><td><code>moltis_channel_messages_sent_total</code></td><td>Counter</td><td>channel</td><td>Outbound messages</td></tr><tr><td><code>moltis_channel_otp_challenges_total</code></td><td>Counter</td><td>channel</td><td>OTP challenges issued to non-allowlisted users</td></tr><tr><td><code>moltis_channel_otp_verifications_total</code></td><td>Counter</td><td>channel, result</td><td>OTP verification attempts (<code>approved</code>, <code>wrong_code</code>, <code>locked_out</code>, <code>expired</code>)</td></tr></tbody></table>
 <h3 id="telegram-specific-metrics">Telegram-Specific Metrics</h3>
 
 
