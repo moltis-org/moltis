@@ -99,7 +99,7 @@ build-release-with-wasm: build-wasm-artifacts
 dev-server:
     cargo build --bin moltis
     just codesign-debug
-    MOLTIS_CONFIG_DIR=.moltis/config MOLTIS_DATA_DIR=.moltis/ cargo run --bin moltis
+    MOLTIS_SLACK_API_BASE_URL_ALLOWLIST=localhost,127.0.0.1 MOLTIS_CONFIG_DIR=.moltis/config MOLTIS_DATA_DIR=.moltis/ cargo run --bin moltis
 
 # Build Debian package for the current architecture
 deb: build-release build-wasm-artifacts

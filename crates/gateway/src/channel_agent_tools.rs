@@ -9,7 +9,7 @@ use {
     },
     serde::{Deserialize, Serialize},
     serde_json::{Map, Value, json},
-    std::{net::IpAddr, sync::Arc},
+    std::sync::Arc,
 };
 
 use crate::services::ChannelService;
@@ -470,7 +470,8 @@ fn apply_channel_settings_patch(
             "api_base_url",
             matches!(channel_type, ChannelType::Slack),
         )?;
-        let api_base_url = normalize_slack_api_base_url_setting(api_base_url)?;
+        let api_base_url = moltis_channels::normalize_slack_api_base_url(api_base_url)
+            .map_err(|e| anyhow!("{e}"))?;
         config.insert("api_base_url".into(), json!(api_base_url));
         changes.push("api_base_url".to_string());
     }
@@ -514,62 +515,6 @@ fn apply_channel_settings_patch(
     }
 
     Ok(changes)
-}
-
-fn normalize_slack_api_base_url_setting(api_base_url: &str) -> Result<String> {
-    let trimmed = api_base_url.trim().trim_end_matches('/');
-    let parsed = reqwest::Url::parse(trimmed)
-        .map_err(|e| anyhow!("Slack api_base_url must be an absolute URL: {e}"))?;
-    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-        return Err(anyhow!(
-            "Slack api_base_url must be an absolute HTTP(S) URL"
-        ));
-    }
-    validate_slack_api_base_url_host(&parsed)?;
-    Ok(trimmed.to_string())
-}
-
-fn validate_slack_api_base_url_host(url: &reqwest::Url) -> Result<()> {
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow!("Slack api_base_url must include a host"))?;
-    if host.eq_ignore_ascii_case("localhost") {
-        return Err(anyhow!("Slack api_base_url must not target localhost"));
-    }
-    if let Ok(ip) = host.trim_matches(&['[', ']'][..]).parse::<IpAddr>()
-        && is_disallowed_slack_api_ip(&ip)
-    {
-        return Err(anyhow!(
-            "Slack api_base_url must not target private or local IP {ip}"
-        ));
-    }
-    Ok(())
-}
-
-fn is_disallowed_slack_api_ip(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            let octets = v4.octets();
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || v4.is_multicast()
-                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
-        },
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return is_disallowed_slack_api_ip(&IpAddr::V4(v4));
-            }
-            let first = v6.segments()[0];
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || (first & 0xfe00) == 0xfc00
-                || (first & 0xffc0) == 0xfe80
-        },
-    }
 }
 
 fn ensure_supported(channel_type: ChannelType, field: &str, supported: bool) -> Result<()> {
@@ -1197,7 +1142,7 @@ mod tests {
             .execute(json!({
                 "account_id": "slack-main",
                 "settings": {
-                    "api_base_url": "http://169.254.169.254/latest/meta-data"
+                    "api_base_url": "http://10.0.0.1/api"
                 }
             }))
             .await
@@ -1234,7 +1179,7 @@ mod tests {
             .await
             .expect_err("IPv4-mapped private Slack api_base_url should be rejected");
 
-        assert!(err.to_string().contains("private or local IP"));
+        assert!(err.to_string().contains("cloud metadata address"));
     }
 
     #[tokio::test]

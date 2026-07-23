@@ -178,6 +178,23 @@ The endpoint must be a public HTTP(S) URL. Localhost, private-network,
 link-local, and other non-public IP targets are rejected because Slack API calls
 carry the bot token.
 
+#### Allowing internal hosts
+
+If you deliberately front Slack with a proxy on an internal host, an operator can
+allow specific hosts back in with the `MOLTIS_SLACK_API_BASE_URL_ALLOWLIST`
+environment variable — a comma-separated list of exact hostnames or IPs:
+
+```sh
+MOLTIS_SLACK_API_BASE_URL_ALLOWLIST="proxy.internal,127.0.0.1"
+```
+
+Only hosts on this list bypass the private-address guard, and matching is on the
+exact host (so `localhost` and `127.0.0.1` must each be listed if you want both).
+The allowlist is intentionally an environment variable, not a web-editable
+setting, so this SSRF exception stays under operator control. Cloud metadata
+addresses (`169.254.169.254`, `fd00:ec2::254`) remain blocked even when
+allowlisted.
+
 If using a proxy, ensure it supports Slack's native streaming methods before
 setting `stream_mode = "native"`.
 
