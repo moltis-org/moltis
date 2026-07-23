@@ -4,7 +4,7 @@
 // component that auto-rerenders from sessionStore signals.
 
 import type { VNode } from "preact";
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import {
 	makeBranchIcon,
 	makeChatIcon,
@@ -59,6 +59,12 @@ const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function startOfLocalDay(date: Date): number {
 	return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function millisecondsUntilNextLocalDay(nowMs: number): number {
+	const now = new Date(nowMs);
+	const nextDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+	return Math.max(0, nextDay.getTime() - nowMs);
 }
 
 export function formatSessionTimestamp(epochMs: number, nowMs = Date.now()): string {
@@ -201,10 +207,11 @@ interface SessionItemProps {
 	activeKey: string;
 	depth: number;
 	keyMap: KeyMap;
+	nowMs: number;
 	refreshing: boolean;
 }
 
-function SessionItem({ session, activeKey, depth, keyMap, refreshing }: SessionItemProps): VNode {
+function SessionItem({ session, activeKey, depth, keyMap, nowMs, refreshing }: SessionItemProps): VNode {
 	const isBranch = depth > 0;
 	const active = session.key === activeKey;
 	// Read per-session signals — auto-subscribes for re-render.
@@ -264,7 +271,7 @@ function SessionItem({ session, activeKey, depth, keyMap, refreshing }: SessionI
 					)}
 					{ts > 0 && (
 						<span className="session-time" title={new Date(ts).toLocaleString()}>
-							{formatSessionTimestamp(ts)}
+							{formatSessionTimestamp(ts, nowMs)}
 						</span>
 					)}
 				</div>
@@ -283,6 +290,7 @@ export function SessionList(): VNode {
 	const filterId = projectStore.projectFilterId.value;
 	const tab = sessionStore.sessionListTab.value;
 	const showArchived = sessionStore.showArchivedSessions.value;
+	const [nowMs, setNowMs] = useState(Date.now);
 
 	// Spinner animation via setInterval
 	const spinnersRef = useRef<HTMLDivElement>(null);
@@ -297,6 +305,21 @@ export function SessionList(): VNode {
 			for (const el of els) el.textContent = spinnerFrames[idx];
 		}, 80);
 		return () => clearInterval(timer);
+	}, []);
+
+	// Session date buckets change at local midnight even when no session data
+	// changes. Schedule the next boundary exactly and repeat after each rollover.
+	useEffect(() => {
+		let timer: ReturnType<typeof setTimeout>;
+		const scheduleNextDay = (): void => {
+			const currentTime = Date.now();
+			timer = setTimeout(() => {
+				setNowMs(Date.now());
+				scheduleNextDay();
+			}, millisecondsUntilNextLocalDay(currentTime));
+		};
+		scheduleNextDay();
+		return () => clearTimeout(timer);
 	}, []);
 
 	let filtered = filterId ? allSessions.filter((s) => s.projectId === filterId) : allSessions;
@@ -328,6 +351,7 @@ export function SessionList(): VNode {
 					activeKey={activeKey}
 					depth={depth}
 					keyMap={keyMap}
+					nowMs={nowMs}
 					refreshing={session.key === refreshingKey}
 				/>
 				{children.map((child) => renderTree(child, depth + 1))}

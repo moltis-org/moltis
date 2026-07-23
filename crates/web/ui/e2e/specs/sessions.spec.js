@@ -78,9 +78,11 @@ test.describe("Session management", () => {
 		await expect(items).not.toHaveCount(0);
 	});
 
-	test("session list distinguishes today from older dates", async ({ page }) => {
+	test("session list distinguishes date buckets and refreshes after midnight", async ({ page }) => {
+		await page.clock.install({ time: new Date(2026, 6, 23, 23, 58) });
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
+		await page.clock.pauseAt(new Date(2026, 6, 23, 23, 59, 59, 500));
 
 		const expected = await page.evaluate(() => {
 			const store = window.__moltis_stores?.sessionStore;
@@ -130,6 +132,11 @@ test.describe("Session management", () => {
 				page.locator(`#sessionList .session-item[data-session-key="e2e:date-label:${key}"] .session-time`),
 			).toHaveText(label);
 		}
+
+		await page.clock.fastForward(1_000);
+		await expect(
+			page.locator('#sessionList .session-item[data-session-key="e2e:date-label:today"] .session-time'),
+		).toHaveText(expected.yesterday);
 
 		expect(pageErrors).toEqual([]);
 	});
