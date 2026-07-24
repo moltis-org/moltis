@@ -77,20 +77,25 @@ test.describe("Slack channel settings", () => {
 			.locator("label", { hasText: "Acknowledge with reactions" })
 			.locator('input[type="checkbox"]');
 		const triggerCheckbox = modal.locator("label", { hasText: "Reaction triggers" }).locator('input[type="checkbox"]');
+		const richBlocksCheckbox = modal
+			.locator("label", { hasText: "Rich Block Kit rendering" })
+			.locator('input[type="checkbox"]');
 
-		// Reflects current config: ack on, triggers off.
+		// Reflects current config: ack on, triggers off, rich blocks off.
 		await expect(ackCheckbox).toBeChecked();
 		await expect(triggerCheckbox).not.toBeChecked();
+		await expect(richBlocksCheckbox).not.toBeChecked();
 
-		// Flip both.
+		// Flip all three.
 		await ackCheckbox.uncheck();
 		await triggerCheckbox.check();
+		await richBlocksCheckbox.check();
 
 		await modal.getByRole("button", { name: "Save Changes", exact: true }).click();
 
 		await expect
 			.poll(() => page.evaluate(() => window.__slackUpdateRequest))
-			.toMatchObject({ config: { ack_reactions: false, reaction_triggers: true } });
+			.toMatchObject({ config: { ack_reactions: false, reaction_triggers: true, rich_blocks: true } });
 
 		expect(pageErrors).toEqual([]);
 	});

@@ -73,6 +73,15 @@ impl SlackOutbound {
             .map(|(_, ts)| ts.clone())
     }
 
+    /// Whether Block Kit rich rendering is enabled for the given account.
+    fn get_rich_blocks(&self, account_id: &str) -> bool {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .map(|s| s.config.rich_blocks)
+            .unwrap_or(false)
+    }
+
     /// Get the stream mode for the given account.
     fn get_stream_mode(&self, account_id: &str) -> StreamMode {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
@@ -318,6 +327,44 @@ async fn post_message(
     Ok(resp.ts)
 }
 
+/// Post a message rendered as Block Kit blocks, with `fallback_text` used for
+/// notifications and clients that cannot render blocks.
+async fn post_message_with_blocks(
+    client: &SlackClient<SlackClientHyperHttpsConnector>,
+    token: &SlackApiToken,
+    channel: &str,
+    fallback_text: &str,
+    blocks: &[serde_json::Value],
+    thread_ts: Option<&str>,
+) -> ChannelResult<()> {
+    let session = client.open_session(token);
+    let mut body = serde_json::json!({
+        "channel": channel,
+        "text": fallback_text,
+        "blocks": blocks,
+    });
+    if let Some(ts) = thread_ts {
+        body["thread_ts"] = serde_json::json!(ts);
+    }
+
+    let resp: serde_json::Value = session
+        .http_session_api
+        .http_post("chat.postMessage", &body, None)
+        .await
+        .map_err(|e| ChannelError::unavailable(format!("chat.postMessage (blocks) failed: {e}")))?;
+
+    if resp.get("ok") == Some(&serde_json::Value::Bool(false)) {
+        let err = resp
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        return Err(ChannelError::unavailable(format!(
+            "chat.postMessage (blocks) error: {err}"
+        )));
+    }
+    Ok(())
+}
+
 /// Update an existing message.
 async fn update_message(
     client: &SlackClient<SlackClientHyperHttpsConnector>,
@@ -473,9 +520,25 @@ impl ChannelOutbound for SlackOutbound {
         let thread_ts = self.get_thread_ts(account_id, to, reply_to);
         let slack_text = markdown_to_slack(text);
 
-        let chunks = chunk_message(&slack_text, SLACK_MAX_MESSAGE_LEN);
-        for chunk in chunks {
-            post_message(&client, &token, to, chunk, thread_ts.as_deref()).await?;
+        // Rich Block Kit rendering (opt-in). Falls back to plain chunked text
+        // when disabled or when the content can't be represented as blocks.
+        let rendered_blocks = self
+            .get_rich_blocks(account_id)
+            .then(|| crate::blocks::markdown_to_blocks(text))
+            .flatten();
+
+        if let Some(blocks) = rendered_blocks {
+            let fallback = chunk_message(&slack_text, SLACK_MAX_MESSAGE_LEN)
+                .first()
+                .copied()
+                .unwrap_or(&slack_text);
+            post_message_with_blocks(&client, &token, to, fallback, &blocks, thread_ts.as_deref())
+                .await?;
+        } else {
+            let chunks = chunk_message(&slack_text, SLACK_MAX_MESSAGE_LEN);
+            for chunk in chunks {
+                post_message(&client, &token, to, chunk, thread_ts.as_deref()).await?;
+            }
         }
 
         #[cfg(feature = "metrics")]
@@ -550,8 +613,56 @@ impl ChannelOutbound for SlackOutbound {
         }
     }
 
-    async fn send_typing(&self, _account_id: &str, _to: &str) -> ChannelResult<()> {
-        // Slack bots cannot show typing indicators.
+    async fn send_typing(&self, account_id: &str, to: &str) -> ChannelResult<()> {
+        // Slack bots have no classic typing indicator. When the account opts in
+        // and the message is in an assistant thread, surface a live status via
+        // `assistant.threads.setStatus` instead. Best-effort: any error (e.g.
+        // the app is not an AI/Assistant app) is swallowed at debug.
+        let params = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            let Some(state) = accounts.get(account_id) else {
+                return Ok(());
+            };
+            if !state.config.assistant_status {
+                return Ok(());
+            }
+            // Resolve the thread ts for this channel (assistant threads only).
+            let thread_ts = state
+                .pending_threads
+                .iter()
+                .find(|(k, _)| k.starts_with(&format!("{to}:")))
+                .map(|(_, ts)| ts.clone());
+            thread_ts.map(|ts| {
+                (
+                    state.config.bot_token.expose_secret().clone(),
+                    state.config.api_base_url.clone(),
+                    ts,
+                )
+            })
+        };
+        let Some((bot_token, api_base_url, thread_ts)) = params else {
+            return Ok(());
+        };
+
+        let http = moltis_common::http_client::build_default_http_client();
+        let body = serde_json::json!({
+            "channel_id": to,
+            "thread_ts": thread_ts,
+            "status": "is thinking…",
+        });
+        match http
+            .post(slack_api_method_url(
+                &api_base_url,
+                "assistant.threads.setStatus",
+            )?)
+            .bearer_auth(&bot_token)
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(_) => {},
+            Err(e) => debug!(account_id, to, "assistant.threads.setStatus failed: {e}"),
+        }
         Ok(())
     }
 

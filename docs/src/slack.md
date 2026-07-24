@@ -107,6 +107,8 @@ offered = ["slack"]
 | `ack_reactions` | no | `true` | Acknowledge inbound messages with emoji reactions (👀 → ✅/❌). Only applied when the bot is directly addressed (DM or @mention). |
 | `reaction_triggers` | no | `false` | Route inbound user reactions into the agent as messages (e.g. react ✅ to approve). |
 | `reaction_trigger_emojis` | no | `[]` | When `reaction_triggers` is on, only these emoji shortcodes trigger the agent. Empty = any emoji. |
+| `rich_blocks` | no | `false` | Render replies as Block Kit blocks (headings, dividers, code) with a plain-text fallback. |
+| `assistant_status` | no | `false` | Show a live "is thinking…" status via `assistant.threads.setStatus`. Requires an AI/Assistant app. |
 | `channel_overrides` | no | `{}` | Per-channel model/provider overrides (see below) |
 | `user_overrides` | no | `{}` | Per-user model/provider overrides (see below) |
 
@@ -273,8 +275,11 @@ with emoji reactions so you know your message was received and is being worked
 on:
 
 - 👀 (`eyes`) is added as soon as the message starts processing.
+- While the agent runs, the reaction swaps to a **phase** emoji reflecting the
+  current tool — 🌐 web, 💻 shell, ✏️ file edits, 🛠️ other tools — and shows ⏳ if
+  a step runs long. Rapid changes are debounced so the reaction doesn't flicker.
 - ✅ (`white_check_mark`) replaces it when the reply is delivered.
-- ❌ (`x`) replaces it if the turn fails.
+- ❌ (`x`) replaces it if the turn fails. A cancelled turn just removes 👀.
 
 Reactions are only added when the bot is **directly addressed** — a direct
 message, or a channel message that @mentions the bot — never on general channel

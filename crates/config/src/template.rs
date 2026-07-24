@@ -816,8 +816,10 @@ port = {port}                           # Port number (auto-generated for this i
 # dm_policy = "allowlist"
 # allowlist = []
 # thread_replies = true
-# ack_reactions = true       # 👀 on receipt, ✅/❌ on completion (DMs + @mentions)
+# ack_reactions = true       # 👀 on receipt, phase emoji while working, ✅/❌ on completion
 # reaction_triggers = false  # route user reactions into the agent (react ✅ to approve)
+# rich_blocks = false        # render replies as Block Kit blocks (fallback to plain text)
+# assistant_status = false   # live "is thinking…" status (needs an AI/Assistant app)
 # otp_self_approval = true
 # otp_cooldown_secs = 300
 

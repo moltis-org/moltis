@@ -119,7 +119,21 @@ pub async fn start_socket_mode(
     Ok(())
 }
 
-/// Run the Socket Mode listener until cancelled.
+/// Initial reconnect backoff after an unexpected socket disconnect.
+const RECONNECT_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(1);
+/// Maximum reconnect backoff.
+const RECONNECT_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
+/// A connection that stayed up at least this long is considered healthy, so the
+/// backoff resets to its initial value on the next disconnect.
+const RECONNECT_STABLE_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Run the Socket Mode listener until cancelled, reconnecting on disconnect.
+///
+/// slack-morphism's `serve()` returns when the socket drops; on its own that
+/// silently kills inbound delivery. This supervises the connection: on any
+/// unexpected exit (or a failed `listen_for`) it rebuilds the listener and
+/// retries with exponential backoff + jitter, resetting the backoff after a
+/// healthy connection. Cancellation always wins the race and shuts down cleanly.
 async fn run_socket_listener(
     account_id: &str,
     client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
@@ -127,42 +141,103 @@ async fn run_socket_listener(
     accounts: AccountStateMap,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let listener_state = ListenerState {
-        account_id: account_id.to_string(),
-        accounts,
-    };
+    let mut backoff = RECONNECT_INITIAL_BACKOFF;
 
-    // Socket Mode callbacks — must be function pointers, so we use user state.
-    let callbacks = SlackSocketModeListenerCallbacks::new()
-        .with_push_events(push_events_callback)
-        .with_command_events(command_events_callback)
-        .with_interaction_events(interaction_events_callback);
+    while !cancel.is_cancelled() {
+        let listener_state = ListenerState {
+            account_id: account_id.to_string(),
+            accounts: accounts.clone(),
+        };
 
-    let listener_environment = Arc::new(
-        SlackClientEventsListenerEnvironment::new(Arc::clone(&client))
-            .with_error_handler(error_handler)
-            .with_user_state(listener_state),
-    );
+        // Callbacks must be function pointers, so per-account data rides on the
+        // listener environment's user state.
+        let callbacks = SlackSocketModeListenerCallbacks::new()
+            .with_push_events(push_events_callback)
+            .with_command_events(command_events_callback)
+            .with_interaction_events(interaction_events_callback);
 
-    let config = SlackClientSocketModeConfig::new();
-    let socket_listener =
-        SlackClientSocketModeListener::new(&config, listener_environment, callbacks);
+        let listener_environment = Arc::new(
+            SlackClientEventsListenerEnvironment::new(Arc::clone(&client))
+                .with_error_handler(error_handler)
+                .with_user_state(listener_state),
+        );
 
-    socket_listener.listen_for(&app_token).await?;
+        let config = SlackClientSocketModeConfig::new();
+        let socket_listener =
+            SlackClientSocketModeListener::new(&config, listener_environment, callbacks);
 
-    info!(account_id, "slack socket mode listener started");
-
-    tokio::select! {
-        () = cancel.cancelled() => {
-            info!(account_id, "slack socket mode shutting down");
-            socket_listener.shutdown().await;
+        if let Err(e) = socket_listener.listen_for(&app_token).await {
+            warn!(account_id, "slack socket mode connect failed: {e}");
+            if !backoff_sleep(&cancel, &mut backoff).await {
+                break;
+            }
+            continue;
         }
-        _code = socket_listener.serve() => {
-            warn!(account_id, "slack socket mode listener unexpectedly stopped");
+
+        info!(account_id, "slack socket mode listener started");
+        let connected_at = tokio::time::Instant::now();
+
+        tokio::select! {
+            () = cancel.cancelled() => {
+                info!(account_id, "slack socket mode shutting down");
+                socket_listener.shutdown().await;
+                break;
+            }
+            _code = socket_listener.serve() => {
+                socket_listener.shutdown().await;
+                // A connection that lasted a while was healthy; reset backoff.
+                if connected_at.elapsed() >= RECONNECT_STABLE_AFTER {
+                    backoff = RECONNECT_INITIAL_BACKOFF;
+                }
+                warn!(
+                    account_id,
+                    backoff_secs = backoff.as_secs(),
+                    "slack socket mode disconnected; reconnecting"
+                );
+                if !backoff_sleep(&cancel, &mut backoff).await {
+                    break;
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+/// Sleep for the current backoff (with jitter), then double it up to the cap.
+///
+/// Returns `false` if cancellation fired during the sleep (caller should stop).
+async fn backoff_sleep(
+    cancel: &tokio_util::sync::CancellationToken,
+    backoff: &mut std::time::Duration,
+) -> bool {
+    let delay = jittered(*backoff);
+    tokio::select! {
+        () = cancel.cancelled() => return false,
+        () = tokio::time::sleep(delay) => {},
+    }
+    *backoff = next_backoff(*backoff);
+    true
+}
+
+/// Double the backoff, capped at [`RECONNECT_MAX_BACKOFF`].
+fn next_backoff(current: std::time::Duration) -> std::time::Duration {
+    (current * 2).min(RECONNECT_MAX_BACKOFF)
+}
+
+/// Apply +/-25% jitter to a backoff duration to avoid reconnect thundering herds.
+///
+/// Uses the wall-clock nanosecond fraction as a cheap entropy source (no `rand`
+/// dependency); jitter quality is not security-relevant here.
+fn jittered(base: std::time::Duration) -> std::time::Duration {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    // Map nanos into [-0.25, +0.25].
+    let frac = (f64::from(nanos) / f64::from(u32::MAX)) - 0.5;
+    let factor = 1.0 + frac * 0.5;
+    base.mul_f64(factor.clamp(0.5, 1.5))
 }
 
 /// Error handler for Socket Mode.
@@ -1020,6 +1095,27 @@ async fn send_otp_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backoff_doubles_and_caps() {
+        use std::time::Duration;
+        assert_eq!(next_backoff(Duration::from_secs(1)), Duration::from_secs(2));
+        assert_eq!(next_backoff(Duration::from_secs(2)), Duration::from_secs(4));
+        // Caps at RECONNECT_MAX_BACKOFF (30s).
+        assert_eq!(next_backoff(Duration::from_secs(20)), RECONNECT_MAX_BACKOFF);
+        assert_eq!(next_backoff(RECONNECT_MAX_BACKOFF), RECONNECT_MAX_BACKOFF);
+    }
+
+    #[test]
+    fn jitter_stays_within_bounds() {
+        use std::time::Duration;
+        let base = Duration::from_secs(10);
+        for _ in 0..100 {
+            let j = jittered(base);
+            assert!(j >= base.mul_f64(0.5), "jitter {j:?} below lower bound");
+            assert!(j <= base.mul_f64(1.5), "jitter {j:?} above upper bound");
+        }
+    }
 
     #[test]
     fn ack_target_dm_is_acknowledged() {

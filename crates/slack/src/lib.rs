@@ -4,6 +4,7 @@
 //! Handles inbound DMs and channel messages, applies access control
 //! policies, and dispatches messages to the chat session.
 
+pub mod blocks;
 pub mod channel_webhook_verifier;
 pub mod client;
 pub mod commands;
