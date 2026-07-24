@@ -11,6 +11,12 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         // does not delay channel feedback.
         let typing_done = start_channel_typing_loop(state, &reply_to);
 
+        // Acknowledge receipt with a reaction (👀) on the exact inbound message
+        // before any reply text arrives. No-op unless the channel populated
+        // `ack_message_id` (i.e. the bot was directly addressed and reactions
+        // are enabled). Finalized to ✅/❌ after the turn completes below.
+        channel_ack_received(state, &reply_to).await;
+
         let session_key = if let Some(ref sm) = state.services.session_metadata {
             resolve_channel_session(&reply_to, sm).await
         } else {
@@ -222,6 +228,9 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         if let Some(done_tx) = typing_done {
             let _ = done_tx.send(());
         }
+
+        // Swap the 👀 acknowledgment for ✅ (success) or ❌ (failure).
+        channel_ack_finish(state, &reply_to, send_result.is_ok()).await;
 
         if let Err(e) = send_result {
             error!("channel dispatch_to_chat failed: {e}");

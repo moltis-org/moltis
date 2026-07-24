@@ -443,6 +443,7 @@ impl MsTeamsPlugin {
 
         let message_id = activity.id.clone();
         let reply_to = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::MsTeams,
             account_id: account_id.to_string(),
             chat_id: chat_id.clone(),

@@ -53,6 +53,7 @@ fn outbound_to_for_msg(msg: &Message) -> String {
 
 fn reply_target_for_msg(account_id: &str, msg: &Message) -> ChannelReplyTarget {
     ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: ChannelType::Telegram,
         account_id: account_id.to_string(),
         chat_id: msg.chat.id.0.to_string(),
@@ -453,6 +454,7 @@ pub async fn handle_message_direct(
         // Handle location sharing: update stored location and resolve any pending tool request.
         let resolved = if let Some(ref sink) = event_sink {
             let reply_target = ChannelReplyTarget {
+                ack_message_id: None,
                 channel_type: ChannelType::Telegram,
                 account_id: account_id.to_string(),
                 chat_id: msg.chat.id.0.to_string(),
@@ -834,6 +836,7 @@ pub async fn handle_edited_location(
 
     if let Some(ref sink) = event_sink {
         let reply_target = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: account_id.to_string(),
             chat_id: msg.chat.id.0.to_string(),
@@ -926,6 +929,7 @@ pub async fn handle_callback_query(
         .map(|tid| tid.0.0.to_string());
     let sender_id = query.from.id.0.to_string();
     let reply_target = ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: ChannelType::Telegram,
         account_id: account_id.to_string(),
         chat_id: chat_id.clone(),

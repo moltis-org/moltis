@@ -118,6 +118,7 @@ pub async fn handle_event(
     }
 
     let reply_to = ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: ChannelType::Signal,
         account_id: account_id.to_string(),
         chat_id: chat_id.clone(),

@@ -300,6 +300,7 @@ pub async fn handle_room_message(
     .await;
 
     let reply_to = ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: ChannelType::Matrix,
         account_id: account_id.clone(),
         chat_id: room_id.clone(),
@@ -569,6 +570,7 @@ pub async fn handle_poll_response(
     record_message_received();
 
     let reply_to = ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: ChannelType::Matrix,
         account_id: account_id.clone(),
         chat_id: room_id,

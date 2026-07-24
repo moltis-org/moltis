@@ -333,6 +333,89 @@ fn start_channel_typing_loop(
     Some(done_tx)
 }
 
+/// Emoji shortcodes for acknowledgment reactions (Slack-style names). Only
+/// channels that populate [`ChannelReplyTarget::ack_message_id`] receive these;
+/// today that is Slack, whose Web API expects shortcodes (not raw glyphs).
+const ACK_RECEIVED_EMOJI: &str = "eyes";
+const ACK_SUCCESS_EMOJI: &str = "white_check_mark";
+const ACK_ERROR_EMOJI: &str = "x";
+
+/// Add the "received" reaction (👀) to the exact inbound message when the
+/// channel asked for acknowledgment reactions (`ack_message_id` set). This
+/// signals "I got your message and I'm working on it" before any reply text
+/// arrives — the primary ack path for Slack, whose bots cannot show typing.
+///
+/// Best-effort: a missing outbound or a reaction API error is logged at debug
+/// (`already_reacted` / `missing_scope` are expected) and never blocks the turn.
+async fn channel_ack_received(state: &Arc<GatewayState>, reply_to: &ChannelReplyTarget) {
+    let Some(message_id) = reply_to.ack_message_id.as_deref() else {
+        return;
+    };
+    let Some(outbound) = state.services.channel_outbound_arc() else {
+        return;
+    };
+    if let Err(e) = outbound
+        .add_reaction(
+            &reply_to.account_id,
+            &reply_to.chat_id,
+            message_id,
+            ACK_RECEIVED_EMOJI,
+        )
+        .await
+    {
+        debug!(
+            account_id = %reply_to.account_id,
+            chat_id = %reply_to.chat_id,
+            "ack reaction (received) failed: {e}"
+        );
+    }
+}
+
+/// Finalize acknowledgment reactions after the turn: remove 👀 and add ✅ on
+/// success or ❌ on failure. Best-effort; mirrors [`channel_ack_received`].
+async fn channel_ack_finish(
+    state: &Arc<GatewayState>,
+    reply_to: &ChannelReplyTarget,
+    success: bool,
+) {
+    let Some(message_id) = reply_to.ack_message_id.as_deref() else {
+        return;
+    };
+    let Some(outbound) = state.services.channel_outbound_arc() else {
+        return;
+    };
+    if let Err(e) = outbound
+        .remove_reaction(
+            &reply_to.account_id,
+            &reply_to.chat_id,
+            message_id,
+            ACK_RECEIVED_EMOJI,
+        )
+        .await
+    {
+        debug!(
+            account_id = %reply_to.account_id,
+            chat_id = %reply_to.chat_id,
+            "ack reaction (remove received) failed: {e}"
+        );
+    }
+    let emoji = if success {
+        ACK_SUCCESS_EMOJI
+    } else {
+        ACK_ERROR_EMOJI
+    };
+    if let Err(e) = outbound
+        .add_reaction(&reply_to.account_id, &reply_to.chat_id, message_id, emoji)
+        .await
+    {
+        debug!(
+            account_id = %reply_to.account_id,
+            chat_id = %reply_to.chat_id,
+            "ack reaction (finish) failed: {e}"
+        );
+    }
+}
+
 async fn resolve_channel_agent_id(
     state: &Arc<GatewayState>,
     session_key: &str,

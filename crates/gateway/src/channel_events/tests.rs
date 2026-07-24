@@ -29,6 +29,7 @@ fn channel_event_serialization() {
 #[test]
 fn channel_session_key_format() {
     let target = ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: ChannelType::Telegram,
         account_id: "bot1".into(),
         chat_id: "12345".into(),
@@ -41,6 +42,7 @@ fn channel_session_key_format() {
 #[test]
 fn channel_session_key_group() {
     let target = ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: ChannelType::Telegram,
         account_id: "bot1".into(),
         chat_id: "-100999".into(),
@@ -56,6 +58,7 @@ fn channel_session_key_group() {
 #[test]
 fn channel_session_key_forum_topic() {
     let target = ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: ChannelType::Telegram,
         account_id: "bot1".into(),
         chat_id: "-100999".into(),

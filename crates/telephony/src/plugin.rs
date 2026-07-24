@@ -94,6 +94,7 @@ impl TelephonyPlugin {
         let config = self.accounts.get(account_id).map(|a| &a.config);
 
         let reply_to = moltis_channels::ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: moltis_channels::ChannelType::Telephony,
             account_id: account_id.to_string(),
             chat_id: call_id.to_string(),

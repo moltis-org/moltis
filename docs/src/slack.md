@@ -46,6 +46,8 @@ Before configuring Moltis, create a Slack app:
    - `im:history` — read DM history
    - `im:read` — view DM metadata
    - `channels:history` — read channel messages (for `mention_mode = "always"`)
+   - `reactions:write` — add acknowledgment reactions (👀/✅/❌; see [Acknowledgment Reactions](#acknowledgment-reactions))
+   - `reactions:read` — read reactions (only for inbound reaction triggers)
 4. Click **Install to Workspace** and copy the **Bot User OAuth Token** (`xoxb-...`)
 5. For Socket Mode (recommended):
    - Go to **Socket Mode** and enable it
@@ -102,6 +104,9 @@ offered = ["slack"]
 | `stream_mode` | no | `"edit_in_place"` | Streaming mode: `"edit_in_place"`, `"native"`, or `"off"` |
 | `edit_throttle_ms` | no | `500` | Minimum milliseconds between streaming edit updates |
 | `thread_replies` | no | `true` | Reply in threads |
+| `ack_reactions` | no | `true` | Acknowledge inbound messages with emoji reactions (👀 → ✅/❌). Only applied when the bot is directly addressed (DM or @mention). |
+| `reaction_triggers` | no | `false` | Route inbound user reactions into the agent as messages (e.g. react ✅ to approve). |
+| `reaction_trigger_emojis` | no | `[]` | When `reaction_triggers` is on, only these emoji shortcodes trigger the agent. Empty = any emoji. |
 | `channel_overrides` | no | `{}` | Per-channel model/provider overrides (see below) |
 | `user_overrides` | no | `{}` | Per-user model/provider overrides (see below) |
 
@@ -133,6 +138,7 @@ model_provider = "anthropic"
 stream_mode = "edit_in_place"
 edit_throttle_ms = 500
 thread_replies = true
+ack_reactions = true
 
 # Per-channel override: use a different model in a specific Slack channel
 [channels.slack.my-bot.channel_overrides.C0123456789]
@@ -259,6 +265,41 @@ The `edit_in_place` mode throttles updates to `edit_throttle_ms` milliseconds
 By default (`thread_replies = true`), the bot replies in a thread attached to
 the user's message. Set `thread_replies = false` to have the bot reply directly
 in the channel.
+
+## Acknowledgment Reactions
+
+Because Slack bots cannot show a typing indicator, Moltis acknowledges messages
+with emoji reactions so you know your message was received and is being worked
+on:
+
+- 👀 (`eyes`) is added as soon as the message starts processing.
+- ✅ (`white_check_mark`) replaces it when the reply is delivered.
+- ❌ (`x`) replaces it if the turn fails.
+
+Reactions are only added when the bot is **directly addressed** — a direct
+message, or a channel message that @mentions the bot — never on general channel
+chatter. Set `ack_reactions = false` to disable them.
+
+The bot needs the `reactions:write` OAuth scope (and `reactions:read` if you
+also use inbound reaction triggers). Reaction failures are non-fatal and never
+block the reply.
+
+## Reaction Triggers
+
+With `reaction_triggers = true`, when a user adds an emoji reaction to a message,
+Moltis routes it into the agent as a synthetic message (threaded under the
+reacted message so the agent sees the original content as context). This enables
+flows like "react ✅ to approve" or "react 👍 to continue".
+
+- The bot's own acknowledgment reactions (👀/✅/❌) are always ignored, so
+  triggers never loop.
+- Only *added* reactions trigger (not removals), and only from senders who pass
+  the normal DM/channel access policy.
+- Restrict which emoji count with `reaction_trigger_emojis` (shortcodes without
+  colons, e.g. `["white_check_mark", "thumbsup"]`). Empty means any emoji.
+
+This requires the `reactions:read` scope and the `reaction_added` event
+subscription.
 
 ## Troubleshooting
 

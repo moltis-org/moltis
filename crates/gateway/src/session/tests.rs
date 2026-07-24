@@ -985,6 +985,7 @@ mod tests {
         let key = "telegram:bot-main:-100123";
         metadata.upsert(key, None).await.unwrap();
         let binding_json = serde_json::to_string(&moltis_channels::ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: moltis_channels::ChannelType::Telegram,
             account_id: "bot-main".to_string(),
             chat_id: "-100123".to_string(),

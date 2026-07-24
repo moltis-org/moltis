@@ -1417,6 +1417,7 @@ mod tests {
     async fn generated_image_payload_dispatches_to_telegram_as_media() {
         let outbound = Arc::new(RecordingOutbound::default());
         let targets = vec![ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "telegram-main".into(),
             chat_id: "-100123".into(),
@@ -1452,6 +1453,7 @@ mod tests {
     async fn generated_image_payload_dispatches_to_matrix_as_media() {
         let outbound = Arc::new(RecordingOutbound::default());
         let targets = vec![ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Matrix,
             account_id: "matrix-main".into(),
             chat_id: "!room:example.org".into(),

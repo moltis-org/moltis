@@ -89,6 +89,8 @@ export interface ChannelConfig {
 	group_policy?: string;
 	signing_secret?: string;
 	channel_allowlist?: string[];
+	ack_reactions?: boolean;
+	reaction_triggers?: boolean;
 	// Matrix
 	homeserver?: string;
 	user_id?: string;

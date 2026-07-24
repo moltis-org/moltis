@@ -47,6 +47,8 @@ export function EditChannelModal(): VNode | null {
 	const editSignalAccount = useSignal("");
 	const editSignalHttpUrl = useSignal("http://127.0.0.1:8080");
 	const editSlackApiBaseUrl = useSignal("https://slack.com/api");
+	const editSlackAckReactions = useSignal(true);
+	const editSlackReactionTriggers = useSignal(false);
 	const editChannelNamePatterns = useSignal<string[]>([]);
 	const editCategoryAllowlist = useSignal<string[]>([]);
 	const editAdvancedConfigPatch = useSignal("");
@@ -75,6 +77,8 @@ export function EditChannelModal(): VNode | null {
 		editSignalAccount.value = (ch?.config?.account as string) || "";
 		editSignalHttpUrl.value = (ch?.config?.http_url as string) || "http://127.0.0.1:8080";
 		editSlackApiBaseUrl.value = (ch?.config?.api_base_url as string) || "https://slack.com/api";
+		editSlackAckReactions.value = ch?.config?.ack_reactions !== false;
+		editSlackReactionTriggers.value = ch?.config?.reaction_triggers === true;
 		editChannelNamePatterns.value = (ch?.config?.channel_name_patterns || []) as string[];
 		editCategoryAllowlist.value = (ch?.config?.category_allowlist || []) as string[];
 		editAdvancedConfigPatch.value = "";
@@ -193,6 +197,8 @@ export function EditChannelModal(): VNode | null {
 		}
 		if (isSlack) {
 			updateConfig.api_base_url = editSlackApiBaseUrl.value.trim() || "https://slack.com/api";
+			updateConfig.ack_reactions = editSlackAckReactions.value;
+			updateConfig.reaction_triggers = editSlackReactionTriggers.value;
 		}
 		addChannelCredentials(updateConfig, form);
 		addModelToConfig(updateConfig);
@@ -401,6 +407,37 @@ export function EditChannelModal(): VNode | null {
 						<div className="text-xs text-[var(--muted)]">
 							Use Slack's default endpoint unless you use a Slack-compatible proxy or test gateway.
 						</div>
+						<label className="flex items-start gap-2 cursor-pointer mt-1">
+							<input
+								type="checkbox"
+								checked={editSlackAckReactions.value}
+								onChange={(e) => {
+									editSlackAckReactions.value = targetChecked(e);
+								}}
+							/>
+							<span className="flex flex-col gap-1">
+								<span className="text-xs font-medium text-[var(--text-strong)]">Acknowledge with reactions</span>
+								<span className="text-xs text-[var(--muted)]">
+									React to messages that mention the bot (or DMs) with 👀 on receipt, then ✅ or ❌ when done.
+								</span>
+							</span>
+						</label>
+						<label className="flex items-start gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={editSlackReactionTriggers.value}
+								onChange={(e) => {
+									editSlackReactionTriggers.value = targetChecked(e);
+								}}
+							/>
+							<span className="flex flex-col gap-1">
+								<span className="text-xs font-medium text-[var(--text-strong)]">Reaction triggers</span>
+								<span className="text-xs text-[var(--muted)]">
+									Let users drive the bot by reacting to a message (e.g. react ✅ to approve). Restrict which emoji
+									trigger it via <code>reaction_trigger_emojis</code> in Advanced config.
+								</span>
+							</span>
+						</label>
 					</div>
 				)}
 				{isNostr && (

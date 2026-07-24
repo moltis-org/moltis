@@ -262,6 +262,7 @@ pub async fn handle_verified_interaction_webhook(
 
     if let Some(sink) = event_sink {
         let reply_to = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),
             chat_id: channel_id.to_string(),
@@ -312,6 +313,7 @@ pub async fn handle_verified_command_webhook(
 
     if let Some(sink) = event_sink {
         let reply_to = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),
             chat_id: channel_id,
@@ -369,10 +371,12 @@ async fn dispatch_event_callback(
                 .get("thread_ts")
                 .and_then(|v| v.as_str())
                 .map(String::from);
+            let message_ts = event.get("ts").and_then(|v| v.as_str()).map(String::from);
 
             if !channel.is_empty() && !user.is_empty() {
                 crate::socket::handle_inbound(
-                    account_id, channel, user, text, thread_ts, None, true, // is_mention
+                    account_id, channel, user, text, thread_ts, message_ts, None,
+                    true, // is_mention
                     accounts,
                 )
                 .await;
@@ -390,25 +394,16 @@ async fn dispatch_event_callback(
 
                 if !user.is_empty() && !reaction.is_empty() && !item_channel.is_empty() {
                     let added = event_type == "reaction_added";
-
-                    // Dispatch reaction via the event sink directly since
-                    // handle_reaction_event expects a SlackReactionsItem.
-                    let event_sink = {
-                        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
-                        accts.get(account_id).and_then(|s| s.event_sink.clone())
-                    };
-                    if let Some(sink) = event_sink {
-                        sink.emit(moltis_channels::ChannelEvent::ReactionChange {
-                            channel_type: ChannelType::Slack,
-                            account_id: account_id.to_string(),
-                            chat_id: item_channel.to_string(),
-                            message_id: message_ts.to_string(),
-                            user_id: user.to_string(),
-                            emoji: reaction.to_string(),
-                            added,
-                        })
-                        .await;
-                    }
+                    crate::socket::dispatch_reaction(
+                        account_id,
+                        user,
+                        reaction,
+                        item_channel.to_string(),
+                        message_ts.to_string(),
+                        added,
+                        accounts,
+                    )
+                    .await;
                 }
             }
         },
@@ -493,6 +488,7 @@ pub async fn handle_interaction_webhook(
 
     if let Some(sink) = event_sink {
         let reply_to = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),
             chat_id: channel_id.to_string(),

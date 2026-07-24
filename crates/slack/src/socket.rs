@@ -207,12 +207,15 @@ async fn push_events_callback(
                 .as_ref()
                 .map(|ts| ts.to_string());
 
+            let message_ts = Some(mention_event.origin.ts.to_string());
+
             handle_inbound(
                 &listener_state.account_id,
                 &channel,
                 &user,
                 text,
                 thread_ts,
+                message_ts,
                 None,
                 true, // is_mention
                 &listener_state.accounts,
@@ -282,6 +285,7 @@ async fn command_events_callback(
 
     if let Some(sink) = event_sink {
         let reply_to = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),
             chat_id: event.channel_id.to_string(),
@@ -349,6 +353,7 @@ async fn interaction_events_callback(
 
     if let Some(sink) = event_sink {
         let reply_to = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),
             chat_id: channel_id,
@@ -409,8 +414,10 @@ pub(crate) async fn handle_message_event(
         .unwrap_or("");
 
     let thread_ts = event.origin.thread_ts.as_ref().map(|ts| ts.to_string());
+    // The exact ts of this inbound message (for acknowledgment reactions).
+    let message_ts = event.origin.ts.to_string();
     // Use thread_ts if available, otherwise use the message ts for threading.
-    let reply_thread = thread_ts.or_else(|| Some(event.origin.ts.to_string()));
+    let reply_thread = thread_ts.or_else(|| Some(message_ts.clone()));
 
     // Detect if this is a mention.
     let bot_user_id = {
@@ -427,6 +434,7 @@ pub(crate) async fn handle_message_event(
         &user_id,
         text,
         reply_thread,
+        Some(message_ts),
         event.sender.username.clone(),
         is_mention,
         accounts,
@@ -444,6 +452,7 @@ pub(crate) async fn handle_inbound(
     user_id: &str,
     text: &str,
     thread_ts: Option<String>,
+    message_ts: Option<String>,
     username: Option<String>,
     is_mention: bool,
     accounts: &AccountStateMap,
@@ -572,9 +581,15 @@ pub(crate) async fn handle_inbound(
         }
     }
 
+    // Acknowledge with reactions only when the bot is directly addressed
+    // (DM or @mention) — never on general channel chatter — and the account
+    // has ack reactions enabled.
+    let ack_message_id = ack_reaction_target(config.ack_reactions, is_dm, is_mention, message_ts);
+
     // Dispatch to chat.
     if let Some(sink) = &event_sink {
         let reply_to = ChannelReplyTarget {
+            ack_message_id,
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),
             chat_id: channel_id.to_string(),
@@ -629,22 +644,147 @@ pub(crate) async fn handle_reaction_event(
         _ => return,
     };
 
-    let event_sink = {
+    dispatch_reaction(
+        account_id, user_id, emoji, channel_id, message_ts, added, accounts,
+    )
+    .await;
+}
+
+/// Core reaction handling shared by Socket Mode and the Events API.
+///
+/// Always emits a [`ChannelEvent::ReactionChange`] for observers; additionally
+/// routes the reaction into the agent as a synthetic message when
+/// `reaction_triggers` is enabled and the reaction is eligible.
+pub(crate) async fn dispatch_reaction(
+    account_id: &str,
+    user_id: &str,
+    emoji: &str,
+    channel_id: String,
+    message_ts: String,
+    added: bool,
+    accounts: &AccountStateMap,
+) {
+    let (config, event_sink, bot_user_id) = {
         let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
-        accts.get(account_id).and_then(|s| s.event_sink.clone())
+        match accts.get(account_id) {
+            Some(state) => (
+                state.config.clone(),
+                state.event_sink.clone(),
+                state.bot_user_id.clone(),
+            ),
+            None => return,
+        }
     };
 
-    if let Some(sink) = event_sink {
-        sink.emit(ChannelEvent::ReactionChange {
-            channel_type: ChannelType::Slack,
-            account_id: account_id.to_string(),
-            chat_id: channel_id,
-            message_id: message_ts,
-            user_id: user_id.to_string(),
-            emoji: emoji.to_string(),
-            added,
-        })
-        .await;
+    let Some(sink) = event_sink else {
+        return;
+    };
+
+    // Always surface the raw reaction change to observers (web UI, hooks).
+    sink.emit(ChannelEvent::ReactionChange {
+        channel_type: ChannelType::Slack,
+        account_id: account_id.to_string(),
+        chat_id: channel_id.clone(),
+        message_id: message_ts.clone(),
+        user_id: user_id.to_string(),
+        emoji: emoji.to_string(),
+        added,
+    })
+    .await;
+
+    // Optionally route the reaction into the agent as a message. The bot's own
+    // acknowledgment reactions (👀/✅/❌) are always ignored to avoid loops.
+    let is_self = bot_user_id.as_deref() == Some(user_id);
+    if !reaction_should_trigger(
+        config.reaction_triggers,
+        added,
+        is_self,
+        emoji,
+        &config.reaction_trigger_emojis,
+    ) {
+        return;
+    }
+
+    let is_dm = channel_id.starts_with('D');
+    let access_granted = check_access(
+        is_dm,
+        user_id,
+        &channel_id,
+        &config.dm_policy,
+        &config.group_policy,
+        &config.allowlist,
+        &config.channel_allowlist,
+    );
+    if !access_granted {
+        debug!(
+            account_id,
+            user_id, "slack reaction trigger denied by access control"
+        );
+        return;
+    }
+
+    // Thread the synthetic message under the reacted message so the agent sees
+    // the original content as thread context (dispatch fetches thread history).
+    let reply_to = ChannelReplyTarget {
+        channel_type: ChannelType::Slack,
+        account_id: account_id.to_string(),
+        chat_id: channel_id,
+        message_id: Some(message_ts),
+        thread_id: None,
+        // Never acknowledge a reaction trigger with another reaction.
+        ack_message_id: None,
+    };
+
+    let meta = ChannelMessageMeta {
+        channel_type: ChannelType::Slack,
+        sender_name: None,
+        username: None,
+        sender_id: Some(user_id.to_string()),
+        message_kind: Some(ChannelMessageKind::Text),
+        model: config
+            .resolve_model(&reply_to.chat_id, user_id)
+            .map(String::from),
+        agent_id: config
+            .resolve_agent_id(&reply_to.chat_id, user_id)
+            .map(String::from),
+        audio_filename: None,
+        documents: None,
+    };
+
+    let synthetic = format!("<@{user_id}> reacted :{emoji}: to this message.");
+    sink.dispatch_to_chat(&synthetic, reply_to, meta).await;
+}
+
+/// Decide whether an inbound reaction should be routed to the agent.
+///
+/// Triggers only when: the feature is enabled, the reaction was *added* (not
+/// removed), it is not the bot's own reaction, and — if an emoji allowlist is
+/// configured — the emoji is on it. An empty allowlist matches any emoji.
+fn reaction_should_trigger(
+    enabled: bool,
+    added: bool,
+    is_self: bool,
+    emoji: &str,
+    allowlist: &[String],
+) -> bool {
+    enabled && added && !is_self && (allowlist.is_empty() || allowlist.iter().any(|e| e == emoji))
+}
+
+/// Decide which inbound message (if any) to acknowledge with reactions.
+///
+/// Returns the message ts only when acknowledgment reactions are enabled for
+/// the account and the bot was directly addressed — a 1:1 DM or an @mention.
+/// General channel chatter never earns a reaction (avoids emoji noise).
+fn ack_reaction_target(
+    ack_reactions_enabled: bool,
+    is_dm: bool,
+    is_mention: bool,
+    message_ts: Option<String>,
+) -> Option<String> {
+    if ack_reactions_enabled && (is_dm || is_mention) {
+        message_ts
+    } else {
+        None
     }
 }
 
@@ -867,6 +1007,63 @@ async fn send_otp_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ack_target_dm_is_acknowledged() {
+        assert_eq!(
+            ack_reaction_target(true, true, false, Some("111.222".into())),
+            Some("111.222".into())
+        );
+    }
+
+    #[test]
+    fn ack_target_mention_is_acknowledged() {
+        assert_eq!(
+            ack_reaction_target(true, false, true, Some("111.222".into())),
+            Some("111.222".into())
+        );
+    }
+
+    #[test]
+    fn ack_target_unaddressed_channel_message_is_not_acknowledged() {
+        assert_eq!(
+            ack_reaction_target(true, false, false, Some("111.222".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn ack_target_disabled_config_never_acknowledges() {
+        assert_eq!(
+            ack_reaction_target(false, true, true, Some("111.222".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn reaction_trigger_requires_enabled_added_and_not_self() {
+        // Disabled → never.
+        assert!(!reaction_should_trigger(false, true, false, "x", &[]));
+        // Removal → never.
+        assert!(!reaction_should_trigger(true, false, false, "x", &[]));
+        // Bot's own reaction → never.
+        assert!(!reaction_should_trigger(true, true, true, "eyes", &[]));
+        // Enabled add by another user with no allowlist → trigger.
+        assert!(reaction_should_trigger(true, true, false, "x", &[]));
+    }
+
+    #[test]
+    fn reaction_trigger_respects_emoji_allowlist() {
+        let allow = vec!["white_check_mark".to_string()];
+        assert!(reaction_should_trigger(
+            true,
+            true,
+            false,
+            "white_check_mark",
+            &allow
+        ));
+        assert!(!reaction_should_trigger(true, true, false, "x", &allow));
+    }
 
     #[test]
     fn dm_open_allows_anyone() {
