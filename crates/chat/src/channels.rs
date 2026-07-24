@@ -851,6 +851,14 @@ pub(crate) async fn send_tool_status_to_channels(
         return;
     }
 
+    // Drive the acknowledgment reaction into its "tool" phase (🛠️/🌐/💻/…).
+    state
+        .note_channel_activity(
+            session_key,
+            moltis_channels::ChannelActivity::Tool(tool_name.to_string()),
+        )
+        .await;
+
     // Buffer the status message for the logbook
     let message = format_tool_status_message(tool_name, arguments);
     state.push_channel_status_log(session_key, message).await;

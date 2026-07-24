@@ -8,6 +8,7 @@ pub mod channel_webhook_verifier;
 pub mod client;
 pub mod commands;
 pub mod config;
+pub mod emoji;
 pub mod markdown;
 pub mod outbound;
 pub mod plugin;

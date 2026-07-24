@@ -8,8 +8,8 @@ use {
 
 use {
     moltis_channels::{
-        ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget,
-        Error as ChannelError, Result as ChannelResult, SavedChannelFile,
+        ChannelAckOutcome, ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelMessageMeta,
+        ChannelReplyTarget, Error as ChannelError, Result as ChannelResult, SavedChannelFile,
     },
     moltis_sessions::metadata::{SessionEntry, SqliteSessionMetadata},
     moltis_tools::approval::PendingApprovalView,
@@ -17,6 +17,7 @@ use {
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
+    channel_reactions::ChannelReactionController,
     state::GatewayState,
 };
 
@@ -336,83 +337,66 @@ fn start_channel_typing_loop(
 /// Emoji shortcodes for acknowledgment reactions (Slack-style names). Only
 /// channels that populate [`ChannelReplyTarget::ack_message_id`] receive these;
 /// today that is Slack, whose Web API expects shortcodes (not raw glyphs).
-const ACK_RECEIVED_EMOJI: &str = "eyes";
-const ACK_SUCCESS_EMOJI: &str = "white_check_mark";
-const ACK_ERROR_EMOJI: &str = "x";
-
-/// Add the "received" reaction (👀) to the exact inbound message when the
-/// channel asked for acknowledgment reactions (`ack_message_id` set). This
-/// signals "I got your message and I'm working on it" before any reply text
-/// arrives — the primary ack path for Slack, whose bots cannot show typing.
+/// Create and register a per-turn acknowledgment reaction controller, keyed by
+/// session key. The controller immediately adds 👀 to the exact inbound message
+/// and is later driven through phase emojis and finalized by the agent run.
 ///
-/// Best-effort: a missing outbound or a reaction API error is logged at debug
-/// (`already_reacted` / `missing_scope` are expected) and never blocks the turn.
-async fn channel_ack_received(state: &Arc<GatewayState>, reply_to: &ChannelReplyTarget) {
-    let Some(message_id) = reply_to.ack_message_id.as_deref() else {
+/// No-op unless the channel populated `ack_message_id` (bot directly addressed
+/// and reactions enabled) and an outbound implementation is available.
+async fn register_channel_reaction_controller(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    reply_to: &ChannelReplyTarget,
+) {
+    let Some(message_id) = reply_to.ack_message_id.clone() else {
         return;
     };
     let Some(outbound) = state.services.channel_outbound_arc() else {
         return;
     };
-    if let Err(e) = outbound
-        .add_reaction(
-            &reply_to.account_id,
-            &reply_to.chat_id,
-            message_id,
-            ACK_RECEIVED_EMOJI,
-        )
+    let controller = ChannelReactionController::start(
+        outbound,
+        reply_to.account_id.clone(),
+        reply_to.chat_id.clone(),
+        message_id,
+    );
+    state
+        .channel_reaction_controllers
+        .lock()
         .await
-    {
-        debug!(
-            account_id = %reply_to.account_id,
-            chat_id = %reply_to.chat_id,
-            "ack reaction (received) failed: {e}"
-        );
-    }
+        .insert(session_key.to_string(), controller);
 }
 
-/// Finalize acknowledgment reactions after the turn: remove 👀 and add ✅ on
-/// success or ❌ on failure. Best-effort; mirrors [`channel_ack_received`].
-async fn channel_ack_finish(
+/// Finalize the acknowledgment reaction only when `chat.send` returned before
+/// the run executed — an error, or an `Ok` payload carrying a terminal state
+/// (`rejected`/`error`/`blocked`/`aborted`). Normal runs (which return
+/// `{ok, runId}` with no terminal state) finalize from the run's completion, so
+/// this leaves their controller in place.
+async fn finalize_reaction_on_early_return(
     state: &Arc<GatewayState>,
-    reply_to: &ChannelReplyTarget,
-    success: bool,
+    session_key: &str,
+    send_result: &Result<serde_json::Value, moltis_service_traits::ServiceError>,
 ) {
-    let Some(message_id) = reply_to.ack_message_id.as_deref() else {
+    let outcome = match send_result {
+        Err(_) => Some(ChannelAckOutcome::Failure),
+        Ok(payload) => match payload.get("state").and_then(|v| v.as_str()) {
+            Some("rejected" | "error" | "blocked") => Some(ChannelAckOutcome::Failure),
+            Some("aborted") => Some(ChannelAckOutcome::Cancelled),
+            _ => None,
+        },
+    };
+    let Some(outcome) = outcome else {
         return;
     };
-    let Some(outbound) = state.services.channel_outbound_arc() else {
-        return;
-    };
-    if let Err(e) = outbound
-        .remove_reaction(
-            &reply_to.account_id,
-            &reply_to.chat_id,
-            message_id,
-            ACK_RECEIVED_EMOJI,
-        )
+    let controller = state
+        .channel_reaction_controllers
+        .lock()
         .await
-    {
-        debug!(
-            account_id = %reply_to.account_id,
-            chat_id = %reply_to.chat_id,
-            "ack reaction (remove received) failed: {e}"
-        );
-    }
-    let emoji = if success {
-        ACK_SUCCESS_EMOJI
-    } else {
-        ACK_ERROR_EMOJI
-    };
-    if let Err(e) = outbound
-        .add_reaction(&reply_to.account_id, &reply_to.chat_id, message_id, emoji)
-        .await
-    {
-        debug!(
-            account_id = %reply_to.account_id,
-            chat_id = %reply_to.chat_id,
-            "ack reaction (finish) failed: {e}"
-        );
+        .remove(session_key);
+    if let Some(controller) = controller {
+        controller
+            .note(moltis_channels::ChannelActivity::Finished(outcome))
+            .await;
     }
 }
 

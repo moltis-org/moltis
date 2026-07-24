@@ -390,6 +390,17 @@ impl ChatService for LiveChatService {
                 }
             }
             broadcast(&self.state, "chat", payload, BroadcastOpts::default()).await;
+
+            // Finalize channel acknowledgment reactions: cancelled leaves no
+            // ✅/❌ terminal, only strips the in-progress marker.
+            self.state
+                .note_channel_activity(
+                    key,
+                    moltis_channels::ChannelActivity::Finished(
+                        moltis_channels::ChannelAckOutcome::Cancelled,
+                    ),
+                )
+                .await;
         }
 
         Ok(serde_json::json!({

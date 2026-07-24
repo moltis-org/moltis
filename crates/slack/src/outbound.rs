@@ -437,7 +437,9 @@ async fn modify_reaction(
     let session = client.open_session(token);
     let channel_id: SlackChannelId = channel.into();
     let ts: SlackTs = timestamp.into();
-    let reaction = SlackReactionName::new(emoji.to_string());
+    // Slack expects shortcodes (no colons, no raw glyphs, no skin-tone suffix).
+    let reaction =
+        SlackReactionName::new(crate::emoji::normalize_reaction_name(emoji).into_owned());
 
     if add {
         let req = SlackApiReactionsAddRequest::new(channel_id, reaction, ts);

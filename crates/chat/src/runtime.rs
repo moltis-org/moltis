@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use {moltis_channels::ChannelReplyTarget, moltis_tools::sandbox::SandboxRouter};
+use {
+    moltis_channels::{ChannelActivity, ChannelReplyTarget},
+    moltis_tools::sandbox::SandboxRouter,
+};
 
 /// TTS runtime override configuration (provider/voice/model).
 ///
@@ -129,6 +132,14 @@ pub trait ChatRuntime: Send + Sync {
 
     /// Take (and remove) the last error for a run_id.
     async fn last_run_error(&self, run_id: &str) -> Option<String>;
+
+    /// Report a mid-turn activity for a channel-dispatched session so the
+    /// runtime can drive acknowledgment reactions (phase emojis) and status.
+    ///
+    /// Default no-op: runtimes without channel reactions (tests, headless)
+    /// ignore it. Emitted from the agent loop (Thinking/Tool) and from the run
+    /// completion (Finished).
+    async fn note_channel_activity(&self, _session_key: &str, _activity: ChannelActivity) {}
 
     // ── Push notifications ───────────────────────────────────────────────
 

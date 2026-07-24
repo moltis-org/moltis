@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use {async_trait::async_trait, serde_json::Value};
 
-use {moltis_channels::ChannelReplyTarget, moltis_tools::sandbox::SandboxRouter};
+use {
+    moltis_channels::{ChannelActivity, ChannelReplyTarget},
+    moltis_tools::sandbox::SandboxRouter,
+};
 
 use crate::state::GatewayState;
 
@@ -51,6 +54,30 @@ impl ChatRuntime for GatewayChatRuntime {
 
     async fn peek_channel_replies(&self, session_key: &str) -> Vec<ChannelReplyTarget> {
         self.state.peek_channel_replies(session_key).await
+    }
+
+    // ── Channel acknowledgment reactions ────────────────────────────────────
+
+    async fn note_channel_activity(&self, session_key: &str, activity: ChannelActivity) {
+        // A terminal activity finalizes and removes the controller; phase
+        // activities just forward. Look up without holding the lock across the
+        // (awaiting) forward to avoid contention.
+        let is_terminal = matches!(activity, ChannelActivity::Finished(_));
+        let controller = {
+            let map = self.state.channel_reaction_controllers.lock().await;
+            map.get(session_key).cloned()
+        };
+        let Some(controller) = controller else {
+            return;
+        };
+        controller.note(activity).await;
+        if is_terminal {
+            self.state
+                .channel_reaction_controllers
+                .lock()
+                .await
+                .remove(session_key);
+        }
     }
 
     // ── Channel status log ──────────────────────────────────────────────────
