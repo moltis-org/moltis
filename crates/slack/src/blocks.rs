@@ -29,7 +29,7 @@ pub fn markdown_to_blocks(markdown: &str) -> Option<Vec<Value>> {
     let flush_paragraph = |paragraph: &mut String, blocks: &mut Vec<Value>| {
         let trimmed = paragraph.trim();
         if !trimmed.is_empty() {
-            for chunk in split_section(&markdown_to_slack(trimmed)) {
+            for chunk in split_by_limit(&markdown_to_slack(trimmed), MAX_SECTION_CHARS) {
                 blocks.push(section_block(&chunk));
             }
         }
@@ -41,11 +41,8 @@ pub fn markdown_to_blocks(markdown: &str) -> Option<Vec<Value>> {
         if line.trim_start().starts_with("```") {
             match code.take() {
                 Some(buf) => {
-                    // Closing fence: emit the accumulated code as a section.
-                    let fenced = format!("```\n{}\n```", buf.trim_end_matches('\n'));
-                    for chunk in split_section(&fenced) {
-                        blocks.push(section_block(&chunk));
-                    }
+                    // Closing fence: emit the accumulated code as fenced section(s).
+                    push_code_blocks(&buf, &mut blocks);
                 },
                 None => {
                     // Opening fence: flush any pending paragraph first.
@@ -93,10 +90,7 @@ pub fn markdown_to_blocks(markdown: &str) -> Option<Vec<Value>> {
     // Flush trailing state.
     if let Some(buf) = code.take() {
         // Unterminated fence: still emit what we have.
-        let fenced = format!("```\n{}\n```", buf.trim_end_matches('\n'));
-        for chunk in split_section(&fenced) {
-            blocks.push(section_block(&chunk));
-        }
+        push_code_blocks(&buf, &mut blocks);
     }
     flush_paragraph(&mut paragraph, &mut blocks);
 
@@ -132,27 +126,35 @@ fn section_block(mrkdwn: &str) -> Value {
     })
 }
 
-/// Split a section body into pieces no longer than [`MAX_SECTION_CHARS`],
-/// preferring line boundaries.
-fn split_section(text: &str) -> Vec<String> {
-    if text.chars().count() <= MAX_SECTION_CHARS {
+/// Emit a code block as one or more fenced section blocks. Oversized code is
+/// split on the *raw* content and each chunk re-wrapped in its own ``` fence,
+/// so a split never produces unbalanced/mismatched code delimiters.
+fn push_code_blocks(code: &str, blocks: &mut Vec<Value>) {
+    // Reserve room for the fence delimiters ("```\n" + "\n```") in each chunk.
+    let overhead = "```\n\n```".chars().count();
+    let body_limit = MAX_SECTION_CHARS.saturating_sub(overhead).max(1);
+    for piece in split_by_limit(code.trim_end_matches('\n'), body_limit) {
+        blocks.push(section_block(&format!("```\n{piece}\n```")));
+    }
+}
+
+/// Split a body into pieces no longer than `limit` chars, preferring line
+/// boundaries and hard-splitting any single line that exceeds the limit.
+fn split_by_limit(text: &str, limit: usize) -> Vec<String> {
+    if text.chars().count() <= limit {
         return vec![text.to_string()];
     }
     let mut out = Vec::new();
     let mut current = String::new();
     for line in text.split_inclusive('\n') {
-        if current.chars().count() + line.chars().count() > MAX_SECTION_CHARS && !current.is_empty()
-        {
+        if current.chars().count() + line.chars().count() > limit && !current.is_empty() {
             out.push(std::mem::take(&mut current));
         }
         // A single line longer than the limit is hard-split by char boundary.
-        if line.chars().count() > MAX_SECTION_CHARS {
+        if line.chars().count() > limit {
             let mut buf = line;
-            while buf.chars().count() > MAX_SECTION_CHARS {
-                let cut = buf
-                    .char_indices()
-                    .nth(MAX_SECTION_CHARS)
-                    .map_or(buf.len(), |(i, _)| i);
+            while buf.chars().count() > limit {
+                let cut = buf.char_indices().nth(limit).map_or(buf.len(), |(i, _)| i);
                 out.push(buf[..cut].to_string());
                 buf = &buf[cut..];
             }
@@ -234,6 +236,26 @@ mod tests {
         assert!(blocks.len() >= 2);
         for b in &blocks {
             assert!(b["text"]["text"].as_str().unwrap().chars().count() <= MAX_SECTION_CHARS);
+        }
+    }
+
+    #[test]
+    fn long_fenced_code_splits_into_balanced_fences() {
+        // A code block far larger than MAX_SECTION_CHARS, many lines.
+        let code: String = (0..500).map(|i| format!("line {i} of code\n")).collect();
+        let md = format!("```\n{code}```");
+        let blocks = markdown_to_blocks(&md).unwrap();
+        assert!(blocks.len() >= 2, "expected the code block to split");
+        for b in &blocks {
+            let text = b["text"]["text"].as_str().unwrap();
+            // Every chunk is a self-contained, balanced code fence within limits.
+            assert!(
+                text.starts_with("```\n"),
+                "chunk missing opening fence: {text:.40}"
+            );
+            assert!(text.ends_with("\n```"), "chunk missing closing fence");
+            assert_eq!(text.matches("```").count(), 2, "unbalanced fences in chunk");
+            assert!(text.chars().count() <= MAX_SECTION_CHARS);
         }
     }
 }
