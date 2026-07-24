@@ -46,50 +46,71 @@ async function deleteAgentByName(page, agentName) {
 	await expect(testCard).toHaveCount(0, { timeout: 10_000 });
 }
 
-async function mockExternalAgentsRpc(page, listPayload) {
-	await page.addInitScript((externalAgentsListPayload) => {
-		if (window.__externalAgentE2EPatched) return;
-		window.__externalAgentE2EPatched = true;
-		window.__externalAgentE2ERequests = [];
-		window.__externalAgentE2EListPayload = externalAgentsListPayload || [
-			{ kind: "codex", name: "Codex", installed: true, isAcp: false, version: null },
-			{ kind: "claude-code", name: "Claude Code", installed: false, isAcp: false, version: null },
-		];
-		const originalSend = WebSocket.prototype.send;
-
-		function respond(socket, id, payload) {
-			queueMicrotask(() => {
-				const event = new MessageEvent("message", {
-					data: JSON.stringify({ type: "res", id, ok: true, payload }),
+async function mockExternalAgentsRpc(page, listPayload, modelsPayload) {
+	if (Array.isArray(modelsPayload)) {
+		await page.route(
+			"**/api/bootstrap?**",
+			async (route) => {
+				await route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ models: modelsPayload }),
 				});
-				if (typeof socket.onmessage === "function") socket.onmessage(event);
-			});
-		}
+			},
+			{ times: 1 },
+		);
+	}
+	await page.addInitScript(
+		({ externalAgentsListPayload, modelListPayload }) => {
+			if (window.__externalAgentE2EPatched) return;
+			window.__externalAgentE2EPatched = true;
+			window.__externalAgentE2ERequests = [];
+			window.__externalAgentE2EModelsPayload = modelListPayload;
+			window.__externalAgentE2EListPayload = externalAgentsListPayload || [
+				{ kind: "codex", name: "Codex", installed: true, isAcp: false, version: null },
+				{ kind: "claude-code", name: "Claude Code", installed: false, isAcp: false, version: null },
+			];
+			const originalSend = WebSocket.prototype.send;
 
-		WebSocket.prototype.send = function (payload) {
-			try {
-				var parsed = JSON.parse(payload);
-				if (parsed?.method === "external_agents.list") {
-					window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
-					respond(this, parsed.id, window.__externalAgentE2EListPayload);
-					return;
-				}
-				if (parsed?.method === "external_agents.bind") {
-					window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
-					respond(this, parsed.id, { ok: true, sessionKey: parsed.params?.sessionKey, kind: parsed.params?.kind });
-					return;
-				}
-				if (parsed?.method === "external_agents.unbind") {
-					window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
-					respond(this, parsed.id, { ok: true, sessionKey: parsed.params?.sessionKey });
-					return;
-				}
-			} catch (_err) {
-				// Fall through to the original sender.
+			function respond(socket, id, payload) {
+				queueMicrotask(() => {
+					const event = new MessageEvent("message", {
+						data: JSON.stringify({ type: "res", id, ok: true, payload }),
+					});
+					if (typeof socket.onmessage === "function") socket.onmessage(event);
+				});
 			}
-			return originalSend.call(this, payload);
-		};
-	}, listPayload);
+
+			WebSocket.prototype.send = function (payload) {
+				try {
+					var parsed = JSON.parse(payload);
+					if (parsed?.method === "models.list" && Array.isArray(window.__externalAgentE2EModelsPayload)) {
+						respond(this, parsed.id, window.__externalAgentE2EModelsPayload);
+						return;
+					}
+					if (parsed?.method === "external_agents.list") {
+						window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
+						respond(this, parsed.id, window.__externalAgentE2EListPayload);
+						return;
+					}
+					if (parsed?.method === "external_agents.bind") {
+						window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
+						respond(this, parsed.id, { ok: true, sessionKey: parsed.params?.sessionKey, kind: parsed.params?.kind });
+						return;
+					}
+					if (parsed?.method === "external_agents.unbind") {
+						window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
+						respond(this, parsed.id, { ok: true, sessionKey: parsed.params?.sessionKey });
+						return;
+					}
+				} catch (_err) {
+					// Fall through to the original sender.
+				}
+				return originalSend.call(this, payload);
+			};
+		},
+		{ externalAgentsListPayload: listPayload, modelListPayload: modelsPayload },
+	);
 }
 
 async function expectActiveSessionExternalAgent(page, kind) {
@@ -407,31 +428,39 @@ test.describe("Agents settings page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("external-agent picker labels named ACP agents", async ({ page }) => {
+	test("composer selector lists and binds named ACP agents", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await mockExternalAgentsRpc(page, [
-			{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null },
-			{ kind: "acp-codex", name: "ACP: Codex", installed: true, isAcp: true, version: null },
-			{ kind: "acp-claude", name: "ACP: Claude", installed: true, isAcp: true, version: null },
-			{ kind: "acp-pi", name: "ACP: Pi", installed: true, isAcp: true, version: null },
-			{ kind: "acp-opencode", name: "ACP: opencode", installed: true, isAcp: true, version: null },
-			{ kind: "acp-gemini", name: "ACP: Gemini", installed: true, isAcp: true, version: null },
-			{ kind: "acp-augment", name: "ACP: Augment", installed: true, isAcp: true, version: null },
-			{ kind: "acp-kiro", name: "ACP: Kiro", installed: true, isAcp: true, version: null },
-			{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: true, isAcp: true, version: null },
-			{ kind: "acp-openhands", name: "ACP: OpenHands", installed: true, isAcp: true, version: null },
-			{ kind: "acp-kimi", name: "ACP: Kimi", installed: true, isAcp: true, version: null },
-			{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: true, isAcp: true, version: null },
-			{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: true, isAcp: true, version: null },
-		]);
+		await mockExternalAgentsRpc(
+			page,
+			[
+				{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null },
+				{ kind: "acp-codex", name: "ACP: Codex", installed: true, isAcp: true, version: null },
+				{ kind: "acp-claude", name: "ACP: Claude", installed: true, isAcp: true, version: null },
+				{ kind: "acp-pi", name: "ACP: Pi", installed: true, isAcp: true, version: null },
+				{ kind: "acp-opencode", name: "ACP: opencode", installed: true, isAcp: true, version: null },
+				{ kind: "acp-gemini", name: "ACP: Gemini", installed: true, isAcp: true, version: null },
+				{ kind: "acp-augment", name: "ACP: Augment", installed: true, isAcp: true, version: null },
+				{ kind: "acp-kiro", name: "ACP: Kiro", installed: true, isAcp: true, version: null },
+				{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: true, isAcp: true, version: null },
+				{ kind: "acp-openhands", name: "ACP: OpenHands", installed: true, isAcp: true, version: null },
+				{ kind: "acp-kimi", name: "ACP: Kimi", installed: true, isAcp: true, version: null },
+				{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: true, isAcp: true, version: null },
+				{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: true, isAcp: true, version: null },
+			],
+			[{ id: "e2e/model", displayName: "E2E Model", provider: "e2e", supportsReasoning: true }],
+		);
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
 		await waitForWsConnected(page);
 		await createSession(page);
 
-		const picker = page.getByTestId("external-agent-picker");
-		await expect(picker).toBeVisible({ timeout: 10_000 });
-		await picker.locator("button").click();
+		await expect(page.getByTestId("external-agent-picker")).toHaveCount(0);
+		const picker = page.locator("#modelComboBtn");
+		await expect(picker).toBeEnabled({ timeout: 10_000 });
+		await expect(page.locator("#reasoningCombo")).toBeVisible();
+		await picker.click();
+		const dropdown = page.locator("#modelDropdownList");
+		await expect(dropdown.getByText("E2E Model", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Copilot", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Codex", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Claude", { exact: true })).toBeVisible();
@@ -458,11 +487,28 @@ test.describe("Agents settings page", () => {
 				{ timeout: 10_000 },
 			)
 			.toBe(true);
+		await expect(picker).toBeEnabled();
+		await expect(page.locator("#modelComboLabel")).toHaveText("ACP: Copilot");
+		await expect(page.locator("#reasoningCombo")).toBeHidden();
+
+		await picker.click();
+		await dropdown.getByText("E2E Model", { exact: true }).click();
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(() =>
+						(window.__externalAgentE2ERequests || []).some((req) => req.method === "external_agents.unbind"),
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
+		await expect(page.locator("#modelComboLabel")).toHaveText("E2E Model");
+		await expect(page.locator("#reasoningCombo")).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("external-agent picker is hidden when no external agents are installed", async ({ page }) => {
+	test("composer selector hides unavailable ACP agents", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await mockExternalAgentsRpc(page, [
 			{ kind: "acp-copilot", name: "ACP: Copilot", installed: false, isAcp: true, version: null },
@@ -492,6 +538,7 @@ test.describe("Agents settings page", () => {
 			)
 			.toBe(true);
 		await expect(page.getByTestId("external-agent-picker")).toHaveCount(0);
+		await page.locator("#modelComboBtn").click();
 		await expect(page.getByText("ACP: Copilot (unavailable)", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("ACP: Codex (unavailable)", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("ACP: opencode (unavailable)", { exact: true })).toHaveCount(0);
@@ -504,6 +551,37 @@ test.describe("Agents settings page", () => {
 		await expect(page.getByText("ACP: Stakpak (unavailable)", { exact: true })).toHaveCount(0);
 		await expect(page.getByText("ACP: fast-agent (unavailable)", { exact: true })).toHaveCount(0);
 
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("ACP-only sessions auto-bind once", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockExternalAgentsRpc(
+			page,
+			[{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null }],
+			[],
+		);
+		await page.goto("/chats");
+		await expectPageContentMounted(page);
+		await waitForWsConnected(page);
+		await createSession(page);
+
+		const sessionKey = await page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "");
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(
+						(key) =>
+							(window.__externalAgentE2ERequests || []).filter(
+								(req) => req.method === "external_agents.bind" && req.params?.sessionKey === key,
+							).length,
+						sessionKey,
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe(1);
+		await expect(page.locator("#modelComboLabel")).toHaveText("ACP: Copilot");
+		await expect(page.locator("#modelComboBtn")).toBeEnabled();
 		expect(pageErrors).toEqual([]);
 	});
 

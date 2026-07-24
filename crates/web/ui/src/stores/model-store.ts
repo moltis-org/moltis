@@ -57,13 +57,13 @@ export function setAll(arr: ModelInfo[]): void {
 	models.value = arr || [];
 }
 
-/** Fetch models from the server via RPC. */
-export function fetch(): Promise<void> {
+/** Fetch models from the server via RPC. Returns whether the response succeeded. */
+export function fetch(): Promise<boolean> {
 	return sendRpc("models.list", {}).then((r) => {
 		const res = r as RpcResponse<ModelInfo[]>;
-		if (!res?.ok) return;
+		if (!res?.ok) return false;
 		setAll(res.payload || []);
-		if (models.value.length === 0) return;
+		if (models.value.length === 0) return true;
 		let saved = localStorage.getItem("moltis-model") || "";
 		// If the saved model has a reasoning suffix, strip it and restore the effort
 		const parsed = parseReasoningSuffix(saved);
@@ -76,6 +76,7 @@ export function fetch(): Promise<void> {
 		const model = found || models.value[0];
 		select(model.id);
 		if (!found) localStorage.setItem("moltis-model", model.id);
+		return true;
 	});
 }
 
