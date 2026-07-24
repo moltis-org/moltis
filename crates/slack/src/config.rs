@@ -133,7 +133,7 @@ pub struct SlackAccountConfig {
     /// When `reaction_triggers` is enabled, only these emoji (shortcodes, no
     /// colons — e.g. `white_check_mark`) trigger the agent. Empty means any
     /// emoji triggers. Default: empty.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reaction_trigger_emojis: Vec<String>,
 
     /// Per-channel model/provider overrides (channel_id -> override).

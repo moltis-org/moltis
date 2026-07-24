@@ -301,6 +301,14 @@ flows like "react ✅ to approve" or "react 👍 to continue".
 This requires the `reactions:read` scope and the `reaction_added` event
 subscription.
 
+```admonish note title="Thread context on threaded replies"
+Slack's `reaction_added` event only carries the reacted message's own
+timestamp, not its thread root. When a user reacts to a message that is itself a
+reply inside a thread, the agent is threaded under that reply and sees only the
+reacted message as context — not the whole thread. Reactions on top-level
+messages are unaffected.
+```
+
 ## Troubleshooting
 
 ### Bot doesn't respond

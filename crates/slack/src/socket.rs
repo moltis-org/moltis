@@ -694,7 +694,20 @@ pub(crate) async fn dispatch_reaction(
 
     // Optionally route the reaction into the agent as a message. The bot's own
     // acknowledgment reactions (👀/✅/❌) are always ignored to avoid loops.
-    let is_self = bot_user_id.as_deref() == Some(user_id);
+    //
+    // Fail closed: if the bot user id is unknown we cannot distinguish the bot's
+    // own reactions, so treat the reactor as "self" and skip. Triggering here
+    // would let the bot's own ACK reactions fire agent turns and loop.
+    let is_self = match bot_user_id.as_deref() {
+        Some(bot_id) => bot_id == user_id,
+        None => {
+            debug!(
+                account_id,
+                user_id, "slack reaction trigger skipped: bot_user_id unknown"
+            );
+            true
+        },
+    };
     if !reaction_should_trigger(
         config.reaction_triggers,
         added,
