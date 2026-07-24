@@ -1271,24 +1271,19 @@ impl LiveChatService {
                 agent_fut.await
             };
 
-            // Signal the channel acknowledgment reactions that the turn finished.
-            // By this point the reply (if any) has already been delivered inside
-            // `agent_fut`, so a present assistant response means success. Aborted
-            // runs never reach here (the task is cancelled); the abort path emits
-            // `Cancelled` instead.
-            {
-                let outcome = if assistant_text.is_some() {
-                    moltis_channels::ChannelAckOutcome::Success
-                } else {
-                    moltis_channels::ChannelAckOutcome::Failure
-                };
-                state
-                    .note_channel_activity(
-                        &session_key_clone,
-                        moltis_channels::ChannelActivity::Finished(outcome),
-                    )
-                    .await;
-            }
+            // Finalize channel ack reactions (aborted runs emit Cancelled on the
+            // abort path and never reach here).
+            let ack_outcome = if assistant_text.is_some() {
+                moltis_channels::ChannelAckOutcome::Success
+            } else {
+                moltis_channels::ChannelAckOutcome::Failure
+            };
+            state
+                .note_channel_activity(
+                    &session_key_clone,
+                    moltis_channels::ChannelActivity::Finished(ack_outcome),
+                )
+                .await;
 
             // Persist assistant response (even empty ones — needed for LLM history coherence).
             if let Some(assistant_output) = assistant_text {
