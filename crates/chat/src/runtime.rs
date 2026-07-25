@@ -141,6 +141,20 @@ pub trait ChatRuntime: Send + Sync {
     /// completion (Finished).
     async fn note_channel_activity(&self, _session_key: &str, _activity: ChannelActivity) {}
 
+    /// Bind the given acknowledgment keys to this session's now-executing run,
+    /// so activity routes to exactly the inbound message(s) this run handles.
+    /// Called once the queue decision is known and the run actually starts.
+    async fn activate_channel_acks(&self, _session_key: &str, _ack_keys: Vec<String>) {}
+
+    /// Finalize acknowledgment keys directly, for paths where no run executes
+    /// (rejected hook, early error) and nothing else will signal a terminal.
+    async fn finalize_channel_acks(
+        &self,
+        _ack_keys: Vec<String>,
+        _outcome: moltis_channels::ChannelAckOutcome,
+    ) {
+    }
+
     // ── Push notifications ───────────────────────────────────────────────
 
     /// Send a push notification to all subscribed devices.

@@ -79,6 +79,7 @@ pub async fn register_events_api_account(
             bot_user_id: Some(bot_user_id),
             pending_threads: std::collections::HashMap::new(),
             otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(otp_cooldown_secs)),
+            dedup: std::sync::Mutex::new(crate::state::EventDedup::default()),
         });
     }
 
@@ -390,6 +391,10 @@ async fn dispatch_event_callback(
             if let Some(item) = item {
                 // Extract channel and message_ts from the item.
                 let item_channel = item.get("channel").and_then(|v| v.as_str()).unwrap_or("");
+                let item_user = event
+                    .get("item_user")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
                 let message_ts = item.get("ts").and_then(|v| v.as_str()).unwrap_or("");
 
                 if !user.is_empty() && !reaction.is_empty() && !item_channel.is_empty() {
@@ -400,6 +405,7 @@ async fn dispatch_event_callback(
                         reaction,
                         item_channel.to_string(),
                         message_ts.to_string(),
+                        item_user,
                         added,
                         accounts,
                     )
@@ -726,6 +732,7 @@ mod tests {
                 bot_user_id: Some("B123".to_string()),
                 pending_threads: std::collections::HashMap::new(),
                 otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
+                dedup: Mutex::new(crate::state::EventDedup::default()),
             });
         }
 
@@ -756,6 +763,7 @@ mod tests {
                 bot_user_id: Some("B123".to_string()),
                 pending_threads: std::collections::HashMap::new(),
                 otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
+                dedup: Mutex::new(crate::state::EventDedup::default()),
             });
         }
 
@@ -791,6 +799,7 @@ mod tests {
                 bot_user_id: Some("B123".to_string()),
                 pending_threads: std::collections::HashMap::new(),
                 otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
+                dedup: Mutex::new(crate::state::EventDedup::default()),
             });
         }
 

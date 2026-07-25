@@ -633,6 +633,7 @@ async fn deliver_channel_replies_to_targets(
                                 thread_id = target.thread_id.as_deref().unwrap_or("-"),
                                 "failed to send channel reply: {e}"
                             );
+                            crate::channel_acks::note_delivery_failed(&state, &session_key).await;
                         }
                     },
                 },
@@ -689,6 +690,7 @@ async fn deliver_channel_replies_to_targets(
                                 thread_id = target.thread_id.as_deref().unwrap_or("-"),
                                 "failed to send channel reply: {e}"
                             );
+                            crate::channel_acks::note_delivery_failed(&state, &session_key).await;
                         }
                     },
                 },

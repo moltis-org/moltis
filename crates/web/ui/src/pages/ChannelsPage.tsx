@@ -92,7 +92,6 @@ export interface ChannelConfig {
 	ack_reactions?: boolean;
 	reaction_triggers?: boolean;
 	rich_blocks?: boolean;
-	assistant_status?: boolean;
 	// Matrix
 	homeserver?: string;
 	user_id?: string;

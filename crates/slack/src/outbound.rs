@@ -531,22 +531,22 @@ impl ChannelOutbound for SlackOutbound {
         let thread_ts = self.get_thread_ts(account_id, to, reply_to);
         let slack_text = markdown_to_slack(text);
 
-        // Rich Block Kit rendering (opt-in). Falls back to plain chunked text
-        // when disabled or when the content can't be represented as blocks.
-        let rendered_blocks = self
-            .get_rich_blocks(account_id)
+        let chunks = chunk_message(&slack_text, SLACK_MAX_MESSAGE_LEN);
+
+        // Rich Block Kit rendering (opt-in). Only used when the whole reply fits
+        // a single message: the `text` fallback must carry the *entire* content
+        // for notifications and clients that cannot render blocks, so a reply
+        // that needs chunking is sent as plain text instead of silently
+        // delivering only its first chunk.
+        let rendered_blocks = (self.get_rich_blocks(account_id) && chunks.len() == 1)
             .then(|| crate::blocks::markdown_to_blocks(text))
             .flatten();
 
         if let Some(blocks) = rendered_blocks {
-            let fallback = chunk_message(&slack_text, SLACK_MAX_MESSAGE_LEN)
-                .first()
-                .copied()
-                .unwrap_or(&slack_text);
+            let fallback = chunks.first().copied().unwrap_or(&slack_text);
             post_message_with_blocks(&client, &token, to, fallback, &blocks, thread_ts.as_deref())
                 .await?;
         } else {
-            let chunks = chunk_message(&slack_text, SLACK_MAX_MESSAGE_LEN);
             for chunk in chunks {
                 post_message(&client, &token, to, chunk, thread_ts.as_deref()).await?;
             }
@@ -624,56 +624,11 @@ impl ChannelOutbound for SlackOutbound {
         }
     }
 
-    async fn send_typing(&self, account_id: &str, to: &str) -> ChannelResult<()> {
-        // Slack bots have no classic typing indicator. When the account opts in
-        // and the message is in an assistant thread, surface a live status via
-        // `assistant.threads.setStatus` instead. Best-effort: any error (e.g.
-        // the app is not an AI/Assistant app) is swallowed at debug.
-        let params = {
-            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-            let Some(state) = accounts.get(account_id) else {
-                return Ok(());
-            };
-            if !state.config.assistant_status {
-                return Ok(());
-            }
-            // Resolve the thread ts for this channel (assistant threads only).
-            let thread_ts = state
-                .pending_threads
-                .iter()
-                .find(|(k, _)| k.starts_with(&format!("{to}:")))
-                .map(|(_, ts)| ts.clone());
-            thread_ts.map(|ts| {
-                (
-                    state.config.bot_token.expose_secret().clone(),
-                    state.config.api_base_url.clone(),
-                    ts,
-                )
-            })
-        };
-        let Some((bot_token, api_base_url, thread_ts)) = params else {
-            return Ok(());
-        };
-
-        let http = shared_http_client();
-        let body = serde_json::json!({
-            "channel_id": to,
-            "thread_ts": thread_ts,
-            "status": "is thinking…",
-        });
-        match http
-            .post(slack_api_method_url(
-                &api_base_url,
-                "assistant.threads.setStatus",
-            )?)
-            .bearer_auth(&bot_token)
-            .json(&body)
-            .send()
-            .await
-        {
-            Ok(_) => {},
-            Err(e) => debug!(account_id, to, "assistant.threads.setStatus failed: {e}"),
-        }
+    async fn send_typing(&self, _account_id: &str, _to: &str) -> ChannelResult<()> {
+        // Slack bots have no typing indicator. `assistant.threads.setStatus`
+        // can show a live status, but only for apps configured as Slack AI/
+        // Assistant apps and only inside assistant threads; that needs an exact
+        // thread identity per turn, so it is intentionally not wired here.
         Ok(())
     }
 
@@ -953,7 +908,10 @@ impl ChannelStreamOutbound for SlackOutbound {
     }
 
     async fn is_stream_enabled(&self, account_id: &str) -> bool {
-        self.get_stream_mode(account_id) != StreamMode::Off
+        // Streaming sends incremental plain text, which cannot carry Block Kit.
+        // When rich rendering is requested it wins: the reply is delivered once,
+        // complete, through `send_text` so it actually renders as blocks.
+        self.get_stream_mode(account_id) != StreamMode::Off && !self.get_rich_blocks(account_id)
     }
 }
 

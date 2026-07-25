@@ -47,13 +47,143 @@ const STALL_AFTER: Duration = Duration::from_secs(20);
 /// and the 👀 reaction — alive forever.
 const MAX_LIFETIME: Duration = Duration::from_secs(900);
 
-/// Registry of active controllers, keyed by session key.
+/// Opaque per-message acknowledgment identity: `account:chat:message_id`.
 ///
-/// Agent runs serialize per session (via the send permit), so at most one run
-/// is executing at a time. If a second message for the same session is received
-/// while the first is still running, registering its controller replaces (and
-/// finalizes) the first — see `register_channel_reaction_controller`.
-pub type ReactionControllerRegistry = Arc<Mutex<HashMap<String, Arc<ChannelReactionController>>>>;
+/// One inbound message == one ack key == one reaction slot, independent of
+/// which agent run eventually handles it.
+#[must_use]
+pub fn ack_key(account_id: &str, chat_id: &str, message_id: &str) -> String {
+    format!("{account_id}:{chat_id}:{message_id}")
+}
+
+/// Upper bound on parked (received but not yet running) acknowledgments, so a
+/// message that is never claimed by a run cannot grow the map without bound.
+/// Controllers additionally self-expire via [`MAX_LIFETIME`].
+const MAX_PENDING_ACKS: usize = 512;
+
+/// The acknowledgments a currently-executing run owns.
+///
+/// `id` distinguishes successive turns on the same session so a slow terminal
+/// from turn N can never clear turn N+1's state.
+struct ActiveTurn {
+    id: u64,
+    keys: Vec<String>,
+}
+
+#[derive(Default)]
+struct RegistryInner {
+    /// Received messages with a live reaction, not yet claimed by a run.
+    pending: HashMap<String, Arc<ChannelReactionController>>,
+    /// Insertion order of `pending`, for oldest-first eviction.
+    pending_order: Vec<String>,
+    /// Which acknowledgments the running turn owns, per session.
+    active: HashMap<String, ActiveTurn>,
+}
+
+/// Routes acknowledgment-reaction activity to the right inbound message(s).
+///
+/// A message's controller is created when it is *received* (so 👀 appears
+/// immediately, even while queued) and keyed by its own ack key. A run claims
+/// its acknowledgments when it actually starts executing — which is also when
+/// the queue decision is known — so activity is never misrouted to a message
+/// that merely happens to share the session. In `collect` queue mode a single
+/// run legitimately owns several inbound messages, and every one of them
+/// receives the phase and terminal reactions.
+#[derive(Default)]
+pub struct ReactionRegistry {
+    inner: Mutex<RegistryInner>,
+    next_turn_id: std::sync::atomic::AtomicU64,
+}
+
+impl ReactionRegistry {
+    /// Park a freshly received message's controller until a run claims it.
+    pub async fn register_pending(&self, key: String, controller: Arc<ChannelReactionController>) {
+        let mut inner = self.inner.lock().await;
+        if inner.pending.insert(key.clone(), controller).is_none() {
+            inner.pending_order.push(key);
+        }
+        while inner.pending_order.len() > MAX_PENDING_ACKS {
+            let oldest = inner.pending_order.remove(0);
+            inner.pending.remove(&oldest);
+        }
+    }
+
+    /// Bind the given acknowledgments to this session's now-executing run.
+    ///
+    /// Any previously active turn for the session is dropped from routing (its
+    /// controllers keep their own lifetime cap), so a superseded run cannot
+    /// keep driving reactions.
+    pub async fn activate(&self, session_key: &str, keys: Vec<String>) {
+        if keys.is_empty() {
+            return;
+        }
+        let id = self
+            .next_turn_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut inner = self.inner.lock().await;
+        inner
+            .active
+            .insert(session_key.to_string(), ActiveTurn { id, keys });
+    }
+
+    /// Forward an activity to every acknowledgment the session's run owns.
+    ///
+    /// Terminal activities finalize and release those acknowledgments; the
+    /// release is identity-checked against the turn id so a late terminal from
+    /// a superseded run cannot clear the current one.
+    pub async fn note(&self, session_key: &str, activity: ChannelActivity) {
+        let is_terminal = matches!(activity, ChannelActivity::Finished(_));
+        let (turn_id, controllers) = {
+            let inner = self.inner.lock().await;
+            let Some(turn) = inner.active.get(session_key) else {
+                return;
+            };
+            let controllers: Vec<_> = turn
+                .keys
+                .iter()
+                .filter_map(|k| inner.pending.get(k).cloned())
+                .collect();
+            (turn.id, controllers)
+        };
+
+        for controller in &controllers {
+            controller.note(activity.clone()).await;
+        }
+
+        if is_terminal {
+            let mut inner = self.inner.lock().await;
+            // Only release if this session's active turn is still ours.
+            let still_ours = inner
+                .active
+                .get(session_key)
+                .is_some_and(|turn| turn.id == turn_id);
+            if still_ours && let Some(turn) = inner.active.remove(session_key) {
+                for key in turn.keys {
+                    inner.pending.remove(&key);
+                    inner.pending_order.retain(|k| k != &key);
+                }
+            }
+        }
+    }
+
+    /// Finalize specific acknowledgments directly, for paths where no run ever
+    /// executes (a rejected hook, an early error) and nothing will signal a
+    /// terminal for them.
+    pub async fn finalize_keys(&self, keys: &[String], outcome: ChannelAckOutcome) {
+        let controllers = {
+            let mut inner = self.inner.lock().await;
+            keys.iter()
+                .filter_map(|k| {
+                    inner.pending_order.retain(|pk| pk != k);
+                    inner.pending.remove(k)
+                })
+                .collect::<Vec<_>>()
+        };
+        for controller in controllers {
+            controller.note(ChannelActivity::Finished(outcome)).await;
+        }
+    }
+}
 
 /// Classify a tool name into a phase emoji shortcode.
 ///
@@ -156,8 +286,8 @@ async fn run_worker(
     chat_id: String,
     message_id: String,
 ) {
-    // Initial acknowledgment: 👀.
-    add_reaction(
+    // Initial acknowledgment: 👀. Only track it if it actually landed.
+    let acked = add_reaction(
         &outbound,
         &account_id,
         &chat_id,
@@ -165,7 +295,7 @@ async fn run_worker(
         RECEIVED_EMOJI,
     )
     .await;
-    let mut current: Option<String> = Some(RECEIVED_EMOJI.to_string());
+    let mut current: Option<String> = acked.then(|| RECEIVED_EMOJI.to_string());
     let mut pending: Option<String> = None;
     let mut stalled = false;
     let started = tokio::time::Instant::now();
@@ -202,8 +332,10 @@ async fn run_worker(
                     // one so the message is never momentarily bare, and a failed
                     // add still leaves the previous marker rather than nothing.
                     Some(term) => {
-                        add_reaction(&outbound, &account_id, &chat_id, &message_id, term).await;
-                        if let Some(cur) = current.take().filter(|cur| cur != term) {
+                        let landed =
+                            add_reaction(&outbound, &account_id, &chat_id, &message_id, term).await;
+                        let stale = current.take().filter(|cur| cur != term);
+                        if let Some(cur) = stale.filter(|_| landed) {
                             remove_reaction(&outbound, &account_id, &chat_id, &message_id, &cur)
                                 .await;
                         }
@@ -268,28 +400,38 @@ async fn swap(
     // Add first, then remove the previous marker: the message always shows at
     // least one reaction, and a failed add leaves the old marker in place
     // instead of clearing the acknowledgment entirely.
-    add_reaction(outbound, account_id, chat_id, message_id, emoji).await;
+    if !add_reaction(outbound, account_id, chat_id, message_id, emoji).await {
+        // The new marker never landed — keep tracking the old one so it is
+        // still cleaned up at the terminal instead of being orphaned.
+        return;
+    }
     if let Some(cur) = current.take() {
         remove_reaction(outbound, account_id, chat_id, message_id, &cur).await;
     }
     *current = Some(emoji.to_string());
 }
 
+/// Returns whether the reaction is believed to be on the message afterwards, so
+/// callers only advance their tracked state when the call actually landed.
 async fn add_reaction(
     outbound: &Arc<dyn ChannelOutbound>,
     account_id: &str,
     chat_id: &str,
     message_id: &str,
     emoji: &str,
-) {
-    if let Err(e) = outbound
+) -> bool {
+    match outbound
         .add_reaction(account_id, chat_id, message_id, emoji)
         .await
     {
-        debug!(
-            account_id,
-            chat_id, emoji, "channel add_reaction failed: {e}"
-        );
+        Ok(()) => true,
+        Err(e) => {
+            debug!(
+                account_id,
+                chat_id, emoji, "channel add_reaction failed: {e}"
+            );
+            false
+        },
     }
 }
 
@@ -417,6 +559,117 @@ mod tests {
         // Each transition adds the new marker before removing the old one, so
         // the message is never left without a reaction.
         assert_eq!(recorded, vec!["+👀", "+🌐", "-👀", "+✅", "-🌐"]);
+    }
+
+    /// Build a registry with one parked acknowledgment; returns its ops log.
+    async fn park(registry: &ReactionRegistry, key: &str) -> Arc<StdMutex<Vec<String>>> {
+        let ops = Arc::new(StdMutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingOutbound { ops: ops.clone() });
+        let controller =
+            ChannelReactionController::start(outbound, "a".into(), "c".into(), key.into());
+        registry.register_pending(key.to_string(), controller).await;
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        ops
+    }
+
+    fn ops_of(ops: &Arc<StdMutex<Vec<String>>>) -> Vec<String> {
+        ops.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    #[tokio::test]
+    async fn queued_message_keeps_its_own_ack_and_is_not_driven_by_the_active_run() {
+        // A is running; B arrives and queues behind it. B must keep its own 👀
+        // and must not receive A's terminal.
+        let registry = ReactionRegistry::default();
+        let a = park(&registry, "msg-a").await;
+        let b = park(&registry, "msg-b").await;
+        registry.activate("sess", vec!["msg-a".into()]).await;
+
+        registry
+            .note(
+                "sess",
+                ChannelActivity::Finished(ChannelAckOutcome::Success),
+            )
+            .await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        assert_eq!(ops_of(&a), vec!["+👀", "+✅", "-👀"], "A should complete");
+        assert_eq!(
+            ops_of(&b),
+            vec!["+👀"],
+            "B must still be waiting, untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_mode_fans_terminal_out_to_every_combined_message() {
+        let registry = ReactionRegistry::default();
+        let a = park(&registry, "msg-a").await;
+        let b = park(&registry, "msg-b").await;
+        // One run answers both messages.
+        registry
+            .activate("sess", vec!["msg-a".into(), "msg-b".into()])
+            .await;
+
+        registry
+            .note(
+                "sess",
+                ChannelActivity::Finished(ChannelAckOutcome::Success),
+            )
+            .await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        for ops in [&a, &b] {
+            assert_eq!(ops_of(ops), vec!["+👀", "+✅", "-👀"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn superseded_turn_terminal_does_not_clear_the_current_turn() {
+        // Turn 1 activates, is superseded by turn 2, then turn 1's terminal
+        // arrives late. It must not release turn 2's acknowledgment.
+        let registry = ReactionRegistry::default();
+        let b = park(&registry, "msg-b").await;
+        registry.activate("sess", vec!["msg-b".into()]).await;
+        registry.activate("sess", vec!["msg-b".into()]).await; // turn 2
+
+        registry
+            .note(
+                "sess",
+                ChannelActivity::Finished(ChannelAckOutcome::Success),
+            )
+            .await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        // The still-current turn resolved exactly once.
+        assert_eq!(ops_of(&b), vec!["+👀", "+✅", "-👀"]);
+    }
+
+    #[tokio::test]
+    async fn finalize_keys_resolves_acks_that_never_ran() {
+        // Hook rejection / early error: no run ever claims the message.
+        let registry = ReactionRegistry::default();
+        let a = park(&registry, "msg-a").await;
+        registry
+            .finalize_keys(&["msg-a".to_string()], ChannelAckOutcome::Failure)
+            .await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert_eq!(ops_of(&a), vec!["+👀", "+❌", "-👀"]);
+    }
+
+    #[tokio::test]
+    async fn activity_for_unknown_session_is_a_noop() {
+        let registry = ReactionRegistry::default();
+        let a = park(&registry, "msg-a").await;
+        // Never activated — a stray activity must not touch the parked ack.
+        registry
+            .note(
+                "other-session",
+                ChannelActivity::Finished(ChannelAckOutcome::Success),
+            )
+            .await;
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert_eq!(ops_of(&a), vec!["+👀"]);
     }
 
     #[test]

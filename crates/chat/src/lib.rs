@@ -1,4 +1,5 @@
 mod agent_loop;
+pub(crate) mod channel_acks;
 mod channels;
 mod compaction;
 mod compaction_run;

@@ -24,7 +24,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         // (bot directly addressed and reactions enabled). Because the run is
         // fire-and-forget, the terminal is applied from the run's completion —
         // NOT from `chat.send` returning below.
-        register_channel_reaction_controller(state, &session_key, &reply_to).await;
+        let ack_key = register_channel_reaction_controller(state, &reply_to).await;
         let effective_text = if state.is_channel_command_mode_enabled(&session_key).await {
             rewrite_for_shell_mode(text).unwrap_or_else(|| text.to_string())
         } else {
@@ -142,6 +142,13 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             "_channel_reply_target": &reply_to,
         });
 
+        // Carry this message's acknowledgment identity into the run so the
+        // reaction follows the message itself — through queueing and replay —
+        // rather than whatever else shares the session.
+        if let Some(ref key) = ack_key {
+            params["_ack_keys"] = serde_json::json!([key]);
+        }
+
         // Attach thread context if available.
         if let Some(thread_history) = thread_context {
             params["_thread_context"] = serde_json::json!(thread_history);
@@ -235,7 +242,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         // Only finalize the reaction here for early returns where the run never
         // executes (rejection/error before spawn). Normal runs finalize from the
         // run's completion via `note_channel_activity`.
-        finalize_reaction_on_early_return(state, &session_key, &send_result).await;
+        finalize_reaction_on_early_return(state, ack_key.as_ref(), &send_result).await;
 
         if let Err(e) = send_result {
             error!("channel dispatch_to_chat failed: {e}");

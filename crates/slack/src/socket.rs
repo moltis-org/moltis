@@ -90,6 +90,7 @@ pub async fn start_socket_mode(
             bot_user_id: Some(bot_user_id),
             pending_threads: std::collections::HashMap::new(),
             otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(otp_cooldown_secs)),
+            dedup: std::sync::Mutex::new(crate::state::EventDedup::default()),
         });
     }
 
@@ -234,10 +235,13 @@ fn jittered(base: std::time::Duration) -> std::time::Duration {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    // Map nanos into [-0.25, +0.25].
-    let frac = (f64::from(nanos) / f64::from(u32::MAX)) - 0.5;
-    let factor = 1.0 + frac * 0.5;
-    base.mul_f64(factor.clamp(0.5, 1.5))
+    // Nanoseconds within the current second map to [0, 1), then to a
+    // symmetric +/-25% factor. Dividing by anything but NANOS_PER_SEC would
+    // bias the jitter to one side.
+    const NANOS_PER_SEC: f64 = 1_000_000_000.0;
+    let unit = f64::from(nanos) / NANOS_PER_SEC;
+    let factor = 0.75 + unit * 0.5;
+    base.mul_f64(factor.clamp(0.75, 1.25))
 }
 
 /// Error handler for Socket Mode.
@@ -263,6 +267,39 @@ async fn push_events_callback(
     };
     drop(guard);
 
+    // Slack retries an envelope that is not acknowledged quickly. Drop repeats
+    // so a retry cannot start a second agent turn for one user message.
+    {
+        let accts = listener_state
+            .accounts
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accts.get(&listener_state.account_id) {
+            let mut dedup = state.dedup.lock().unwrap_or_else(|e| e.into_inner());
+            if !dedup.insert_new(event.event_id.as_ref()) {
+                debug!(
+                    account_id = %listener_state.account_id,
+                    event_id = %event.event_id,
+                    "dropping duplicate slack event (retry)"
+                );
+                return Ok(());
+            }
+        }
+    }
+
+    // Process off the callback path: the SDK only acknowledges the envelope
+    // once this callback returns, and handling can involve Web API calls that
+    // would otherwise risk exceeding Slack's acknowledgment deadline and
+    // trigger a retry.
+    tokio::spawn(async move {
+        handle_push_event(event, listener_state).await;
+    });
+
+    Ok(())
+}
+
+/// Handle a push event body. Runs off the Socket Mode acknowledgment path.
+async fn handle_push_event(event: SlackPushEventCallback, listener_state: ListenerState) {
     match event.event {
         SlackEventCallbackBody::Message(msg_event) => {
             handle_message_event(
@@ -303,6 +340,7 @@ async fn push_events_callback(
                 reaction_event.user.as_ref(),
                 reaction_event.reaction.as_ref(),
                 &reaction_event.item,
+                reaction_event.item_user.as_ref().map(|u| u.to_string()),
                 true,
                 &listener_state.accounts,
             )
@@ -314,6 +352,7 @@ async fn push_events_callback(
                 reaction_event.user.as_ref(),
                 reaction_event.reaction.as_ref(),
                 &reaction_event.item,
+                reaction_event.item_user.as_ref().map(|u| u.to_string()),
                 false,
                 &listener_state.accounts,
             )
@@ -323,8 +362,6 @@ async fn push_events_callback(
             debug!("unhandled slack push event");
         },
     }
-
-    Ok(())
 }
 
 /// Command events callback (slash commands).
@@ -698,11 +735,13 @@ pub(crate) async fn handle_inbound(
 }
 
 /// Handle a reaction_added or reaction_removed event.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_reaction_event(
     account_id: &str,
     user_id: &str,
     emoji: &str,
     item: &SlackReactionsItem,
+    item_user: Option<String>,
     added: bool,
     accounts: &AccountStateMap,
 ) {
@@ -720,7 +759,7 @@ pub(crate) async fn handle_reaction_event(
     };
 
     dispatch_reaction(
-        account_id, user_id, emoji, channel_id, message_ts, added, accounts,
+        account_id, user_id, emoji, channel_id, message_ts, item_user, added, accounts,
     )
     .await;
 }
@@ -730,12 +769,14 @@ pub(crate) async fn handle_reaction_event(
 /// Always emits a [`ChannelEvent::ReactionChange`] for observers; additionally
 /// routes the reaction into the agent as a synthetic message when
 /// `reaction_triggers` is enabled and the reaction is eligible.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn dispatch_reaction(
     account_id: &str,
     user_id: &str,
     emoji: &str,
     channel_id: String,
     message_ts: String,
+    item_user: Option<String>,
     added: bool,
     accounts: &AccountStateMap,
 ) {
@@ -783,10 +824,18 @@ pub(crate) async fn dispatch_reaction(
             true
         },
     };
+    // Only reactions on the bot's *own* messages drive the agent. Without this
+    // any member could point the agent at an arbitrary third party's message
+    // simply by reacting to it. Fail closed when authorship is unknown.
+    let target_is_bot = match (bot_user_id.as_deref(), item_user.as_deref()) {
+        (Some(bot_id), Some(author)) => bot_id == author,
+        _ => false,
+    };
     if !reaction_should_trigger(
         config.reaction_triggers,
         added,
         is_self,
+        target_is_bot,
         emoji,
         &config.reaction_trigger_emojis,
     ) {
@@ -846,16 +895,22 @@ pub(crate) async fn dispatch_reaction(
 /// Decide whether an inbound reaction should be routed to the agent.
 ///
 /// Triggers only when: the feature is enabled, the reaction was *added* (not
-/// removed), it is not the bot's own reaction, and — if an emoji allowlist is
-/// configured — the emoji is on it. An empty allowlist matches any emoji.
+/// removed), it is not the bot's own reaction, the reacted-to message was
+/// authored by the bot, and — if an emoji allowlist is configured — the emoji
+/// is on it. An empty allowlist matches any emoji.
 fn reaction_should_trigger(
     enabled: bool,
     added: bool,
     is_self: bool,
+    target_is_bot: bool,
     emoji: &str,
     allowlist: &[String],
 ) -> bool {
-    enabled && added && !is_self && (allowlist.is_empty() || allowlist.iter().any(|e| e == emoji))
+    enabled
+        && added
+        && !is_self
+        && target_is_bot
+        && (allowlist.is_empty() || allowlist.iter().any(|e| e == emoji))
 }
 
 /// Decide which inbound message (if any) to acknowledge with reactions.
@@ -1152,13 +1207,13 @@ mod tests {
     #[test]
     fn reaction_trigger_requires_enabled_added_and_not_self() {
         // Disabled → never.
-        assert!(!reaction_should_trigger(false, true, false, "x", &[]));
+        assert!(!reaction_should_trigger(false, true, false, true, "x", &[]));
         // Removal → never.
-        assert!(!reaction_should_trigger(true, false, false, "x", &[]));
+        assert!(!reaction_should_trigger(true, false, false, true, "x", &[]));
         // Bot's own reaction → never.
-        assert!(!reaction_should_trigger(true, true, true, "eyes", &[]));
+        assert!(!reaction_should_trigger(true, true, true, true, "eyes", &[]));
         // Enabled add by another user with no allowlist → trigger.
-        assert!(reaction_should_trigger(true, true, false, "x", &[]));
+        assert!(reaction_should_trigger(true, true, false, true, "x", &[]));
     }
 
     #[test]
@@ -1168,10 +1223,13 @@ mod tests {
             true,
             true,
             false,
+            true,
             "white_check_mark",
             &allow
         ));
-        assert!(!reaction_should_trigger(true, true, false, "x", &allow));
+        assert!(!reaction_should_trigger(
+            true, true, false, true, "x", &allow
+        ));
     }
 
     #[test]

@@ -107,8 +107,7 @@ offered = ["slack"]
 | `ack_reactions` | no | `true` | Acknowledge inbound messages with emoji reactions (👀 → ✅/❌). Only applied when the bot is directly addressed (DM or @mention). |
 | `reaction_triggers` | no | `false` | Route inbound user reactions into the agent as messages (e.g. react ✅ to approve). |
 | `reaction_trigger_emojis` | no | `[]` | When `reaction_triggers` is on, only these emoji shortcodes trigger the agent. Empty = any emoji. |
-| `rich_blocks` | no | `false` | Render replies as Block Kit blocks (headings, dividers, code) with a plain-text fallback. |
-| `assistant_status` | no | `false` | Show a live "is thinking…" status via `assistant.threads.setStatus`. Requires an AI/Assistant app. |
+| `rich_blocks` | no | `false` | Render replies as Block Kit blocks (headings, dividers, code) with a plain-text fallback. Disables streaming, since streamed text cannot carry blocks. |
 | `channel_overrides` | no | `{}` | Per-channel model/provider overrides (see below) |
 | `user_overrides` | no | `{}` | Per-user model/provider overrides (see below) |
 
@@ -285,6 +284,12 @@ Reactions are only added when the bot is **directly addressed** — a direct
 message, or a channel message that @mentions the bot — never on general channel
 chatter. Set `ack_reactions = false` to disable them.
 
+Each inbound message owns its own reaction for its whole life, including while
+it waits behind an in-flight turn: a message queued behind another keeps its 👀
+and is resolved when its own turn runs. In `collect` queue mode one reply
+answers several messages, and every one of them receives the terminal reaction.
+A reply that fails to deliver is marked ❌ rather than ✅.
+
 The bot needs the `reactions:write` OAuth scope (and `reactions:read` if you
 also use inbound reaction triggers). Reaction failures are non-fatal and never
 block the reply.
@@ -300,6 +305,8 @@ flows like "react ✅ to approve" or "react 👍 to continue".
   triggers never loop.
 - Only *added* reactions trigger (not removals), and only from senders who pass
   the normal DM/channel access policy.
+- Only reactions on the **bot's own messages** trigger. Without this, any member
+  could point the agent at an unrelated person's message just by reacting to it.
 - Restrict which emoji count with `reaction_trigger_emojis` (shortcodes without
   colons, e.g. `["white_check_mark", "thumbsup"]`). Empty means any emoji.
 

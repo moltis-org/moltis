@@ -59,25 +59,28 @@ impl ChatRuntime for GatewayChatRuntime {
     // ── Channel acknowledgment reactions ────────────────────────────────────
 
     async fn note_channel_activity(&self, session_key: &str, activity: ChannelActivity) {
-        // A terminal activity finalizes and removes the controller; phase
-        // activities just forward. Look up without holding the lock across the
-        // (awaiting) forward to avoid contention.
-        let is_terminal = matches!(activity, ChannelActivity::Finished(_));
-        let controller = {
-            let map = self.state.channel_reaction_controllers.lock().await;
-            map.get(session_key).cloned()
-        };
-        let Some(controller) = controller else {
-            return;
-        };
-        controller.note(activity).await;
-        if is_terminal {
-            self.state
-                .channel_reaction_controllers
-                .lock()
-                .await
-                .remove(session_key);
-        }
+        self.state
+            .channel_reaction_controllers
+            .note(session_key, activity)
+            .await;
+    }
+
+    async fn activate_channel_acks(&self, session_key: &str, ack_keys: Vec<String>) {
+        self.state
+            .channel_reaction_controllers
+            .activate(session_key, ack_keys)
+            .await;
+    }
+
+    async fn finalize_channel_acks(
+        &self,
+        ack_keys: Vec<String>,
+        outcome: moltis_channels::ChannelAckOutcome,
+    ) {
+        self.state
+            .channel_reaction_controllers
+            .finalize_keys(&ack_keys, outcome)
+            .await;
     }
 
     // ── Channel status log ──────────────────────────────────────────────────

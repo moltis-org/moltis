@@ -50,7 +50,6 @@ export function EditChannelModal(): VNode | null {
 	const editSlackAckReactions = useSignal(true);
 	const editSlackReactionTriggers = useSignal(false);
 	const editSlackRichBlocks = useSignal(false);
-	const editSlackAssistantStatus = useSignal(false);
 	const editChannelNamePatterns = useSignal<string[]>([]);
 	const editCategoryAllowlist = useSignal<string[]>([]);
 	const editAdvancedConfigPatch = useSignal("");
@@ -82,7 +81,6 @@ export function EditChannelModal(): VNode | null {
 		editSlackAckReactions.value = ch?.config?.ack_reactions !== false;
 		editSlackReactionTriggers.value = ch?.config?.reaction_triggers === true;
 		editSlackRichBlocks.value = ch?.config?.rich_blocks === true;
-		editSlackAssistantStatus.value = ch?.config?.assistant_status === true;
 		editChannelNamePatterns.value = (ch?.config?.channel_name_patterns || []) as string[];
 		editCategoryAllowlist.value = (ch?.config?.category_allowlist || []) as string[];
 		editAdvancedConfigPatch.value = "";
@@ -204,7 +202,6 @@ export function EditChannelModal(): VNode | null {
 			updateConfig.ack_reactions = editSlackAckReactions.value;
 			updateConfig.reaction_triggers = editSlackReactionTriggers.value;
 			updateConfig.rich_blocks = editSlackRichBlocks.value;
-			updateConfig.assistant_status = editSlackAssistantStatus.value;
 		}
 		addChannelCredentials(updateConfig, form);
 		addModelToConfig(updateConfig);
@@ -457,22 +454,6 @@ export function EditChannelModal(): VNode | null {
 								<span className="text-xs text-[var(--muted)]">
 									Render replies with headings, dividers, and code blocks instead of one flat message. Falls back to
 									plain text when it can't fit Slack's limits.
-								</span>
-							</span>
-						</label>
-						<label className="flex items-start gap-2 cursor-pointer">
-							<input
-								type="checkbox"
-								checked={editSlackAssistantStatus.value}
-								onChange={(e) => {
-									editSlackAssistantStatus.value = targetChecked(e);
-								}}
-							/>
-							<span className="flex flex-col gap-1">
-								<span className="text-xs font-medium text-[var(--text-strong)]">Live "is thinking…" status</span>
-								<span className="text-xs text-[var(--muted)]">
-									Show a live status while a turn runs. Requires the Slack app to be set up as an AI/Assistant app; no
-									effect otherwise.
 								</span>
 							</span>
 						</label>

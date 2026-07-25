@@ -502,7 +502,7 @@ pub struct GatewayState {
     /// Active per-turn channel acknowledgment reaction controllers, keyed by
     /// session key. Created when a channel message is received (adds 👀),
     /// driven by the agent run, and removed when the turn finalizes.
-    pub channel_reaction_controllers: crate::channel_reactions::ReactionControllerRegistry,
+    pub channel_reaction_controllers: Arc<crate::channel_reactions::ReactionRegistry>,
 }
 
 impl GatewayState {
@@ -606,7 +606,9 @@ impl GatewayState {
             broadcaster: Arc::new(Broadcaster::new()),
             client_registry: RwLock::new(ClientRegistryInner::new()),
             inner: RwLock::new(GatewayInner::new(hook_registry)),
-            channel_reaction_controllers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            channel_reaction_controllers: Arc::new(
+                crate::channel_reactions::ReactionRegistry::default(),
+            ),
         })
     }
 

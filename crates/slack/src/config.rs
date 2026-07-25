@@ -125,12 +125,6 @@ pub struct SlackAccountConfig {
     /// content cannot be represented within Slack's limits. Default: false.
     pub rich_blocks: bool,
 
-    /// Show a live "is thinking…" status via `assistant.threads.setStatus`
-    /// while a turn runs. Only works when the Slack app is configured as an
-    /// AI/Assistant app and the message is in an assistant thread; a no-op
-    /// otherwise. Default: false.
-    pub assistant_status: bool,
-
     /// Acknowledge inbound messages with emoji reactions (👀 on receipt, ✅ on
     /// success, ❌ on error). Only applied when the bot is directly addressed
     /// (DM or @mention). Default: true.
@@ -185,7 +179,6 @@ impl std::fmt::Debug for SlackAccountConfig {
             .field("edit_throttle_ms", &self.edit_throttle_ms)
             .field("thread_replies", &self.thread_replies)
             .field("rich_blocks", &self.rich_blocks)
-            .field("assistant_status", &self.assistant_status)
             .field("ack_reactions", &self.ack_reactions)
             .field("reaction_triggers", &self.reaction_triggers)
             .field("reaction_trigger_emojis", &self.reaction_trigger_emojis)
@@ -217,7 +210,6 @@ impl Default for SlackAccountConfig {
             edit_throttle_ms: 500,
             thread_replies: true,
             rich_blocks: false,
-            assistant_status: false,
             ack_reactions: true,
             reaction_triggers: false,
             reaction_trigger_emojis: Vec::new(),
@@ -289,7 +281,7 @@ pub struct RedactedConfig<'a>(pub &'a SlackAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 18; // always-present fields
+        let mut count = 17; // always-present fields
         count += c.signing_secret.is_some() as usize;
         count += !c.reaction_trigger_emojis.is_empty() as usize;
         count += c.model.is_some() as usize;
@@ -323,7 +315,6 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("edit_throttle_ms", &c.edit_throttle_ms)?;
         s.serialize_field("thread_replies", &c.thread_replies)?;
         s.serialize_field("rich_blocks", &c.rich_blocks)?;
-        s.serialize_field("assistant_status", &c.assistant_status)?;
         s.serialize_field("ack_reactions", &c.ack_reactions)?;
         s.serialize_field("reaction_triggers", &c.reaction_triggers)?;
         if !c.reaction_trigger_emojis.is_empty() {
@@ -446,7 +437,6 @@ mod tests {
         assert!(cfg.thread_replies);
         assert!(cfg.ack_reactions);
         assert!(!cfg.rich_blocks);
-        assert!(!cfg.assistant_status);
         assert!(cfg.otp_self_approval);
         assert_eq!(cfg.otp_cooldown_secs, 300);
         assert_eq!(cfg.mention_mode, MentionMode::Mention);

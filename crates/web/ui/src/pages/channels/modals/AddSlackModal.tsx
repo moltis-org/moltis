@@ -125,7 +125,9 @@ export function AddSlackModal(): VNode {
 							2. Under OAuth & Permissions, add bot scopes: <code className="text-[var(--accent)]">chat:write</code>,{" "}
 							<code className="text-[var(--accent)]">channels:history</code>,{" "}
 							<code className="text-[var(--accent)]">im:history</code>,{" "}
-							<code className="text-[var(--accent)]">app_mentions:read</code>
+							<code className="text-[var(--accent)]">app_mentions:read</code>,{" "}
+							<code className="text-[var(--accent)]">reactions:write</code> (acknowledgment reactions),{" "}
+							<code className="text-[var(--accent)]">reactions:read</code> (only for reaction triggers)
 						</div>
 						<div className="text-xs text-[var(--muted)]">
 							3. Install the app to your workspace and copy the Bot User OAuth Token
@@ -135,7 +137,16 @@ export function AddSlackModal(): VNode {
 							<code className="text-[var(--accent)]">connections:write</code> scope
 						</div>
 						<div className="text-xs text-[var(--muted)]">
-							5. For Events API: set the Request URL to your server's webhook endpoint
+							5. Under Event Subscriptions, subscribe to bot events:{" "}
+							<code className="text-[var(--accent)]">message.im</code>,{" "}
+							<code className="text-[var(--accent)]">app_mention</code>, and{" "}
+							<code className="text-[var(--accent)]">reaction_added</code> if you use reaction triggers
+						</div>
+						<div className="text-xs text-[var(--muted)]">
+							6. For Events API: set the Request URL to{" "}
+							<code className="text-[var(--accent)]">
+								https://your-host/api/channels/slack/&lt;account_id&gt;/webhook
+							</code>
 						</div>
 					</div>
 				</div>

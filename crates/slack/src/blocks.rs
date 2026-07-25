@@ -68,10 +68,19 @@ pub fn markdown_to_blocks(markdown: &str) -> Option<Vec<Value>> {
             continue;
         }
 
-        // ATX heading → header block.
+        // ATX heading → header block. A header cannot hold more than
+        // MAX_HEADER_CHARS and Slack has no continuation, so an overlong
+        // heading is rendered as a bold section instead of being truncated —
+        // the renderer must never drop content.
         if let Some(text) = heading_text(trimmed) {
             flush_paragraph(&mut paragraph, &mut blocks);
-            blocks.push(header_block(&text));
+            if text.chars().count() > MAX_HEADER_CHARS {
+                for chunk in split_by_limit(&format!("*{text}*"), MAX_SECTION_CHARS) {
+                    blocks.push(section_block(&chunk));
+                }
+            } else {
+                blocks.push(header_block(&text));
+            }
             continue;
         }
 
@@ -111,11 +120,12 @@ fn heading_text(line: &str) -> Option<String> {
     }
 }
 
+/// Build a header block. Callers must ensure `text` fits [`MAX_HEADER_CHARS`];
+/// longer headings are rendered as sections so nothing is lost.
 fn header_block(text: &str) -> Value {
-    let truncated = truncate_chars(text, MAX_HEADER_CHARS);
     json!({
         "type": "header",
-        "text": { "type": "plain_text", "text": truncated, "emoji": true },
+        "text": { "type": "plain_text", "text": text, "emoji": true },
     })
 }
 
@@ -169,17 +179,6 @@ fn split_by_limit(text: &str, limit: usize) -> Vec<String> {
     out
 }
 
-fn truncate_chars(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_string();
-    }
-    let cut = text
-        .char_indices()
-        .nth(max.saturating_sub(1))
-        .map_or(text.len(), |(i, _)| i);
-    format!("{}…", &text[..cut])
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -220,6 +219,19 @@ mod tests {
         // `#nospace` is not an ATX heading.
         let blocks = markdown_to_blocks("#notaheading").unwrap();
         assert_eq!(blocks[0]["type"], "section");
+    }
+
+    #[test]
+    fn overlong_heading_becomes_a_section_not_truncated() {
+        let heading = "H".repeat(400);
+        let blocks = markdown_to_blocks(&format!("# {heading}")).unwrap();
+        // Rendered as a section, and the full text survives.
+        assert_eq!(blocks[0]["type"], "section");
+        let rendered: String = blocks
+            .iter()
+            .filter_map(|b| b["text"]["text"].as_str())
+            .collect();
+        assert!(rendered.contains(&heading), "heading content was lost");
     }
 
     #[test]

@@ -8,7 +8,7 @@ use {
     tracing::{debug, info, warn},
 };
 
-use {moltis_config::MessageQueueMode, moltis_service_traits::ServiceResult};
+use moltis_service_traits::ServiceResult;
 
 #[cfg(feature = "local-llm")]
 use moltis_providers::model_id::raw_model_id;
@@ -31,6 +31,8 @@ use crate::{
 };
 
 use {super::*, crate::service::build_persisted_assistant_message};
+
+use super::queue_drain;
 
 use {
     crate::memory_tools::AgentScopedMemoryWriter,
@@ -125,6 +127,9 @@ impl LiveChatService {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // Carried through queueing/replay so reactions follow the message.
+        let ack_keys = crate::channel_acks::ack_keys_from_params(&params);
+
         // Track client-side sequence number for ordering diagnostics.
         // Note: seq resets to 1 on page reload, so a drop from a high value
         // back to 1 is normal (new browser session) — only flag issues within
@@ -196,6 +201,10 @@ impl LiveChatService {
                     queued_replay,
                     "chat.send: acquired session permit"
                 );
+                // This call owns the session and will execute: claim its acks.
+                self.state
+                    .activate_channel_acks(&session_key, ack_keys.clone())
+                    .await;
                 p
             },
             Err(_) => {
@@ -425,6 +434,10 @@ impl LiveChatService {
                     session_metadata.touch(&session_key_clone, count).await;
                 }
 
+                // Explicit /sh runs finalize their own acknowledgment: they
+                // never reach the model path that emits the terminal below.
+                crate::channel_acks::note_turn_finished(&state, &session_key_clone, true).await;
+
                 active_runs.write().await.remove(&run_id_clone);
                 let mut runs_by_session = active_runs_by_session.write().await;
                 if runs_by_session.get(&session_key_clone) == Some(&run_id_clone) {
@@ -445,61 +458,14 @@ impl LiveChatService {
 
                 drop(permit);
 
-                // Drain queued messages for this session.
-                let queued = message_queue
-                    .write()
-                    .await
-                    .remove(&session_key_clone)
-                    .unwrap_or_default();
-                if !queued.is_empty() {
-                    let queue_mode = message_queue_mode;
-                    let chat = state_for_drain.chat_service().await;
-                    match queue_mode {
-                        MessageQueueMode::Followup => {
-                            let mut iter = queued.into_iter();
-                            let Some(first) = iter.next() else {
-                                return;
-                            };
-                            let rest: Vec<QueuedMessage> = iter.collect();
-                            if !rest.is_empty() {
-                                message_queue
-                                    .write()
-                                    .await
-                                    .entry(session_key_clone.clone())
-                                    .or_default()
-                                    .extend(rest);
-                            }
-                            info!(session = %session_key_clone, "replaying queued message (followup)");
-                            let mut replay_params = first.params;
-                            replay_params["_queued_replay"] = serde_json::json!(true);
-                            if let Err(e) = chat.send(replay_params).await {
-                                warn!(session = %session_key_clone, error = %e, "failed to replay queued message");
-                            }
-                        },
-                        MessageQueueMode::Collect => {
-                            let combined: Vec<&str> = queued
-                                .iter()
-                                .filter_map(|m| m.params.get("text").and_then(|v| v.as_str()))
-                                .collect();
-                            if !combined.is_empty() {
-                                info!(
-                                    session = %session_key_clone,
-                                    count = combined.len(),
-                                    "replaying collected messages"
-                                );
-                                let Some(last) = queued.last() else {
-                                    return;
-                                };
-                                let mut merged = last.params.clone();
-                                merged["text"] = serde_json::json!(combined.join("\n\n"));
-                                merged["_queued_replay"] = serde_json::json!(true);
-                                if let Err(e) = chat.send(merged).await {
-                                    warn!(session = %session_key_clone, error = %e, "failed to replay collected messages");
-                                }
-                            }
-                        },
-                    }
-                }
+                // Replay anything that queued behind this run.
+                queue_drain::drain_and_replay(
+                    &message_queue,
+                    &session_key_clone,
+                    message_queue_mode,
+                    &state_for_drain,
+                )
+                .await;
             });
 
             self.active_runs
@@ -1273,17 +1239,12 @@ impl LiveChatService {
 
             // Finalize channel ack reactions (aborted runs emit Cancelled on the
             // abort path and never reach here).
-            let ack_outcome = if assistant_text.is_some() {
-                moltis_channels::ChannelAckOutcome::Success
-            } else {
-                moltis_channels::ChannelAckOutcome::Failure
-            };
-            state
-                .note_channel_activity(
-                    &session_key_clone,
-                    moltis_channels::ChannelActivity::Finished(ack_outcome),
-                )
-                .await;
+            crate::channel_acks::note_turn_finished(
+                &state,
+                &session_key_clone,
+                assistant_text.is_some(),
+            )
+            .await;
 
             // Persist assistant response (even empty ones — needed for LLM history coherence).
             if let Some(assistant_output) = assistant_text {
@@ -1417,64 +1378,14 @@ impl LiveChatService {
             // fail `try_acquire_owned()` and re-queue the message forever.
             drop(permit);
 
-            // Drain queued messages for this session.
-            let queued = message_queue
-                .write()
-                .await
-                .remove(&session_key_clone)
-                .unwrap_or_default();
-            if !queued.is_empty() {
-                let queue_mode = message_queue_mode;
-                let chat = state_for_drain.chat_service().await;
-                match queue_mode {
-                    MessageQueueMode::Followup => {
-                        let mut iter = queued.into_iter();
-                        let Some(first) = iter.next() else {
-                            return;
-                        };
-                        // Put remaining messages back so the replayed run's
-                        // own drain loop picks them up after it completes.
-                        let rest: Vec<QueuedMessage> = iter.collect();
-                        if !rest.is_empty() {
-                            message_queue
-                                .write()
-                                .await
-                                .entry(session_key_clone.clone())
-                                .or_default()
-                                .extend(rest);
-                        }
-                        info!(session = %session_key_clone, "replaying queued message (followup)");
-                        let mut replay_params = first.params;
-                        replay_params["_queued_replay"] = serde_json::json!(true);
-                        if let Err(e) = chat.send(replay_params).await {
-                            warn!(session = %session_key_clone, error = %e, "failed to replay queued message");
-                        }
-                    },
-                    MessageQueueMode::Collect => {
-                        let combined: Vec<&str> = queued
-                            .iter()
-                            .filter_map(|m| m.params.get("text").and_then(|v| v.as_str()))
-                            .collect();
-                        if !combined.is_empty() {
-                            info!(
-                                session = %session_key_clone,
-                                count = combined.len(),
-                                "replaying collected messages"
-                            );
-                            // Use the last queued message as the base params, override text.
-                            let Some(last) = queued.last() else {
-                                return;
-                            };
-                            let mut merged = last.params.clone();
-                            merged["text"] = serde_json::json!(combined.join("\n\n"));
-                            merged["_queued_replay"] = serde_json::json!(true);
-                            if let Err(e) = chat.send(merged).await {
-                                warn!(session = %session_key_clone, error = %e, "failed to replay collected messages");
-                            }
-                        }
-                    },
-                }
-            }
+            // Replay anything that queued behind this run.
+            queue_drain::drain_and_replay(
+                &message_queue,
+                &session_key_clone,
+                message_queue_mode,
+                &state_for_drain,
+            )
+            .await;
         });
 
         self.active_runs

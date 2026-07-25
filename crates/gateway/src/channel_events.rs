@@ -345,37 +345,26 @@ fn start_channel_typing_loop(
 /// and reactions enabled) and an outbound implementation is available.
 async fn register_channel_reaction_controller(
     state: &Arc<GatewayState>,
-    session_key: &str,
     reply_to: &ChannelReplyTarget,
-) {
-    let Some(message_id) = reply_to.ack_message_id.clone() else {
-        return;
-    };
-    let Some(outbound) = state.services.channel_outbound_arc() else {
-        return;
-    };
+) -> Option<String> {
+    let message_id = reply_to.ack_message_id.clone()?;
+    let outbound = state.services.channel_outbound_arc()?;
+    let key =
+        crate::channel_reactions::ack_key(&reply_to.account_id, &reply_to.chat_id, &message_id);
     let controller = ChannelReactionController::start(
         outbound,
         reply_to.account_id.clone(),
         reply_to.chat_id.clone(),
         message_id,
     );
-    // If a controller was already registered for this session (e.g. the user
-    // sent another message before the previous turn finished), finalize the old
-    // one first so its in-progress 👀 is stripped rather than left stuck when
-    // its handle is dropped.
-    let previous = state
+    // Park it against this message's own identity. A run claims it once the
+    // queue decision is known, so a message that queues behind an active run
+    // keeps its own 👀 instead of hijacking the running turn's reactions.
+    state
         .channel_reaction_controllers
-        .lock()
-        .await
-        .insert(session_key.to_string(), controller);
-    if let Some(previous) = previous {
-        previous
-            .note(moltis_channels::ChannelActivity::Finished(
-                ChannelAckOutcome::Cancelled,
-            ))
-            .await;
-    }
+        .register_pending(key.clone(), controller)
+        .await;
+    Some(key)
 }
 
 /// Finalize the acknowledgment reaction only when `chat.send` returned before
@@ -385,30 +374,38 @@ async fn register_channel_reaction_controller(
 /// this leaves their controller in place.
 async fn finalize_reaction_on_early_return(
     state: &Arc<GatewayState>,
-    session_key: &str,
+    ack_key: Option<&String>,
     send_result: &Result<serde_json::Value, moltis_service_traits::ServiceError>,
 ) {
+    let Some(ack_key) = ack_key else {
+        return;
+    };
     let outcome = match send_result {
         Err(_) => Some(ChannelAckOutcome::Failure),
-        Ok(payload) => match payload.get("state").and_then(|v| v.as_str()) {
-            Some("rejected" | "error" | "blocked") => Some(ChannelAckOutcome::Failure),
-            Some("aborted") => Some(ChannelAckOutcome::Cancelled),
-            _ => None,
+        Ok(payload) => {
+            // A queued message keeps its acknowledgment: it has not run yet and
+            // will claim it on replay.
+            if payload.get("queued").and_then(serde_json::Value::as_bool) == Some(true) {
+                None
+            } else if payload.get("rejected").and_then(serde_json::Value::as_bool) == Some(true) {
+                // Blocked by a MessageReceived hook — no run will ever start.
+                Some(ChannelAckOutcome::Failure)
+            } else {
+                match payload.get("state").and_then(|v| v.as_str()) {
+                    Some("rejected" | "error" | "blocked") => Some(ChannelAckOutcome::Failure),
+                    Some("aborted") => Some(ChannelAckOutcome::Cancelled),
+                    _ => None,
+                }
+            }
         },
     };
     let Some(outcome) = outcome else {
         return;
     };
-    let controller = state
+    state
         .channel_reaction_controllers
-        .lock()
-        .await
-        .remove(session_key);
-    if let Some(controller) = controller {
-        controller
-            .note(moltis_channels::ChannelActivity::Finished(outcome))
-            .await;
-    }
+        .finalize_keys(std::slice::from_ref(ack_key), outcome)
+        .await;
 }
 
 async fn resolve_channel_agent_id(

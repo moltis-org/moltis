@@ -342,6 +342,7 @@ mod tests {
             bot_user_id: Some("Ubot".into()),
             pending_threads: HashMap::new(),
             otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(300)),
+            dedup: std::sync::Mutex::new(crate::state::EventDedup::default()),
         }
     }
 
