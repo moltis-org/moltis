@@ -32,6 +32,11 @@ const STALL_EMOJI: &str = "hourglass_flowing_sand";
 const PHASE_DEBOUNCE: Duration = Duration::from_millis(700);
 /// After this idle time with no activity, show a "still working" marker.
 const STALL_AFTER: Duration = Duration::from_secs(20);
+/// Hard cap on a worker's lifetime. Normally the run signals completion long
+/// before this; the cap is a safety net so a run that never finalizes (e.g. a
+/// panicked task that skips the terminal signal) can't leave the worker task —
+/// and the 👀 reaction — alive forever.
+const MAX_LIFETIME: Duration = Duration::from_secs(900);
 
 /// Registry of active controllers, keyed by session key (runs serialize per
 /// session via the send permit, so at most one is active per session).
@@ -150,8 +155,19 @@ async fn run_worker(
     let mut current: Option<String> = Some(RECEIVED_EMOJI.to_string());
     let mut pending: Option<String> = None;
     let mut stalled = false;
+    let started = tokio::time::Instant::now();
 
     loop {
+        // Safety net: never outlive the hard cap. If a run failed to signal
+        // completion (e.g. it panicked), strip the in-progress marker and exit
+        // so neither the task nor the 👀 reaction leaks.
+        if started.elapsed() >= MAX_LIFETIME {
+            if let Some(cur) = current.take() {
+                remove_reaction(&outbound, &account_id, &chat_id, &message_id, &cur).await;
+            }
+            return;
+        }
+
         // Wait for the next command. If a phase change is pending, apply it once
         // the debounce window elapses; otherwise fall back to the stall timer.
         let wait = if pending.is_some() {

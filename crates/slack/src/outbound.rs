@@ -28,6 +28,17 @@ use crate::{
 /// Minimum chars before the first message is sent during streaming.
 const STREAM_MIN_INITIAL_CHARS: usize = 30;
 
+/// Shared HTTP client for raw Slack Web API calls (native streaming, assistant
+/// status). `reqwest::Client` pools connections and is cheap to clone, so build
+/// it once instead of per call — `send_typing` in particular is invoked on a
+/// repeating loop while a turn runs.
+fn shared_http_client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(moltis_common::http_client::build_default_http_client)
+        .clone()
+}
+
 /// Slack outbound message sender.
 pub struct SlackOutbound {
     pub(crate) accounts: AccountStateMap,
@@ -125,7 +136,7 @@ impl SlackOutbound {
         stream: &mut StreamReceiver,
     ) -> ChannelResult<()> {
         let (bot_token, api_base_url, throttle) = self.get_native_stream_config(account_id)?;
-        let http = moltis_common::http_client::build_default_http_client();
+        let http = shared_http_client();
 
         let stream_id =
             start_native_stream(&http, &api_base_url, &bot_token, to, thread_ts).await?;
@@ -644,7 +655,7 @@ impl ChannelOutbound for SlackOutbound {
             return Ok(());
         };
 
-        let http = moltis_common::http_client::build_default_http_client();
+        let http = shared_http_client();
         let body = serde_json::json!({
             "channel_id": to,
             "thread_ts": thread_ts,
