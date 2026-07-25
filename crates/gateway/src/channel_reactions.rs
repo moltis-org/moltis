@@ -97,14 +97,33 @@ pub struct ReactionRegistry {
 
 impl ReactionRegistry {
     /// Park a freshly received message's controller until a run claims it.
+    ///
+    /// A controller displaced by a duplicate registration or by the pending cap
+    /// is finalized rather than dropped: dropping its handle would close the
+    /// worker's channel, which exits without touching the message and would
+    /// leave 👀 on it until the lifetime cap.
     pub async fn register_pending(&self, key: String, controller: Arc<ChannelReactionController>) {
-        let mut inner = self.inner.lock().await;
-        if inner.pending.insert(key.clone(), controller).is_none() {
-            inner.pending_order.push(key);
-        }
-        while inner.pending_order.len() > MAX_PENDING_ACKS {
-            let oldest = inner.pending_order.remove(0);
-            inner.pending.remove(&oldest);
+        let displaced = {
+            let mut inner = self.inner.lock().await;
+            let mut displaced = Vec::new();
+            if let Some(previous) = inner.pending.insert(key.clone(), controller) {
+                displaced.push(previous);
+            } else {
+                inner.pending_order.push(key.clone());
+            }
+            // Evict oldest entries that no active turn still owns.
+            while inner.pending_order.len() > MAX_PENDING_ACKS {
+                let oldest = inner.pending_order.remove(0);
+                if let Some(evicted) = inner.pending.remove(&oldest) {
+                    displaced.push(evicted);
+                }
+            }
+            displaced
+        };
+        for controller in displaced {
+            controller
+                .note(ChannelActivity::Finished(ChannelAckOutcome::Cancelled))
+                .await;
         }
     }
 
@@ -172,6 +191,11 @@ impl ReactionRegistry {
     pub async fn finalize_keys(&self, keys: &[String], outcome: ChannelAckOutcome) {
         let controllers = {
             let mut inner = self.inner.lock().await;
+            // Drop any active-turn ownership of these keys too, so a later
+            // terminal cannot address controllers that are already resolved.
+            inner
+                .active
+                .retain(|_, turn| !turn.keys.iter().any(|tk| keys.contains(tk)));
             keys.iter()
                 .filter_map(|k| {
                     inner.pending_order.retain(|pk| pk != k);
@@ -655,6 +679,26 @@ mod tests {
             .await;
         tokio::time::sleep(Duration::from_millis(60)).await;
         assert_eq!(ops_of(&a), vec!["+👀", "+❌", "-👀"]);
+    }
+
+    #[tokio::test]
+    async fn duplicate_registration_resolves_the_displaced_controller() {
+        // A retry of the same message must not strand the first 👀.
+        let registry = ReactionRegistry::default();
+        let first = park(&registry, "msg-a").await;
+        let second_ops = Arc::new(StdMutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingOutbound {
+            ops: second_ops.clone(),
+        });
+        let replacement =
+            ChannelReactionController::start(outbound, "a".into(), "c".into(), "msg-a".into());
+        registry
+            .register_pending("msg-a".to_string(), replacement)
+            .await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        // Displaced controller cleared its marker instead of leaking it.
+        assert_eq!(ops_of(&first), vec!["+👀", "-👀"]);
+        assert_eq!(ops_of(&second_ops), vec!["+👀"]);
     }
 
     #[tokio::test]

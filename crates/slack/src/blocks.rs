@@ -24,7 +24,8 @@ const MAX_HEADER_CHARS: usize = 150;
 pub fn markdown_to_blocks(markdown: &str) -> Option<Vec<Value>> {
     let mut blocks: Vec<Value> = Vec::new();
     let mut paragraph = String::new();
-    let mut code: Option<String> = None;
+    // Accumulated fenced-code body plus the backtick count that opened it.
+    let mut code: Option<(String, usize)> = None;
 
     let flush_paragraph = |paragraph: &mut String, blocks: &mut Vec<Value>| {
         let trimmed = paragraph.trim();
@@ -37,23 +38,28 @@ pub fn markdown_to_blocks(markdown: &str) -> Option<Vec<Value>> {
     };
 
     for line in markdown.lines() {
-        // Fenced code block toggling.
-        if line.trim_start().starts_with("```") {
-            match code.take() {
-                Some(buf) => {
-                    // Closing fence: emit the accumulated code as fenced section(s).
-                    push_code_blocks(&buf, &mut blocks);
+        // Fence handling. A closing fence must be a bare run of at least as
+        // many backticks as the opener; anything else (a longer fence used as
+        // content, or ```rust) is body text. Treating every ```-prefixed line
+        // as a toggle silently truncated code blocks that contained one.
+        if let Some(ticks) = opening_fence_len(line) {
+            match &code {
+                Some((buf, open_ticks)) => {
+                    if is_closing_fence(line, *open_ticks) {
+                        push_code_blocks(buf, &mut blocks);
+                        code = None;
+                        continue;
+                    }
                 },
                 None => {
-                    // Opening fence: flush any pending paragraph first.
                     flush_paragraph(&mut paragraph, &mut blocks);
-                    code = Some(String::new());
+                    code = Some((String::new(), ticks));
+                    continue;
                 },
             }
-            continue;
         }
 
-        if let Some(buf) = code.as_mut() {
+        if let Some((buf, _)) = code.as_mut() {
             buf.push_str(line);
             buf.push('\n');
             continue;
@@ -97,7 +103,7 @@ pub fn markdown_to_blocks(markdown: &str) -> Option<Vec<Value>> {
     }
 
     // Flush trailing state.
-    if let Some(buf) = code.take() {
+    if let Some((buf, _)) = code.take() {
         // Unterminated fence: still emit what we have.
         push_code_blocks(&buf, &mut blocks);
     }
@@ -108,6 +114,21 @@ pub fn markdown_to_blocks(markdown: &str) -> Option<Vec<Value>> {
         return None;
     }
     Some(blocks)
+}
+
+/// Backtick count if this line opens a fence (three or more backticks,
+/// optionally followed by an info string such as ```rust).
+fn opening_fence_len(line: &str) -> Option<usize> {
+    let trimmed = line.trim_start();
+    let ticks = trimmed.chars().take_while(|c| *c == '`').count();
+    (ticks >= 3).then_some(ticks)
+}
+
+/// A fence closes a block only if it is a bare run of at least `open_ticks`
+/// backticks with no trailing content.
+fn is_closing_fence(line: &str, open_ticks: usize) -> bool {
+    let trimmed = line.trim();
+    trimmed.len() >= open_ticks && trimmed.chars().all(|c| c == '`')
 }
 
 /// Extract heading text from an ATX heading line (`# …` … `###### …`).
@@ -143,7 +164,10 @@ fn push_code_blocks(code: &str, blocks: &mut Vec<Value>) {
     // Reserve room for the fence delimiters ("```\n" + "\n```") in each chunk.
     let overhead = "```\n\n```".chars().count();
     let body_limit = MAX_SECTION_CHARS.saturating_sub(overhead).max(1);
-    for piece in split_by_limit(code.trim_end_matches('\n'), body_limit) {
+    // Only the single newline the parser appends per line is dropped; further
+    // trailing blank lines are part of the snippet.
+    let body = code.strip_suffix('\n').unwrap_or(code);
+    for piece in split_by_limit(body, body_limit) {
         blocks.push(section_block(&format!("```\n{piece}\n```")));
     }
 }
@@ -232,6 +256,45 @@ mod tests {
             .filter_map(|b| b["text"]["text"].as_str())
             .collect();
         assert!(rendered.contains(&heading), "heading content was lost");
+    }
+
+    #[test]
+    fn code_block_containing_a_longer_fence_is_not_truncated() {
+        // A ```` run inside a ``` block is content, not a terminator.
+        let md = "```\nbefore\n````\nafter\n```";
+        let blocks = markdown_to_blocks(md).unwrap();
+        let rendered: String = blocks
+            .iter()
+            .filter_map(|b| b["text"]["text"].as_str())
+            .collect();
+        assert!(rendered.contains("before"), "opening content lost");
+        assert!(rendered.contains("after"), "content after inner fence lost");
+    }
+
+    #[test]
+    fn info_string_fence_round_trips_content() {
+        let md = "```rust\nlet x = 1;\n```";
+        let blocks = markdown_to_blocks(md).unwrap();
+        let rendered: String = blocks
+            .iter()
+            .filter_map(|b| b["text"]["text"].as_str())
+            .collect();
+        assert!(rendered.contains("let x = 1;"), "code body lost");
+        assert_eq!(rendered.matches("```").count(), 2, "unbalanced fences");
+    }
+
+    #[test]
+    fn interior_blank_lines_in_code_are_preserved() {
+        let md = "```\na\n\n\nb\n```";
+        let blocks = markdown_to_blocks(md).unwrap();
+        let rendered: String = blocks
+            .iter()
+            .filter_map(|b| b["text"]["text"].as_str())
+            .collect();
+        assert!(
+            rendered.contains("a\n\n\nb"),
+            "blank lines collapsed: {rendered:?}"
+        );
     }
 
     #[test]

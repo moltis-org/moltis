@@ -426,6 +426,19 @@ impl ChatService for LiveChatService {
         let count = removed.len();
         info!(session = %session_key, count, "cancel_queued: cleared message queue");
 
+        // These messages will never be answered, so clear their channel
+        // acknowledgment markers rather than leaving them to expire.
+        let cancelled_acks =
+            crate::channel_acks::merged_ack_keys(removed.iter().map(|m| &m.params));
+        if !cancelled_acks.is_empty() {
+            self.state
+                .finalize_channel_acks(
+                    cancelled_acks,
+                    moltis_channels::ChannelAckOutcome::Cancelled,
+                )
+                .await;
+        }
+
         broadcast(
             &self.state,
             "chat",

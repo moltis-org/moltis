@@ -153,6 +153,20 @@ model_provider = "anthropic"
 
 ### Events API Mode
 
+Set these Request URLs in your Slack app (replace `<id>` with the account ID you
+configured in Moltis):
+
+| Slack setting | URL |
+|---------------|-----|
+| Event Subscriptions | `https://your-host/api/channels/slack/<id>/events` |
+| Interactivity & Shortcuts | `https://your-host/api/channels/slack/<id>/interactions` |
+| Slash Commands | `https://your-host/api/channels/slack/<id>/commands` |
+
+These endpoints are reachable without a Moltis session — Slack cannot present
+one — and instead verify Slack's request signature (HMAC) and timestamp before
+doing any work.
+
+
 If you prefer webhook-based delivery instead of Socket Mode:
 
 ```toml

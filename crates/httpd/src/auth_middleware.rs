@@ -237,6 +237,24 @@ pub async fn auth_gate(
 
 /// Paths that never require authentication.
 #[cfg(feature = "web-ui")]
+/// Exactly the three Slack callback endpoints, and nothing else under the
+/// Slack namespace.
+///
+/// Matching the whole `/api/channels/slack/` prefix would also expose any
+/// future management route added there, so the suffix is checked explicitly.
+#[cfg(feature = "slack")]
+fn is_slack_callback_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/api/channels/slack/") else {
+        return false;
+    };
+    matches!(
+        rest.split_once('/'),
+        Some((account_id, suffix))
+            if !account_id.is_empty()
+                && matches!(suffix, "events" | "interactions" | "commands")
+    )
+}
+
 fn is_public_path(path: &str) -> bool {
     matches!(
         path,
@@ -255,6 +273,20 @@ fn is_public_path(path: &str) -> bool {
                 path.starts_with("/api/channels/msteams/")
             }
             #[cfg(not(feature = "msteams"))]
+            {
+                false
+            }
+        }
+        // Slack calls these endpoints itself and cannot present a Moltis
+        // session, so gateway auth would reject every callback before the
+        // handler runs. They are not unauthenticated: each verifies Slack's
+        // HMAC signature (and timestamp freshness) before doing any work.
+        || {
+            #[cfg(feature = "slack")]
+            {
+                is_slack_callback_path(path)
+            }
+            #[cfg(not(feature = "slack"))]
             {
                 false
             }
@@ -431,6 +463,33 @@ pub fn parse_cookie<'a>(header: &'a str, name: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(feature = "slack")]
+    #[test]
+    fn slack_callback_paths_bypass_gateway_auth_but_nothing_else_does() {
+        // Slack cannot present a Moltis session; these three verify Slack's
+        // HMAC signature themselves.
+        for p in [
+            "/api/channels/slack/my-bot/events",
+            "/api/channels/slack/my-bot/interactions",
+            "/api/channels/slack/my-bot/commands",
+        ] {
+            assert!(
+                is_public_path(p),
+                "{p} must reach its HMAC-verifying handler"
+            );
+        }
+        // Everything else in the namespace stays authenticated.
+        for p in [
+            "/api/channels/slack/my-bot/config",
+            "/api/channels/slack/my-bot",
+            "/api/channels/slack//events",
+            "/api/channels/slack/my-bot/events/extra",
+            "/api/channels/slack",
+        ] {
+            assert!(!is_public_path(p), "{p} must stay authenticated");
+        }
+    }
     use {super::*, sqlx::SqlitePool};
 
     #[test]

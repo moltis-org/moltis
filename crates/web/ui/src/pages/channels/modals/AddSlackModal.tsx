@@ -143,10 +143,13 @@ export function AddSlackModal(): VNode {
 							<code className="text-[var(--accent)]">reaction_added</code> if you use reaction triggers
 						</div>
 						<div className="text-xs text-[var(--muted)]">
-							6. For Events API: set the Request URL to{" "}
-							<code className="text-[var(--accent)]">
-								https://your-host/api/channels/slack/&lt;account_id&gt;/webhook
-							</code>
+							6. For Events API, set these Request URLs (replace{" "}
+							<code className="text-[var(--accent)]">&lt;id&gt;</code> with the Account ID below): Event Subscriptions{" "}
+							<code className="text-[var(--accent)]">https://your-host/api/channels/slack/&lt;id&gt;/events</code>,
+							Interactivity{" "}
+							<code className="text-[var(--accent)]">https://your-host/api/channels/slack/&lt;id&gt;/interactions</code>
+							, Slash Commands{" "}
+							<code className="text-[var(--accent)]">https://your-host/api/channels/slack/&lt;id&gt;/commands</code>
 						</div>
 					</div>
 				</div>
