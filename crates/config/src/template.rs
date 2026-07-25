@@ -839,8 +839,8 @@ port = {port}                           # Port number (auto-generated for this i
 # allowed_pubkeys = ["npub1..."]
 # # Buzz / NIP-29 group chat: the `h`-tag group ids the bot joins. Requires a
 # # relay that supports NIP-29 + NIP-42 (Buzz relays do). Empty = DM-only.
+# # This list is also the allowlist — messages for any other group are dropped.
 # groups = ["buzz-general"]
-# group_policy = "open"           # open | allowlist | disabled
 # group_mention_mode = "mention"  # mention (p-tagged only) | always | none
 
 # See docs or defaults.toml for full channel configuration examples

@@ -89,7 +89,6 @@ offered = ["telegram", "discord", "slack", "matrix", "nostr"]
 | `otp_self_approval` | no | `true` | Allow non-allowlisted senders to self-approve via OTP code |
 | `otp_cooldown_secs` | no | `300` | Cooldown after 3 failed OTP attempts |
 | `groups` | no | `[]` | NIP-29 group ids (`h` tags) to join — see [Buzz & NIP-29 Groups](#buzz--nip-29-groups). Empty = DM-only |
-| `group_policy` | no | `"open"` | Group participation: `"open"`, `"allowlist"`, or `"disabled"` |
 | `group_mention_mode` | no | `"mention"` | When to respond in groups: `"mention"` (p-tagged only), `"always"`, or `"none"` |
 | `profile.name` | no | — | NIP-01 profile display name |
 | `profile.display_name` | no | — | NIP-01 longer display name |
@@ -162,7 +161,6 @@ secret_key = "nsec1..."
 relays = ["wss://relay.example-buzz.dev"]
 # The NIP-29 group ids (h tags) the bot joins. Empty keeps DM-only mode.
 groups = ["buzz-general", "buzz-dev"]
-group_policy = "open"           # open | allowlist | disabled
 group_mention_mode = "mention"  # mention | always | none
 ```
 
@@ -176,14 +174,31 @@ group_mention_mode = "mention"  # mention | always | none
   agent channels.
 - **`none`** — never respond in groups (receive-only).
 
-`group_policy` gates which groups are honored: `open` responds in every joined
-group, `allowlist` restricts responses to the ids in `groups`, and `disabled`
-turns group chat off entirely (no `kind:9` subscription).
-
 Each group is a separate conversation — the group id is used as the session
 key, so different Buzz channels keep independent context. Replies are posted as
 `kind:9` events carrying the group's `h` tag and a NIP-10 `e` tag threading them
 to the message being answered.
+
+### Access Control
+
+`groups` is the whole access model: it is both the set of groups the bot
+subscribes to *and* the set it accepts messages from. There is deliberately no
+"respond in any group" mode.
+
+```admonish warning
+A group's `h` tag is an unauthenticated label. An event's signature proves who
+wrote it, not which group it belongs to, and a relay can push any event down
+the socket — `nostr-sdk` does not verify that delivered events match the filters
+you subscribed with. Moltis therefore re-checks every inbound `kind:9` against
+`groups` and drops anything else, so a hostile or buggy relay cannot inject text
+into the agent by inventing an `h` tag. Keep `groups` to channels you actually
+intend the bot to work in.
+```
+
+Note that group chat has no sender allowlist: in NIP-29 the relay owns
+membership, so anyone the relay admits to a joined channel can address the bot
+there. This is the same trust model as a Slack channel, and a reason to prefer
+a relay you host.
 
 ### Setup
 
@@ -194,8 +209,8 @@ to the message being answered.
    `groups` requires an account restart** to take effect.
 
 ```admonish note
-NIP-42 authentication is enabled automatically for every Nostr account, so the
-bot transparently authenticates to relays that require it (Buzz relays challenge
+NIP-42 authentication is enabled for every Nostr account, so the bot
+transparently authenticates to relays that require it (Buzz relays challenge
 every connection before granting group read/write scopes).
 ```
 

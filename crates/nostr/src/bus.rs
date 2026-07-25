@@ -87,11 +87,7 @@ pub async fn run_subscription_loop(
     // connect, so group membership changes take effect on account restart.
     let group_ids: Vec<String> = {
         let cfg = config.read().unwrap_or_else(|e| e.into_inner());
-        if cfg.group_policy == moltis_channels::gating::GroupPolicy::Disabled {
-            Vec::new()
-        } else {
-            cfg.groups.clone()
-        }
+        cfg.groups.clone()
     };
     if !group_ids.is_empty() {
         let group_filter = Filter::new()
@@ -431,16 +427,16 @@ async fn handle_group_event(
     };
 
     // Read group config fields (drop the guard before any .await).
-    let (policy, groups, mention_mode) = {
+    let (groups, mention_mode) = {
         let cfg = config.read().unwrap_or_else(|e| e.into_inner());
-        (
-            cfg.group_policy.clone(),
-            cfg.groups.clone(),
-            cfg.group_mention_mode.clone(),
-        )
+        (cfg.groups.clone(), cfg.group_mention_mode.clone())
     };
 
-    if let Err(denied) = crate::groups::check_group_access(&group_id, &policy, &groups) {
+    // Re-check membership against the configured join list. The relay is
+    // untrusted and `nostr-sdk` does not verify that delivered events match our
+    // subscription filters, so a `kind:9` for a group we never joined can still
+    // arrive on this socket.
+    if let Err(denied) = crate::groups::check_group_access(&group_id, &groups) {
         #[cfg(feature = "metrics")]
         counter!(nostr_metrics::ACCESS_CONTROL_DENIALS_TOTAL, "reason" => "group").increment(1);
         tracing::debug!(

@@ -14,7 +14,7 @@
 //! **not** encrypted; the relay enforces membership and authorization.
 
 use {
-    moltis_channels::gating::{self, GroupPolicy, MentionMode},
+    moltis_channels::gating::MentionMode,
     nostr_sdk::prelude::{
         Alphabet, Client, Event, EventBuilder, EventId, Kind, PublicKey, SingleLetterTag, Tag,
         TagKind,
@@ -68,40 +68,43 @@ pub fn should_respond(mode: &MentionMode, event: &Event, bot: &PublicKey) -> boo
 /// Reason a group message was rejected by access control.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GroupDenied {
-    /// Group participation is disabled for this account.
+    /// No groups are configured, so group chat is off for this account.
     Disabled,
-    /// The group id is not on the allowlist.
-    NotAllowlisted,
+    /// The event's group is not one this account joined.
+    NotJoined,
 }
 
 impl std::fmt::Display for GroupDenied {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Disabled => write!(f, "groups are disabled"),
-            Self::NotAllowlisted => write!(f, "group not in allowlist"),
+            Self::Disabled => write!(f, "no groups configured"),
+            Self::NotJoined => write!(f, "group not joined"),
         }
     }
 }
 
-/// Check whether a group is allowed under the given policy and allowlist.
+/// Check that an inbound group message belongs to a group this account joined.
 ///
-/// An empty allowlist under [`GroupPolicy::Allowlist`] allows every group,
-/// matching the shared [`gating::is_allowed`] convention used across channels.
-pub fn check_group_access(
-    group_id: &str,
-    policy: &GroupPolicy,
-    allowed: &[String],
-) -> Result<(), GroupDenied> {
-    match policy {
-        GroupPolicy::Disabled => Err(GroupDenied::Disabled),
-        GroupPolicy::Open => Ok(()),
-        GroupPolicy::Allowlist => {
-            if gating::is_allowed(group_id, allowed) {
-                Ok(())
-            } else {
-                Err(GroupDenied::NotAllowlisted)
-            }
-        },
+/// The configured `joined` list is authoritative: it is the only set of groups
+/// we ever subscribe to, so anything else must be rejected. This is a security
+/// boundary, not a convenience filter — a relay is untrusted and can push any
+/// event it likes down the socket, including a `kind:9` carrying an arbitrary
+/// `h` tag. The `h` tag is an unauthenticated label (the signature proves who
+/// wrote the event, not which group it belongs to), so without this check a
+/// hostile or buggy relay could inject text straight into the agent.
+///
+/// An empty `joined` list therefore denies everything rather than allowing
+/// everything — the opposite of the `moltis_channels::gating::is_allowed`
+/// convention used for optional allowlists, because here the list defines
+/// membership itself rather than filtering within it.
+pub fn check_group_access(group_id: &str, joined: &[String]) -> Result<(), GroupDenied> {
+    if joined.is_empty() {
+        return Err(GroupDenied::Disabled);
+    }
+    if joined.iter().any(|g| g == group_id) {
+        Ok(())
+    } else {
+        Err(GroupDenied::NotJoined)
     }
 }
 
@@ -202,25 +205,48 @@ mod tests {
     }
 
     #[test]
-    fn group_access_open_allows_any() {
-        assert!(check_group_access("anything", &GroupPolicy::Open, &[]).is_ok());
+    fn group_access_allows_joined_group() {
+        let joined = vec!["buzz-general".to_string(), "buzz-dev".to_string()];
+        assert!(check_group_access("buzz-general", &joined).is_ok());
+        assert!(check_group_access("buzz-dev", &joined).is_ok());
     }
 
+    /// An empty join list denies everything — group chat is simply off.
     #[test]
-    fn group_access_disabled_denies_all() {
+    fn group_access_empty_join_list_denies_all() {
         assert_eq!(
-            check_group_access("g", &GroupPolicy::Disabled, &["g".into()]),
+            check_group_access("anything", &[]),
             Err(GroupDenied::Disabled)
         );
     }
 
+    /// A relay can push any event down the socket, so a `kind:9` for a group
+    /// we never joined must be rejected rather than fed to the agent.
     #[test]
-    fn group_access_allowlist_matches() {
-        let allowed = vec!["buzz-general".to_string()];
-        assert!(check_group_access("buzz-general", &GroupPolicy::Allowlist, &allowed).is_ok());
+    fn group_access_rejects_unjoined_group_from_hostile_relay() {
+        let joined = vec!["buzz-general".to_string()];
         assert_eq!(
-            check_group_access("other", &GroupPolicy::Allowlist, &allowed),
-            Err(GroupDenied::NotAllowlisted)
+            check_group_access("attacker-controlled-group", &joined),
+            Err(GroupDenied::NotJoined)
+        );
+    }
+
+    /// Group ids are matched exactly — no glob or case folding, since an `h`
+    /// tag is an opaque identifier rather than a user-facing handle.
+    #[test]
+    fn group_access_matches_exactly() {
+        let joined = vec!["buzz-general".to_string()];
+        assert_eq!(
+            check_group_access("buzz-general-2", &joined),
+            Err(GroupDenied::NotJoined)
+        );
+        assert_eq!(
+            check_group_access("BUZZ-GENERAL", &joined),
+            Err(GroupDenied::NotJoined)
+        );
+        assert_eq!(
+            check_group_access("*", &joined),
+            Err(GroupDenied::NotJoined)
         );
     }
 

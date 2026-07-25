@@ -59,8 +59,9 @@ export function AddNostrModal(): VNode {
 			.filter(Boolean);
 		if (groups.length > 0) {
 			// NIP-29 group chat (Buzz channels). Left empty keeps DM-only mode.
+			// `groups` is both the join list and the allowlist, so there is no
+			// separate group policy to send.
 			addConfig.groups = groups;
-			addConfig.group_policy = "open";
 			addConfig.group_mention_mode = groupMentionMode.value;
 		}
 		if (addModel.value) {
