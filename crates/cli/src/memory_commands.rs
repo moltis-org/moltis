@@ -60,6 +60,58 @@ fn memory_db_path() -> std::path::PathBuf {
     moltis_config::data_dir().join("memory.db")
 }
 
+/// Resolve the embedding dimension for a zvec collection stem.
+///
+/// The zvec backend writes its HNSW collection to `<stem>_<dim>` on disk
+/// (suffix appended by `collection_path()` in moltis-memory-zvec; the cache
+/// and lock files share the bare stem and are skipped by the `_<digits>`
+/// match below). To survive later changes to `memory.embedding_dimension`,
+/// scan the parent directory for an existing suffixed sibling and prefer
+/// the one matching `config_dim` when present. Falls back to `config_dim`
+/// (so a fresh collection can still be created) and then `default_dim`.
+#[cfg(feature = "zvec")]
+fn resolve_zvec_dimension(
+    stem: &std::path::Path,
+    config_dim: Option<u32>,
+    default_dim: u32,
+) -> u32 {
+    use std::path::Path;
+
+    let parent = stem.parent().unwrap_or_else(|| Path::new("."));
+    let stem_name = match stem.file_name().and_then(|s| s.to_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return config_dim.unwrap_or(default_dim),
+    };
+
+    let mut first_found: Option<u32> = None;
+    if let Ok(entries) = std::fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            let Some(name) = entry.file_name().into_string().ok() else {
+                continue;
+            };
+            let Some(suffix) = name.strip_prefix(stem_name) else {
+                continue;
+            };
+            let Some(digits) = suffix.strip_prefix('_') else {
+                continue;
+            };
+            // Reject suffixes with extra characters (e.g. `<stem>_768.lock`)
+            // so we only match the bare collection file.
+            if !digits.bytes().all(|b| b.is_ascii_digit()) {
+                continue;
+            }
+            let Ok(dim) = digits.parse::<u32>() else {
+                continue;
+            };
+            if Some(dim) == config_dim {
+                return dim;
+            }
+            first_found.get_or_insert(dim);
+        }
+    }
+    first_found.unwrap_or_else(|| config_dim.unwrap_or(default_dim))
+}
+
 /// Open a read-only SQLite connection pool to memory.db.
 async fn open_memory_pool() -> anyhow::Result<sqlx::SqlitePool> {
     let db_path = memory_db_path();
@@ -181,28 +233,41 @@ async fn handle_reindex(
     let config = moltis_config::discover_and_load();
     let data_dir = moltis_config::data_dir();
 
-    let source_path = match from {
-        Some(ref p) => Path::new(p).to_path_buf(),
+    // The zvec backend stores its HNSW collection on disk as `<stem>_<dim>`
+    // (e.g. `memory.zvec_768`), with the suffix appended by
+    // `collection_path()` in moltis-memory-zvec. The gateway always opens
+    // the active collection with `Some(dim)`, so the bare-stem file the
+    // previous default produced (`memory_zvec` with no suffix) never matched
+    // a real collection and `open_or_create_collection` would silently
+    // create a fresh empty one. Mirror the gateway default stem here and
+    // resolve the dimension up front by scanning for an existing suffixed
+    // sibling, falling back to the configured dimension and then 768.
+    let source_stem = match from {
+        Some(ref p) => std::path::PathBuf::from(p),
         None => {
-            let db_name = config.memory.db_path.as_deref().unwrap_or("memory_zvec");
+            let db_name = config.memory.db_path.as_deref().unwrap_or("memory.zvec");
             data_dir.join(db_name)
         },
     };
+    let default_dim = config.memory.embedding_dimension.unwrap_or(768);
+    let source_dim_guess =
+        resolve_zvec_dimension(&source_stem, config.memory.embedding_dimension, default_dim);
 
     moltis_memory_zvec::ensure_zvec_initialized()?;
 
     // Open the source as a full store so enumeration uses the durable redb
     // file/chunk index (HNSW filter queries can't reliably list documents).
     let source_cache_path = {
-        let mut p = source_path.clone();
+        let mut p = source_stem.clone();
         p.as_mut_os_string().push(".cache");
         p
     };
     let source = {
-        let sp = source_path.clone();
+        let sp = source_stem.clone();
         let cp = source_cache_path.clone();
+        let dim = source_dim_guess;
         tokio::task::spawn_blocking(move || {
-            let collection = moltis_memory_zvec::open_or_create_collection(&sp, None)?;
+            let collection = moltis_memory_zvec::open_or_create_collection(&sp, Some(dim))?;
             let cache = moltis_memory_zvec::RedbCache::new(&cp)?;
             Ok::<_, anyhow::Error>(moltis_memory_zvec::ZvecMemoryStore::with_cache(
                 collection, cache,
@@ -212,13 +277,12 @@ async fn handle_reindex(
         .map_err(|e| anyhow::anyhow!("spawn_blocking join failed: {e}"))??
     };
 
-    let default_dim = config.memory.embedding_dimension.unwrap_or(768);
     let source_dim = {
         let coll = source.collection_arc();
         tokio::task::spawn_blocking(move || moltis_memory_zvec::read_dimension_meta(&coll))
             .await
             .map_err(|e| anyhow::anyhow!("spawn_blocking join failed: {e}"))??
-            .unwrap_or(default_dim)
+            .unwrap_or(source_dim_guess)
     };
 
     let source_rows = source.list_files().await?;
@@ -264,7 +328,11 @@ async fn handle_reindex(
         .with_model(model_name.clone(), embed_dims);
 
     println!("Re-index plan:");
-    println!("  Source collection:  {}", source_path.display());
+    println!(
+        "  Source collection:  {}_{}",
+        source_stem.display(),
+        source_dim
+    );
     println!("  Target collection:  {}", Path::new(&to).display());
     println!("  Source dimension:   {}", source_dim);
     println!("  Target dimension:   {}", target_dim);
@@ -587,5 +655,70 @@ mod tests {
 
         // Should not panic
         print_human(&results);
+    }
+
+    #[cfg(feature = "zvec")]
+    mod zvec_dim {
+        use super::*;
+
+        fn write_collection(dir: &std::path::Path, stem: &str, dim: u32) {
+            std::fs::write(dir.join(format!("{stem}_{dim}")), b"").unwrap();
+        }
+
+        #[test]
+        fn prefers_config_dim_when_matching_sibling_exists() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let stem = tmp.path().join("memory.zvec");
+            write_collection(tmp.path(), "memory.zvec", 1536);
+            write_collection(tmp.path(), "memory.zvec", 768);
+            // config_dim 768 is one of the siblings → pick it even though 1536 sorts first.
+            assert_eq!(resolve_zvec_dimension(&stem, Some(768), 1536), 768);
+        }
+
+        #[test]
+        fn falls_back_to_first_sibling_when_config_dim_absent() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let stem = tmp.path().join("memory.zvec");
+            write_collection(tmp.path(), "memory.zvec", 1024);
+            // No matching sibling for config_dim=1536, but a real collection exists → use it.
+            assert_eq!(resolve_zvec_dimension(&stem, Some(1536), 768), 1024);
+        }
+
+        #[test]
+        fn ignores_cache_and_lock_files() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let stem = tmp.path().join("memory.zvec");
+            // Cache/lock files share the stem but must not be parsed as dimensions.
+            std::fs::write(tmp.path().join("memory.zvec.cache"), b"").unwrap();
+            std::fs::write(tmp.path().join("memory.zvec.lock"), b"").unwrap();
+            std::fs::write(tmp.path().join("memory.zvec_768.bak"), b"").unwrap();
+            write_collection(tmp.path(), "memory.zvec", 768);
+            assert_eq!(resolve_zvec_dimension(&stem, None, 1024), 768);
+        }
+
+        #[test]
+        fn uses_config_dim_when_no_sibling_exists() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let stem = tmp.path().join("memory.zvec");
+            // Fresh collection: no sibling on disk, must fall through to config_dim.
+            assert_eq!(resolve_zvec_dimension(&stem, Some(1536), 768), 1536);
+        }
+
+        #[test]
+        fn uses_default_dim_when_nothing_else_available() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let stem = tmp.path().join("memory.zvec");
+            assert_eq!(resolve_zvec_dimension(&stem, None, 768), 768);
+        }
+
+        #[test]
+        fn handles_relative_stem_without_parent() {
+            // A stem with no parent component should not panic; parent resolves to ".".
+            // We can't assert on a specific dim here since it depends on cwd contents,
+            // but we can verify the call doesn't panic and returns a positive value.
+            let stem = std::path::PathBuf::from("nonexistent_test_stem_12345");
+            let dim = resolve_zvec_dimension(&stem, None, 768);
+            assert_eq!(dim, 768);
+        }
     }
 }
