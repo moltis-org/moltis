@@ -57,6 +57,7 @@ fn glyph_to_shortcode(glyph: &str) -> Option<&'static str> {
         "🛠️" | "🛠" => "hammer_and_wrench",
         "🌐" => "globe_with_meridians",
         "💻" => "computer",
+        "✏️" | "✏" => "pencil2",
         "🏗️" | "🏗" => "building_construction",
         "🛫" => "airplane_departure",
         "🗜️" | "🗜" => "clamp",
@@ -105,6 +106,25 @@ mod tests {
     #[test]
     fn trims_whitespace() {
         assert_eq!(normalize_reaction_name("  eyes  "), "eyes");
+    }
+
+    #[test]
+    fn every_canonical_ack_emoji_maps_to_a_shortcode() {
+        // The reaction controller emits the channel-neutral glyph vocabulary;
+        // Slack's Web API silently drops raw glyphs, so every one of them must
+        // normalize to a shortcode here. This is the cross-crate contract —
+        // adding a new canonical emoji without a mapping fails this test.
+        for glyph in moltis_channels::activity::ack_emoji::ALL {
+            let normalized = normalize_reaction_name(glyph);
+            assert_ne!(
+                &normalized, glyph,
+                "canonical ack emoji {glyph} has no Slack shortcode mapping"
+            );
+            assert!(
+                normalized.is_ascii(),
+                "{glyph} normalized to a non-shortcode value: {normalized}"
+            );
+        }
     }
 
     #[test]

@@ -7,10 +7,15 @@
 //! loop, and finalized (✅/❌ or nothing on cancel) when the run completes.
 //!
 //! The controller owns a single reaction "slot" on the inbound message: each
-//! transition removes the current emoji and adds the next, so at most one
-//! reaction from the bot is visible at a time. All Slack API calls run on one
-//! serialized worker task (no concurrent add/remove races), phase changes are
-//! debounced to avoid flicker, and terminal transitions win over late phases.
+//! transition adds the next emoji and then removes the previous one, so the
+//! message is never momentarily bare and a failed add leaves the old marker
+//! rather than clearing the acknowledgment entirely. All reaction API calls run
+//! on one serialized worker task (no concurrent add/remove races), phase changes
+//! are debounced to avoid flicker, and terminals win over late phases.
+//!
+//! Emoji come from the channel-neutral [`ack_emoji`] vocabulary; each channel
+//! translates at its own boundary (Slack maps glyphs to shortcodes, Matrix uses
+//! glyphs directly), so this controller stays platform-agnostic.
 //!
 //! Design ported from openclaw's `status-reactions.ts`.
 
@@ -22,11 +27,15 @@ use {
     tracing::debug,
 };
 
-/// Emoji shortcodes for acknowledgment/phase reactions (Slack-style names).
-const RECEIVED_EMOJI: &str = "eyes";
-const SUCCESS_EMOJI: &str = "white_check_mark";
-const ERROR_EMOJI: &str = "x";
-const STALL_EMOJI: &str = "hourglass_flowing_sand";
+/// Acknowledgment/phase emoji, from the shared channel-neutral vocabulary.
+/// Channels translate these at their own boundary (Slack maps glyphs to
+/// shortcodes; Matrix uses the glyph directly).
+use moltis_channels::activity::ack_emoji;
+
+const RECEIVED_EMOJI: &str = ack_emoji::RECEIVED;
+const SUCCESS_EMOJI: &str = ack_emoji::SUCCESS;
+const ERROR_EMOJI: &str = ack_emoji::ERROR;
+const STALL_EMOJI: &str = ack_emoji::STALL;
 
 /// Coalesce rapid phase changes so the reaction does not flicker.
 const PHASE_DEBOUNCE: Duration = Duration::from_millis(700);
@@ -65,9 +74,9 @@ pub fn classify_tool_emoji(tool_name: &str) -> &'static str {
         "http",
         "url",
     ]) {
-        "globe_with_meridians"
+        ack_emoji::WEB
     } else if has(&["bash", "exec", "shell", "process", "command", "run"]) {
-        "computer"
+        ack_emoji::SHELL
     } else if has(&[
         "edit",
         "write",
@@ -77,13 +86,13 @@ pub fn classify_tool_emoji(tool_name: &str) -> &'static str {
         "create_file",
         "code",
     ]) {
-        "pencil2"
+        ack_emoji::EDIT
     } else if has(&["deploy", "fly", "release", "publish"]) {
-        "airplane_departure"
+        ack_emoji::DEPLOY
     } else if has(&["build", "compile", "cargo", "npm", "make"]) {
-        "building_construction"
+        ack_emoji::BUILD
     } else {
-        "hammer_and_wrench"
+        ack_emoji::TOOL
     }
 }
 
@@ -188,11 +197,24 @@ async fn run_worker(
                 }
             },
             Ok(Some(Command::Finish(outcome))) => {
-                if let Some(cur) = current.take() {
-                    remove_reaction(&outbound, &account_id, &chat_id, &message_id, &cur).await;
-                }
-                if let Some(term) = terminal_emoji(outcome) {
-                    add_reaction(&outbound, &account_id, &chat_id, &message_id, term).await;
+                match terminal_emoji(outcome) {
+                    // Add the terminal marker *before* removing the in-progress
+                    // one so the message is never momentarily bare, and a failed
+                    // add still leaves the previous marker rather than nothing.
+                    Some(term) => {
+                        add_reaction(&outbound, &account_id, &chat_id, &message_id, term).await;
+                        if let Some(cur) = current.take().filter(|cur| cur != term) {
+                            remove_reaction(&outbound, &account_id, &chat_id, &message_id, &cur)
+                                .await;
+                        }
+                    },
+                    // Cancelled: strip the in-progress marker, leave nothing.
+                    None => {
+                        if let Some(cur) = current.take() {
+                            remove_reaction(&outbound, &account_id, &chat_id, &message_id, &cur)
+                                .await;
+                        }
+                    },
                 }
                 return;
             },
@@ -243,10 +265,13 @@ async fn swap(
     if current.as_deref() == Some(emoji) {
         return;
     }
+    // Add first, then remove the previous marker: the message always shows at
+    // least one reaction, and a failed add leaves the old marker in place
+    // instead of clearing the acknowledgment entirely.
+    add_reaction(outbound, account_id, chat_id, message_id, emoji).await;
     if let Some(cur) = current.take() {
         remove_reaction(outbound, account_id, chat_id, message_id, &cur).await;
     }
-    add_reaction(outbound, account_id, chat_id, message_id, emoji).await;
     *current = Some(emoji.to_string());
 }
 
@@ -353,16 +378,14 @@ mod tests {
     #[tokio::test]
     async fn lifecycle_success_swaps_eyes_for_check() {
         assert_eq!(run_lifecycle(ChannelAckOutcome::Success).await, vec![
-            "+eyes",
-            "-eyes",
-            "+white_check_mark"
+            "+👀", "+✅", "-👀"
         ]);
     }
 
     #[tokio::test]
     async fn lifecycle_failure_swaps_eyes_for_x() {
         assert_eq!(run_lifecycle(ChannelAckOutcome::Failure).await, vec![
-            "+eyes", "-eyes", "+x"
+            "+👀", "+❌", "-👀"
         ]);
     }
 
@@ -370,7 +393,7 @@ mod tests {
     async fn lifecycle_cancelled_strips_eyes_with_no_terminal() {
         // Cancelled removes the in-progress marker and adds nothing.
         assert_eq!(run_lifecycle(ChannelAckOutcome::Cancelled).await, vec![
-            "+eyes", "-eyes"
+            "+👀", "-👀"
         ]);
     }
 
@@ -391,40 +414,39 @@ mod tests {
             .await;
         tokio::time::sleep(Duration::from_millis(50)).await;
         let recorded = ops.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        assert_eq!(recorded, vec![
-            "+eyes",
-            "-eyes",
-            "+globe_with_meridians",
-            "-globe_with_meridians",
-            "+white_check_mark",
-        ]);
+        // Each transition adds the new marker before removing the old one, so
+        // the message is never left without a reaction.
+        assert_eq!(recorded, vec!["+👀", "+🌐", "-👀", "+✅", "-🌐"]);
     }
 
     #[test]
     fn classifies_web_tools() {
-        assert_eq!(classify_tool_emoji("web_search"), "globe_with_meridians");
-        assert_eq!(classify_tool_emoji("web_fetch"), "globe_with_meridians");
+        assert_eq!(classify_tool_emoji("web_search"), ack_emoji::WEB);
+        assert_eq!(classify_tool_emoji("web_fetch"), ack_emoji::WEB);
     }
 
     #[test]
     fn classifies_shell_and_edit_tools() {
-        assert_eq!(classify_tool_emoji("exec"), "computer");
-        assert_eq!(classify_tool_emoji("bash"), "computer");
-        assert_eq!(classify_tool_emoji("str_replace_editor"), "pencil2");
+        assert_eq!(classify_tool_emoji("exec"), ack_emoji::SHELL);
+        assert_eq!(classify_tool_emoji("bash"), ack_emoji::SHELL);
+        assert_eq!(classify_tool_emoji("str_replace_editor"), ack_emoji::EDIT);
     }
 
     #[test]
     fn unknown_tool_uses_generic_emoji() {
-        assert_eq!(classify_tool_emoji("some_mcp_tool"), "hammer_and_wrench");
+        assert_eq!(classify_tool_emoji("some_mcp_tool"), ack_emoji::TOOL);
     }
 
     #[test]
     fn terminal_emoji_maps_outcomes() {
         assert_eq!(
             terminal_emoji(ChannelAckOutcome::Success),
-            Some("white_check_mark")
+            Some(ack_emoji::SUCCESS)
         );
-        assert_eq!(terminal_emoji(ChannelAckOutcome::Failure), Some("x"));
+        assert_eq!(
+            terminal_emoji(ChannelAckOutcome::Failure),
+            Some(ack_emoji::ERROR)
+        );
         assert_eq!(terminal_emoji(ChannelAckOutcome::Cancelled), None);
     }
 }
