@@ -38,8 +38,12 @@ const STALL_AFTER: Duration = Duration::from_secs(20);
 /// and the 👀 reaction — alive forever.
 const MAX_LIFETIME: Duration = Duration::from_secs(900);
 
-/// Registry of active controllers, keyed by session key (runs serialize per
-/// session via the send permit, so at most one is active per session).
+/// Registry of active controllers, keyed by session key.
+///
+/// Agent runs serialize per session (via the send permit), so at most one run
+/// is executing at a time. If a second message for the same session is received
+/// while the first is still running, registering its controller replaces (and
+/// finalizes) the first — see `register_channel_reaction_controller`.
 pub type ReactionControllerRegistry = Arc<Mutex<HashMap<String, Arc<ChannelReactionController>>>>;
 
 /// Classify a tool name into a phase emoji shortcode.
@@ -284,7 +288,117 @@ async fn remove_reaction(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex as StdMutex;
+
+    use moltis_channels::{Result as ChannelResult, plugin::ChannelOutbound};
+
     use super::*;
+
+    /// A mock outbound that records the reaction add/remove operations in order.
+    struct RecordingOutbound {
+        ops: Arc<StdMutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChannelOutbound for RecordingOutbound {
+        async fn send_text(&self, _: &str, _: &str, _: &str, _: Option<&str>) -> ChannelResult<()> {
+            Ok(())
+        }
+
+        async fn send_media(
+            &self,
+            _: &str,
+            _: &str,
+            _: &moltis_common::types::ReplyPayload,
+            _: Option<&str>,
+        ) -> ChannelResult<()> {
+            Ok(())
+        }
+
+        async fn add_reaction(&self, _: &str, _: &str, _: &str, emoji: &str) -> ChannelResult<()> {
+            self.ops
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(format!("+{emoji}"));
+            Ok(())
+        }
+
+        async fn remove_reaction(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            emoji: &str,
+        ) -> ChannelResult<()> {
+            self.ops
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(format!("-{emoji}"));
+            Ok(())
+        }
+    }
+
+    async fn run_lifecycle(outcome: ChannelAckOutcome) -> Vec<String> {
+        let ops = Arc::new(StdMutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingOutbound { ops: ops.clone() });
+        let controller =
+            ChannelReactionController::start(outbound, "a".into(), "c".into(), "m".into());
+        // Let the worker apply the initial 👀 before signalling completion.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        controller.note(ChannelActivity::Finished(outcome)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        ops.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    #[tokio::test]
+    async fn lifecycle_success_swaps_eyes_for_check() {
+        assert_eq!(run_lifecycle(ChannelAckOutcome::Success).await, vec![
+            "+eyes",
+            "-eyes",
+            "+white_check_mark"
+        ]);
+    }
+
+    #[tokio::test]
+    async fn lifecycle_failure_swaps_eyes_for_x() {
+        assert_eq!(run_lifecycle(ChannelAckOutcome::Failure).await, vec![
+            "+eyes", "-eyes", "+x"
+        ]);
+    }
+
+    #[tokio::test]
+    async fn lifecycle_cancelled_strips_eyes_with_no_terminal() {
+        // Cancelled removes the in-progress marker and adds nothing.
+        assert_eq!(run_lifecycle(ChannelAckOutcome::Cancelled).await, vec![
+            "+eyes", "-eyes"
+        ]);
+    }
+
+    #[tokio::test]
+    async fn tool_phase_swaps_marker_then_terminal() {
+        let ops = Arc::new(StdMutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingOutbound { ops: ops.clone() });
+        let controller =
+            ChannelReactionController::start(outbound, "a".into(), "c".into(), "m".into());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        controller
+            .note(ChannelActivity::Tool("web_search".into()))
+            .await;
+        // Wait past the debounce window so the phase is applied.
+        tokio::time::sleep(PHASE_DEBOUNCE + Duration::from_millis(100)).await;
+        controller
+            .note(ChannelActivity::Finished(ChannelAckOutcome::Success))
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let recorded = ops.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert_eq!(recorded, vec![
+            "+eyes",
+            "-eyes",
+            "+globe_with_meridians",
+            "-globe_with_meridians",
+            "+white_check_mark",
+        ]);
+    }
 
     #[test]
     fn classifies_web_tools() {

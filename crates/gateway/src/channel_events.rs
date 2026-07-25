@@ -360,11 +360,22 @@ async fn register_channel_reaction_controller(
         reply_to.chat_id.clone(),
         message_id,
     );
-    state
+    // If a controller was already registered for this session (e.g. the user
+    // sent another message before the previous turn finished), finalize the old
+    // one first so its in-progress 👀 is stripped rather than left stuck when
+    // its handle is dropped.
+    let previous = state
         .channel_reaction_controllers
         .lock()
         .await
         .insert(session_key.to_string(), controller);
+    if let Some(previous) = previous {
+        previous
+            .note(moltis_channels::ChannelActivity::Finished(
+                ChannelAckOutcome::Cancelled,
+            ))
+            .await;
+    }
 }
 
 /// Finalize the acknowledgment reaction only when `chat.send` returned before
