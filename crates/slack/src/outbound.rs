@@ -178,20 +178,21 @@ impl SlackOutbound {
             }
         }
 
-        // Flush any remaining text.
+        // Flush any remaining text. A failure here means the tail of the reply
+        // never reached the user, so it must surface: the caller then treats
+        // the target as undelivered and falls back to a plain send, and the
+        // acknowledgment cannot claim success.
         if !pending.is_empty() {
             let text = markdown_to_slack(&pending);
-            if let Err(e) =
-                append_native_stream(&http, &api_base_url, &bot_token, &stream_id, &text).await
-            {
-                warn!(account_id, to, "final chat.appendStream failed: {e}");
-            }
+            append_native_stream(&http, &api_base_url, &bot_token, &stream_id, &text)
+                .await
+                .inspect_err(|e| warn!(account_id, to, "final chat.appendStream failed: {e}"))?;
         }
 
-        // Finalize the stream.
-        if let Err(e) = stop_native_stream(&http, &api_base_url, &bot_token, &stream_id).await {
-            warn!(account_id, to, "chat.stopStream failed: {e}");
-        }
+        // Finalize the stream. A stream left open renders as incomplete.
+        stop_native_stream(&http, &api_base_url, &bot_token, &stream_id)
+            .await
+            .inspect_err(|e| warn!(account_id, to, "chat.stopStream failed: {e}"))?;
 
         Ok(())
     }
@@ -284,24 +285,32 @@ impl SlackOutbound {
         let final_text = markdown_to_slack(&accumulated);
         let chunks = chunk_message(&final_text, SLACK_MAX_MESSAGE_LEN);
 
+        // Final delivery failures are returned, not swallowed: the caller uses
+        // the result to decide whether the reply actually landed.
         match &sent_ts {
             Some(ts) => {
-                if let Some(first) = chunks.first()
-                    && let Err(e) = update_message(&client, &token, to, ts, first).await
-                {
-                    warn!(account_id, to, "failed to finalize stream message: {e}");
+                if let Some(first) = chunks.first() {
+                    update_message(&client, &token, to, ts, first)
+                        .await
+                        .inspect_err(|e| {
+                            warn!(account_id, to, "failed to finalize stream message: {e}");
+                        })?;
                 }
                 for chunk in chunks.iter().skip(1) {
-                    if let Err(e) = post_message(&client, &token, to, chunk, thread_ts).await {
-                        warn!(account_id, to, "failed to send overflow chunk: {e}");
-                    }
+                    post_message(&client, &token, to, chunk, thread_ts)
+                        .await
+                        .inspect_err(|e| {
+                            warn!(account_id, to, "failed to send overflow chunk: {e}")
+                        })?;
                 }
             },
             None => {
                 for chunk in &chunks {
-                    if let Err(e) = post_message(&client, &token, to, chunk, thread_ts).await {
-                        warn!(account_id, to, "failed to send stream message: {e}");
-                    }
+                    post_message(&client, &token, to, chunk, thread_ts)
+                        .await
+                        .inspect_err(|e| {
+                            warn!(account_id, to, "failed to send stream message: {e}")
+                        })?;
                 }
             },
         }
