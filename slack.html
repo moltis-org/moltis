@@ -65,6 +65,8 @@ requiring a publicly reachable endpoint.</p>
 <li><code>im:history</code> — read DM history</li>
 <li><code>im:read</code> — view DM metadata</li>
 <li><code>channels:history</code> — read channel messages (for <code>mention_mode = "always"</code>)</li>
+<li><code>reactions:write</code> — add acknowledgment reactions (👀/✅/❌; see <a href="#acknowledgment-reactions">Acknowledgment Reactions</a>)</li>
+<li><code>reactions:read</code> — read reactions (only for inbound reaction triggers)</li>
 </ul>
 </li>
 <li>Click <strong>Install to Workspace</strong> and copy the <strong>Bot User OAuth Token</strong> (<code>xoxb-...</code>)</li>
@@ -226,7 +228,25 @@ offered = [&#x22;slack&#x22;]"><code><span class="line"><span style="color:#2429
 
 
 
-<table><thead><tr><th>Field</th><th>Required</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>bot_token</code></td><td><strong>yes</strong></td><td>—</td><td>Bot user OAuth token (<code>xoxb-...</code>)</td></tr><tr><td><code>app_token</code></td><td><strong>yes</strong>*</td><td>—</td><td>App-level token for Socket Mode (<code>xapp-...</code>). *Required for <code>socket_mode</code>.</td></tr><tr><td><code>api_base_url</code></td><td>no</td><td><code>"https://slack.com/api"</code></td><td>Slack Web API base URL. Override only for Slack-compatible proxies, mock servers, or gateways.</td></tr><tr><td><code>connection_mode</code></td><td>no</td><td><code>"socket_mode"</code></td><td>Connection method: <code>"socket_mode"</code> or <code>"events_api"</code></td></tr><tr><td><code>signing_secret</code></td><td>no*</td><td>—</td><td>Signing secret for Events API request verification. *Required for <code>events_api</code>.</td></tr><tr><td><code>dm_policy</code></td><td>no</td><td><code>"allowlist"</code></td><td>Who can DM the bot: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>group_policy</code></td><td>no</td><td><code>"open"</code></td><td>Who can talk to the bot in channels: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>mention_mode</code></td><td>no</td><td><code>"mention"</code></td><td>When the bot responds in channels: <code>"always"</code>, <code>"mention"</code>, or <code>"none"</code></td></tr><tr><td><code>allowlist</code></td><td>no</td><td><code>[]</code></td><td>Slack user IDs allowed to DM the bot (when <code>dm_policy = "allowlist"</code>)</td></tr><tr><td><code>channel_allowlist</code></td><td>no</td><td><code>[]</code></td><td>Slack channel IDs allowed to interact with the bot</td></tr><tr><td><code>otp_self_approval</code></td><td>no</td><td><code>true</code></td><td>Enable OTP self-approval for non-allowlisted DM users</td></tr><tr><td><code>otp_cooldown_secs</code></td><td>no</td><td><code>300</code></td><td>Cooldown after failed OTP attempts</td></tr><tr><td><code>model</code></td><td>no</td><td>—</td><td>Override the default model for this channel</td></tr><tr><td><code>model_provider</code></td><td>no</td><td>—</td><td>Provider for the overridden model</td></tr><tr><td><code>stream_mode</code></td><td>no</td><td><code>"edit_in_place"</code></td><td>Streaming mode: <code>"edit_in_place"</code>, <code>"native"</code>, or <code>"off"</code></td></tr><tr><td><code>edit_throttle_ms</code></td><td>no</td><td><code>500</code></td><td>Minimum milliseconds between streaming edit updates</td></tr><tr><td><code>thread_replies</code></td><td>no</td><td><code>true</code></td><td>Reply in threads</td></tr><tr><td><code>channel_overrides</code></td><td>no</td><td><code>{}</code></td><td>Per-channel model/provider overrides (see below)</td></tr><tr><td><code>user_overrides</code></td><td>no</td><td><code>{}</code></td><td>Per-user model/provider overrides (see below)</td></tr></tbody></table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Field</th><th>Required</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>bot_token</code></td><td><strong>yes</strong></td><td>—</td><td>Bot user OAuth token (<code>xoxb-...</code>)</td></tr><tr><td><code>app_token</code></td><td><strong>yes</strong>*</td><td>—</td><td>App-level token for Socket Mode (<code>xapp-...</code>). *Required for <code>socket_mode</code>.</td></tr><tr><td><code>api_base_url</code></td><td>no</td><td><code>"https://slack.com/api"</code></td><td>Slack Web API base URL. Override only for Slack-compatible proxies, mock servers, or gateways.</td></tr><tr><td><code>connection_mode</code></td><td>no</td><td><code>"socket_mode"</code></td><td>Connection method: <code>"socket_mode"</code> or <code>"events_api"</code></td></tr><tr><td><code>signing_secret</code></td><td>no*</td><td>—</td><td>Signing secret for Events API request verification. *Required for <code>events_api</code>.</td></tr><tr><td><code>dm_policy</code></td><td>no</td><td><code>"allowlist"</code></td><td>Who can DM the bot: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>group_policy</code></td><td>no</td><td><code>"open"</code></td><td>Who can talk to the bot in channels: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>mention_mode</code></td><td>no</td><td><code>"mention"</code></td><td>When the bot responds in channels: <code>"always"</code>, <code>"mention"</code>, or <code>"none"</code></td></tr><tr><td><code>allowlist</code></td><td>no</td><td><code>[]</code></td><td>Slack user IDs allowed to DM the bot (when <code>dm_policy = "allowlist"</code>)</td></tr><tr><td><code>channel_allowlist</code></td><td>no</td><td><code>[]</code></td><td>Slack channel IDs allowed to interact with the bot</td></tr><tr><td><code>otp_self_approval</code></td><td>no</td><td><code>true</code></td><td>Enable OTP self-approval for non-allowlisted DM users</td></tr><tr><td><code>otp_cooldown_secs</code></td><td>no</td><td><code>300</code></td><td>Cooldown after failed OTP attempts</td></tr><tr><td><code>model</code></td><td>no</td><td>—</td><td>Override the default model for this channel</td></tr><tr><td><code>model_provider</code></td><td>no</td><td>—</td><td>Provider for the overridden model</td></tr><tr><td><code>stream_mode</code></td><td>no</td><td><code>"edit_in_place"</code></td><td>Streaming mode: <code>"edit_in_place"</code>, <code>"native"</code>, or <code>"off"</code></td></tr><tr><td><code>edit_throttle_ms</code></td><td>no</td><td><code>500</code></td><td>Minimum milliseconds between streaming edit updates</td></tr><tr><td><code>thread_replies</code></td><td>no</td><td><code>true</code></td><td>Reply in threads</td></tr><tr><td><code>ack_reactions</code></td><td>no</td><td><code>true</code></td><td>Acknowledge inbound messages with emoji reactions (👀 → ✅/❌). Only applied when the bot is directly addressed (DM or @mention).</td></tr><tr><td><code>reaction_triggers</code></td><td>no</td><td><code>false</code></td><td>Route inbound user reactions into the agent as messages (e.g. react ✅ to approve).</td></tr><tr><td><code>reaction_trigger_emojis</code></td><td>no</td><td><code>[]</code></td><td>When <code>reaction_triggers</code> is on, only these emoji shortcodes trigger the agent. Empty = any emoji.</td></tr><tr><td><code>channel_overrides</code></td><td>no</td><td><code>{}</code></td><td>Per-channel model/provider overrides (see below)</td></tr><tr><td><code>user_overrides</code></td><td>no</td><td><code>{}</code></td><td>Per-user model/provider overrides (see below)</td></tr></tbody></table>
 <aside class="admonition admonition-important"><div class="admonition-title">Allowlist values are strings</div><div class="admonition-body"><p>All allowlist entries must be <strong>strings</strong>. Use Slack user IDs like<br><code>["U0123456789"]</code>. Matching is case-insensitive and supports glob wildcards.</p></div></aside>
 <h3 id="full-example">Full Example</h3>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels]
@@ -249,6 +269,7 @@ model_provider = &#x22;anthropic&#x22;
 stream_mode = &#x22;edit_in_place&#x22;
 edit_throttle_ms = 500
 thread_replies = true
+ack_reactions = true
 
 # Per-channel override: use a different model in a specific Slack channel
 [channels.slack.my-bot.channel_overrides.C0123456789]
@@ -277,6 +298,7 @@ model_provider = &#x22;anthropic&#x22;"><code><span class="line"><span style="co
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">stream_mode </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "edit_in_place"</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">edit_throttle_ms </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 500</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">thread_replies </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">ack_reactions </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Per-channel override: use a different model in a specific Slack channel</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channels</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">slack</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">my-bot</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channel_overrides</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">C0123456789</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
@@ -441,6 +463,37 @@ Slack user ID, such as <code>U0123456789</code>, to the account allowlist.</p>
 <p>By default (<code>thread_replies = true</code>), the bot replies in a thread attached to
 the user’s message. Set <code>thread_replies = false</code> to have the bot reply directly
 in the channel.</p>
+<h2 id="acknowledgment-reactions">Acknowledgment Reactions</h2>
+<p>Because Slack bots cannot show a typing indicator, Moltis acknowledges messages
+with emoji reactions so you know your message was received and is being worked
+on:</p>
+<ul>
+<li>👀 (<code>eyes</code>) is added as soon as the message starts processing.</li>
+<li>✅ (<code>white_check_mark</code>) replaces it when the reply is delivered.</li>
+<li>❌ (<code>x</code>) replaces it if the turn fails.</li>
+</ul>
+<p>Reactions are only added when the bot is <strong>directly addressed</strong> — a direct
+message, or a channel message that @mentions the bot — never on general channel
+chatter. Set <code>ack_reactions = false</code> to disable them.</p>
+<p>The bot needs the <code>reactions:write</code> OAuth scope (and <code>reactions:read</code> if you
+also use inbound reaction triggers). Reaction failures are non-fatal and never
+block the reply.</p>
+<h2 id="reaction-triggers">Reaction Triggers</h2>
+<p>With <code>reaction_triggers = true</code>, when a user adds an emoji reaction to a message,
+Moltis routes it into the agent as a synthetic message (threaded under the
+reacted message so the agent sees the original content as context). This enables
+flows like “react ✅ to approve” or “react 👍 to continue”.</p>
+<ul>
+<li>The bot’s own acknowledgment reactions (👀/✅/❌) are always ignored, so
+triggers never loop.</li>
+<li>Only <em>added</em> reactions trigger (not removals), and only from senders who pass
+the normal DM/channel access policy.</li>
+<li>Restrict which emoji count with <code>reaction_trigger_emojis</code> (shortcodes without
+colons, e.g. <code>["white_check_mark", "thumbsup"]</code>). Empty means any emoji.</li>
+</ul>
+<p>This requires the <code>reactions:read</code> scope and the <code>reaction_added</code> event
+subscription.</p>
+<aside class="admonition admonition-note"><div class="admonition-title">Thread context on threaded replies</div><div class="admonition-body"><p>Slack's <code>reaction_added</code> event only carries the reacted message's own<br>timestamp, not its thread root. When a user reacts to a message that is itself a<br>reply inside a thread, the agent is threaded under that reply and sees only the<br>reacted message as context — not the whole thread. Reactions on top-level<br>messages are unaffected.</p></div></aside>
 <h2 id="troubleshooting">Troubleshooting</h2>
 <h3 id="bot-doesnt-respond">Bot doesn’t respond</h3>
 <ul>
