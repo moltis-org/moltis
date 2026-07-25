@@ -189,3 +189,76 @@ impl std::fmt::Debug for NostrOutbound {
         f.debug_struct("NostrOutbound").finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use {
+        crate::{config::NostrAccountConfig, state::AccountState},
+        tokio_util::sync::CancellationToken,
+    };
+
+    use super::*;
+
+    /// Build an outbound adapter with one account whose config names `groups`.
+    /// No relay connection is made — `resolve` is pure routing logic.
+    fn outbound_with_groups(groups: Vec<String>) -> NostrOutbound {
+        let keys = Keys::generate();
+        let client = Client::new(keys.clone());
+        let config = NostrAccountConfig {
+            groups,
+            ..Default::default()
+        };
+        let state = AccountState {
+            client,
+            keys,
+            config: Arc::new(RwLock::new(config)),
+            cached_allowlist: Arc::new(RwLock::new(Vec::new())),
+            cancel: CancellationToken::new(),
+            otp: Arc::new(std::sync::Mutex::new(moltis_channels::otp::OtpState::new(
+                300,
+            ))),
+        };
+        let accounts: AccountStateMap = Arc::new(RwLock::new(HashMap::new()));
+        accounts
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert("acct".to_string(), state);
+        NostrOutbound { accounts }
+    }
+
+    #[tokio::test]
+    async fn resolves_configured_group_as_group_send() {
+        let outbound = outbound_with_groups(vec!["buzz-general".into()]);
+        let resolved = outbound.resolve("acct", "buzz-general").await;
+        assert!(matches!(resolved, Ok((_, _, SendTarget::Group(ref g))) if g == "buzz-general"));
+    }
+
+    #[tokio::test]
+    async fn resolves_pubkey_as_dm_send() {
+        let outbound = outbound_with_groups(vec!["buzz-general".into()]);
+        let peer = Keys::generate().public_key().to_hex();
+        let resolved = outbound.resolve("acct", &peer).await;
+        assert!(matches!(resolved, Ok((_, _, SendTarget::Dm(_)))));
+    }
+
+    /// Turning group chat off means clearing `groups`, and outbound reads that
+    /// same list — so a queued reply cannot keep publishing kind:9 events to a
+    /// group the operator has since removed. A group id is not a valid pubkey,
+    /// so it fails closed rather than falling through to a DM.
+    #[tokio::test]
+    async fn refuses_group_send_once_groups_cleared() {
+        let outbound = outbound_with_groups(Vec::new());
+        let resolved = outbound.resolve("acct", "buzz-general").await;
+        assert!(
+            resolved.is_err(),
+            "group send must fail once the group is no longer configured"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_account_is_unavailable() {
+        let outbound = outbound_with_groups(vec!["buzz-general".into()]);
+        let resolved = outbound.resolve("missing", "buzz-general").await;
+        assert!(resolved.is_err(), "unknown account must not resolve");
+    }
+}
