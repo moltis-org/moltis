@@ -230,7 +230,7 @@ mod tests {
         let event_id = EventId::all_zeros();
         let tags = build_group_message_tags("grp", Some(event_id), Some(author));
         // h tag is always first.
-        assert_eq!(tags[0].content().as_deref(), Some("grp"));
+        assert_eq!(tags[0].content(), Some("grp"));
         // e tag and p tag present.
         assert!(tags.iter().any(|t| t.kind() == TagKind::e()));
         assert!(tags.iter().any(|t| t.kind() == TagKind::p()));
@@ -240,6 +240,6 @@ mod tests {
     fn build_tags_h_only_when_no_reply() {
         let tags = build_group_message_tags("grp", None, None);
         assert_eq!(tags.len(), 1);
-        assert_eq!(tags[0].content().as_deref(), Some("grp"));
+        assert_eq!(tags[0].content(), Some("grp"));
     }
 }
