@@ -67,6 +67,10 @@ pub(super) async fn drain_and_replay(
                 .filter_map(|m| m.params.get("text").and_then(|v| v.as_str()))
                 .collect();
             if combined.is_empty() {
+                // Nothing replayable (e.g. every queued message was non-text),
+                // so no reply will ever come. Resolve their acknowledgments
+                // instead of leaving markers to expire.
+                abandon(state, &queued).await;
                 return;
             }
             info!(
@@ -76,6 +80,7 @@ pub(super) async fn drain_and_replay(
             );
             // Use the last queued message as the base params, override text.
             let Some(last) = queued.last() else {
+                abandon(state, &queued).await;
                 return;
             };
             let mut merged = last.params.clone();
@@ -89,5 +94,15 @@ pub(super) async fn drain_and_replay(
                 warn!(session = %session_key, error = %e, "failed to replay collected messages");
             }
         },
+    }
+}
+
+/// Resolve the acknowledgments of queued messages that will never be answered.
+async fn abandon(state: &Arc<dyn ChatRuntime>, queued: &[QueuedMessage]) {
+    let keys = crate::channel_acks::merged_ack_keys(queued.iter().map(|m| &m.params));
+    if !keys.is_empty() {
+        state
+            .finalize_channel_acks(keys, moltis_channels::ChannelAckOutcome::Failure)
+            .await;
     }
 }

@@ -238,10 +238,17 @@ fn jittered(base: std::time::Duration) -> std::time::Duration {
     // Nanoseconds within the current second map to [0, 1), then to a
     // symmetric +/-25% factor. Dividing by anything but NANOS_PER_SEC would
     // bias the jitter to one side.
+    base.mul_f64(jitter_factor(nanos))
+}
+
+/// Map sub-second nanoseconds onto a symmetric +/-25% delay factor.
+///
+/// Split out from [`jittered`] so the distribution can be asserted directly
+/// rather than sampled from the clock.
+fn jitter_factor(nanos: u32) -> f64 {
     const NANOS_PER_SEC: f64 = 1_000_000_000.0;
     let unit = f64::from(nanos) / NANOS_PER_SEC;
-    let factor = 0.75 + unit * 0.5;
-    base.mul_f64(factor.clamp(0.75, 1.25))
+    (0.75 + unit * 0.5).clamp(0.75, 1.25)
 }
 
 /// Error handler for Socket Mode.
@@ -1165,11 +1172,25 @@ mod tests {
     fn jitter_stays_within_bounds() {
         use std::time::Duration;
         let base = Duration::from_secs(10);
-        for _ in 0..100 {
+        for _ in 0..200 {
             let j = jittered(base);
-            assert!(j >= base.mul_f64(0.5), "jitter {j:?} below lower bound");
-            assert!(j <= base.mul_f64(1.5), "jitter {j:?} above upper bound");
+            // Exactly the documented +/-25%. Looser bounds would also accept a
+            // one-sided distribution, which is the bug this guards against.
+            assert!(j >= base.mul_f64(0.75), "jitter {j:?} below lower bound");
+            assert!(j <= base.mul_f64(1.25), "jitter {j:?} above upper bound");
         }
+    }
+
+    #[test]
+    fn jitter_is_two_sided() {
+        // The factor must be able to land on both sides of the base delay;
+        // dividing nanoseconds by the wrong constant silently made it
+        // always-negative, which no range assertion alone would catch.
+        assert!(jitter_factor(0) < 1.0, "minimum should shorten the delay");
+        assert!(
+            jitter_factor(999_999_999) > 1.0,
+            "maximum should lengthen the delay"
+        );
     }
 
     #[test]
