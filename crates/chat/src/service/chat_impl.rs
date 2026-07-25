@@ -357,6 +357,16 @@ impl ChatService for LiveChatService {
             Self::resolve_session_key_for_run(&self.active_runs_by_session, run_id, session_key)
                 .await;
 
+        // Take ownership of this turn's acknowledgments *before* killing the
+        // run. Aborting drops the task and with it the session permit, so a new
+        // turn can activate immediately; finalizing afterwards could resolve
+        // that newer turn instead of the one being aborted.
+        if let Some(key) = resolved_session_key.as_deref() {
+            self.state
+                .finalize_active_channel_acks(key, moltis_channels::ChannelAckOutcome::Cancelled)
+                .await;
+        }
+
         let (resolved_run_id, aborted) = Self::abort_run_handle(
             &self.active_runs,
             &self.active_runs_by_session,
@@ -391,17 +401,22 @@ impl ChatService for LiveChatService {
                 }
             }
             broadcast(&self.state, "chat", payload, BroadcastOpts::default()).await;
+        }
 
-            // Finalize channel acknowledgment reactions: cancelled leaves no
-            // ✅/❌ terminal, only strips the in-progress marker.
-            self.state
-                .note_channel_activity(
-                    key,
-                    moltis_channels::ChannelActivity::Finished(
-                        moltis_channels::ChannelAckOutcome::Cancelled,
-                    ),
-                )
-                .await;
+        // The aborted future was killed mid-flight, so it never ran its own
+        // drain step. Without this, anything queued behind it waits forever.
+        if aborted && let Some(key) = resolved_session_key.clone() {
+            let queue = Arc::clone(&self.message_queue);
+            let state = Arc::clone(&self.state);
+            let mode = self.config.chat.message_queue_mode;
+            let session_sem = self.session_semaphore(&key).await;
+            tokio::spawn(async move {
+                // Wait for the aborted task to release the session permit,
+                // otherwise the replay would simply re-queue itself.
+                let permit = session_sem.acquire_owned().await;
+                drop(permit);
+                queue_drain::drain_and_replay(&queue, &key, mode, &state).await;
+            });
         }
 
         Ok(serde_json::json!({

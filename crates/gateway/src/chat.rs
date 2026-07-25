@@ -72,6 +72,17 @@ impl ChatRuntime for GatewayChatRuntime {
             .await;
     }
 
+    async fn finalize_active_channel_acks(
+        &self,
+        session_key: &str,
+        outcome: moltis_channels::ChannelAckOutcome,
+    ) {
+        self.state
+            .channel_reaction_controllers
+            .finalize_active(session_key, outcome)
+            .await;
+    }
+
     async fn finalize_channel_acks(
         &self,
         ack_keys: Vec<String>,

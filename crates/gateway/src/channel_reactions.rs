@@ -46,6 +46,9 @@ const STALL_AFTER: Duration = Duration::from_secs(20);
 /// panicked task that skips the terminal signal) can't leave the worker task —
 /// and the 👀 reaction — alive forever.
 const MAX_LIFETIME: Duration = Duration::from_secs(900);
+/// Pause before the single terminal-reaction retry. The terminal is the last
+/// thing the worker does, so losing it leaves a permanently stale marker.
+const TERMINAL_RETRY_DELAY: Duration = Duration::from_millis(400);
 
 /// Opaque per-message acknowledgment identity: `account:chat:message_id`.
 ///
@@ -182,6 +185,31 @@ impl ReactionRegistry {
                     inner.pending_order.retain(|k| k != &key);
                 }
             }
+        }
+    }
+
+    /// Finalize whichever turn is active for this session *right now*.
+    ///
+    /// Used by abort, where the run future is killed and cannot signal its own
+    /// terminal. Taking the turn under the lock makes this turn-addressed: a
+    /// turn that starts afterwards can never be caught by this call, which a
+    /// session-addressed terminal sent after the fact could.
+    pub async fn finalize_active(&self, session_key: &str, outcome: ChannelAckOutcome) {
+        let controllers = {
+            let mut inner = self.inner.lock().await;
+            let Some(turn) = inner.active.remove(session_key) else {
+                return;
+            };
+            turn.keys
+                .iter()
+                .filter_map(|k| {
+                    inner.pending_order.retain(|pk| pk != k);
+                    inner.pending.remove(k)
+                })
+                .collect::<Vec<_>>()
+        };
+        for controller in controllers {
+            controller.note(ChannelActivity::Finished(outcome)).await;
         }
     }
 
@@ -356,8 +384,17 @@ async fn run_worker(
                     // one so the message is never momentarily bare, and a failed
                     // add still leaves the previous marker rather than nothing.
                     Some(term) => {
-                        let landed =
+                        // The worker exits immediately after this, so a failed
+                        // terminal is permanent — unlike an intermediate phase,
+                        // which the next transition would supersede. Retry once.
+                        let mut landed =
                             add_reaction(&outbound, &account_id, &chat_id, &message_id, term).await;
+                        if !landed {
+                            tokio::time::sleep(TERMINAL_RETRY_DELAY).await;
+                            landed =
+                                add_reaction(&outbound, &account_id, &chat_id, &message_id, term)
+                                    .await;
+                        }
                         let stale = current.take().filter(|cur| cur != term);
                         if let Some(cur) = stale.filter(|_| landed) {
                             remove_reaction(&outbound, &account_id, &chat_id, &message_id, &cur)

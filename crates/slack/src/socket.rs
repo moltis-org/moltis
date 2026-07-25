@@ -442,6 +442,26 @@ async fn interaction_events_callback(
     };
     drop(guard);
 
+    // Interactions are retried like events, and a repeat would run the button's
+    // action twice. Dedup on the trigger id, which is unique per interaction.
+    if let SlackInteractionEvent::BlockActions(ref ba) = event {
+        let trigger = ba.trigger_id.as_ref();
+        let accts = listener_state
+            .accounts
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accts.get(&listener_state.account_id) {
+            let mut dedup = state.dedup.lock().unwrap_or_else(|e| e.into_inner());
+            if !dedup.insert_new(trigger) {
+                debug!(
+                    account_id = %listener_state.account_id,
+                    "dropping duplicate slack interaction (retry)"
+                );
+                return Ok(());
+            }
+        }
+    }
+
     // Extract the action_id from block_actions interaction type.
     let (action_id, channel_id) = match &event {
         SlackInteractionEvent::BlockActions(ba) => {

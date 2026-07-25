@@ -125,6 +125,7 @@ pub(crate) async fn deliver_channel_replies(
                     "channel reply delivery skipped: outbound unavailable"
                 );
             }
+            crate::channel_acks::note_delivery_failed(state, session_key).await;
             return;
         },
     };
@@ -701,6 +702,8 @@ async fn deliver_channel_replies_to_targets(
     for task in tasks {
         if let Err(e) = task.await {
             warn!(error = %e, "channel reply task join failed");
+            // A panicked task may have sent nothing — do not claim success.
+            crate::channel_acks::note_delivery_failed(&state, &session_key).await;
         }
     }
 }
