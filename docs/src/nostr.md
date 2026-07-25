@@ -4,7 +4,10 @@ Moltis can receive and send encrypted direct messages over
 [Nostr](https://nostr.com), the decentralized social protocol. The integration
 uses [NIP-04](https://github.com/nostr-protocol/nips/blob/master/04.md)
 encrypted DMs (kind:4) and connects to relays via `nostr-sdk` — no public URL
-or server infrastructure is required.
+or server infrastructure is required. It can also join
+[NIP-29](https://github.com/nostr-protocol/nips/blob/master/29.md) group chats,
+including Block's [Buzz](https://github.com/block/buzz) channels — see
+[Buzz & NIP-29 Groups](#buzz--nip-29-groups).
 
 ## How It Works
 
@@ -85,6 +88,9 @@ offered = ["telegram", "discord", "slack", "matrix", "nostr"]
 | `model_provider` | no | — | Provider for the overridden model |
 | `otp_self_approval` | no | `true` | Allow non-allowlisted senders to self-approve via OTP code |
 | `otp_cooldown_secs` | no | `300` | Cooldown after 3 failed OTP attempts |
+| `groups` | no | `[]` | NIP-29 group ids (`h` tags) to join — see [Buzz & NIP-29 Groups](#buzz--nip-29-groups). Empty = DM-only |
+| `group_policy` | no | `"open"` | Group participation: `"open"`, `"allowlist"`, or `"disabled"` |
+| `group_mention_mode` | no | `"mention"` | When to respond in groups: `"mention"` (p-tagged only), `"always"`, or `"none"` |
 | `profile.name` | no | — | NIP-01 profile display name |
 | `profile.display_name` | no | — | NIP-01 longer display name |
 | `profile.about` | no | — | NIP-01 bio / about text |
@@ -131,6 +137,67 @@ nip05 = "bot@example.com"
 When `otp_self_approval` is enabled and a non-allowlisted sender messages the
 bot, the sender appears in the Senders tab of the web UI where they can be
 approved or denied. This works the same as OTP for Telegram and Matrix.
+
+## Buzz & NIP-29 Groups
+
+[Buzz](https://github.com/block/buzz) is Block's open-source team-chat and
+agent-collaboration platform built on Nostr — a Slack/GitHub rival where AI
+agents and humans are first-class members of shared "channels". Its primary API
+is [NIP-29](https://github.com/nostr-protocol/nips/blob/master/29.md)
+relay-based group chat over a connection authenticated with
+[NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md).
+
+Because Buzz speaks plain Nostr, Moltis participates as an ordinary NIP-29
+client — the same code path works against Buzz relays and any other NIP-29
+relay. A Buzz channel is a group identified by an `h` tag; messages are
+`kind:9` chat events. Unlike DMs, group messages are **not** encrypted — the
+relay enforces membership and authorization.
+
+### Configuration
+
+```toml
+[channels.nostr.my-bot]
+secret_key = "nsec1..."
+# Point at the Buzz relay (self-hosted or hosted). NIP-42 auth is automatic.
+relays = ["wss://relay.example-buzz.dev"]
+# The NIP-29 group ids (h tags) the bot joins. Empty keeps DM-only mode.
+groups = ["buzz-general", "buzz-dev"]
+group_policy = "open"           # open | allowlist | disabled
+group_mention_mode = "mention"  # mention | always | none
+```
+
+### How Responses Are Triggered
+
+`group_mention_mode` controls when the bot replies in a group:
+
+- **`mention`** (default) — respond only when the bot's pubkey is `p`-tagged
+  (an `@`-mention). Best for busy channels.
+- **`always`** — respond to every message in joined groups. Use for dedicated
+  agent channels.
+- **`none`** — never respond in groups (receive-only).
+
+`group_policy` gates which groups are honored: `open` responds in every joined
+group, `allowlist` restricts responses to the ids in `groups`, and `disabled`
+turns group chat off entirely (no `kind:9` subscription).
+
+Each group is a separate conversation — the group id is used as the session
+key, so different Buzz channels keep independent context. Replies are posted as
+`kind:9` events carrying the group's `h` tag and a NIP-10 `e` tag threading them
+to the message being answered.
+
+### Setup
+
+1. Generate the bot's key pair (see [Prerequisites](#prerequisites)) and share
+   its `npub` with the Buzz workspace admin so they can invite/approve it.
+2. Set `relays` to the Buzz relay URL and list the channel ids in `groups`.
+3. Restart the account. Relay subscriptions are fixed at connect, so **changing
+   `groups` requires an account restart** to take effect.
+
+```admonish note
+NIP-42 authentication is enabled automatically for every Nostr account, so the
+bot transparently authenticates to relays that require it (Buzz relays challenge
+every connection before granting group read/write scopes).
+```
 
 ## NIP-04 Encryption
 

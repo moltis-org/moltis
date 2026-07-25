@@ -19,6 +19,8 @@ export function AddNostrModal(): VNode {
 	const accountDraft = useSignal("");
 	const secretKeyDraft = useSignal("");
 	const relaysDraft = useSignal("wss://relay.damus.io, wss://relay.nostr.band, wss://nos.lol");
+	const groupsDraft = useSignal("");
+	const groupMentionMode = useSignal("mention");
 	const advancedConfigPatch = useSignal("");
 
 	function onSubmit(e: Event): void {
@@ -51,6 +53,16 @@ export function AddNostrModal(): VNode {
 			dm_policy: (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement).value,
 			allowed_pubkeys: allowlistItems.value,
 		};
+		const groups = groupsDraft.value
+			.split(",")
+			.map((g) => g.trim())
+			.filter(Boolean);
+		if (groups.length > 0) {
+			// NIP-29 group chat (Buzz channels). Left empty keeps DM-only mode.
+			addConfig.groups = groups;
+			addConfig.group_policy = "open";
+			addConfig.group_mention_mode = groupMentionMode.value;
+		}
 		if (addModel.value) {
 			addConfig.model = addModel.value;
 			const found = modelsSig.value.find((x) => x.id === addModel.value);
@@ -67,6 +79,8 @@ export function AddNostrModal(): VNode {
 				accountDraft.value = "";
 				secretKeyDraft.value = "";
 				relaysDraft.value = "wss://relay.damus.io, wss://relay.nostr.band, wss://nos.lol";
+				groupsDraft.value = "";
+				groupMentionMode.value = "mention";
 				advancedConfigPatch.value = "";
 				loadChannels();
 			} else {
@@ -159,6 +173,33 @@ export function AddNostrModal(): VNode {
 						allowlistItems.value = v;
 					}}
 				/>
+				<label className="text-xs text-[var(--muted)]">Buzz / NIP-29 Groups (comma-separated, optional)</label>
+				<input
+					data-field="groups"
+					type="text"
+					placeholder="buzz-general, buzz-dev"
+					value={groupsDraft.value}
+					onInput={(e) => {
+						groupsDraft.value = targetValue(e);
+					}}
+					className="channel-input"
+				/>
+				<div className="text-xs text-[var(--muted)]">
+					NIP-29 group ids to join on a Buzz-style relay. Leave empty for DM-only.
+				</div>
+				<label className="text-xs text-[var(--muted)]">Group Mention Mode</label>
+				<select
+					data-field="groupMentionMode"
+					className="channel-select"
+					value={groupMentionMode.value}
+					onChange={(e) => {
+						groupMentionMode.value = targetValue(e);
+					}}
+				>
+					<option value="mention">Mention only (@-tagged)</option>
+					<option value="always">Always respond</option>
+					<option value="none">Never respond</option>
+				</select>
 				<AdvancedConfigPatchField
 					value={advancedConfigPatch.value}
 					onInput={(value) => {

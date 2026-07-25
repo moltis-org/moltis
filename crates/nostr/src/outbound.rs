@@ -1,7 +1,10 @@
 //! Outbound message sending for Nostr channels.
 //!
-//! Implements `ChannelOutbound` and `ChannelStreamOutbound` — sends text as
-//! NIP-59 gift-wrapped DMs (kind:1059) to connected relays.
+//! Implements `ChannelOutbound` and `ChannelStreamOutbound`. A send target is
+//! either a configured NIP-29 group id — published as a plaintext kind:9 group
+//! chat message (e.g. a Buzz channel reply) — or a pubkey, sent as a NIP-59
+//! gift-wrapped DM (kind:1059). Routing is decided by whether the target
+//! matches one of the account's configured `groups`.
 
 use std::{
     collections::HashMap,
@@ -35,21 +38,41 @@ pub struct NostrOutbound {
     pub accounts: AccountStateMap,
 }
 
+/// Where an outbound message should go: a NIP-29 group or a DM recipient.
+enum SendTarget {
+    /// A configured NIP-29 group id (`h` tag value).
+    Group(String),
+    /// A DM recipient pubkey.
+    Dm(PublicKey),
+}
+
 impl NostrOutbound {
-    /// Look up account state and resolve the recipient pubkey.
+    /// Look up account state and resolve the target: a configured group id is
+    /// treated as a NIP-29 group send; anything else is parsed as a DM pubkey.
     async fn resolve(
         &self,
         account_id: &str,
         to: &str,
-    ) -> ChannelResult<(Client, Keys, PublicKey)> {
+    ) -> ChannelResult<(Client, Keys, SendTarget)> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         let state = accounts.get(account_id).ok_or_else(|| {
             moltis_channels::Error::unavailable(format!("nostr account not found: {account_id}"))
         })?;
+        let client = state.client.clone();
+        let keys = state.keys.clone();
+
+        let is_group = {
+            let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
+            cfg.groups.iter().any(|g| g == to)
+        };
+        if is_group {
+            return Ok((client, keys, SendTarget::Group(to.to_string())));
+        }
+
         let recipient = PublicKey::parse(to).map_err(|e| {
             moltis_channels::Error::invalid_input(format!("invalid recipient pubkey: {e}"))
         })?;
-        Ok((state.client.clone(), state.keys.clone(), recipient))
+        Ok((client, keys, SendTarget::Dm(recipient)))
     }
 }
 
@@ -60,22 +83,42 @@ impl ChannelOutbound for NostrOutbound {
         account_id: &str,
         to: &str,
         text: &str,
-        _reply_to: Option<&str>,
+        reply_to: Option<&str>,
     ) -> ChannelResult<()> {
-        let (client, keys, recipient) = self.resolve(account_id, to).await?;
+        let (client, keys, target) = self.resolve(account_id, to).await?;
 
         #[cfg(feature = "metrics")]
         let start = tokio::time::Instant::now();
 
-        // Send as NIP-59 gift-wrapped DM (kind:1059)
-        crate::gift_wrap::send_gift_wrapped_dm(&client, &keys, &recipient, text)
-            .await
-            .map_err(|e| {
-                #[cfg(feature = "metrics")]
-                counter!(nostr_metrics::MESSAGE_SEND_ERRORS_TOTAL, "reason" => "gift_wrap")
-                    .increment(1);
-                moltis_channels::Error::external("nostr", e)
-            })?;
+        match target {
+            SendTarget::Group(group_id) => {
+                // NIP-29 group chat reply (kind:9). `reply_to` is the inbound
+                // event id, threaded via a NIP-10 `e` tag.
+                let reply_event = reply_to.and_then(|id| EventId::parse(id).ok());
+                crate::groups::send_group_message(&client, &group_id, text, reply_event, None)
+                    .await
+                    .map_err(|e| {
+                        #[cfg(feature = "metrics")]
+                        counter!(nostr_metrics::MESSAGE_SEND_ERRORS_TOTAL, "reason" => "group")
+                            .increment(1);
+                        moltis_channels::Error::external("nostr", e)
+                    })?;
+                tracing::debug!(account_id, group = %group_id, len = text.len(), "sent group message");
+            },
+            SendTarget::Dm(recipient) => {
+                // NIP-59 gift-wrapped DM (kind:1059).
+                crate::gift_wrap::send_gift_wrapped_dm(&client, &keys, &recipient, text)
+                    .await
+                    .map_err(|e| {
+                        #[cfg(feature = "metrics")]
+                        counter!(nostr_metrics::MESSAGE_SEND_ERRORS_TOTAL, "reason" => "gift_wrap")
+                            .increment(1);
+                        moltis_channels::Error::external("nostr", e)
+                    })?;
+                let npub = recipient.to_bech32().unwrap_or_else(|_| recipient.to_hex());
+                tracing::debug!(account_id, to = %npub, len = text.len(), "sent gift-wrapped DM");
+            },
+        }
 
         #[cfg(feature = "metrics")]
         {
@@ -83,9 +126,6 @@ impl ChannelOutbound for NostrOutbound {
             histogram!(nostr_metrics::MESSAGE_SEND_DURATION_SECONDS)
                 .record(start.elapsed().as_secs_f64());
         }
-
-        let npub = recipient.to_bech32().unwrap_or_else(|_| recipient.to_hex());
-        tracing::debug!(account_id, to = %npub, len = text.len(), "sent gift-wrapped DM");
 
         Ok(())
     }

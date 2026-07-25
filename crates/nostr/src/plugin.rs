@@ -117,8 +117,11 @@ impl ChannelPlugin for NostrPlugin {
             "starting Nostr account"
         );
 
-        // Build nostr-sdk client
+        // Build nostr-sdk client. Enable NIP-42 automatic authentication so the
+        // bot can join relays that require it — Buzz relays challenge every
+        // connection before granting group (NIP-29) read/write scopes.
         let client = Client::new(bot_keys.clone());
+        client.automatic_authentication(true);
 
         // Add relays
         for relay_url in &nostr_config.relays {

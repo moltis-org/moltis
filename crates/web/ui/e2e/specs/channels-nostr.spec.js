@@ -74,6 +74,32 @@ test.describe("Nostr channel", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("add modal has Buzz / NIP-29 group fields", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/channels");
+		await waitForWsConnected(page);
+
+		await page.getByRole("button", { name: "Connect Nostr", exact: true }).click();
+		await expect(page.getByRole("heading", { name: "Connect Nostr", exact: true })).toBeVisible();
+
+		// Groups input is present and empty by default (DM-only).
+		const groupsInput = page.locator('input[data-field="groups"]');
+		await expect(groupsInput).toBeVisible();
+		await expect(groupsInput).toHaveValue("");
+		await expect(groupsInput).toHaveAttribute("placeholder", "buzz-general, buzz-dev");
+
+		// Mention mode select defaults to "mention".
+		const mentionModeSelect = page.locator('select[data-field="groupMentionMode"]');
+		await expect(mentionModeSelect).toBeVisible();
+		await expect(mentionModeSelect).toHaveValue("mention");
+
+		// It offers always / none as well.
+		await mentionModeSelect.selectOption("always");
+		await expect(mentionModeSelect).toHaveValue("always");
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("add modal validates required fields", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/channels");

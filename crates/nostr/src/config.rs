@@ -3,7 +3,7 @@
 use {
     moltis_channels::{
         config_view::ChannelConfigView,
-        gating::{DmPolicy, GroupPolicy},
+        gating::{DmPolicy, GroupPolicy, MentionMode},
     },
     moltis_common::secret_serde,
     secrecy::Secret,
@@ -48,6 +48,23 @@ pub struct NostrAccountConfig {
     /// Public keys allowed to send DMs (npub1/hex).
     pub allowed_pubkeys: Vec<String>,
 
+    /// NIP-29 group ids (the `h` tag values) to join — e.g. Buzz channels.
+    ///
+    /// Empty (the default) keeps the account in DM-only mode. When set, the bot
+    /// subscribes to `kind:9` group chat messages scoped to these groups and
+    /// authenticates to the relay via NIP-42. Changing this list takes effect
+    /// on the next account restart (relay subscriptions are fixed at connect).
+    pub groups: Vec<String>,
+
+    /// Group participation policy. `open` responds in every joined group,
+    /// `allowlist` restricts responses to `groups`, `disabled` turns group
+    /// chat off entirely (no `kind:9` subscription).
+    pub group_policy: GroupPolicy,
+
+    /// When the bot should respond in group chats: `mention` (only when its
+    /// pubkey is `p`-tagged — the default), `always`, or `none`.
+    pub group_mention_mode: MentionMode,
+
     /// Whether this account is enabled.
     pub enabled: bool,
 
@@ -81,6 +98,9 @@ impl Default for NostrAccountConfig {
             relays: default_relays(),
             dm_policy: DmPolicy::Allowlist,
             allowed_pubkeys: Vec::new(),
+            groups: Vec::new(),
+            group_policy: GroupPolicy::Open,
+            group_mention_mode: MentionMode::Mention,
             enabled: true,
             profile: None,
             model: None,
@@ -107,6 +127,9 @@ impl std::fmt::Debug for NostrAccountConfig {
             .field("relays", &self.relays)
             .field("dm_policy", &self.dm_policy)
             .field("allowed_pubkeys", &self.allowed_pubkeys)
+            .field("groups", &self.groups)
+            .field("group_policy", &self.group_policy)
+            .field("group_mention_mode", &self.group_mention_mode)
             .field("enabled", &self.enabled)
             .field("profile", &self.profile)
             .field("model", &self.model)
@@ -124,13 +147,16 @@ pub struct RedactedConfig<'a>(pub &'a NostrAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 10;
+        let mut count = 13;
         count += c.agent_id.is_some() as usize;
         let mut s = serializer.serialize_struct("NostrAccountConfig", count)?;
         s.serialize_field("secret_key", "[REDACTED]")?;
         s.serialize_field("relays", &c.relays)?;
         s.serialize_field("dm_policy", &c.dm_policy)?;
         s.serialize_field("allowed_pubkeys", &c.allowed_pubkeys)?;
+        s.serialize_field("groups", &c.groups)?;
+        s.serialize_field("group_policy", &c.group_policy)?;
+        s.serialize_field("group_mention_mode", &c.group_mention_mode)?;
         s.serialize_field("enabled", &c.enabled)?;
         s.serialize_field("profile", &c.profile)?;
         s.serialize_field("model", &c.model)?;
@@ -150,8 +176,8 @@ impl ChannelConfigView for NostrAccountConfig {
     }
 
     fn group_allowlist(&self) -> &[String] {
-        // Nostr DMs are always 1:1, no group concept
-        &[]
+        // NIP-29 group ids the bot joins (e.g. Buzz channels).
+        &self.groups
     }
 
     fn dm_policy(&self) -> DmPolicy {
@@ -159,7 +185,12 @@ impl ChannelConfigView for NostrAccountConfig {
     }
 
     fn group_policy(&self) -> GroupPolicy {
-        GroupPolicy::Disabled
+        // Groups are effectively disabled until at least one is configured.
+        if self.groups.is_empty() {
+            GroupPolicy::Disabled
+        } else {
+            self.group_policy.clone()
+        }
     }
 
     fn model(&self) -> Option<&str> {
@@ -234,5 +265,55 @@ mod tests {
         assert!(cfg.group_allowlist().is_empty());
         assert_eq!(cfg.model(), Some("test-model"));
         assert_eq!(cfg.model_provider(), Some("test-provider"));
+    }
+
+    #[test]
+    fn default_group_config_is_dm_only() {
+        let cfg = NostrAccountConfig::default();
+        assert!(cfg.groups.is_empty());
+        assert_eq!(cfg.group_mention_mode, MentionMode::Mention);
+        // Group policy reports Disabled until a group is configured.
+        assert_eq!(cfg.group_policy(), GroupPolicy::Disabled);
+    }
+
+    #[test]
+    fn configured_groups_expose_policy_and_allowlist() {
+        let cfg = NostrAccountConfig {
+            groups: vec!["buzz-general".into(), "buzz-dev".into()],
+            group_policy: GroupPolicy::Allowlist,
+            group_mention_mode: MentionMode::Always,
+            ..Default::default()
+        };
+        assert_eq!(cfg.group_policy(), GroupPolicy::Allowlist);
+        assert_eq!(cfg.group_allowlist(), &["buzz-general", "buzz-dev"]);
+    }
+
+    #[test]
+    fn groups_round_trip_json() {
+        let cfg = NostrAccountConfig {
+            secret_key: Secret::new("deadbeef".repeat(8)),
+            groups: vec!["buzz-general".into()],
+            group_policy: GroupPolicy::Allowlist,
+            group_mention_mode: MentionMode::Always,
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&cfg).unwrap_or_default();
+        let parsed: NostrAccountConfig = serde_json::from_value(json).unwrap_or_default();
+        assert_eq!(parsed.groups, vec!["buzz-general"]);
+        assert_eq!(parsed.group_policy, GroupPolicy::Allowlist);
+        assert_eq!(parsed.group_mention_mode, MentionMode::Always);
+    }
+
+    #[test]
+    fn redacted_config_includes_group_fields() {
+        let cfg = NostrAccountConfig {
+            groups: vec!["buzz-general".into()],
+            ..Default::default()
+        };
+        let json = serde_json::to_value(RedactedConfig(&cfg)).unwrap_or_default();
+        assert_eq!(json["secret_key"], "[REDACTED]");
+        assert!(json["groups"].is_array());
+        assert!(json.get("group_policy").is_some());
+        assert!(json.get("group_mention_mode").is_some());
     }
 }

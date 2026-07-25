@@ -1,9 +1,11 @@
-//! Nostr relay subscription loop — inbound DM pipeline.
+//! Nostr relay subscription loop — inbound DM and group-chat pipeline.
 //!
 //! Subscribes to kind:4 (NIP-04 encrypted DMs) and kind:1059 (NIP-59 gift
-//! wraps) addressed to the bot's pubkey. Events flow through dedup,
-//! self-message filtering, access control, and decryption/unwrapping before
-//! being dispatched to the gateway via `ChannelEventSink`.
+//! wraps) addressed to the bot's pubkey, plus kind:9 (NIP-29 group chat, e.g.
+//! Buzz channels) scoped to the configured groups via the `h` tag. Events flow
+//! through dedup, self-message filtering, access control, and (for DMs)
+//! decryption/unwrapping before being dispatched to the gateway via
+//! `ChannelEventSink`.
 
 use std::sync::{Arc, RwLock};
 
@@ -78,7 +80,33 @@ pub async fn run_subscription_loop(
 
     let mut seen = SeenTracker::new();
 
-    for filter in [nip04_filter, gift_wrap_filter] {
+    let mut filters = vec![nip04_filter, gift_wrap_filter];
+
+    // NIP-29 group chat (Buzz channels) — subscribe to kind:9 scoped to the
+    // configured groups via the `h` tag. Relay subscriptions are fixed at
+    // connect, so group membership changes take effect on account restart.
+    let group_ids: Vec<String> = {
+        let cfg = config.read().unwrap_or_else(|e| e.into_inner());
+        if cfg.group_policy == moltis_channels::gating::GroupPolicy::Disabled {
+            Vec::new()
+        } else {
+            cfg.groups.clone()
+        }
+    };
+    if !group_ids.is_empty() {
+        let group_filter = Filter::new()
+            .kind(crate::groups::group_chat_kind())
+            .custom_tags(crate::groups::h_tag(), group_ids.clone())
+            .since(since);
+        filters.push(group_filter);
+        tracing::info!(
+            account_id,
+            groups = ?group_ids,
+            "subscribing to NIP-29 group chat (kind:9)"
+        );
+    }
+
+    for filter in filters {
         if let Err(e) = client.subscribe(filter, None).await {
             tracing::error!(account_id, "failed to subscribe: {e}");
             return;
@@ -144,6 +172,15 @@ async fn handle_event(
     account_id: &str,
     event_sink: &Arc<dyn moltis_channels::ChannelEventSink>,
 ) {
+    // 0. Route NIP-29 group chat (kind:9) separately from encrypted DMs.
+    if event.kind == crate::groups::group_chat_kind() {
+        handle_group_event(
+            event, bot_pubkey, since, seen, config, account_id, event_sink,
+        )
+        .await;
+        return;
+    }
+
     // 1. Kind gate — accept kind:4 (legacy NIP-04) and kind:1059 (NIP-59 gift wrap)
     let is_gift_wrap = event.kind == Kind::GiftWrap;
     if event.kind != Kind::EncryptedDirectMessage && !is_gift_wrap {
@@ -347,6 +384,134 @@ async fn handle_event(
         sender_name: None,
         username: Some(sender_npub),
         sender_id: Some(sender_hex.clone()),
+        message_kind: Some(moltis_channels::ChannelMessageKind::Text),
+        model: None,
+        agent_id: None,
+        audio_filename: None,
+        documents: None,
+    };
+
+    event_sink.dispatch_to_chat(text, reply_to, meta).await;
+}
+
+/// Process an inbound NIP-29 group chat message (`kind:9`, e.g. a Buzz channel).
+///
+/// Group messages are plaintext (the relay enforces membership), so there is
+/// no decryption or OTP flow. The event is deduped, filtered for self-messages
+/// and staleness, gated by group policy and mention mode, then dispatched to
+/// the gateway with the group id as the session/chat id so replies route back
+/// to the group.
+async fn handle_group_event(
+    event: &Event,
+    bot_pubkey: &PublicKey,
+    since: Timestamp,
+    seen: &mut SeenTracker,
+    config: &Arc<RwLock<NostrAccountConfig>>,
+    account_id: &str,
+    event_sink: &Arc<dyn moltis_channels::ChannelEventSink>,
+) {
+    // Dedup, skip self-messages, skip stale events.
+    if seen.check_and_insert(&event.id) {
+        return;
+    }
+    if event.pubkey == *bot_pubkey {
+        return;
+    }
+    if event.created_at < since {
+        return;
+    }
+
+    let Some(group_id) = crate::groups::extract_group_id(event) else {
+        tracing::debug!(
+            account_id,
+            event_id = %event.id,
+            "group message without `h` tag, ignoring"
+        );
+        return;
+    };
+
+    // Read group config fields (drop the guard before any .await).
+    let (policy, groups, mention_mode) = {
+        let cfg = config.read().unwrap_or_else(|e| e.into_inner());
+        (
+            cfg.group_policy.clone(),
+            cfg.groups.clone(),
+            cfg.group_mention_mode.clone(),
+        )
+    };
+
+    if let Err(denied) = crate::groups::check_group_access(&group_id, &policy, &groups) {
+        #[cfg(feature = "metrics")]
+        counter!(nostr_metrics::ACCESS_CONTROL_DENIALS_TOTAL, "reason" => "group").increment(1);
+        tracing::debug!(
+            account_id,
+            group = group_id,
+            "group message rejected: {denied}"
+        );
+        return;
+    }
+
+    if !crate::groups::should_respond(&mention_mode, event, bot_pubkey) {
+        tracing::trace!(
+            account_id,
+            group = group_id,
+            "group message ignored by mention mode"
+        );
+        return;
+    }
+
+    // Size validation — truncate at a safe UTF-8 boundary.
+    let text = if event.content.len() > MAX_MESSAGE_BYTES {
+        tracing::warn!(
+            account_id,
+            len = event.content.len(),
+            "group message exceeds size limit"
+        );
+        &event.content[..event.content.floor_char_boundary(MAX_MESSAGE_BYTES)]
+    } else {
+        event.content.as_str()
+    };
+    if text.trim().is_empty() {
+        return;
+    }
+
+    let sender_hex = event.pubkey.to_hex();
+    let sender_npub = event
+        .pubkey
+        .to_bech32()
+        .unwrap_or_else(|_| sender_hex.clone());
+
+    #[cfg(feature = "metrics")]
+    counter!(nostr_metrics::MESSAGES_RECEIVED_TOTAL).increment(1);
+
+    event_sink
+        .emit(moltis_channels::ChannelEvent::InboundMessage {
+            channel_type: moltis_channels::ChannelType::Nostr,
+            account_id: account_id.to_string(),
+            peer_id: group_id.clone(),
+            username: Some(sender_npub.clone()),
+            sender_name: None,
+            message_count: None,
+            access_granted: true,
+        })
+        .await;
+
+    // Reply routes back to the group (chat_id = group id), threaded to this
+    // message so NIP-29 clients render it as a reply.
+    let reply_to = moltis_channels::ChannelReplyTarget {
+        ack_message_id: None,
+        channel_type: moltis_channels::ChannelType::Nostr,
+        account_id: account_id.to_string(),
+        chat_id: group_id,
+        message_id: Some(event.id.to_hex()),
+        thread_id: None,
+    };
+
+    let meta = moltis_channels::ChannelMessageMeta {
+        channel_type: moltis_channels::ChannelType::Nostr,
+        sender_name: None,
+        username: Some(sender_npub),
+        sender_id: Some(sender_hex),
         message_kind: Some(moltis_channels::ChannelMessageKind::Text),
         model: None,
         agent_id: None,
