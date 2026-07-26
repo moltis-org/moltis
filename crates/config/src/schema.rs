@@ -15,6 +15,8 @@ mod chat;
 mod code_index;
 #[path = "schema/hooks.rs"]
 mod hooks;
+
+mod instrumentation;
 #[path = "schema/memory.rs"]
 mod memory;
 #[path = "schema/modes.rs"]
@@ -33,8 +35,8 @@ mod tools;
 mod voice;
 
 pub use {
-    agents::*, chat::*, code_index::*, hooks::*, memory::*, modes::*, phone::*, providers::*,
-    runtime::*, system::*, tools::*, voice::*,
+    agents::*, chat::*, code_index::*, hooks::*, instrumentation::*, memory::*, modes::*, phone::*,
+    providers::*, runtime::*, system::*, tools::*, voice::*,
 };
 
 // ── Reasoning effort ──────────────────────────────────────────────────────
@@ -305,6 +307,8 @@ pub struct MoltisConfig {
     pub auth: AuthConfig,
     pub graphql: GraphqlConfig,
     pub metrics: MetricsConfig,
+    /// Agent instrumentation exported to Langfuse, OTLP collectors and Datadog.
+    pub instrumentation: InstrumentationConfig,
     pub identity: AgentIdentity,
     pub user: UserProfile,
     pub hooks: Option<HooksConfig>,

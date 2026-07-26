@@ -1,0 +1,40 @@
+//! Agent instrumentation with pluggable backends.
+//!
+//! One instrumentation pass in the agent runtime feeds any number of backends
+//! through [`sink::ObservationSink`]. What each backend actually receives is
+//! governed by its [`profile::ExportProfile`], because an LLM observability
+//! product and an infrastructure APM want very different things:
+//!
+//! * **Langfuse** gets the full conversation — prompts, completions, tool
+//!   arguments and results — plus the observation taxonomy, cache-aware token
+//!   usage, cost, and managed-prompt linkage.
+//! * **Grafana, Datadog, Honeycomb** get operational shape only: latency,
+//!   errors, model, token counts. No conversation content, no per-user
+//!   cardinality.
+//!
+//! See `docs/src/instrumentation.md` for the operator-facing guide.
+
+pub mod builder;
+pub mod exporters;
+pub mod model;
+pub mod profile;
+pub mod recorder;
+pub mod redact;
+pub mod runtime;
+pub mod sink;
+
+pub use {
+    builder::{BuildOutcome, BuiltInstrumentation, SkippedBackend, build},
+    model::{
+        Event, Level, ObservationId, ObservationKind, ObservationRecord, ScoreRecord, ScoreValue,
+        TokenUsage, TraceId, TraceRecord, TraceScope,
+    },
+    profile::{ContentCapture, ExportProfile, Vocabulary},
+    recorder::{RecorderSettings, StepGuard, TurnRecorder},
+    redact::RedactionPolicy,
+    runtime::{BatchConfig, BatchSink, SinkStatsSnapshot, Transport, TransportError},
+    sink::{
+        ObservationSink, SinkFanout, clear_global_sink, global_sink, is_enabled, record,
+        set_global_sink,
+    },
+};

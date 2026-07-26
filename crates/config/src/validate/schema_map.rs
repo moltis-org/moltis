@@ -510,6 +510,54 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ])),
         ),
         (
+            "instrumentation",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("environment", Leaf),
+                ("release", Leaf),
+                ("sample_rate", Leaf),
+                ("redact", Leaf),
+                ("queue_capacity", Leaf),
+                ("flush_interval_ms", Leaf),
+                ("max_batch_bytes", Leaf),
+                (
+                    "langfuse",
+                    Struct(HashMap::from([
+                        ("enabled", Leaf),
+                        ("host", Leaf),
+                        ("public_key", Leaf),
+                        ("secret_key", Leaf),
+                        ("capture_input", Leaf),
+                        ("capture_output", Leaf),
+                        ("capture_tool_io", Leaf),
+                        ("timeout_secs", Leaf),
+                    ])),
+                ),
+                (
+                    "otlp",
+                    Struct(HashMap::from([
+                        ("enabled", Leaf),
+                        ("endpoint", Leaf),
+                        ("headers", Map(Box::new(Leaf))),
+                        ("content", Leaf),
+                        ("emit_user_id", Leaf),
+                        ("timeout_secs", Leaf),
+                    ])),
+                ),
+                (
+                    "datadog",
+                    Struct(HashMap::from([
+                        ("enabled", Leaf),
+                        ("endpoint", Leaf),
+                        ("api_key", Leaf),
+                        ("service", Leaf),
+                        ("content", Leaf),
+                        ("timeout_secs", Leaf),
+                    ])),
+                ),
+            ])),
+        ),
+        (
             "identity",
             Struct(HashMap::from([
                 ("name", Leaf),

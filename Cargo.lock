@@ -8030,6 +8030,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-observability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "futures",
+ "moltis-common",
+ "moltis-config",
+ "moltis-metrics",
+ "rand 0.10.1",
+ "reqwest 0.13.2",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
 name = "moltis-onboarding"
 version = "0.1.0"
 dependencies = [
