@@ -7120,6 +7120,7 @@ dependencies = [
  "anyhow",
  "clap",
  "dotenvy",
+ "moltis-acp",
  "moltis-agents",
  "moltis-browser",
  "moltis-claude-import",
@@ -7158,6 +7159,23 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "which 8.0.2",
+]
+
+[[package]]
+name = "moltis-acp"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "anyhow",
+ "async-trait",
+ "futures",
+ "moltis-metrics",
+ "serde_json",
+ "tokio",
+ "tokio-test",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

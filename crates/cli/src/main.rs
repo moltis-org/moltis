@@ -24,6 +24,8 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[unsafe(export_name = "malloc_conf")]
 static malloc_conf: &[u8] = b"dirty_decay_ms:1000,muzzy_decay_ms:1000,background_thread:true\0";
 
+#[cfg(feature = "acp")]
+mod acp_command;
 mod auth_commands;
 mod browser_commands;
 mod channel_commands;
@@ -52,7 +54,12 @@ use {
     clap::{Parser, Subcommand},
     moltis_gateway::logs::{EnabledLogLevels, LogBroadcastLayer, LogBuffer},
     tracing::info,
-    tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt},
+    tracing_subscriber::{
+        EnvFilter,
+        fmt::{self, writer::BoxMakeWriter},
+        layer::SubscriberExt,
+        util::SubscriberInitExt,
+    },
 };
 
 #[derive(Parser)]
@@ -107,6 +114,9 @@ struct Cli {
 enum Commands {
     /// Start the gateway server (default when no subcommand is provided).
     Gateway,
+    /// Serve Moltis to an ACP client over stdio.
+    #[cfg(feature = "acp")]
+    Acp(acp_command::AcpArgs),
     /// Invoke an agent directly.
     Agent {
         #[arg(short, long)]
@@ -287,6 +297,20 @@ fn default_telemetry_filter(log_level: &str) -> EnvFilter {
     filter
 }
 
+/// Whether the chosen command uses stdout as a machine-readable wire, in which
+/// case logs must go to stderr instead.
+///
+/// `moltis acp` frames JSON-RPC on stdout: a single log line written there
+/// corrupts the stream and the client disconnects with a parse error.
+fn command_reserves_stdout(command: Option<&Commands>) -> bool {
+    #[cfg(feature = "acp")]
+    if matches!(command, Some(Commands::Acp(_))) {
+        return true;
+    }
+    let _ = command;
+    false
+}
+
 /// Initialise tracing and optionally attach a [`LogBroadcastLayer`] that
 /// captures events into an in-memory ring buffer for the web UI.
 fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
@@ -303,9 +327,23 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
     // Optionally attach the in-memory capture layer.
     let log_layer = log_buffer.map(LogBroadcastLayer::new);
 
+    // Boxed so both destinations share one layer type.
+    let stdout_reserved = command_reserves_stdout(cli.command.as_ref());
+    let writer = if stdout_reserved {
+        BoxMakeWriter::new(std::io::stderr)
+    } else {
+        BoxMakeWriter::new(std::io::stdout)
+    };
+
     if cli.json_logs {
         registry
-            .with(fmt::layer().json().with_target(true).with_thread_ids(false))
+            .with(
+                fmt::layer()
+                    .json()
+                    .with_target(true)
+                    .with_thread_ids(false)
+                    .with_writer(writer),
+            )
             .with(log_layer)
             .init();
     } else {
@@ -314,7 +352,9 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
                 fmt::layer()
                     .with_target(true)
                     .with_thread_ids(false)
-                    .with_ansi(true),
+                    // ANSI escapes are terminal decoration, never wire content.
+                    .with_ansi(!stdout_reserved)
+                    .with_writer(writer),
             )
             .with(log_layer)
             .init();
@@ -490,6 +530,8 @@ async fn main() -> anyhow::Result<()> {
             .await
             .map_err(Into::into)
         },
+        #[cfg(feature = "acp")]
+        Some(Commands::Acp(args)) => acp_command::handle_acp(args).await,
         Some(Commands::Agent { message, .. }) => {
             let result = moltis_agents::runner::run_agent("default", "main", &message).await?;
             println!("{result}");

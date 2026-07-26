@@ -69,6 +69,7 @@ path = "src/main.rs"
 anyhow                 = { workspace = true }
 clap                   = { workspace = true }
 dotenvy                = { workspace = true }
+moltis-acp             = { optional = true, workspace = true }
 moltis-agents          = { workspace = true }
 moltis-browser         = { workspace = true }
 moltis-claude-import   = { optional = true, workspace = true }
@@ -113,6 +114,7 @@ tikv-jemallocator = { optional = true, workspace = true }
 tempfile = { workspace = true }
 
 [features]
+acp               = ["dep:moltis-acp"]
 agent             = ["moltis-gateway/agent", "moltis-web?/agent"]
 caldav            = ["moltis-gateway/caldav"]
 cloudflare-tunnel = ["moltis-httpd/cloudflare-tunnel", "moltis-web?/cloudflare-tunnel"]
@@ -127,6 +129,7 @@ home-assistant    = ["moltis-gateway/home-assistant"]
 bundled-skills = ["moltis-gateway/bundled-skills", "moltis-web?/bundled-skills"]
 default = ["full"]
 full = [
+  "acp",
   "agent",
   "bundled-skills",
   "caldav",

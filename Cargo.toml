@@ -1,6 +1,7 @@
 [workspace]
 default-members = [
   "apps/courier",
+  "crates/acp",
   "crates/agents",
   "crates/auth",
   "crates/auto-reply",
@@ -72,6 +73,7 @@ default-members = [
 ]
 members = [
   "apps/courier",
+  "crates/acp",
   "crates/agents",
   "crates/auth",
   "crates/auto-reply",
@@ -367,6 +369,7 @@ zeroize       = { features = ["derive"], version = "1" }
 
 # Workspace crates
 moltis                  = { path = "crates/cli" }
+moltis-acp              = { path = "crates/acp" }
 moltis-agents           = { path = "crates/agents" }
 moltis-auth             = { path = "crates/auth" }
 moltis-auto-reply       = { path = "crates/auto-reply" }
