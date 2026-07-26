@@ -12,7 +12,7 @@ use {
 
 use crate::{
     exporters::{
-        langfuse::{LangfuseClient, LangfuseConfig},
+        langfuse::{LangfuseClient, LangfuseConfig, ScoreSink},
         otlp::{OtlpConfig, OtlpTransport},
     },
     profile::{ContentCapture, ExportProfile},
@@ -106,11 +106,16 @@ fn validate_endpoint(raw: &str) -> Result<(), String> {
 }
 
 /// Build the Langfuse backend.
+///
+/// Returns two sinks, not one. Traces go over OTLP, but the OTLP mapping has
+/// no representation for a score and drops those events, so scores need their
+/// own sink onto the ingestion API — otherwise every score recorded would be
+/// silently discarded on the way out.
 fn build_langfuse(
     settings: &LangfuseSettings,
     config: &InstrumentationConfig,
     release: &str,
-) -> Result<(Arc<dyn ObservationSink>, Arc<LangfuseClient>), String> {
+) -> Result<(Vec<Arc<dyn ObservationSink>>, Arc<LangfuseClient>), String> {
     if settings.public_key.trim().is_empty() {
         return Err("public_key is not set".to_string());
     }
@@ -132,9 +137,10 @@ fn build_langfuse(
     };
 
     let transport = Arc::new(langfuse_config.build_transport(release.to_string()));
-    let sink = Arc::new(BatchSink::spawn(transport, batch_config(config)));
+    let traces = Arc::new(BatchSink::spawn(transport, batch_config(config)));
     let client = Arc::new(LangfuseClient::new(langfuse_config));
-    Ok((sink, client))
+    let scores = Arc::new(ScoreSink::spawn(Arc::clone(&client), batch_config(config)));
+    Ok((vec![traces, scores], client))
 }
 
 /// Build a generic OTLP backend.
@@ -225,8 +231,8 @@ pub fn build(config: &InstrumentationConfig, release: &str) -> BuildOutcome {
 
     if config.langfuse.enabled {
         match build_langfuse(&config.langfuse, config, release) {
-            Ok((sink, client)) => {
-                sinks.push(sink);
+            Ok((langfuse_sinks, client)) => {
+                sinks.extend(langfuse_sinks);
                 langfuse_client = Some(client);
                 backends.push("langfuse".to_string());
             },
@@ -415,7 +421,23 @@ mod tests {
         let built = build(&config, "test").built.expect("should build");
 
         assert_eq!(built.backends, vec!["langfuse", "otlp", "datadog"]);
-        assert_eq!(built.sink.name(), "langfuse+otlp+datadog");
+        // Langfuse contributes two sinks: traces over OTLP and scores over the
+        // ingestion API. It still reports as one backend to the operator.
+        assert_eq!(built.sink.name(), "langfuse+langfuse-scores+otlp+datadog");
+    }
+
+    #[tokio::test]
+    async fn langfuse_gets_a_score_sink_alongside_the_trace_sink() {
+        // The OTLP mapping has no representation for a score and drops those
+        // events, so without a second sink every score would be recorded by the
+        // agent and then silently discarded on the way out.
+        let config = InstrumentationConfig {
+            langfuse: valid_langfuse(),
+            ..enabled_config()
+        };
+        let built = build(&config, "test").built.expect("should build");
+
+        assert_eq!(built.sink.name(), "langfuse+langfuse-scores");
     }
 
     #[tokio::test]

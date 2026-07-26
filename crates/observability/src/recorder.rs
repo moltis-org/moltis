@@ -83,7 +83,22 @@ impl TurnRecorder {
         scope: TraceScope,
         settings: RecorderSettings,
     ) -> Option<Self> {
-        let sink = sink::global_sink()?;
+        Self::begin_with_sink(sink::global_sink()?, name, scope, settings)
+    }
+
+    /// Begin recording a turn against an explicit sink.
+    ///
+    /// The global sink is process-wide, which makes it unusable for anything
+    /// that needs its own destination: parallel tests, and the experiment
+    /// runner, which routes a dataset run's traces separately from live
+    /// traffic. Both would otherwise race with whatever was installed last.
+    #[must_use]
+    pub fn begin_with_sink(
+        sink: Arc<dyn ObservationSink>,
+        name: impl Into<String>,
+        scope: TraceScope,
+        settings: RecorderSettings,
+    ) -> Option<Self> {
         if !settings.sampled() {
             return None;
         }

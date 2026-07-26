@@ -13,7 +13,6 @@ use {
         BatchConfig, BatchSink, ExportProfile, ObservationKind, ObservationSink, RecorderSettings,
         TokenUsage, TraceScope, TurnRecorder,
         exporters::otlp::{OtlpConfig, OtlpTransport},
-        sink,
     },
     serde_json::Value,
     wiremock::{
@@ -76,11 +75,18 @@ async fn run_turn_against(server: &MockServer, profile: ExportProfile) -> Vec<Va
         flush_interval: Duration::from_millis(20),
         ..Default::default()
     }));
-    sink::set_global_sink(batch_sink.clone());
 
     {
-        let recorder = TurnRecorder::begin("agent-run", scope(), RecorderSettings::default())
-            .expect("sink installed");
+        // Deliberately not the global sink: these tests run in parallel in one
+        // process, and a shared global means one test's spans land in another
+        // test's collector.
+        let recorder = TurnRecorder::begin_with_sink(
+            batch_sink.clone(),
+            "agent-run",
+            scope(),
+            RecorderSettings::default(),
+        )
+        .expect("recorder should start");
         recorder.set_input(Value::String(SECRET_PROMPT.into()));
 
         let mut generation = recorder.step(ObservationKind::Generation, "anthropic/claude-opus-4");
@@ -105,7 +111,6 @@ async fn run_turn_against(server: &MockServer, profile: ExportProfile) -> Vec<Va
         .flush(Duration::from_secs(5))
         .await
         .expect("flush should succeed");
-    sink::clear_global_sink();
 
     captured_bodies(server).await
 }
@@ -303,18 +308,19 @@ async fn an_unreachable_backend_does_not_stall_the_turn() {
         flush_interval: Duration::from_millis(20),
         ..Default::default()
     }));
-    sink::set_global_sink(batch_sink.clone());
-
     let started = std::time::Instant::now();
-    let recorder = TurnRecorder::begin("agent-run", scope(), RecorderSettings::default())
-        .expect("sink installed");
+    let recorder = TurnRecorder::begin_with_sink(
+        batch_sink.clone(),
+        "agent-run",
+        scope(),
+        RecorderSettings::default(),
+    )
+    .expect("recorder should start");
     for _ in 0..200 {
         recorder.step(ObservationKind::Tool, "exec").finish();
     }
     recorder.finish();
     let elapsed = started.elapsed();
-
-    sink::clear_global_sink();
 
     // Recording is a queue push; a dead backend must not be felt by the agent.
     assert!(
