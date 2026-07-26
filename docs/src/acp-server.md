@@ -58,6 +58,11 @@ ACP sessions map onto Moltis session keys in a dedicated `acp:` namespace, so a
 `SessionId` *is* the Moltis session key, which means a client can hand an id
 straight back to `session/load` to resume a conversation.
 
+The namespace is enforced, not merely conventional: `session/load` rejects any
+id outside `acp:` with `invalid_params` before the backend is consulted, so a
+client cannot name a Web UI or channel session and drive it. `session/new`
+likewise refuses to return a key a backend minted outside the namespace.
+
 ## Protocol support
 
 | Method | Status |
@@ -67,7 +72,7 @@ straight back to `session/load` to resume a conversation.
 | `session/new` | Supported; returns a namespaced Moltis session key |
 | `session/prompt` | Supported; streams `session/update` notifications, then returns a stop reason |
 | `session/cancel` | Supported; aborts the in-flight turn, resolving `prompt` with `cancelled` |
-| `session/load` | Supported when the backend can resume; replays history before responding |
+| `session/load` | Supported when the backend can resume; rejects ids outside the `acp:` namespace, then replays history before responding |
 | `fs/*`, `terminal/*` | Not requested from the client |
 | `session/request_permission` | Not yet routed through Moltis's tool gate |
 

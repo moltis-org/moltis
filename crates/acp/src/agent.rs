@@ -19,7 +19,7 @@ use {
 
 use crate::{
     backend::{AcpBackend, TurnUpdates},
-    session::{SessionKey, SessionRegistry},
+    session::{ACP_SESSION_NAMESPACE, SessionKey, SessionRegistry},
 };
 
 /// Protocol handler bridging an ACP client to a Moltis backend.
@@ -138,6 +138,14 @@ impl acp::Agent for MoltisAgent {
             .map_err(|error| {
                 acp::Error::internal_error().data(format!("failed to create session: {error}"))
             })?;
+        // A backend minting keys outside the namespace would quietly hand the
+        // client an id that `load_session` must then refuse. That is our bug,
+        // not the client's, so it is an internal error rather than bad input.
+        if !key.is_namespaced() {
+            return Err(acp::Error::internal_error().data(format!(
+                "backend created session {key} outside the `{ACP_SESSION_NAMESPACE}:` namespace"
+            )));
+        }
         self.sessions.insert(key.clone());
         Ok(acp::NewSessionResponse::new(acp::SessionId::from(key)))
     }
@@ -150,7 +158,19 @@ impl acp::Agent for MoltisAgent {
         if !self.backend.capabilities().load_session {
             return Err(acp::Error::method_not_found());
         }
+        // `session_id` is arbitrary client input, and unlike `prompt`/`cancel`
+        // there is no registry entry to check it against — resuming a session
+        // this connection never opened is the whole point. The `acp:` namespace
+        // is therefore the only thing keeping a client from naming a Web UI or
+        // channel session here and driving it with subsequent prompts. Enforce
+        // it before the backend sees the key, so no backend has to re-derive
+        // the invariant to stay isolated.
         let key = SessionKey::from(&args.session_id);
+        if !key.is_namespaced() {
+            return Err(acp::Error::invalid_params().data(format!(
+                "session id {key} is outside the `{ACP_SESSION_NAMESPACE}:` namespace"
+            )));
+        }
         let history = self.backend.load_session(&key).await.map_err(|error| {
             acp::Error::invalid_params().data(format!("failed to load session {key}: {error}"))
         })?;

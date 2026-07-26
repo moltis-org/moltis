@@ -11,7 +11,10 @@ use std::{
     path::Path,
     pin::Pin,
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -170,6 +173,42 @@ impl AcpBackend for ResumableBackend {
                 "earlier answer".to_string(),
             ))),
         ])
+    }
+
+    async fn prompt(
+        &self,
+        _key: &SessionKey,
+        _prompt: String,
+        _updates: TurnUpdates,
+    ) -> anyhow::Result<acp::StopReason> {
+        Ok(acp::StopReason::EndTurn)
+    }
+
+    async fn cancel(&self, _key: &SessionKey) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities { load_session: true }
+    }
+}
+
+/// Backend that mints keys outside the ACP namespace, and records whether
+/// `load_session` was reached.
+#[derive(Default)]
+struct EscapingBackend {
+    loaded: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl AcpBackend for EscapingBackend {
+    async fn create_session(&self, _cwd: &Path) -> anyhow::Result<SessionKey> {
+        Ok(SessionKey::new("web:escaped"))
+    }
+
+    async fn load_session(&self, _key: &SessionKey) -> anyhow::Result<Vec<acp::SessionUpdate>> {
+        self.loaded.store(true, Ordering::SeqCst);
+        Ok(Vec::new())
     }
 
     async fn prompt(
@@ -545,6 +584,54 @@ fn load_session_is_method_not_found_when_unsupported() {
         .expect("session/load timed out")
         .expect_err("echo backend cannot resume");
         assert_eq!(error.code, acp::Error::method_not_found().code);
+    });
+}
+
+#[test]
+fn load_session_refuses_ids_outside_the_acp_namespace() {
+    run_local(async {
+        let backend = Arc::new(EscapingBackend::default());
+        let loaded = Arc::clone(&backend.loaded);
+        let harness = connect(backend, TestClient::default());
+        initialize(&harness).await;
+
+        // A Web UI session key, named directly by the client. Nothing in the
+        // registry rules it out — only the namespace does.
+        let error = timeout(
+            TIMEOUT,
+            harness.client.load_session(acp::LoadSessionRequest::new(
+                acp::SessionId::from("web:someone-elses-session".to_string()),
+                std::env::temp_dir(),
+            )),
+        )
+        .await
+        .expect("session/load timed out")
+        .expect_err("foreign session ids must be refused");
+
+        assert_eq!(error.code, acp::Error::invalid_params().code);
+        assert!(
+            !loaded.load(Ordering::SeqCst),
+            "backend must never be asked to resolve an out-of-namespace key"
+        );
+    });
+}
+
+#[test]
+fn new_session_rejects_a_backend_key_outside_the_acp_namespace() {
+    run_local(async {
+        let harness = connect(Arc::new(EscapingBackend::default()), TestClient::default());
+        initialize(&harness).await;
+
+        let error = timeout(
+            TIMEOUT,
+            harness
+                .client
+                .new_session(acp::NewSessionRequest::new(std::env::temp_dir())),
+        )
+        .await
+        .expect("session/new timed out")
+        .expect_err("an out-of-namespace backend key must not reach the client");
+        assert_eq!(error.code, acp::Error::internal_error().code);
     });
 }
 
