@@ -151,8 +151,10 @@ relay-based group chat over a connection authenticated with
 Because Buzz speaks plain Nostr, Moltis participates as an ordinary NIP-29
 client — the same code path works against Buzz relays and any other NIP-29
 relay. A Buzz channel is a group identified by an `h` tag; messages are
-`kind:9` chat events. Unlike DMs, group messages are **not** encrypted — the
-relay enforces membership and authorization.
+`kind:9` (standard NIP-29) or `kind:40002` (Buzz) chat events — both are read,
+see [Message Kinds](#message-kinds-kind9-vs-kind40002). Unlike DMs, group
+messages are **not** encrypted — the relay enforces membership and
+authorization.
 
 ### Configuration
 
@@ -217,9 +219,10 @@ lands correctly.
 - **`none`** — never respond in groups (receive-only).
 
 Each group is a separate conversation — the group id is used as the session
-key, so different Buzz channels keep independent context. Replies are posted as
-`kind:9` events carrying the group's `h` tag and a NIP-10 `e` tag threading them
-to the message being answered.
+key, so different Buzz channels keep independent context. A reply carries the
+group's `h` tag, a NIP-10 `e` tag threading it to the message being answered,
+and a `p` tag notifying that message's author. It is published with the same
+kind as the message it answers.
 
 ### Access Control
 
@@ -231,10 +234,10 @@ subscribes to *and* the set it accepts messages from. There is deliberately no
 A group's `h` tag is an unauthenticated label. An event's signature proves who
 wrote it, not which group it belongs to, and a relay can push any event down
 the socket — `nostr-sdk` does not verify that delivered events match the filters
-you subscribed with. Moltis therefore re-checks every inbound `kind:9` against
-`groups` and drops anything else, so a hostile or buggy relay cannot inject text
-into the agent by inventing an `h` tag. Keep `groups` to channels you actually
-intend the bot to work in.
+you subscribed with. Moltis therefore re-checks every inbound group message
+(`kind:9` and `kind:40002` alike) against `groups` and drops anything else, so
+a hostile or buggy relay cannot inject text into the agent by inventing an `h`
+tag. Keep `groups` to channels you actually intend the bot to work in.
 ```
 
 Note that group chat has no sender allowlist: in NIP-29 the relay owns
