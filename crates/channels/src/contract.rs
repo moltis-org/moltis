@@ -41,10 +41,7 @@ pub async fn double_start_same_account(plugin: &mut dyn ChannelPlugin) -> Result
     plugin.start_account(id, config.clone()).await?;
     // Second start: must succeed or return a clear error — must not panic.
     let result = plugin.start_account(id, config).await;
-    assert!(
-        result.is_ok(),
-        "second start_account should succeed, got: {result:?}"
-    );
+    assert!(result.is_ok(), "second start_account should succeed");
 
     plugin.stop_account(id).await?;
     Ok(())

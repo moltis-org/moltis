@@ -404,18 +404,6 @@ fn build_webhook_endpoint(
     ))
 }
 
-fn generate_webhook_secret() -> String {
-    let mut bytes = [0_u8; 24];
-    rand::rng().fill_bytes(&mut bytes);
-    let mut out = String::with_capacity(bytes.len() * 2);
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    for b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    out
-}
-
 fn encode_query_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for b in value.bytes() {
@@ -436,6 +424,18 @@ fn hex_upper(value: u8) -> char {
         10..=15 => (b'A' + (value - 10)) as char,
         _ => '0',
     }
+}
+
+fn generate_webhook_secret() -> String {
+    let mut bytes = [0_u8; 24];
+    rand::rng().fill_bytes(&mut bytes);
+    let mut out = String::with_capacity(bytes.len() * 2);
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn print_setup_links() {

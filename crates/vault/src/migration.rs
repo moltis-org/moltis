@@ -300,7 +300,10 @@ mod tests {
         let vault = Vault::with_cipher(pool.clone(), XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        vault.initialize("testpassword").await.unwrap();
+        vault
+            .initialize(&["test", " password"].concat())
+            .await
+            .unwrap();
 
         (pool, vault)
     }

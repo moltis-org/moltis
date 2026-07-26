@@ -450,10 +450,10 @@ fn assign_openai_tool_call_id(
 
     let base = base_openai_tool_call_id(raw);
     let mut candidate = base.clone();
-    let mut nonce = 1usize;
+    let mut suffix_index = 1usize;
     while used_tool_call_ids.contains(&candidate) {
-        candidate = disambiguate_tool_call_id(&base, nonce);
-        nonce = nonce.saturating_add(1);
+        candidate = disambiguate_tool_call_id(&base, suffix_index);
+        suffix_index = suffix_index.saturating_add(1);
     }
 
     used_tool_call_ids.insert(candidate.clone());

@@ -104,9 +104,6 @@ impl SttProvider for GoogleStt {
     async fn transcribe(&self, request: TranscribeRequest) -> Result<Transcript> {
         let api_key = self.get_api_key()?;
 
-        // Build the URL with API key
-        let url = format!("{}?key={}", API_BASE, api_key.expose_secret());
-
         // Encode audio as base64
         let audio_content = base64::engine::general_purpose::STANDARD.encode(&request.audio);
 
@@ -133,7 +130,8 @@ impl SttProvider for GoogleStt {
 
         let response = self
             .client
-            .post(&url)
+            .post(API_BASE)
+            .header("x-goog-api-key", api_key.expose_secret())
             .json(&body)
             .send()
             .await

@@ -16,6 +16,57 @@ interface ImageAttachment {
 	name: string;
 }
 
+const ALLOWED_MARKDOWN_TAGS = new Set([
+	"A",
+	"BR",
+	"CODE",
+	"DIV",
+	"EM",
+	"LI",
+	"OL",
+	"P",
+	"PRE",
+	"SPAN",
+	"STRONG",
+	"TABLE",
+	"TBODY",
+	"TD",
+	"TH",
+	"THEAD",
+	"TR",
+	"UL",
+]);
+const ALLOWED_MARKDOWN_ATTRS = new Set(["class", "data-lang", "href", "rel", "target"]);
+
+function appendSanitizedMarkdown(target: HTMLElement, html: string): void {
+	const template = document.createElement("template");
+	template.innerHTML = html;
+	for (const node of Array.from(template.content.childNodes)) {
+		target.appendChild(sanitizeMarkdownNode(node));
+	}
+}
+
+function sanitizeMarkdownNode(node: Node): Node {
+	if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent || "");
+	if (!(node instanceof HTMLElement && ALLOWED_MARKDOWN_TAGS.has(node.tagName))) {
+		return document.createTextNode(node.textContent || "");
+	}
+
+	const clone = document.createElement(node.tagName.toLowerCase());
+	for (const attr of Array.from(node.attributes)) {
+		if (!ALLOWED_MARKDOWN_ATTRS.has(attr.name)) continue;
+		if (attr.name === "href" && !/^(https?:|mailto:|#)/i.test(attr.value)) continue;
+		clone.setAttribute(attr.name, attr.value);
+	}
+	for (const child of Array.from(node.childNodes)) {
+		clone.appendChild(sanitizeMarkdownNode(child));
+	}
+	if (clone.tagName === "A" && clone.getAttribute("target") === "_blank") {
+		clone.setAttribute("rel", "noopener noreferrer");
+	}
+	return clone;
+}
+
 export interface DocumentAttachment {
 	display_name: string;
 	stored_filename: string;
@@ -116,9 +167,7 @@ export function chatAddMsg(cls: MessageRole, content: string, isHtml?: boolean):
 		el.classList.add("system-notice");
 	}
 	if (isHtml) {
-		// Safe: content is produced by renderMarkdown which escapes via esc() first,
-		// then only adds our own formatting tags (pre, code, strong).
-		el.innerHTML = content; // eslint-disable-line no-unsanitized/property
+		appendSanitizedMarkdown(el, content);
 	} else {
 		el.textContent = content;
 	}
@@ -144,10 +193,7 @@ export function chatAddMsgWithImages(
 function appendHtmlContent(el: HTMLElement, htmlContent: string): void {
 	if (!htmlContent) return;
 	const textDiv = document.createElement("div");
-	// Safe: htmlContent is produced by renderMarkdown which escapes user
-	// input via esc() first, then only adds our own formatting tags.
-	// This is the same pattern used in chatAddMsg above.
-	textDiv.innerHTML = htmlContent; // eslint-disable-line no-unsanitized/property
+	appendSanitizedMarkdown(textDiv, htmlContent);
 	el.appendChild(textDiv);
 }
 

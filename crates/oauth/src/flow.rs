@@ -16,6 +16,16 @@ use crate::{
     types::{OAuthConfig, OAuthTokens, PkceChallenge},
 };
 
+fn https_url(raw: &str, endpoint: &str) -> Result<Url> {
+    let url = Url::parse(raw)?;
+    if url.scheme() != "https" {
+        return Err(Error::message(format!(
+            "OAuth {endpoint} endpoint must use https"
+        )));
+    }
+    Ok(url)
+}
+
 /// Manages the OAuth 2.0 authorization code flow with PKCE.
 pub struct OAuthFlow {
     config: OAuthConfig,
@@ -102,7 +112,7 @@ impl OAuthFlow {
 
         let result = self
             .client
-            .post(&self.config.token_url)
+            .post(https_url(&self.config.token_url, "token")?)
             .form(&form)
             .send()
             .await?
@@ -146,7 +156,7 @@ impl OAuthFlow {
 
         let result = self
             .client
-            .post(&self.config.token_url)
+            .post(https_url(&self.config.token_url, "token")?)
             .form(&form)
             .send()
             .await?

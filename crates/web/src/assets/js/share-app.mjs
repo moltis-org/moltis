@@ -84,6 +84,7 @@ import { DateTime } from "/assets/js/vendor/luxon.mjs";
 
   function openImageViewer(src) {
     if (!imageViewer || !imageViewerImage || !src) return;
+    if (src.indexOf("data:image/") !== 0 && src.indexOf("/share/") !== 0) return;
     imageViewerImage.setAttribute("src", src);
     imageViewer.hidden = false;
     imageViewer.setAttribute("aria-hidden", "false");
@@ -201,6 +202,7 @@ import { DateTime } from "/assets/js/vendor/luxon.mjs";
   }
 
   function renderAudioPlayer(container, audioSrc, onEnded) {
+    if (audioSrc.indexOf("data:audio/") !== 0 && audioSrc.indexOf("/share/") !== 0) return;
     var wrapper = document.createElement("div");
     wrapper.className = "waveform-player";
 

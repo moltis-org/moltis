@@ -8,6 +8,16 @@ use crate::{
     types::{OAuthConfig, OAuthTokens},
 };
 
+fn https_url(raw: &str, endpoint: &str) -> Result<reqwest::Url> {
+    let url = reqwest::Url::parse(raw)?;
+    if url.scheme() != "https" {
+        return Err(Error::message(format!(
+            "OAuth device {endpoint} endpoint must use https"
+        )));
+    }
+    Ok(url)
+}
+
 /// Response from the device code request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeviceCodeResponse {
@@ -45,7 +55,7 @@ pub async fn request_device_code_with_headers(
     }
 
     let mut req = client
-        .post(&config.auth_url)
+        .post(https_url(&config.auth_url, "authorization")?)
         .header("Accept", "application/json")
         .form(&form);
 
@@ -104,7 +114,7 @@ pub async fn poll_for_token_with_headers(
         }
 
         let mut req = client
-            .post(&config.token_url)
+            .post(https_url(&config.token_url, "token")?)
             .header("Accept", "application/json")
             .form(&form);
 

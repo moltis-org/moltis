@@ -24,6 +24,10 @@ fn share_cookie_name(share_id: &str) -> String {
     format!("moltis_share_{}", share_id)
 }
 
+fn parse_share_id(value: &str) -> Option<uuid::Uuid> {
+    uuid::Uuid::parse_str(value).ok()
+}
+
 fn request_origin(headers: &axum::http::HeaderMap, tls_active: bool) -> Option<String> {
     let host = headers
         .get(axum::http::header::HOST)
@@ -63,9 +67,10 @@ pub async fn share_page_handler(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
-    if uuid::Uuid::parse_str(&share_id).is_err() {
+    let Some(parsed_share_id) = parse_share_id(&share_id) else {
         return not_found_share_response();
-    }
+    };
+    let share_id = parsed_share_id.to_string();
 
     let static_path = moltis_config::data_dir()
         .join("shares")
@@ -201,9 +206,10 @@ pub async fn share_social_image_handler(
     jar: CookieJar,
     State(state): State<AppState>,
 ) -> axum::response::Response {
-    if uuid::Uuid::parse_str(&share_id).is_err() {
+    let Some(parsed_share_id) = parse_share_id(&share_id) else {
         return not_found_share_response();
-    }
+    };
+    let share_id = parsed_share_id.to_string();
 
     let static_path = moltis_config::data_dir()
         .join("shares")

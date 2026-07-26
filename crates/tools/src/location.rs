@@ -172,11 +172,10 @@ async fn reverse_geocode_with_client(
     lat: f64,
     lon: f64,
 ) -> Option<PlaceName> {
-    let url = format!(
-        "https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&zoom=14"
-    );
     let resp = client
-        .get(&url)
+        .get("https://nominatim.openstreetmap.org/reverse")
+        .query(&[("lat", lat), ("lon", lon)])
+        .query(&[("format", "json"), ("zoom", "14")])
         .header("User-Agent", "moltis/0.3")
         .timeout(std::time::Duration::from_secs(5))
         .send()

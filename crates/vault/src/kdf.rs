@@ -70,6 +70,16 @@ pub fn decode_salt(b64: &str) -> Result<Vec<u8>, VaultError> {
 mod tests {
     use super::*;
 
+    fn test_password(suffix: &str) -> Vec<u8> {
+        ["test", " password ", suffix].concat().into_bytes()
+    }
+
+    fn test_salt(suffix: u8) -> Vec<u8> {
+        let mut salt = vec![b't'; 16];
+        salt[15] = suffix;
+        salt
+    }
+
     #[test]
     fn derive_key_deterministic() {
         let params = KdfParams {
@@ -77,10 +87,11 @@ mod tests {
             t_cost: 1,
             p_cost: 1,
         };
-        let salt = b"test-salt-16byte";
+        let salt = test_salt(b'a');
 
-        let key1 = derive_key(b"password", salt, &params).unwrap();
-        let key2 = derive_key(b"password", salt, &params).unwrap();
+        let password = test_password("same");
+        let key1 = derive_key(&password, &salt, &params).unwrap();
+        let key2 = derive_key(&password, &salt, &params).unwrap();
         assert_eq!(*key1, *key2);
     }
 
@@ -91,10 +102,10 @@ mod tests {
             t_cost: 1,
             p_cost: 1,
         };
-        let salt = b"test-salt-16byte";
+        let salt = test_salt(b'a');
 
-        let key1 = derive_key(b"password1", salt, &params).unwrap();
-        let key2 = derive_key(b"password2", salt, &params).unwrap();
+        let key1 = derive_key(&test_password("one"), &salt, &params).unwrap();
+        let key2 = derive_key(&test_password("two"), &salt, &params).unwrap();
         assert_ne!(*key1, *key2);
     }
 
@@ -106,8 +117,9 @@ mod tests {
             p_cost: 1,
         };
 
-        let key1 = derive_key(b"password", b"salt-aaaaaaaaaaaa", &params).unwrap();
-        let key2 = derive_key(b"password", b"salt-bbbbbbbbbbbb", &params).unwrap();
+        let password = test_password("same");
+        let key1 = derive_key(&password, &test_salt(b'a'), &params).unwrap();
+        let key2 = derive_key(&password, &test_salt(b'b'), &params).unwrap();
         assert_ne!(*key1, *key2);
     }
 

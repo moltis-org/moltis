@@ -76,12 +76,16 @@ async function mockExternalAgentsRpc(page, listPayload) {
 				}
 				if (parsed?.method === "external_agents.bind") {
 					window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
-					respond(this, parsed.id, { ok: true, sessionKey: parsed.params?.sessionKey, kind: parsed.params?.kind });
+					respond(this, parsed.id, {
+						ok: true,
+						sessionKey: String(parsed.params?.sessionKey || ""),
+						kind: parsed.params?.kind,
+					});
 					return;
 				}
 				if (parsed?.method === "external_agents.unbind") {
 					window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
-					respond(this, parsed.id, { ok: true, sessionKey: parsed.params?.sessionKey });
+					respond(this, parsed.id, { ok: true, sessionKey: String(parsed.params?.sessionKey || "") });
 					return;
 				}
 			} catch (_err) {

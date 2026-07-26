@@ -92,12 +92,14 @@ impl TtsProvider for GoogleTts {
             .as_ref()
             .ok_or_else(|| anyhow!("Google Cloud TTS API key not configured"))?;
 
-        let url = format!(
-            "https://texttospeech.googleapis.com/v1/voices?key={}",
-            api_key.expose_secret()
-        );
+        let url = "https://texttospeech.googleapis.com/v1/voices";
 
-        let resp = self.client.get(&url).send().await?;
+        let resp = self
+            .client
+            .get(url)
+            .header("x-goog-api-key", api_key.expose_secret())
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -210,12 +212,15 @@ impl GoogleTts {
             },
         };
 
-        let url = format!(
-            "https://texttospeech.googleapis.com/v1/text:synthesize?key={}",
-            api_key.expose_secret()
-        );
+        let url = "https://texttospeech.googleapis.com/v1/text:synthesize";
 
-        let resp = self.client.post(&url).json(&req_body).send().await?;
+        let resp = self
+            .client
+            .post(url)
+            .header("x-goog-api-key", api_key.expose_secret())
+            .json(&req_body)
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -285,14 +290,14 @@ impl GoogleTts {
         }
 
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            model,
-            api_key.expose_secret()
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+            model
         );
 
         let resp = self
             .client
             .post(&url)
+            .header("x-goog-api-key", api_key.expose_secret())
             .header("Content-Type", "application/json")
             .json(&body)
             .send()

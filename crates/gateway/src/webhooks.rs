@@ -522,7 +522,10 @@ mod tests {
         .unwrap();
 
         let vault = Arc::new(moltis_vault::Vault::new(pool).await.unwrap());
-        vault.initialize("test-password").await.unwrap();
+        vault
+            .initialize(&["test", " password"].concat())
+            .await
+            .unwrap();
         vault
     }
 

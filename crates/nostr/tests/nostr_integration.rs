@@ -38,7 +38,7 @@ fn sender_secret() -> Option<Secret<String>> {
 #[ignore]
 fn bot_key_parses_successfully() {
     let keys = moltis_nostr::keys::derive_keys(&bot_secret());
-    assert!(keys.is_ok(), "bot key must parse: {keys:?}");
+    assert!(keys.is_ok(), "bot key must parse");
     let keys = keys.unwrap();
     let npub = keys.public_key().to_bech32().unwrap();
     println!("Bot public key: {npub}");
