@@ -97,6 +97,17 @@ impl LiveChatService {
         };
         let desired_reply_medium = infer_reply_medium(&params, &text);
 
+        // Request-scoped tool restriction. Channels set this for non-operator
+        // senders; resolve it up front so every run started below — the
+        // explicit-shell fast path as well as the agent loop — uses the
+        // restricted registry rather than the shared one.
+        let request_tool_policy = tool_policy::parse_request_tool_policy(&params)?;
+        let request_tool_registry = tool_policy::resolve_request_tool_registry(
+            &self.tool_registry,
+            request_tool_policy.as_ref(),
+        )
+        .await;
+
         let conn_id = params
             .get("_conn_id")
             .and_then(|v| v.as_str())
@@ -373,7 +384,7 @@ impl LiveChatService {
             let terminal_runs = Arc::clone(&self.terminal_runs);
             let session_store = Arc::clone(&self.session_store);
             let session_metadata = Arc::clone(&self.session_metadata);
-            let tool_registry = Arc::clone(&self.tool_registry);
+            let tool_registry = Arc::clone(&request_tool_registry);
             let session_key_clone = session_key.clone();
             let message_queue = Arc::clone(&self.message_queue);
             let state_for_drain = Arc::clone(&self.state);
@@ -921,7 +932,7 @@ impl LiveChatService {
         let active_partial_assistant = Arc::clone(&self.active_partial_assistant);
         let active_reply_medium = Arc::clone(&self.active_reply_medium);
         let run_id_clone = run_id.clone();
-        let tool_registry = Arc::clone(&self.tool_registry);
+        let tool_registry = Arc::clone(&request_tool_registry);
         let hook_registry = self.hook_registry.clone();
 
         // Log if tool mode is active but the provider doesn't support tools.

@@ -1,6 +1,7 @@
 //! `ChatService` trait implementation for `LiveChatService`.
 
 mod send;
+mod tool_policy;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -27,7 +28,7 @@ use {
     moltis_config::ToolMode,
     moltis_service_traits::{ChatService, ServiceError, ServiceResult},
     moltis_sessions::{ContentBlock, MessageContent, PersistedMessage},
-    moltis_tools::policy::{PolicyContext, ToolPolicy},
+    moltis_tools::policy::PolicyContext,
 };
 
 use crate::{
@@ -72,12 +73,7 @@ impl ChatService for LiveChatService {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
-        let request_tool_policy = params
-            .get("_tool_policy")
-            .cloned()
-            .map(serde_json::from_value::<ToolPolicy>)
-            .transpose()
-            .map_err(|e| format!("invalid '_tool_policy' parameter: {e}"))?;
+        let request_tool_policy = tool_policy::parse_request_tool_policy(&params)?;
         let ephemeral = params
             .get("_ephemeral")
             .and_then(|v| v.as_bool())
@@ -184,14 +180,11 @@ impl ChatService for LiveChatService {
 
         let run_id = uuid::Uuid::new_v4().to_string();
         let state = Arc::clone(&self.state);
-        let tool_registry = if let Some(policy) = request_tool_policy.as_ref() {
-            let registry_guard = self.tool_registry.read().await;
-            Arc::new(RwLock::new(
-                registry_guard.clone_allowed_by(|name| policy.is_allowed(name)),
-            ))
-        } else {
-            Arc::clone(&self.tool_registry)
-        };
+        let tool_registry = tool_policy::resolve_request_tool_registry(
+            &self.tool_registry,
+            request_tool_policy.as_ref(),
+        )
+        .await;
         let hook_registry = self.hook_registry.clone();
         let provider_name = provider.name().to_string();
         let model_id = provider.id().to_string();
