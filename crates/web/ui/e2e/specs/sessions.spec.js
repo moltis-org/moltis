@@ -484,6 +484,41 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("cron tab hides archived sessions until the shared archive toggle is enabled", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		const keys = await page.evaluate(() => {
+			const store = window.__moltis_stores?.sessionStore;
+			if (!store) throw new Error("session store unavailable");
+
+			const suffix = Date.now();
+			const activeKey = `cron:e2e-archive-filter-active-${suffix}`;
+			const archivedKey = `cron:e2e-archive-filter-archived-${suffix}`;
+			store.setShowArchivedSessions(false);
+			store.upsert({ key: activeKey, label: "Active cron run", archived: false });
+			store.upsert({ key: archivedKey, label: "Archived cron run", archived: true });
+			return { activeKey, archivedKey };
+		});
+
+		await page.locator('#sessionTabBar .session-tab[data-tab="cron"]').click();
+
+		const activeItem = page.locator(`#sessionList .session-item[data-session-key="${keys.activeKey}"]`);
+		const archivedItem = page.locator(`#sessionList .session-item[data-session-key="${keys.archivedKey}"]`);
+		const archivedToggle = page.locator("#showArchivedSessions");
+		await expect(activeItem).toBeVisible();
+		await expect(archivedItem).toHaveCount(0);
+		await expect(archivedToggle).toBeVisible();
+
+		await archivedToggle.check();
+		await expect(archivedItem).toBeVisible();
+
+		await archivedToggle.uncheck();
+		await expect(archivedItem).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("stop action appears for active run and clears after abort", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/");
