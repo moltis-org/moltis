@@ -986,6 +986,40 @@ mod tests {
         assert!(h.sink.dispatched().is_empty());
     }
 
+    /// A channel command is answered by the command handler, not the model —
+    /// the same interception DMs get. Publishing the response needs a relay,
+    /// which this harness has none of, so the assertion is that the text never
+    /// reached the agent.
+    #[tokio::test]
+    async fn slash_commands_are_intercepted_in_groups() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Always);
+        let event = h.incoming("grp", "/help", groups::group_chat_kind(), false);
+        h.handle(&event).await;
+
+        assert!(
+            h.sink.dispatched().is_empty(),
+            "/help must be handled as a command, not sent to the model"
+        );
+    }
+
+    /// A slash that is not a known command is ordinary text and must still
+    /// reach the agent, rather than being silently swallowed.
+    #[tokio::test]
+    async fn unknown_slash_text_still_reaches_the_agent() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Always);
+        let event = h.incoming(
+            "grp",
+            "/notacommand hello",
+            groups::group_chat_kind(),
+            false,
+        );
+        h.handle(&event).await;
+
+        let got = h.sink.dispatched();
+        assert_eq!(got.len(), 1, "unknown slash text is just a message");
+        assert_eq!(got[0].text, "/notacommand hello");
+    }
+
     /// Accepted messages record who to `p`-tag and which dialect to answer in.
     #[tokio::test]
     async fn records_reply_context_for_accepted_message() {
