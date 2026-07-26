@@ -1286,7 +1286,7 @@ impl LiveChatService {
                 {
                     warn!("failed to persist assistant message: {e}");
                 }
-                crate::channels::record_web_reply_trace(
+                crate::channel_feedback::record_web_reply_trace(
                     &state_for_drain,
                     &session_key_clone,
                     &run_id_clone,

@@ -249,6 +249,75 @@ and shown in the settings UI — if you see them, raise `queue_capacity` or lowe
 | `content` | `"metadata_only"` | |
 | `timeout_secs` | `10` | |
 
+### `[instrumentation.feedback]`
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `true` | Collect reaction feedback. Gated by the master switch. |
+| `positive` | `[]` | Reaction tokens counted as approval. Empty uses the built-in list. |
+| `negative` | `[]` | Reaction tokens counted as disapproval. Empty uses the built-in list. |
+| `link_retention_days` | `30` | How long a reply stays attributable to its turn. |
+
+## User feedback
+
+A thumbs up or down on a reply becomes a `user-feedback` score on the trace
+that produced it — `1.0` for positive, `0.0` for negative — visible in
+Langfuse alongside the conversation.
+
+Feedback works in three places:
+
+- **Telegram, Discord and Slack** — react to any message the bot sent.
+- **The web UI** — thumbs appear in the action bar under each assistant
+  message, but only while instrumentation is active and feedback is enabled.
+  A control that goes nowhere is worse than no control.
+
+Reactions accept raw emoji or shortcodes, and skin-tone and presentation
+selectors are ignored when matching, so `👍`, `👍🏾`, `:+1:` and `thumbsup` are
+one signal. The default vocabulary is deliberately narrow; a default that
+swallowed every positive-looking emoji would turn release parties into quality
+data. Override either list to change it:
+
+```toml
+[instrumentation.feedback]
+positive = ["👍", "🎉", "ship-it"]
+```
+
+Setting one list leaves the other on its defaults.
+
+**Changing your mind works.** Score ids are derived from the trace and the
+reacting user, and Langfuse upserts on that id, so switching from 👍 to 👎
+replaces your vote instead of recording both. Removing the reaction retracts
+the score. Two people reacting to the same reply still count separately.
+
+### Why a reaction sometimes does nothing
+
+- **The reply is older than `link_retention_days`.** Attribution comes from a
+  correlation table written when the reply is sent, and it is pruned on that
+  schedule. The web UI says so explicitly rather than failing silently.
+- **The reply predates instrumentation being switched on.** There was no trace
+  to attribute it to.
+- **The channel cannot report the ids of messages it sends.** Telegram, Discord
+  and Slack can; other channels deliver the message but lose feedback
+  attribution.
+
+## Cost
+
+Cost is computed in-process from a built-in price table, so it is available
+whether or not any backend is configured, and every backend sees the same
+number instead of each deriving its own.
+
+Cache reads and writes are priced on their own tiers rather than folded into
+input — a cache read can be an order of magnitude cheaper, and summing them
+would overstate spend on exactly the workloads caching exists to help.
+
+Model ids are matched by longest prefix after stripping any provider prefix,
+so `anthropic/claude-opus-4` and a dated snapshot like
+`claude-opus-4-5-20260101` both price as their family.
+
+**A model with no entry reports no cost at all** rather than falling back to
+an average. Prices go stale whenever a provider changes them, and a confident
+wrong number that looks authoritative is worse than a visible gap.
+
 ## How it works
 
 All three backends are fed over **OTLP/HTTP with a JSON payload**.

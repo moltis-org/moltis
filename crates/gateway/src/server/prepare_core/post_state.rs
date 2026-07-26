@@ -1,6 +1,9 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, atomic::Ordering},
+use {
+    super::feedback::install_feedback,
+    std::{
+        path::PathBuf,
+        sync::{Arc, atomic::Ordering},
+    },
 };
 
 use {
@@ -425,30 +428,7 @@ pub(super) async fn complete_startup(
         }
     }
 
-    // ── Reaction feedback ────────────────────────────────────────────────
-    // Needs the database pool for reply/trace correlation, so it is installed
-    // here rather than at state construction.
-    {
-        let links: Arc<dyn moltis_channels::trace_link::TraceLinkStore> = Arc::new(
-            crate::trace_link_store::SqliteTraceLinkStore::new(db_pool.clone()),
-        );
-        state.feedback.apply(
-            links,
-            &state.config.instrumentation.feedback,
-            Some(state.config.instrumentation.environment.clone()),
-        );
-
-        // Links accumulate one row per delivered reply; drop the ones too old
-        // to attribute a reaction to.
-        let feedback = Arc::clone(&state.feedback);
-        let retention_days = state.config.instrumentation.feedback.link_retention_days;
-        tokio::spawn(async move {
-            let removed = feedback.prune(retention_days).await;
-            if removed > 0 {
-                tracing::debug!(removed, "pruned expired trace links");
-            }
-        });
-    }
+    install_feedback(&state, &db_pool);
 
     {
         let (webhook_tx, webhook_rx) = tokio::sync::mpsc::channel::<i64>(256);

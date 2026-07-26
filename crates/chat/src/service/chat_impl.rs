@@ -32,7 +32,7 @@ use {
 
 use crate::{
     agent_loop::effective_tool_mode,
-    channels::notify_channels_of_compaction,
+    channel_compaction::notify_channels_of_compaction,
     compaction_run,
     memory_tools::AgentScopedMemoryWriter,
     message::{
@@ -303,7 +303,8 @@ impl ChatService for LiveChatService {
             {
                 warn!("send_sync: failed to persist assistant message: {e}");
             }
-            crate::channels::record_web_reply_trace(&self.state, &session_key, &run_id).await;
+            crate::channel_feedback::record_web_reply_trace(&self.state, &session_key, &run_id)
+                .await;
             // Update metadata message count.
             if let Ok(count) = self.session_store.count(&session_key).await {
                 self.session_metadata.touch(&session_key, count).await;

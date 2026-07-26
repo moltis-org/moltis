@@ -34,6 +34,7 @@ use {
     std::{path::PathBuf, sync::Arc},
     tracing::{debug, info, warn},
 };
+mod feedback;
 mod log_persistence;
 mod post_state;
 mod sandbox;
