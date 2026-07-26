@@ -293,6 +293,7 @@ impl Default for DatadogSettings {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use secrecy::ExposeSecret;
 
