@@ -27,7 +27,7 @@ use super::{
     channel_binding_from_tool_context, dispatch_after_llm_call_hook,
     dispatch_before_agent_start_hook, empty_tool_name_retry_prompt,
     explicit_shell_command_from_user_content, find_empty_tool_name_call, finish_agent_run,
-    has_named_tool_call, is_substantive_answer_text, log_tool_argument_diagnostic,
+    has_named_tool_call, instrumentation, is_substantive_answer_text, log_tool_argument_diagnostic,
     record_answer_text, resolve_tool_lookup,
     retry::{
         RATE_LIMIT_MAX_RETRIES, is_context_window_error, next_retry_delay_ms,
@@ -156,6 +156,20 @@ pub async fn run_agent_loop_with_context_and_limits(
         .to_string();
     let channel_for_hooks =
         channel_binding_from_tool_context(&session_key_for_hooks, tool_context.as_ref());
+
+    // Instrumentation. This path serves sub-agents (`spawn_agent`) and silent
+    // turns, so leaving it uninstrumented would drop exactly the nested-agent
+    // traces the observation taxonomy exists to represent.
+    let turn_recorder = Arc::new(instrumentation::begin_turn(
+        &session_key_for_hooks,
+        channel_for_hooks.as_ref(),
+        provider.name(),
+        provider.id(),
+        user_content,
+        instrumentation::recorder_settings(&config.instrumentation),
+        config.instrumentation.environment.clone(),
+        instrumentation::release(&config.instrumentation),
+    ));
 
     dispatch_before_agent_start_hook(
         hook_registry.as_ref(),
@@ -288,6 +302,19 @@ pub async fn run_agent_loop_with_context_and_limits(
             cb(RunnerEvent::Thinking);
         }
 
+        let mut generation_step = turn_recorder.as_ref().as_ref().map(|recorder| {
+            let mut step = recorder.step(
+                moltis_observability::ObservationKind::Generation,
+                instrumentation::generation_name(provider.name(), provider.id()),
+            );
+            step.set_model(provider.id());
+            step.set_metadata("iteration", serde_json::json!(iterations));
+            step.set_input(serde_json::Value::Array(
+                messages.iter().map(ChatMessage::to_openai_value).collect(),
+            ));
+            step
+        });
+
         let mut response = match provider
             .complete_with_options(&messages, &schemas_for_api, &tool_controls)
             .await
@@ -295,6 +322,12 @@ pub async fn run_agent_loop_with_context_and_limits(
             Ok(r) => r,
             Err(e) => {
                 let msg = e.to_string();
+                // Close as failed before any early return, so a failed call is
+                // not rendered as a successful span by the drop guard.
+                if let Some(mut step) = generation_step.take() {
+                    step.fail(msg.clone());
+                    step.finish();
+                }
                 if is_context_window_error(&msg) {
                     return Err(AgentRunError::ContextWindowExceeded(msg));
                 }
@@ -327,6 +360,17 @@ pub async fn run_agent_loop_with_context_and_limits(
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::ThinkingDone);
+        }
+
+        if let Some(mut step) = generation_step.take() {
+            step.set_usage(instrumentation::to_token_usage(&response.usage));
+            if let Some(text) = response.text.clone() {
+                step.set_output(serde_json::Value::String(text));
+            }
+            if !response.tool_calls.is_empty() {
+                step.set_metadata("tool_calls", serde_json::json!(response.tool_calls.len()));
+            }
+            step.finish();
         }
 
         usage_accumulator.record_request(response.usage.clone());
