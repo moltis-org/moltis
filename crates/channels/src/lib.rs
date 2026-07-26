@@ -17,6 +17,7 @@ pub mod plugin;
 pub mod registry;
 pub mod slack_api_url;
 pub mod store;
+pub mod trace_link;
 
 pub use {
     channel_webhook_middleware::{
@@ -37,4 +38,5 @@ pub use {
     },
     registry::{ChannelRegistry, RegistryOutboundRouter},
     slack_api_url::{normalize_slack_api_base_url, validate_slack_api_base_url},
+    trace_link::{TraceLink, TraceLinkStore, WEB_CHANNEL},
 };

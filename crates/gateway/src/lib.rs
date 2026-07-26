@@ -58,6 +58,7 @@ pub mod state;
 pub mod tailscale;
 #[cfg(feature = "msteams")]
 pub mod teams_agent_tools;
+pub mod trace_link_store;
 pub mod tts_phrases;
 pub mod update_check;
 pub mod updater;
