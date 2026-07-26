@@ -32,6 +32,8 @@ mod tests_legacy;
 // ── Re-exports ───────────────────────────────────────────────────────────────
 // Preserves the original public API surface of `crate::server::*`.
 
+pub mod instrumentation;
+
 pub(crate) use hooks::discover_and_build_hooks;
 pub use {
     helpers::approval_manager_from_config,

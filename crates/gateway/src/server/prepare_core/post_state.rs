@@ -405,6 +405,26 @@ pub(super) async fn complete_startup(
         vault.clone(),
     );
 
+    // ── Agent instrumentation ─────────────────────────────────────────────
+    // Applied on the state's own instance so the RPC handlers and the shutdown
+    // flush observe the same backends that were installed here. Runs before
+    // any agent can be invoked, so the first turn is traced.
+    {
+        let status = state
+            .instrumentation
+            .apply(&state.config.instrumentation, &state.version);
+        if status.active {
+            tracing::info!(backends = ?status.backends, "agent instrumentation enabled");
+        }
+        for skipped in &status.skipped {
+            tracing::warn!(
+                backend = %skipped.name,
+                reason = %skipped.reason,
+                "instrumentation backend could not start"
+            );
+        }
+    }
+
     {
         let (webhook_tx, webhook_rx) = tokio::sync::mpsc::channel::<i64>(256);
         let webhook_store: Arc<dyn moltis_webhooks::store::WebhookStore> = {

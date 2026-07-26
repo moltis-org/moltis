@@ -570,6 +570,49 @@ port = {port}                           # Port number (auto-generated for this i
 # prometheus_endpoint = true        # Expose /metrics endpoint
 
 # ══════════════════════════════════════════════════════════════════════════════
+# INSTRUMENTATION (Langfuse / OpenTelemetry / Datadog)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Exports agent runs — LLM calls, tool calls, retrievals — to an external
+# backend. Disabled by default: enabling it sends data about your
+# conversations to a third party. See docs/src/instrumentation.md.
+#
+# Backends deliberately receive different data. Langfuse gets the full
+# conversation because its cost, session and evaluation features are built on
+# it. OTLP and Datadog get operational shape only — latency, errors, model,
+# token counts — because prompt bodies in an APM mean unbounded span size,
+# cardinality pressure, per-byte billing, and conversation content in a system
+# nobody scoped for it.
+
+# [instrumentation]
+# enabled = false                   # Master switch, gates every backend
+# environment = "production"        # Reported to every backend
+# sample_rate = 1.0                 # Fraction of turns traced (0.0-1.0)
+# redact = ["customer_ref"]         # Extra keys to redact; extends the defaults
+# queue_capacity = 10000            # Events are dropped, never blocking a turn
+
+# [instrumentation.langfuse]
+# enabled = false
+# host = "https://cloud.langfuse.com"   # Or a self-hosted URL
+# public_key = "pk-lf-..."
+# secret_key = "sk-lf-..."
+# capture_input = true              # Turn and LLM inputs
+# capture_output = true             # Turn and LLM outputs
+# capture_tool_io = true            # Tool arguments and results
+
+# [instrumentation.otlp]            # Grafana Tempo/Alloy, Honeycomb, a collector
+# enabled = false
+# endpoint = "http://localhost:4318/v1/traces"
+# content = "metadata_only"         # "full" | "metadata_only" | "none"
+# emit_user_id = false              # High-cardinality in an APM index
+
+# [instrumentation.datadog]         # Via the Datadog Agent's OTLP intake
+# enabled = false
+# endpoint = "http://localhost:4318/v1/traces"
+# service = "moltis"
+# content = "metadata_only"
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CRON
 # ══════════════════════════════════════════════════════════════════════════════
 

@@ -179,13 +179,16 @@ impl TurnRecorder {
     }
 
     /// Close the turn, emitting the final trace state.
-    pub fn finish(self) {
+    ///
+    /// Takes `&self` rather than `self` so the recorder can be shared across
+    /// the concurrently-executing tool futures in the agent loop.
+    pub fn finish(&self) {
         let trace = self.snapshot_trace();
         self.sink.record(Event::Trace(Box::new(trace)));
     }
 
     /// Close the turn as failed.
-    pub fn finish_with_error(self, message: impl Into<String>) {
+    pub fn finish_with_error(&self, message: impl Into<String>) {
         self.set_metadata("error", serde_json::Value::String(message.into()));
         self.finish();
     }

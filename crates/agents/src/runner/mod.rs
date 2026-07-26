@@ -1,6 +1,7 @@
 //! Agent runner: LLM call loop with tool execution, retry, and streaming support.
 
 mod helpers;
+pub mod instrumentation;
 mod non_streaming;
 pub mod retry;
 mod streaming;

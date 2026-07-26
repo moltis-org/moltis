@@ -47,6 +47,7 @@ moltis-msteams          = { optional = true, workspace = true }
 moltis-netbird          = { optional = true, workspace = true }
 moltis-network-filter   = { features = ["proxy", "service"], optional = true, workspace = true }
 moltis-nostr            = { optional = true, workspace = true }
+moltis-observability = { workspace = true }
 moltis-oauth            = { workspace = true }
 moltis-onboarding       = { workspace = true }
 moltis-openclaw-import  = { optional = true, workspace = true }

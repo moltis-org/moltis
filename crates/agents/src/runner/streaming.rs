@@ -35,7 +35,7 @@ use super::{
     channel_binding_from_tool_context, dispatch_after_llm_call_hook,
     dispatch_before_agent_start_hook, empty_tool_name_retry_prompt,
     explicit_shell_command_from_user_content, find_empty_tool_name_call, finish_agent_run,
-    has_named_tool_call, is_substantive_answer_text, log_tool_argument_diagnostic,
+    has_named_tool_call, instrumentation, is_substantive_answer_text, log_tool_argument_diagnostic,
     resolve_tool_lookup,
     retry::{
         RATE_LIMIT_MAX_RETRIES, is_context_window_error, next_retry_delay_ms,
@@ -146,6 +146,19 @@ pub async fn run_agent_loop_streaming_with_limits(
         .to_string();
     let channel_for_hooks =
         channel_binding_from_tool_context(&session_key_for_hooks, tool_context.as_ref());
+
+    // Instrumentation. `None` when no backend is configured or the turn was
+    // not sampled, in which case every call below is skipped.
+    let turn_recorder = Arc::new(instrumentation::begin_turn(
+        &session_key_for_hooks,
+        channel_for_hooks.as_ref(),
+        provider.name(),
+        provider.id(),
+        user_content,
+        instrumentation::recorder_settings(&config.instrumentation),
+        config.instrumentation.environment.clone(),
+        instrumentation::release(&config.instrumentation),
+    ));
 
     dispatch_before_agent_start_hook(
         hook_registry.as_ref(),
@@ -289,6 +302,20 @@ pub async fn run_agent_loop_streaming_with_limits(
         // Use streaming API.
         #[cfg(feature = "metrics")]
         let iter_start = std::time::Instant::now();
+        let mut generation_step = turn_recorder.as_ref().as_ref().map(|recorder| {
+            let mut step = recorder.step(
+                moltis_observability::ObservationKind::Generation,
+                instrumentation::generation_name(provider.name(), provider.id()),
+            );
+            step.set_model(provider.id());
+            step.set_metadata("iteration", serde_json::json!(iterations));
+            step.set_metadata("tool_count", serde_json::json!(schemas_for_api.len()));
+            step.set_input(serde_json::Value::Array(
+                messages.iter().map(ChatMessage::to_openai_value).collect(),
+            ));
+            step
+        });
+
         let mut stream = provider.stream_with_tools_and_options(
             messages.clone(),
             schemas_for_api.clone(),
@@ -314,6 +341,9 @@ pub async fn run_agent_loop_streaming_with_limits(
         while let Some(event) = stream.next().await {
             match event {
                 StreamEvent::Delta(text) => {
+                    if let Some(step) = generation_step.as_mut() {
+                        step.mark_first_token();
+                    }
                     accumulated_text.push_str(&text);
                     if let Some(cb) = on_event {
                         cb(RunnerEvent::TextDelta(text.clone()));
@@ -423,6 +453,14 @@ pub async fn run_agent_loop_streaming_with_limits(
 
         // Handle stream errors — retry on transient failures/rate limits.
         if let Some(err) = stream_error {
+            // Close the generation as failed before any early return, so a
+            // failed call is visible in the backend rather than silently
+            // ending as a span with no error on it.
+            if let Some(mut step) = generation_step.take() {
+                step.fail(err.clone());
+                step.set_usage(instrumentation::to_token_usage(&request_usage));
+                step.finish();
+            }
             if is_context_window_error(&err) {
                 return Err(AgentRunError::ContextWindowExceeded(err));
             }
@@ -451,6 +489,17 @@ pub async fn run_agent_loop_streaming_with_limits(
                 continue;
             }
             return Err(AgentRunError::Other(anyhow::anyhow!(err)));
+        }
+
+        if let Some(mut step) = generation_step.take() {
+            step.set_usage(instrumentation::to_token_usage(&request_usage));
+            if !accumulated_text.is_empty() {
+                step.set_output(serde_json::Value::String(accumulated_text.clone()));
+            }
+            if !tool_calls.is_empty() {
+                step.set_metadata("tool_calls", serde_json::json!(tool_calls.len()));
+            }
+            step.finish();
         }
 
         usage_accumulator.record_request(request_usage.clone());
@@ -636,6 +685,12 @@ pub async fn run_agent_loop_streaming_with_limits(
                 tool_calls = total_tool_calls,
                 "streaming agent loop complete — returning text"
             );
+            if let Some(recorder) = turn_recorder.as_ref() {
+                recorder.set_output(serde_json::Value::String(final_text.clone()));
+                recorder.set_metadata("iterations", serde_json::json!(iterations));
+                recorder.set_metadata("tool_calls", serde_json::json!(total_tool_calls));
+                recorder.finish();
+            }
             return Ok(finish_agent_run(
                 final_text,
                 iterations,
@@ -689,6 +744,7 @@ pub async fn run_agent_loop_streaming_with_limits(
         let tool_futures: Vec<_> = tool_calls
             .iter()
             .map(|tc| {
+                let tool_turn_recorder = Arc::clone(&turn_recorder);
                 let sanitized = sanitize_tool_name(&tc.name);
                 if *sanitized != tc.name {
                     debug!(original = %tc.name, sanitized = %sanitized, "sanitized mangled tool name");
@@ -820,6 +876,15 @@ pub async fn run_agent_loop_streaming_with_limits(
                         }
                     }
 
+                    let mut tool_step = tool_turn_recorder.as_ref().as_ref().map(|recorder| {
+                        let mut step = recorder.step(
+                            instrumentation::tool_observation_kind(&tc_name),
+                            tc_name.clone(),
+                        );
+                        step.set_input(args.clone());
+                        step
+                    });
+
                     if let Some(tool) = tool {
                         match tool.execute(args).await {
                             Ok(val) => {
@@ -848,6 +913,14 @@ pub async fn run_agent_loop_streaming_with_limits(
                                     }
                                 }
 
+                                if let Some(mut step) = tool_step.take() {
+                                    step.set_output(val.clone());
+                                    if let Some(message) = error_msg.clone() {
+                                        step.fail(message);
+                                    }
+                                    step.finish();
+                                }
+
                                 if has_error {
                                     (false, serde_json::json!({ "result": val }), error_msg, false)
                                 } else {
@@ -856,6 +929,10 @@ pub async fn run_agent_loop_streaming_with_limits(
                             }
                             Err(e) => {
                                 let err_str = e.to_string();
+                                if let Some(mut step) = tool_step.take() {
+                                    step.fail(err_str.clone());
+                                    step.finish();
+                                }
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
@@ -878,6 +955,10 @@ pub async fn run_agent_loop_streaming_with_limits(
                         }
                     } else {
                         let err_str = format!("unknown tool: {tc_name}");
+                        if let Some(mut step) = tool_step.take() {
+                            step.fail(err_str.clone());
+                            step.finish();
+                        }
                         (
                             false,
                             serde_json::json!({ "error": err_str }),
