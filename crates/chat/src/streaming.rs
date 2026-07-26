@@ -41,7 +41,7 @@ use crate::{
 };
 
 #[cfg(feature = "push-notifications")]
-use crate::channels::send_chat_push_notification;
+use crate::channel_push::send_chat_push_notification;
 
 const STREAM_RETRYABLE_SERVER_PATTERNS: &[&str] = &[
     "http 500",

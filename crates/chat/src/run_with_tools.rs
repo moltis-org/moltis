@@ -56,7 +56,7 @@ use crate::{
 };
 
 #[cfg(feature = "push-notifications")]
-use crate::channels::send_chat_push_notification;
+use crate::channel_push::send_chat_push_notification;
 
 pub(crate) async fn run_with_tools(
     persona: PromptPersona,

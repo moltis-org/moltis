@@ -29,6 +29,8 @@ export function NotificationsSection(): VNode {
 	const [toggling, setToggling] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [serverStatus, setServerStatus] = useState<PushServerStatus | null>(null);
+	const [testing, setTesting] = useState(false);
+	const [testResult, setTestResult] = useState<string | null>(null);
 
 	async function checkStatus(): Promise<void> {
 		setIsLoading(true);
@@ -87,6 +89,26 @@ export function NotificationsSection(): VNode {
 		}
 
 		setToggling(false);
+		rerender();
+	}
+
+	async function onSendTest(): Promise<void> {
+		setTesting(true);
+		setTestResult(null);
+		rerender();
+
+		const result = await push.sendTestNotification();
+		if (result.success) {
+			setTestResult(
+				result.sent === 0
+					? "No devices accepted the notification — check that a device is still subscribed."
+					: `Sent to ${result.sent} device${result.sent === 1 ? "" : "s"}.`,
+			);
+		} else {
+			setTestResult(result.error || "Failed to send test notification");
+		}
+
+		setTesting(false);
 		rerender();
 	}
 
@@ -183,7 +205,28 @@ export function NotificationsSection(): VNode {
 					</button>
 				</div>
 				<StatusMessage error={error} className="text-xs mt-2" />
+
+				{(serverStatus?.subscription_count || 0) > 0 ? (
+					<div className="provider-item" style={{ marginTop: "6px", marginBottom: 0 }}>
+						<div style={{ flex: 1, minWidth: 0 }}>
+							<div className="provider-item-name" style={{ fontSize: ".9rem" }}>
+								Test Notification
+							</div>
+							<div style={{ fontSize: ".75rem", color: "var(--muted)", marginTop: "2px" }}>
+								{testResult || "Send a notification to every subscribed device to verify delivery."}
+							</div>
+						</div>
+						<button className="provider-btn provider-btn-secondary" onClick={onSendTest} disabled={testing}>
+							{testing ? "…" : "Send"}
+						</button>
+					</div>
+				) : null}
 			</div>
+
+			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
+				Notifications are grouped per chat, so a busy conversation produces one notification rather than a stack. The
+				device you are actively reading a chat on is skipped — other devices still get notified.
+			</p>
 
 			{needsInstall ? (
 				<div

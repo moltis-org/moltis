@@ -27,10 +27,16 @@ The app will appear in your app drawer and home screen.
 When installed as a PWA, moltis provides:
 
 - **Standalone mode**: Full-screen experience without browser UI
-- **Offline support**: Previously loaded content remains accessible
+- **Offline support**: Previously loaded content remains accessible, with a dedicated offline page that reloads automatically once the connection returns
 - **Fast loading**: Assets are cached locally
 - **Home screen icon**: Quick access from your device's home screen
+- **App shortcuts**: Long-press the icon to jump straight to Chats, Projects, or Settings
+- **App badge**: The icon shows an unread count while notifications are pending
+  (Android, Windows, macOS Dock). The badge is driven by the page rather than the
+  service worker, so it updates while the app is open or backgrounded — a fully
+  closed app picks the count up when it is next opened.
 - **Safe area support**: Proper spacing for notched devices (iPhone X+)
+- **Non-disruptive updates**: A new version installs in the background and only takes over when the page asks it to, so an update never reloads the app mid-conversation
 
 ## Push Notifications
 
@@ -77,6 +83,8 @@ The gateway exposes these API endpoints for push notifications:
 | `/api/push/vapid-key` | GET | Get the VAPID public key for subscription |
 | `/api/push/subscribe` | POST | Register a push subscription |
 | `/api/push/unsubscribe` | POST | Remove a push subscription |
+| `/api/push/presence` | POST | Report which session this device is viewing |
+| `/api/push/test` | POST | Send a test notification to every subscribed device |
 | `/api/push/status` | GET | Get push service status and subscription list |
 
 ### Subscribe Request
@@ -87,9 +95,28 @@ The gateway exposes these API endpoints for push notifications:
   "keys": {
     "p256dh": "base64url-encoded-key",
     "auth": "base64url-encoded-auth"
-  }
+  },
+  "replaces": "https://fcm.googleapis.com/fcm/send/old-endpoint"
 }
 ```
+
+`replaces` is optional. The service worker sends it when the browser rotates a
+subscription (`pushsubscriptionchange`) so the dead endpoint is retired in the
+same request rather than lingering until its next delivery failure.
+
+### Presence Request
+
+```json
+{
+  "endpoint": "https://fcm.googleapis.com/fcm/send/...",
+  "session_key": "main",
+  "visible": true
+}
+```
+
+Returns `204 No Content` when recorded, or `404 Not Found` if the server does not
+know the endpoint — which tells the client its subscription is stale and it
+should re-register.
 
 ### Status Response
 
@@ -114,14 +141,41 @@ Push notifications include:
 
 ```json
 {
-  "title": "moltis",
-  "body": "New response available",
-  "url": "/chats",
-  "sessionKey": "session-id"
+  "title": "Deploy plan",
+  "body": "Rolled out to staging and the smoke tests pass.",
+  "url": "/chats/main",
+  "sessionKey": "main",
+  "notificationId": "5f1c…",
+  "timestamp": "2026-07-26T09:12:44Z"
 }
 ```
 
-Clicking a notification will open or focus the app and navigate to the relevant chat.
+The title is the session's label (falling back to `moltis`), and the body is the
+reply with markdown syntax stripped so it reads as plain text in the
+notification shade.
+
+Clicking a notification focuses an existing window — preferring one already
+showing the target chat — and routes in place rather than reloading the app. If
+no window is open, one is opened at the chat.
+
+### Delivery Behaviour
+
+Several details keep notifications from piling up or stepping on each other:
+
+- **Per-session grouping**: Notifications are tagged per session, so one busy
+  chat produces one notification rather than a wall of them. The replacement
+  sets `renotify`, so it still alerts you instead of being swapped in silently,
+  and its body says how many earlier messages it folded in.
+- **Foreground suppression**: The browser reports which session it is showing.
+  A device that is visible and focused on a session is skipped when that session
+  produces a reply — your phone stays quiet for a message you are watching
+  stream in on that same phone. Other devices still get notified.
+- **Server-side collapsing**: Messages carry a per-session `Topic`, so a device
+  that was offline wakes to the latest message per session, not a backlog.
+- **Expiry**: Messages carry a 6-hour TTL. A push older than that is dropped by
+  the push service rather than delivered as stale news.
+- **Endpoint hygiene**: Endpoints that return 410 Gone or 404 Not Found are
+  removed automatically, and rotated subscriptions re-register themselves.
 
 ## Configuration
 
@@ -179,14 +233,17 @@ Note: iOS push notifications require iOS 16.4 or later and the app must be insta
 
 ### Notifications Not Working
 
-1. **Check permissions**: Ensure notifications are allowed in browser/OS settings
-2. **Check subscription**: Go to Settings > Notifications to see if your device is listed
-3. **Check server logs**: Look for `push:` prefixed log messages for delivery status
-4. **Safari/iOS specific**:
+1. **Send a test notification**: Settings > Notifications has a **Send** button that
+   pushes to every subscribed device and reports how many accepted it. This is the
+   fastest way to tell a broken subscription apart from a chat that never fired one.
+2. **Check permissions**: Ensure notifications are allowed in browser/OS settings
+3. **Check subscription**: Go to Settings > Notifications to see if your device is listed
+4. **Check server logs**: Look for `push:` prefixed log messages for delivery status
+5. **Safari/iOS specific**:
    - Must be installed as PWA (Add to Dock/Home Screen)
    - iOS requires version 16.4 or later
    - The Enable button is disabled until installed as PWA
-5. **Behind a proxy**: Ensure your proxy forwards `X-Forwarded-For` or `X-Real-IP` headers
+6. **Behind a proxy**: Ensure your proxy forwards `X-Forwarded-For` or `X-Real-IP` headers
 
 ### PWA Not Installing
 

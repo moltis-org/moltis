@@ -132,6 +132,14 @@ pub trait ChatRuntime: Send + Sync {
 
     // ── Push notifications ───────────────────────────────────────────────
 
+    /// Human-readable label for a session, used to title push notifications.
+    ///
+    /// Returns `None` when the session has no label yet (auto-titling may not
+    /// have run) or when no metadata store is wired up.
+    async fn session_label(&self, _session_key: &str) -> Option<String> {
+        None
+    }
+
     /// Send a push notification to all subscribed devices.
     /// Returns the number of devices notified, or an error.
     async fn send_push_notification(

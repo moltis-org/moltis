@@ -172,6 +172,11 @@ impl ChatRuntime for GatewayChatRuntime {
 
     // ── Push notifications ──────────────────────────────────────────────────
 
+    async fn session_label(&self, session_key: &str) -> Option<String> {
+        let metadata = self.state.services.session_metadata.as_ref()?;
+        metadata.get(session_key).await?.label
+    }
+
     async fn send_push_notification(
         &self,
         title: &str,

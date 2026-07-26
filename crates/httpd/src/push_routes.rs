@@ -26,6 +26,19 @@ struct VapidKeyResponse {
 pub struct SubscribeRequest {
     pub endpoint: String,
     pub keys: SubscriptionKeys,
+    /// Endpoint this subscription supersedes, sent when the browser rotates a
+    /// subscription via `pushsubscriptionchange`.
+    #[serde(default)]
+    pub replaces: Option<String>,
+}
+
+/// Request reporting which session a subscribed device is currently viewing.
+#[derive(Deserialize)]
+pub struct PresenceRequest {
+    pub endpoint: String,
+    #[serde(default)]
+    pub session_key: Option<String>,
+    pub visible: bool,
 }
 
 #[derive(Deserialize)]
@@ -140,7 +153,7 @@ async fn subscribe_handler(
     };
 
     push_service
-        .add_subscription(subscription)
+        .add_subscription(subscription, req.replaces.as_deref())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -180,6 +193,67 @@ async fn unsubscribe_handler(
     .await;
 
     Ok(StatusCode::OK)
+}
+
+/// Result of sending a test notification.
+#[derive(Serialize)]
+struct TestNotificationResponse {
+    /// Number of devices the push was accepted for.
+    sent: usize,
+}
+
+/// Send a test notification to every subscribed device.
+///
+/// Push failures are otherwise invisible — the browser, the push service, and
+/// the network all fail silently — so this gives users a way to prove the path
+/// works end to end.
+async fn test_handler(
+    State(state): State<AppState>,
+) -> Result<Json<TestNotificationResponse>, StatusCode> {
+    let Some(ref push_service) = state.push_service else {
+        return Err(StatusCode::NOT_IMPLEMENTED);
+    };
+
+    // No session key: a test must reach every device, including the one the
+    // user is holding, so it must not be suppressed by presence.
+    let payload = moltis_gateway::push::PushPayload::new(
+        "moltis",
+        "Test notification — push is working.",
+        Some("/settings/notifications".to_string()),
+        None,
+    );
+
+    let sent = push_service
+        .send_to_all(&payload)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(TestNotificationResponse { sent }))
+}
+
+/// Report which session this device is currently viewing.
+///
+/// Used to suppress push notifications on the device the user is already
+/// reading the conversation on.
+async fn presence_handler(
+    State(state): State<AppState>,
+    Json(req): Json<PresenceRequest>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let Some(ref push_service) = state.push_service else {
+        return Err(StatusCode::NOT_IMPLEMENTED);
+    };
+
+    let recorded = push_service
+        .record_presence(&req.endpoint, req.session_key, req.visible)
+        .await;
+
+    // An unknown endpoint means the client's subscription is stale; telling it
+    // so lets the page re-register instead of silently losing suppression.
+    if recorded {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
 }
 
 /// Parse a user agent string into a friendly device name.
@@ -269,5 +343,7 @@ pub fn push_router() -> Router<AppState> {
         .route("/vapid-key", get(vapid_key_handler))
         .route("/subscribe", post(subscribe_handler))
         .route("/unsubscribe", post(unsubscribe_handler))
+        .route("/presence", post(presence_handler))
+        .route("/test", post(test_handler))
         .route("/status", get(status_handler))
 }
