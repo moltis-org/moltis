@@ -95,6 +95,8 @@ const READ_METHODS: &[&str] = &[
     "webhooks.delivery.get",
     "webhooks.delivery.payload",
     "webhooks.delivery.actions",
+    "feedback.status",
+    "feedback.submit",
     "instrumentation.status",
     "heartbeat.status",
     "heartbeat.runs",

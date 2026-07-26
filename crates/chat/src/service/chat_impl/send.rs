@@ -1286,6 +1286,12 @@ impl LiveChatService {
                 {
                     warn!("failed to persist assistant message: {e}");
                 }
+                crate::channels::record_web_reply_trace(
+                    &state_for_drain,
+                    &session_key_clone,
+                    &run_id_clone,
+                )
+                .await;
                 // Update metadata counts.
                 if let Ok(count) = session_store.count(&session_key_clone).await {
                     session_metadata.touch(&session_key_clone, count).await;

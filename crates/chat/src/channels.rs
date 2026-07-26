@@ -455,6 +455,35 @@ pub(crate) async fn deliver_channel_error(
     }
 }
 
+/// Link a web-delivered assistant message to the trace that produced it.
+///
+/// The web is treated as one more channel so a thumb in the browser resolves
+/// through the same correlation table as a Telegram reaction. The run id is
+/// the message identity: unlike a message index it does not shift when older
+/// history is compacted away.
+pub(crate) async fn record_web_reply_trace(
+    state: &Arc<dyn ChatRuntime>,
+    session_key: &str,
+    run_id: &str,
+) {
+    let Some(feedback) = state.feedback() else {
+        return;
+    };
+    let Some(trace_id) = moltis_observability::recent_trace(session_key) else {
+        return;
+    };
+    feedback
+        .record_reply(
+            moltis_channels::trace_link::WEB_CHANNEL,
+            moltis_channels::trace_link::WEB_CHANNEL,
+            session_key,
+            std::slice::from_ref(&run_id.to_string()),
+            &trace_id,
+            Some(session_key),
+        )
+        .await;
+}
+
 /// Link the messages a reply produced to the trace that generated it.
 ///
 /// Best-effort by design: a missing link costs feedback attribution for one

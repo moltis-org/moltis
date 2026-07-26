@@ -303,6 +303,7 @@ impl ChatService for LiveChatService {
             {
                 warn!("send_sync: failed to persist assistant message: {e}");
             }
+            crate::channels::record_web_reply_trace(&self.state, &session_key, &run_id).await;
             // Update metadata message count.
             if let Ok(count) = self.session_store.count(&session_key).await {
                 self.session_metadata.touch(&session_key, count).await;

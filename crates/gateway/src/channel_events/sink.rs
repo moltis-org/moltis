@@ -34,7 +34,7 @@ async fn handle_reaction_feedback(state: &Arc<GatewayState>, event: &ChannelEven
     let outcome = state
         .feedback
         .on_reaction(
-            *channel_type,
+            channel_type.as_str(),
             account_id,
             chat_id,
             message_id,

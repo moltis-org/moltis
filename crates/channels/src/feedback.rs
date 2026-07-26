@@ -16,10 +16,7 @@ use {
     tracing::{debug, warn},
 };
 
-use crate::{
-    ChannelType,
-    trace_link::{TraceLink, TraceLinkStore},
-};
+use crate::trace_link::{TraceLink, TraceLinkStore};
 
 /// What happened to an inbound reaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,7 +135,7 @@ impl FeedbackService {
     /// representation and must call the API directly.
     pub async fn on_reaction(
         &self,
-        channel_type: ChannelType,
+        channel: &str,
         account_id: &str,
         chat_id: &str,
         message_id: &str,
@@ -168,7 +165,6 @@ impl FeedbackService {
             return FeedbackOutcome::NotFeedback;
         };
 
-        let channel = channel_type.as_str();
         let link = match links.lookup(channel, account_id, chat_id, message_id).await {
             Ok(Some(link)) => link,
             Ok(None) => {
@@ -388,7 +384,7 @@ mod tests {
 
         let outcome = service
             .on_reaction(
-                ChannelType::Telegram,
+                "telegram",
                 "bot-1",
                 "chat-1",
                 "42",
@@ -420,7 +416,7 @@ mod tests {
         // mean the vocabulary check ran after the database query.
         let outcome = service
             .on_reaction(
-                ChannelType::Telegram,
+                "telegram",
                 "bot-1",
                 "chat-1",
                 "42",
@@ -439,7 +435,7 @@ mod tests {
         let (service, _links) = service(true);
         let outcome = service
             .on_reaction(
-                ChannelType::Telegram,
+                "telegram",
                 "bot-1",
                 "chat-1",
                 "unknown",
@@ -460,7 +456,7 @@ mod tests {
 
         let outcome = service
             .on_reaction(
-                ChannelType::Telegram,
+                "telegram",
                 "bot-1",
                 "chat-1",
                 "42",
@@ -481,7 +477,7 @@ mod tests {
 
         let outcome = service
             .on_reaction(
-                ChannelType::Telegram,
+                "telegram",
                 "bot-1",
                 "chat-1",
                 "42",
@@ -528,7 +524,7 @@ mod tests {
         assert_eq!(
             service
                 .on_reaction(
-                    ChannelType::Telegram,
+                    "telegram",
                     "bot-1",
                     "chat-1",
                     "42",
@@ -570,7 +566,7 @@ mod tests {
         assert_eq!(
             service
                 .on_reaction(
-                    ChannelType::Telegram,
+                    "telegram",
                     "bot-1",
                     "chat-1",
                     "42",

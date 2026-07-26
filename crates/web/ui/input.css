@@ -2205,6 +2205,14 @@
     -webkit-mask-image: url("./icons/masks/mask-git-fork.svg");
     mask-image: url("./icons/masks/mask-git-fork.svg");
   }
+  .icon-thumbs-up {
+    -webkit-mask-image: url("./icons/masks/mask-thumbs-up.svg");
+    mask-image: url("./icons/masks/mask-thumbs-up.svg");
+  }
+  .icon-thumbs-down {
+    -webkit-mask-image: url("./icons/masks/mask-thumbs-down.svg");
+    mask-image: url("./icons/masks/mask-thumbs-down.svg");
+  }
   .icon-list-plus {
     -webkit-mask-image: url("./icons/masks/mask-list-plus.svg");
     mask-image: url("./icons/masks/mask-list-plus.svg");
