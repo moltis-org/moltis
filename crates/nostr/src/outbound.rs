@@ -443,15 +443,19 @@ impl ChannelStreamOutbound for NostrOutbound {
                 {
                     tracing::warn!(account_id, "final streamed edit failed: {e}");
                 }
+                // Counted here rather than after the match: the initial publish
+                // went through `send_group_message`, which records no metrics,
+                // and the edits that follow are all the same logical message.
+                #[cfg(feature = "metrics")]
+                counter!(nostr_metrics::MESSAGES_SENT_TOTAL).increment(1);
             },
+            // `send_text` records its own metrics, so counting again here
+            // would double it — and an empty stream sent nothing at all.
             None if !buffer.trim().is_empty() => {
                 self.send_text(account_id, to, &buffer, reply_to).await?;
             },
             None => {},
         }
-
-        #[cfg(feature = "metrics")]
-        counter!(nostr_metrics::MESSAGES_SENT_TOTAL).increment(1);
 
         Ok(())
     }
