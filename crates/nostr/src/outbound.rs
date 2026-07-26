@@ -167,12 +167,20 @@ impl NostrOutbound {
         let client = state.client.clone();
         let keys = state.keys.clone();
 
-        let is_group = {
-            let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
-            cfg.groups.iter().any(|g| g == to)
-        };
-        if is_group {
-            return Ok((client, keys, SendTarget::Group(to.to_string())));
+        // A prefixed target is a group, full stop — never reinterpret it as a
+        // pubkey. Membership is then re-checked so a group removed from the
+        // config fails closed rather than being delivered anywhere.
+        if let Some(group_id) = crate::groups::parse_group_target(to) {
+            let still_joined = {
+                let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
+                cfg.groups.iter().any(|g| g == group_id)
+            };
+            if !still_joined {
+                return Err(moltis_channels::Error::unavailable(format!(
+                    "nostr group no longer configured: {group_id}"
+                )));
+            }
+            return Ok((client, keys, SendTarget::Group(group_id.to_string())));
         }
 
         let recipient = PublicKey::parse(to).map_err(|e| {
@@ -523,7 +531,9 @@ mod tests {
     #[tokio::test]
     async fn resolves_configured_group_as_group_send() {
         let outbound = outbound_with_groups(vec!["buzz-general".into()]);
-        let resolved = outbound.resolve("acct", "buzz-general").await;
+        let resolved = outbound
+            .resolve("acct", &crate::groups::group_target("buzz-general"))
+            .await;
         assert!(matches!(resolved, Ok((_, _, SendTarget::Group(ref g))) if g == "buzz-general"));
     }
 
@@ -536,16 +546,58 @@ mod tests {
     }
 
     /// Turning group chat off means clearing `groups`, and outbound reads that
-    /// same list — so a queued reply cannot keep publishing kind:9 events to a
-    /// group the operator has since removed. A group id is not a valid pubkey,
-    /// so it fails closed rather than falling through to a DM.
+    /// same list — so a queued reply cannot keep publishing to a group the
+    /// operator has since removed.
     #[tokio::test]
     async fn refuses_group_send_once_groups_cleared() {
         let outbound = outbound_with_groups(Vec::new());
-        let resolved = outbound.resolve("acct", "buzz-general").await;
+        let resolved = outbound
+            .resolve("acct", &crate::groups::group_target("buzz-general"))
+            .await;
         assert!(
             resolved.is_err(),
             "group send must fail once the group is no longer configured"
+        );
+    }
+
+    /// A group id may be 64 hex characters, which is also exactly what a public
+    /// key looks like. If routing fell back to pubkey parsing for a removed
+    /// group, the channel's reply would be gift-wrapped to whoever owns that
+    /// key — so a stale group target must fail, never become a DM.
+    #[tokio::test]
+    async fn removed_group_whose_id_is_a_valid_pubkey_never_becomes_a_dm() {
+        // A real, parseable public key used as the group's `h` tag.
+        let pubkey_shaped_id = Keys::generate().public_key().to_hex();
+        assert!(
+            PublicKey::parse(&pubkey_shaped_id).is_ok(),
+            "precondition: the group id really is a valid pubkey"
+        );
+
+        // Group removed from config while a reply target still points at it.
+        let outbound = outbound_with_groups(Vec::new());
+        let resolved = outbound
+            .resolve("acct", &crate::groups::group_target(&pubkey_shaped_id))
+            .await;
+
+        assert!(
+            !matches!(resolved, Ok((_, _, SendTarget::Dm(_)))),
+            "a removed group must never be reinterpreted as a DM recipient"
+        );
+        assert!(resolved.is_err(), "it must fail closed");
+    }
+
+    /// The same id, still configured, routes as a group — proving the guard
+    /// above rejects because of removal, not because of the id's shape.
+    #[tokio::test]
+    async fn pubkey_shaped_group_id_still_routes_as_a_group_when_configured() {
+        let pubkey_shaped_id = Keys::generate().public_key().to_hex();
+        let outbound = outbound_with_groups(vec![pubkey_shaped_id.clone()]);
+        let resolved = outbound
+            .resolve("acct", &crate::groups::group_target(&pubkey_shaped_id))
+            .await;
+        assert!(
+            matches!(resolved, Ok((_, _, SendTarget::Group(ref g))) if *g == pubkey_shaped_id),
+            "a configured group keeps routing as a group even when its id parses as a pubkey"
         );
     }
 
@@ -663,13 +715,23 @@ mod tests {
         let outbound = outbound_with_groups(vec!["grp".into()]);
         assert!(
             outbound
-                .add_reaction("acct", "grp", "not-an-event-id", "eyes")
+                .add_reaction(
+                    "acct",
+                    &crate::groups::group_target("grp"),
+                    "not-an-event-id",
+                    "eyes"
+                )
                 .await
                 .is_ok()
         );
         assert!(
             outbound
-                .remove_reaction("acct", "grp", "not-an-event-id", "eyes")
+                .remove_reaction(
+                    "acct",
+                    &crate::groups::group_target("grp"),
+                    "not-an-event-id",
+                    "eyes"
+                )
                 .await
                 .is_ok()
         );
@@ -681,7 +743,12 @@ mod tests {
         let outbound = outbound_with_groups(vec!["grp".into()]);
         let event_id = EventId::from_byte_array(Keys::generate().public_key().to_bytes());
         let result = outbound
-            .remove_reaction("acct", "grp", &event_id.to_hex(), "eyes")
+            .remove_reaction(
+                "acct",
+                &crate::groups::group_target("grp"),
+                &event_id.to_hex(),
+                "eyes",
+            )
             .await;
         assert!(result.is_ok());
     }
@@ -689,7 +756,9 @@ mod tests {
     #[tokio::test]
     async fn unknown_account_is_unavailable() {
         let outbound = outbound_with_groups(vec!["buzz-general".into()]);
-        let resolved = outbound.resolve("missing", "buzz-general").await;
+        let resolved = outbound
+            .resolve("missing", &crate::groups::group_target("buzz-general"))
+            .await;
         assert!(resolved.is_err(), "unknown account must not resolve");
     }
 }

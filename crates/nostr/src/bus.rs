@@ -531,7 +531,9 @@ async fn handle_group_event(
         ack_message_id: ack_reactions.then(|| event.id.to_hex()),
         channel_type: moltis_channels::ChannelType::Nostr,
         account_id: account_id.to_string(),
-        chat_id: group_id.clone(),
+        // Prefixed so the target carries its own kind: a group id can look
+        // exactly like a pubkey, and this target outlives the config.
+        chat_id: crate::groups::group_target(&group_id),
         message_id: Some(event.id.to_hex()),
         thread_id: None,
     };
@@ -922,8 +924,13 @@ mod tests {
         let got = h.sink.dispatched();
         assert_eq!(got.len(), 1, "mentioned message should reach the agent");
         assert_eq!(got[0].text, "hello bot");
-        // The group id becomes the session/chat id so replies route back.
-        assert_eq!(got[0].chat_id, "buzz-general");
+        // The reply target is the prefixed group id, so outbound can classify
+        // it without consulting config — a group id may look like a pubkey.
+        assert_eq!(got[0].chat_id, "group:buzz-general");
+        assert_eq!(
+            groups::parse_group_target(&got[0].chat_id),
+            Some("buzz-general")
+        );
         assert_eq!(got[0].message_id, Some(event.id.to_hex()));
     }
 

@@ -439,7 +439,7 @@ async fn buzz_stream_publishes_then_edits_to_final_text() {
     outbound
         .send_stream(
             "acct",
-            "buzz-general",
+            &groups::group_target("buzz-general"),
             None,
             stream_of(&["Hello", ", ", "world"]),
         )
@@ -476,7 +476,12 @@ async fn nip29_stream_sends_one_complete_message_without_edits() {
     let outbound = outbound_for(&relay, group_config("grp", GroupMessageKind::Nip29)).await;
 
     outbound
-        .send_stream("acct", "grp", None, stream_of(&["Hello", ", ", "world"]))
+        .send_stream(
+            "acct",
+            &groups::group_target("grp"),
+            None,
+            stream_of(&["Hello", ", ", "world"]),
+        )
         .await
         .expect("stream");
 
@@ -509,7 +514,7 @@ async fn stream_error_before_any_text_still_replies() {
     drop(tx);
 
     outbound
-        .send_stream("acct", "grp", None, rx)
+        .send_stream("acct", &groups::group_target("grp"), None, rx)
         .await
         .expect("stream");
 

@@ -158,6 +158,33 @@ pub fn check_group_access(group_id: &str, joined: &[String]) -> Result<(), Group
     }
 }
 
+/// Marks a reply target as a group rather than a DM recipient.
+///
+/// Outbound only receives a `chat_id`, and a NIP-29 group id is an opaque
+/// string that can perfectly well be 64 hex characters — which is also exactly
+/// what a Nostr public key looks like. Classifying by "is this id currently in
+/// `groups`?" therefore breaks the moment the group is removed: the reply
+/// target persists in the session (`_channel_reply_target`), so a queued or
+/// resumed turn would fall through to the DM path, parse the former group id as
+/// a pubkey, and gift-wrap the channel's reply to whoever owns that key.
+///
+/// Prefixing removes the ambiguity: the target carries its own kind, so
+/// classification never depends on mutable config, and a stale group target
+/// fails closed instead of being misdelivered.
+pub const GROUP_TARGET_PREFIX: &str = "group:";
+
+/// Build the reply-target chat id for a group.
+#[must_use]
+pub fn group_target(group_id: &str) -> String {
+    format!("{GROUP_TARGET_PREFIX}{group_id}")
+}
+
+/// Recover the group id from a reply target, if it is one.
+#[must_use]
+pub fn parse_group_target(target: &str) -> Option<&str> {
+    target.strip_prefix(GROUP_TARGET_PREFIX)
+}
+
 /// Channel commands that must not be reachable by an arbitrary group member.
 ///
 /// Group chat has no per-sender allowlist by design — NIP-29 makes the relay
