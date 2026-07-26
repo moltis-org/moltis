@@ -263,9 +263,21 @@ impl StepGuard {
     }
 
     /// Set the model this step used.
+    /// Name the model this step used.
+    ///
+    /// Re-prices any usage already recorded: callers are free to set usage
+    /// before the model is known, and without this the step would keep a cost
+    /// of zero forever.
     pub fn set_model(&mut self, model: impl Into<String>) {
         if let Some(record) = self.record.as_mut() {
-            record.model = Some(model.into());
+            let model = model.into();
+            if let Some(usage) = record.usage {
+                let details = crate::pricing::cost_details(&model, &usage);
+                if !details.is_empty() {
+                    record.cost_details = details;
+                }
+            }
+            record.model = Some(model);
         }
     }
 
@@ -277,8 +289,19 @@ impl StepGuard {
     }
 
     /// Set token usage.
+    /// Attach token usage, pricing it locally when the model is known.
+    ///
+    /// Cost is computed here rather than left to the backend so it exists
+    /// without one configured, and so every backend sees the same number
+    /// instead of each deriving its own from a private price table.
     pub fn set_usage(&mut self, usage: TokenUsage) {
         if let Some(record) = self.record.as_mut() {
+            if let Some(model) = record.model.as_deref() {
+                let details = crate::pricing::cost_details(model, &usage);
+                if !details.is_empty() {
+                    record.cost_details = details;
+                }
+            }
             record.usage = Some(usage);
         }
     }
@@ -711,6 +734,60 @@ mod tests {
             assert_eq!(
                 observed.status_message.as_deref(),
                 Some("provider returned 500")
+            );
+        });
+    }
+
+    #[test]
+    fn usage_is_priced_when_the_model_is_known() {
+        with_sink(|collected| {
+            let recorder = TurnRecorder::begin("run", scope(), RecorderSettings::default())
+                .expect("recorder starts");
+            let mut step = recorder.step(ObservationKind::Generation, "gen");
+            step.set_model("claude-opus-4");
+            step.set_usage(TokenUsage::from_provider_totals(1_000_000, 0, 0, 0));
+            step.finish();
+
+            let observations = collected.observations();
+            let record = observations.last().expect("one observation");
+            assert!((record.cost_details["total"] - 15.0).abs() < 1e-9);
+        });
+    }
+
+    #[test]
+    fn usage_recorded_before_the_model_is_still_priced() {
+        // Callers are free to set usage first; without re-pricing on
+        // `set_model` the step would keep a cost of zero forever.
+        with_sink(|collected| {
+            let recorder = TurnRecorder::begin("run", scope(), RecorderSettings::default())
+                .expect("recorder starts");
+            let mut step = recorder.step(ObservationKind::Generation, "gen");
+            step.set_usage(TokenUsage::from_provider_totals(1_000_000, 0, 0, 0));
+            step.set_model("claude-opus-4");
+            step.finish();
+
+            let observations = collected.observations();
+            let record = observations.last().expect("one observation");
+            assert!((record.cost_details["total"] - 15.0).abs() < 1e-9);
+        });
+    }
+
+    #[test]
+    fn an_unpriced_model_records_usage_without_a_cost() {
+        with_sink(|collected| {
+            let recorder = TurnRecorder::begin("run", scope(), RecorderSettings::default())
+                .expect("recorder starts");
+            let mut step = recorder.step(ObservationKind::Generation, "gen");
+            step.set_model("some-private-finetune");
+            step.set_usage(TokenUsage::from_provider_totals(1_000, 1_000, 0, 0));
+            step.finish();
+
+            let observations = collected.observations();
+            let record = observations.last().expect("one observation");
+            assert!(record.usage.is_some());
+            assert!(
+                record.cost_details.is_empty(),
+                "a guessed cost is worse than none"
             );
         });
     }
