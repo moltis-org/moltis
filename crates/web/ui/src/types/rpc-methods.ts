@@ -46,6 +46,10 @@ export interface RpcMethodMap {
 	"chat.send": unknown;
 	"chat.send_sync": unknown;
 
+	// ── Instrumentation ─────────────────────────────────────────
+	"instrumentation.status": unknown;
+	"instrumentation.test": unknown;
+
 	// ── Cron ────────────────────────────────────────────────────
 	"cron.list": unknown;
 	"cron.remove": unknown;

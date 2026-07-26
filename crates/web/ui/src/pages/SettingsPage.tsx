@@ -42,6 +42,7 @@ import { ConfigSection, GraphqlSection } from "./sections/ConfigSection";
 import { EnvironmentSection } from "./sections/EnvironmentSection";
 import { IdentitySection } from "./sections/IdentitySection";
 import { ImportSection } from "./sections/ImportSection";
+import { InstrumentationSection } from "./sections/InstrumentationSection";
 import { MemorySection } from "./sections/MemorySection";
 import { NotificationsSection } from "./sections/NotificationsSection";
 import { PhoneSection } from "./sections/PhoneSection";
@@ -200,6 +201,7 @@ const sections: SectionItem[] = [
 	{ id: "terminal", label: "Terminal", page: true },
 	{ id: "monitoring", label: "Monitoring", page: true },
 	{ id: "logs", label: "Logs", page: true },
+	{ id: "instrumentation", label: "Instrumentation" },
 	{ id: "graphql", label: "GraphQL" },
 	{ id: "config", label: "Configuration" },
 ];
@@ -410,6 +412,7 @@ function SettingsPage(): VNode {
 					{section === "phone" ? <PhoneSection /> : null}
 					{section === "notifications" ? <NotificationsSection /> : null}
 					{section === "import" ? <ImportSection /> : null}
+					{section === "instrumentation" ? <InstrumentationSection /> : null}
 					{section === "graphql" ? <GraphqlSection /> : null}
 					{section === "config" ? <ConfigSection /> : null}
 				</div>
