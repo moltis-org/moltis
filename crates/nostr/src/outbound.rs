@@ -418,14 +418,18 @@ impl ChannelStreamOutbound for NostrOutbound {
                 // Throttle edits: every token would be an event on the relay.
                 Some(target) => {
                     if last_edit.elapsed() >= STREAM_EDIT_INTERVAL {
-                        if let Err(e) =
+                        let result =
                             crate::groups::edit_group_message(&client, &group_id, target, &buffer)
-                                .await
-                        {
-                            tracing::debug!(account_id, "streamed edit failed: {e}");
+                                .await;
+                        if let Err(ref e) = result {
+                            tracing::warn!(account_id, "streamed edit failed: {e}");
                         }
                         last_edit = tokio::time::Instant::now();
-                        pending_edit = false;
+                        // Keep the flag set when the edit failed: it means
+                        // "the buffer has moved on since what the relay holds",
+                        // so clearing it here would skip the final edit and
+                        // leave the reply permanently truncated.
+                        pending_edit = result.is_err();
                     } else {
                         pending_edit = true;
                     }

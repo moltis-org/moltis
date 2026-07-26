@@ -41,7 +41,7 @@ pub struct ReplyContexts {
     /// NIP-25 has no "unreact": retracting means publishing a NIP-09 deletion
     /// that references the reaction event, so its id has to be kept around
     /// between adding 👀 and replacing it with ✅/❌.
-    reactions: HashMap<(EventId, String), EventId>,
+    reactions: HashMap<(EventId, String), (EventId, u64)>,
     capacity: usize,
     seq: u64,
 }
@@ -87,13 +87,40 @@ impl ReplyContexts {
     }
 
     /// Remember the reaction event we published, so it can be retracted later.
+    ///
+    /// Bounded like `entries`: the gateway retracts the 👀 it adds on receipt,
+    /// but the terminal ✅/❌ is never retracted, so without a ceiling this map
+    /// would grow by one entry per completed group turn for the life of the
+    /// process — driven entirely by remote traffic. Losing an old id only costs
+    /// a best-effort retraction that nothing is waiting on.
     pub fn record_reaction(&mut self, target: EventId, emoji: &str, reaction: EventId) {
-        self.reactions.insert((target, emoji.to_string()), reaction);
+        if self.reactions.len() >= self.capacity {
+            self.evict_oldest_reactions();
+        }
+        self.seq = self.seq.saturating_add(1);
+        self.reactions
+            .insert((target, emoji.to_string()), (reaction, self.seq));
+    }
+
+    /// Drop the oldest ~10% of remembered reactions (at least one).
+    fn evict_oldest_reactions(&mut self) {
+        let to_remove = (self.capacity / 10).max(1);
+        let mut by_age: Vec<((EventId, String), u64)> = self
+            .reactions
+            .iter()
+            .map(|(key, (_, seq))| (key.clone(), *seq))
+            .collect();
+        by_age.sort_by_key(|(_, seq)| *seq);
+        for (key, _) in by_age.into_iter().take(to_remove) {
+            self.reactions.remove(&key);
+        }
     }
 
     /// Take back the id of a reaction we published, if we still know it.
     pub fn take_reaction(&mut self, target: EventId, emoji: &str) -> Option<EventId> {
-        self.reactions.remove(&(target, emoji.to_string()))
+        self.reactions
+            .remove(&(target, emoji.to_string()))
+            .map(|(reaction, _)| reaction)
     }
 
     /// Drop the oldest ~10% of entries (at least one) to stay under capacity.
@@ -215,6 +242,23 @@ mod tests {
         // Removing one must not disturb the other.
         assert_eq!(ctxs.take_reaction(target, "\u{1F440}"), Some(eyes));
         assert_eq!(ctxs.take_reaction(event_id(), "\u{1F440}"), None);
+    }
+
+    /// The gateway never retracts the terminal ✅/❌, so without a ceiling this
+    /// map would grow once per completed group turn, forever.
+    #[test]
+    fn reactions_are_bounded_too() {
+        let mut ctxs = ReplyContexts::with_capacity(10);
+        let author = Keys::generate().public_key();
+        for _ in 0..200 {
+            ctxs.record_reaction(event_id(), "\u{2705}", event_id());
+        }
+        assert!(
+            ctxs.reactions.len() <= 10,
+            "reaction ids must not grow without bound, got {}",
+            ctxs.reactions.len()
+        );
+        let _ = author;
     }
 
     #[test]

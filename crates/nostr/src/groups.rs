@@ -203,6 +203,32 @@ pub async fn send_group_message(
     let tags = build_group_message_tags(group_id, reply_to, mention);
     let builder = EventBuilder::new(kind, text).tags(tags);
     let output = client.send_event_builder(builder).await?;
+    require_accepted(output)
+}
+
+/// Treat an event that no relay accepted as a failure.
+///
+/// `RelayPool::send_event_to` returns `Ok` even when every relay answered
+/// `OK false` — the rejections are collected into `output.failed` and the call
+/// still succeeds. That default is dangerous for group chat, where rejection is
+/// the *expected* response to a routine misconfiguration: a NIP-29 relay
+/// refuses posts from a pubkey it has not admitted to the group
+/// (`"restricted: ..."`). Without this check the bot would report success,
+/// acknowledge the user with a ✅, and say nothing in the channel.
+fn require_accepted(output: nostr_sdk::prelude::Output<EventId>) -> Result<EventId, Error> {
+    if output.success.is_empty() {
+        let reasons = output
+            .failed
+            .iter()
+            .map(|(url, err)| format!("{url}: {err}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(Error::Relay(if reasons.is_empty() {
+            "no relay accepted the event".to_string()
+        } else {
+            format!("all relays rejected the event ({reasons})")
+        }));
+    }
     Ok(*output.id())
 }
 
@@ -238,7 +264,8 @@ pub async fn edit_group_message(
         Tag::custom(TagKind::h(), [group_id.to_string()]),
         Tag::custom(TagKind::e(), [target.to_hex()]),
     ]);
-    client.send_event_builder(builder).await?;
+    let output = client.send_event_builder(builder).await?;
+    require_accepted(output)?;
     Ok(())
 }
 
@@ -255,7 +282,7 @@ pub async fn send_reaction(
     let builder = EventBuilder::new(Kind::Reaction, emoji)
         .tags([Tag::custom(TagKind::e(), [target.to_hex()])]);
     let output = client.send_event_builder(builder).await?;
-    Ok(*output.id())
+    require_accepted(output)
 }
 
 /// Request deletion of an event we published (NIP-09 `kind:5`).
@@ -265,7 +292,8 @@ pub async fn send_reaction(
 pub async fn delete_event(client: &Client, target: EventId) -> Result<(), Error> {
     let builder = EventBuilder::new(Kind::EventDeletion, "")
         .tags([Tag::custom(TagKind::e(), [target.to_hex()])]);
-    client.send_event_builder(builder).await?;
+    let output = client.send_event_builder(builder).await?;
+    require_accepted(output)?;
     Ok(())
 }
 
@@ -306,6 +334,49 @@ mod tests {
     #[test]
     fn group_chat_kind_is_nine() {
         assert_eq!(group_chat_kind().as_u16(), 9);
+    }
+
+    /// `RelayPool::send_event_to` returns `Ok` even when every relay answered
+    /// `OK false`, so a NIP-29 relay refusing a post from a pubkey it has not
+    /// admitted would otherwise look like a successful send — the bot would ✅
+    /// the user and say nothing in the channel.
+    #[test]
+    fn rejection_by_every_relay_is_an_error() {
+        use std::collections::{HashMap, HashSet};
+
+        use nostr_sdk::prelude::{Output, RelayUrl};
+
+        let url = RelayUrl::parse("wss://relay.example").expect("parse relay url");
+        let rejected: Output<EventId> = Output {
+            val: EventId::all_zeros(),
+            success: HashSet::new(),
+            failed: HashMap::from([(url, "restricted: not a member of the group".to_string())]),
+        };
+
+        let err = require_accepted(rejected).expect_err("all-rejected must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("rejected"), "unexpected message: {msg}");
+        // The relay's reason has to survive, or the operator cannot diagnose it.
+        assert!(msg.contains("not a member"), "reason lost: {msg}");
+    }
+
+    /// One accepting relay is enough — partial failure is normal on Nostr.
+    #[test]
+    fn acceptance_by_any_relay_succeeds() {
+        use std::collections::{HashMap, HashSet};
+
+        use nostr_sdk::prelude::{Output, RelayUrl};
+
+        let good = RelayUrl::parse("wss://good.example").expect("parse");
+        let bad = RelayUrl::parse("wss://bad.example").expect("parse");
+        let id = EventId::all_zeros();
+        let mixed: Output<EventId> = Output {
+            val: id,
+            success: HashSet::from([good]),
+            failed: HashMap::from([(bad, "rate-limited".to_string())]),
+        };
+
+        assert_eq!(require_accepted(mixed).ok(), Some(id));
     }
 
     #[test]
