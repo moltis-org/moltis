@@ -46,7 +46,7 @@ async function deleteAgentByName(page, agentName) {
 	await expect(testCard).toHaveCount(0, { timeout: 10_000 });
 }
 
-async function mockExternalAgentsRpc(page, listPayload, modelsPayload) {
+async function mockExternalAgentsRpc(page, listPayload, modelsPayload, bindFailures = 0) {
 	if (Array.isArray(modelsPayload)) {
 		await page.route(
 			"**/api/bootstrap?**",
@@ -61,12 +61,12 @@ async function mockExternalAgentsRpc(page, listPayload, modelsPayload) {
 		);
 	}
 	await page.addInitScript(
-		({ externalAgentsListPayload, modelListPayload }) => {
+		({ externalAgentsListPayload, modelListPayload, bindFailureCount }) => {
 			if (window.__externalAgentE2EPatched) return;
 			window.__externalAgentE2EPatched = true;
 			window.__externalAgentE2ERequests = [];
-			window.__externalAgentE2EModelsPayload = modelListPayload;
-			window.__externalAgentE2EListPayload = externalAgentsListPayload || [
+			let failuresRemaining = bindFailureCount;
+			const agentsPayload = externalAgentsListPayload || [
 				{ kind: "codex", name: "Codex", installed: true, isAcp: false, version: null },
 				{ kind: "claude-code", name: "Claude Code", installed: false, isAcp: false, version: null },
 			];
@@ -81,26 +81,40 @@ async function mockExternalAgentsRpc(page, listPayload, modelsPayload) {
 				});
 			}
 
+			function respondError(socket, id, message) {
+				queueMicrotask(() => {
+					const event = new MessageEvent("message", {
+						data: JSON.stringify({ type: "res", id, ok: false, error: { message } }),
+					});
+					if (typeof socket.onmessage === "function") socket.onmessage(event);
+				});
+			}
+
 			WebSocket.prototype.send = function (payload) {
 				try {
 					var parsed = JSON.parse(payload);
-					if (parsed?.method === "models.list" && Array.isArray(window.__externalAgentE2EModelsPayload)) {
-						respond(this, parsed.id, window.__externalAgentE2EModelsPayload);
+					if (parsed?.method === "models.list" && Array.isArray(modelListPayload)) {
+						respond(this, parsed.id, modelListPayload);
 						return;
 					}
 					if (parsed?.method === "external_agents.list") {
 						window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
-						respond(this, parsed.id, window.__externalAgentE2EListPayload);
+						respond(this, parsed.id, agentsPayload);
 						return;
 					}
 					if (parsed?.method === "external_agents.bind") {
 						window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
-						respond(this, parsed.id, { ok: true, sessionKey: parsed.params?.sessionKey, kind: parsed.params?.kind });
+						if (failuresRemaining > 0) {
+							failuresRemaining--;
+							respondError(this, parsed.id, "simulated bind failure");
+							return;
+						}
+						respond(this, parsed.id, { ok: true });
 						return;
 					}
 					if (parsed?.method === "external_agents.unbind") {
 						window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
-						respond(this, parsed.id, { ok: true, sessionKey: parsed.params?.sessionKey });
+						respond(this, parsed.id, { ok: true });
 						return;
 					}
 				} catch (_err) {
@@ -109,7 +123,7 @@ async function mockExternalAgentsRpc(page, listPayload, modelsPayload) {
 				return originalSend.call(this, payload);
 			};
 		},
-		{ externalAgentsListPayload: listPayload, modelListPayload: modelsPayload },
+		{ externalAgentsListPayload: listPayload, modelListPayload: modelsPayload, bindFailureCount: bindFailures },
 	);
 }
 
@@ -582,6 +596,36 @@ test.describe("Agents settings page", () => {
 			.toBe(1);
 		await expect(page.locator("#modelComboLabel")).toHaveText("ACP: Copilot");
 		await expect(page.locator("#modelComboBtn")).toBeEnabled();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("ACP-only sessions retry auto-bind after a failed attempt", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockExternalAgentsRpc(
+			page,
+			[{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null }],
+			[],
+			1,
+		);
+		await page.goto("/chats");
+		await expectPageContentMounted(page);
+		await waitForWsConnected(page);
+
+		const sessionKey = await page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "");
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(
+						(key) =>
+							(window.__externalAgentE2ERequests || []).filter(
+								(req) => req.method === "external_agents.bind" && req.params?.sessionKey === key,
+							).length,
+						sessionKey,
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe(2);
+		await expect(page.locator("#modelComboLabel")).toHaveText("ACP: Copilot");
 		expect(pageErrors).toEqual([]);
 	});
 

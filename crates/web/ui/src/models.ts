@@ -14,6 +14,7 @@ let externalAgentsLoaded = false;
 let modelsLoaded = false;
 let switchingBackend = false;
 const acpAutoBindAttempted = new Set<string>();
+const acpAutoBindInFlight = new Set<string>();
 
 function installedAcpAgents(): ExternalAgentInfo[] {
 	return externalAgents.filter((agent) => agent.installed && agent.isAcp);
@@ -87,23 +88,28 @@ function maybeAutoBindAcp(): void {
 		!externalAgentsLoaded ||
 		modelStore.models.value.length > 0 ||
 		session.external_agent_kind ||
-		acpAutoBindAttempted.has(sessionKey)
+		acpAutoBindAttempted.has(sessionKey) ||
+		acpAutoBindInFlight.has(sessionKey)
 	) {
 		return;
 	}
 	const agent = installedAcpAgents()[0];
 	if (!agent) return;
-	acpAutoBindAttempted.add(sessionKey);
-	void bindAcpAgent(agent);
+	acpAutoBindInFlight.add(sessionKey);
+	void bindAcpAgent(agent)
+		.then((bound) => {
+			if (bound) acpAutoBindAttempted.add(sessionKey);
+		})
+		.finally(() => acpAutoBindInFlight.delete(sessionKey));
 }
 
-async function bindAcpAgent(agent: ExternalAgentInfo): Promise<void> {
-	if (switchingBackend) return;
+async function bindAcpAgent(agent: ExternalAgentInfo): Promise<boolean> {
+	if (switchingBackend) return false;
 	const sessionKey = sessionStore.activeSessionKey.value;
-	if (!sessionKey || sessionKey.startsWith("cron:")) return;
+	if (!sessionKey || sessionKey.startsWith("cron:")) return false;
 	if (sessionStore.activeSession.value?.external_agent_kind === agent.kind) {
 		closeModelDropdown();
-		return;
+		return true;
 	}
 	switchingBackend = true;
 	updateModelComboAvailability();
@@ -111,12 +117,14 @@ async function bindAcpAgent(agent: ExternalAgentInfo): Promise<void> {
 		const res = await sendRpc("external_agents.bind", { sessionKey, kind: agent.kind });
 		if (!res?.ok) {
 			showToast(res?.error?.message || "Failed to select ACP agent", "error");
-			return;
+			return false;
 		}
 		setExternalAgentKind(sessionKey, agent.kind);
 		closeModelDropdown();
+		return true;
 	} catch {
 		showToast("Failed to select ACP agent", "error");
+		return false;
 	} finally {
 		switchingBackend = false;
 		if (sessionStore.activeSessionKey.value === sessionKey) updateModelComboAvailability();
