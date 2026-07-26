@@ -25,6 +25,8 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 static malloc_conf: &[u8] = b"dirty_decay_ms:1000,muzzy_decay_ms:1000,background_thread:true\0";
 
 #[cfg(feature = "acp")]
+mod acp_backend;
+#[cfg(feature = "acp")]
 mod acp_command;
 mod auth_commands;
 mod browser_commands;

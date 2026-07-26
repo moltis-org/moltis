@@ -7117,7 +7117,9 @@ dependencies = [
 name = "moltis"
 version = "0.1.0"
 dependencies = [
+ "agent-client-protocol",
  "anyhow",
+ "async-trait",
  "clap",
  "dotenvy",
  "moltis-acp",
@@ -7140,6 +7142,7 @@ dependencies = [
  "moltis-plugins",
  "moltis-portable",
  "moltis-projects",
+ "moltis-protocol",
  "moltis-providers",
  "moltis-sessions",
  "moltis-skills",

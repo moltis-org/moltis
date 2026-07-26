@@ -66,7 +66,9 @@ name = "moltis"
 path = "src/main.rs"
 
 [dependencies]
+agent-client-protocol  = { optional = true, workspace = true }
 anyhow                 = { workspace = true }
+async-trait            = { workspace = true }
 clap                   = { workspace = true }
 dotenvy                = { workspace = true }
 moltis-acp             = { optional = true, workspace = true }
@@ -89,6 +91,7 @@ moltis-openclaw-import = { optional = true, workspace = true }
 moltis-plugins         = { workspace = true }
 moltis-portable        = { workspace = true }
 moltis-projects        = { workspace = true }
+moltis-protocol        = { workspace = true }
 moltis-providers       = { workspace = true }
 moltis-sessions        = { workspace = true }
 moltis-skills          = { workspace = true }
@@ -114,7 +117,7 @@ tikv-jemallocator = { optional = true, workspace = true }
 tempfile = { workspace = true }
 
 [features]
-acp               = ["dep:moltis-acp"]
+acp               = ["dep:agent-client-protocol", "dep:moltis-acp"]
 agent             = ["moltis-gateway/agent", "moltis-web?/agent"]
 caldav            = ["moltis-gateway/caldav"]
 cloudflare-tunnel = ["moltis-httpd/cloudflare-tunnel", "moltis-web?/cloudflare-tunnel"]

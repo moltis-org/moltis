@@ -8,9 +8,11 @@
 //! reaching this module — see `acp_reserves_stdout` in `main.rs`, which is what
 //! flips the tracing writer.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use {clap::Args, moltis_acp::AcpBackend};
+
+use crate::acp_backend::MoltisBackend;
 
 #[derive(Args, Debug)]
 pub struct AcpArgs {
@@ -20,25 +22,50 @@ pub struct AcpArgs {
     /// providers, sessions, or tools.
     #[arg(long)]
     pub echo: bool,
+
+    /// Override the config directory.
+    #[arg(long)]
+    pub config_dir: Option<PathBuf>,
+
+    /// Override the data directory.
+    #[arg(long)]
+    pub data_dir: Option<PathBuf>,
 }
 
 /// Resolves the backend to serve and runs the protocol loop until the client
 /// disconnects.
 pub async fn handle_acp(args: AcpArgs) -> anyhow::Result<()> {
-    let backend = resolve_backend(&args)?;
+    let backend = resolve_backend(&args).await?;
     moltis_acp::run_stdio(backend).await
 }
 
-fn resolve_backend(args: &AcpArgs) -> anyhow::Result<Arc<dyn AcpBackend>> {
+async fn resolve_backend(args: &AcpArgs) -> anyhow::Result<Arc<dyn AcpBackend>> {
     if args.echo {
         return Ok(Arc::new(moltis_acp::EchoBackend::new()));
     }
-    // Refusing is better than silently echoing: a client wired up to this
-    // expecting real turns would otherwise look like it was working.
-    Err(anyhow::anyhow!(
-        "serving real Moltis turns over ACP is not wired up yet; run `moltis acp --echo` to \
-         verify a client's handshake in the meantime"
-    ))
+    Ok(Arc::new(MoltisBackend::new(boot_core(args).await?)))
+}
+
+/// Boots the Moltis stack in-process.
+///
+/// `prepare_gateway_core` is the transport-agnostic half of startup: it wires
+/// providers, sessions, memory and tools but binds no socket, so serving ACP
+/// does not stand up an HTTP listener or collide with a running gateway on a
+/// port. The bind address it takes is only recorded for OAuth callbacks.
+async fn boot_core(args: &AcpArgs) -> anyhow::Result<Arc<moltis_gateway::state::GatewayState>> {
+    let core = moltis_gateway::server::prepare_gateway_core(
+        "127.0.0.1",
+        0,
+        true,
+        None,
+        args.config_dir.clone(),
+        args.data_dir.clone(),
+        None,
+        None,
+        None,
+    )
+    .await?;
+    Ok(core.state)
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -46,22 +73,19 @@ fn resolve_backend(args: &AcpArgs) -> anyhow::Result<Arc<dyn AcpBackend>> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn echo_flag_selects_the_echo_backend() {
-        let backend = resolve_backend(&AcpArgs { echo: true }).expect("echo backend");
-        assert!(!backend.capabilities().load_session);
+    fn args(echo: bool) -> AcpArgs {
+        AcpArgs {
+            echo,
+            config_dir: None,
+            data_dir: None,
+        }
     }
 
-    #[test]
-    fn without_echo_the_command_refuses_rather_than_pretending() {
-        // `expect_err` would need `Arc<dyn AcpBackend>: Debug`, which is not
-        // worth forcing onto every implementor.
-        let error = resolve_backend(&AcpArgs { echo: false })
-            .err()
-            .expect("real turns are not implemented yet");
-        assert!(
-            error.to_string().contains("--echo"),
-            "the error should point at the working alternative: {error}"
-        );
+    #[tokio::test]
+    async fn echo_flag_selects_the_echo_backend() {
+        // Resolving the echo backend must not boot the Moltis stack: the flag
+        // exists to check a client's handshake without providers or databases.
+        let backend = resolve_backend(&args(true)).await.expect("echo backend");
+        assert!(!backend.capabilities().load_session);
     }
 }
