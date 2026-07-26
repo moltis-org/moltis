@@ -102,6 +102,13 @@ pub struct MsTeamsAccountConfig {
     /// User allowlist (AAD object IDs or channel user IDs).
     pub allowlist: Vec<String>,
 
+    /// Senders allowed to run privileged actions: `/sh`, shell command mode,
+    /// and host-reaching tools. Empty means "not configured" — the DM
+    /// allowlist is used instead, and if that is empty too, nobody is an
+    /// operator.
+    #[serde(default)]
+    pub operators: Vec<String>,
+
     /// Group/team allowlist.
     pub group_allowlist: Vec<String>,
 
@@ -197,6 +204,7 @@ impl std::fmt::Debug for MsTeamsAccountConfig {
             .field("group_policy", &self.group_policy)
             .field("mention_mode", &self.mention_mode)
             .field("allowlist", &self.allowlist)
+            .field("operators", &self.operators)
             .field("group_allowlist", &self.group_allowlist)
             .field("otp_self_approval", &self.otp_self_approval)
             .field("otp_cooldown_secs", &self.otp_cooldown_secs)
@@ -221,7 +229,7 @@ impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
         // Count: 16 always-present + conditional optional fields.
-        let mut count = 16;
+        let mut count = 17;
         count += c.webhook_secret.is_some() as usize;
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
@@ -240,6 +248,7 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("group_policy", &c.group_policy)?;
         s.serialize_field("mention_mode", &c.mention_mode)?;
         s.serialize_field("allowlist", &c.allowlist)?;
+        s.serialize_field("operators", &c.operators)?;
         s.serialize_field("group_allowlist", &c.group_allowlist)?;
         s.serialize_field("otp_self_approval", &c.otp_self_approval)?;
         s.serialize_field("otp_cooldown_secs", &c.otp_cooldown_secs)?;
@@ -278,6 +287,10 @@ impl Serialize for RedactedConfig<'_> {
 impl ChannelConfigView for MsTeamsAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.allowlist
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {
@@ -340,6 +353,7 @@ impl Default for MsTeamsAccountConfig {
             group_policy: GroupPolicy::Open,
             mention_mode: MentionMode::Mention,
             allowlist: Vec::new(),
+            operators: Vec::new(),
             group_allowlist: Vec::new(),
             otp_self_approval: true,
             otp_cooldown_secs: 300,

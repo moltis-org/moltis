@@ -122,13 +122,37 @@ interact with the agent.
 UI: Settings > Channels > Pending Senders
 ```
 
-### Per-Channel Permissions
+### Operators vs. Allowed Senders
 
-Each channel can have different permission levels:
+Being allowed to message the bot is **not** permission to run commands on the
+host. Shell access is gated separately by each account's `operators` list:
 
-- **Read-only**: Sender can ask questions, agent responds
-- **Execute**: Sender can trigger actions (with approval still required)
-- **Admin**: Full access including configuration changes
+| | Guest (default) | Operator |
+|---|---|---|
+| Chat with the agent | ✅ | ✅ |
+| `/sh`, shell command mode | ❌ | ✅ |
+| `/approve`, `/deny`, `/update` | ❌ | ✅ |
+| `exec`, `process`, `write_file`, `browser`, agent bridges | ❌ | ✅ |
+| `memory_*`, `sessions_*`, `codebase_*`, `caldav` (private state) | ❌ | ✅ |
+| `update_channel_settings` (edits the operator list itself) | ❌ | ✅ |
+| `cron`, `webhook`, `spawn_*`, `send_message`, `home_assistant`, `mcp_*` | ❌ | ✅ |
+| `web_search`, `web_fetch`, `calc`, image and reply tools | ✅ | ✅ |
+
+Denial is enforced in three places, so a guest cannot reach the shell by any
+route: the `/sh` command handler, the shell command-mode rewrite (which is
+re-checked per message, not per session), and the agent's tool registry for
+that turn.
+
+With no `operators` list the account falls back to its DM `allowlist`; with
+neither, **no one** has shell access. Configure it under
+**Settings → Channels → Edit → Operators**, or see
+[Channels → Operators](./channels.md#operators-privileged-senders).
+
+```admonish danger title="Public channels"
+On a public Discord guild or any shared group chat, every member clears the
+access gate. Always set `operators` explicitly there — do not rely on the
+allowlist fallback, which is meant for single-owner private instances.
+```
 
 ### Channel Isolation
 

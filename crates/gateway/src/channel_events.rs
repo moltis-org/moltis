@@ -20,6 +20,8 @@ use crate::{
     state::GatewayState,
 };
 
+pub use moltis_channels::operators::ChannelSenderRole;
+
 /// Default (deterministic) session key for a channel chat.
 ///
 /// For Telegram forum topics the thread ID is appended so each topic gets its
@@ -110,39 +112,59 @@ fn parse_numbered_selection(arg: &str, command_name: &str) -> ChannelResult<usiz
         .map_err(|_| ChannelError::invalid_input(format!("usage: /{command_name} [number]")))
 }
 
-/// Check whether `sender_id` is on the channel account's DM allowlist.
+/// Denial shown when a non-operator tries to reach the shell.
+const SHELL_DENIED_MESSAGE: &str = "Shell access is restricted to this bot's operators. Ask the owner to add you under \
+     Settings → Channels → Operators in the moltis web UI.";
+
+/// Resolve a channel sender's privilege level for an account.
 ///
-/// The DM allowlist is the source of truth for privileged command access:
-/// anyone allowed to DM the bot is trusted to run commands like `/approve`
-/// and `/deny` from any context (DM or group). Users not on the allowlist
-/// can still chat (if group policy permits) but cannot run privileged
-/// commands.
+/// Privileged actions (`/sh`, shell command mode, `/approve`, `/update`, and
+/// host-reaching tools) require the sender to be an **operator**. Passing the
+/// channel access gate is not enough: in a guild or group chat every member
+/// clears that gate, so privilege is decided by the account's `operators` list
+/// (falling back to the DM allowlist for accounts configured before the list
+/// existed).
 ///
-/// Returns `false` when the allowlist is empty (open DM policy) because an
-/// open policy means no one has been explicitly authorized.
-async fn is_sender_on_allowlist(
+/// Fail-closed at every step — an unknown account, a missing registry, or an
+/// unidentified sender all resolve to [`ChannelSenderRole::Guest`].
+async fn resolve_sender_role(
     state: &Arc<GatewayState>,
     account_id: &str,
-    sender_id: &str,
-) -> bool {
+    sender_id: Option<&str>,
+) -> ChannelSenderRole {
     let Some(ref registry) = state.services.channel_registry else {
-        return false;
+        return ChannelSenderRole::Guest;
     };
     let Some(config) = registry.account_config(account_id).await else {
-        return false;
+        return ChannelSenderRole::Guest;
     };
-    let allowlist = config.allowlist();
-    // Empty allowlist = open policy → no explicit authorization.
-    if allowlist.is_empty() {
-        return false;
-    }
-    // Check the full sender_id first, then try the user part before '@'
-    // (WhatsApp JIDs are e.g. "15551234567@s.whatsapp.net" but allowlists
-    // use plain phone numbers like "15551234567").
-    moltis_channels::gating::is_allowed(sender_id, allowlist)
-        || sender_id
-            .split_once('@')
-            .is_some_and(|(user, _)| moltis_channels::gating::is_allowed(user, allowlist))
+    moltis_channels::operators::resolve_sender_role(
+        sender_id,
+        config.operators(),
+        config.allowlist(),
+    )
+}
+
+/// Tool policy applied to channel turns from non-operator senders.
+///
+/// Passed to `chat.send` as `_tool_policy`, which filters the tool registry
+/// for that run. It stacks with the configured policy layers — denials there
+/// still apply — so this can only ever remove tools, never add them.
+fn guest_tool_policy() -> serde_json::Value {
+    serde_json::json!({
+        "deny": moltis_channels::operators::DEFAULT_GUEST_DENIED_TOOLS,
+    })
+}
+
+/// Whether `sender_id` may run privileged channel commands.
+async fn is_sender_authorized(
+    state: &Arc<GatewayState>,
+    account_id: &str,
+    sender_id: Option<&str>,
+) -> bool {
+    resolve_sender_role(state, account_id, sender_id)
+        .await
+        .is_operator()
 }
 
 fn is_attachable_session(entry: &SessionEntry) -> bool {

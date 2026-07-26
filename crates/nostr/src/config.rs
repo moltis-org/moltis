@@ -48,6 +48,13 @@ pub struct NostrAccountConfig {
     /// Public keys allowed to send DMs (npub1/hex).
     pub allowed_pubkeys: Vec<String>,
 
+    /// Senders allowed to run privileged actions: `/sh`, shell command mode,
+    /// and host-reaching tools. Empty means "not configured" — the DM
+    /// allowlist is used instead, and if that is empty too, nobody is an
+    /// operator.
+    #[serde(default)]
+    pub operators: Vec<String>,
+
     /// Whether this account is enabled.
     pub enabled: bool,
 
@@ -81,6 +88,7 @@ impl Default for NostrAccountConfig {
             relays: default_relays(),
             dm_policy: DmPolicy::Allowlist,
             allowed_pubkeys: Vec::new(),
+            operators: Vec::new(),
             enabled: true,
             profile: None,
             model: None,
@@ -107,6 +115,7 @@ impl std::fmt::Debug for NostrAccountConfig {
             .field("relays", &self.relays)
             .field("dm_policy", &self.dm_policy)
             .field("allowed_pubkeys", &self.allowed_pubkeys)
+            .field("operators", &self.operators)
             .field("enabled", &self.enabled)
             .field("profile", &self.profile)
             .field("model", &self.model)
@@ -124,13 +133,14 @@ pub struct RedactedConfig<'a>(pub &'a NostrAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 10;
+        let mut count = 11;
         count += c.agent_id.is_some() as usize;
         let mut s = serializer.serialize_struct("NostrAccountConfig", count)?;
         s.serialize_field("secret_key", "[REDACTED]")?;
         s.serialize_field("relays", &c.relays)?;
         s.serialize_field("dm_policy", &c.dm_policy)?;
         s.serialize_field("allowed_pubkeys", &c.allowed_pubkeys)?;
+        s.serialize_field("operators", &c.operators)?;
         s.serialize_field("enabled", &c.enabled)?;
         s.serialize_field("profile", &c.profile)?;
         s.serialize_field("model", &c.model)?;
@@ -147,6 +157,10 @@ impl Serialize for RedactedConfig<'_> {
 impl ChannelConfigView for NostrAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.allowed_pubkeys
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {

@@ -113,7 +113,7 @@ pub(in crate::channel_events) async fn dispatch_command(
         "sandbox" => {
             control_handlers::handle_sandbox(state, session_metadata, &session_key, args).await
         },
-        "sh" => control_handlers::handle_sh(state, &session_key, args).await,
+        "sh" => control_handlers::handle_sh(state, &session_key, &reply_to, sender_id, args).await,
         "stop" => control_handlers::handle_stop(state, &session_key).await,
         "peek" => control_handlers::handle_peek(state, &session_key).await,
         "tts" => control_handlers::handle_tts(state, &session_key, args).await,

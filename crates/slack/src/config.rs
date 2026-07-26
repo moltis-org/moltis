@@ -95,6 +95,13 @@ pub struct SlackAccountConfig {
     #[serde(default)]
     pub allowlist: Vec<String>,
 
+    /// Senders allowed to run privileged actions: `/sh`, shell command mode,
+    /// and host-reaching tools. Empty means "not configured" — the DM
+    /// allowlist is used instead, and if that is empty too, nobody is an
+    /// operator.
+    #[serde(default)]
+    pub operators: Vec<String>,
+
     /// Channel allowlist (Slack channel IDs).
     #[serde(default)]
     pub channel_allowlist: Vec<String>,
@@ -166,6 +173,7 @@ impl std::fmt::Debug for SlackAccountConfig {
             .field("group_policy", &self.group_policy)
             .field("mention_mode", &self.mention_mode)
             .field("allowlist", &self.allowlist)
+            .field("operators", &self.operators)
             .field("channel_allowlist", &self.channel_allowlist)
             .field("model", &self.model)
             .field("model_provider", &self.model_provider)
@@ -196,6 +204,7 @@ impl Default for SlackAccountConfig {
             group_policy: GroupPolicy::Open,
             mention_mode: MentionMode::Mention,
             allowlist: Vec::new(),
+            operators: Vec::new(),
             channel_allowlist: Vec::new(),
             model: None,
             model_provider: None,
@@ -217,6 +226,10 @@ impl Default for SlackAccountConfig {
 impl ChannelConfigView for SlackAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.allowlist
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {
@@ -274,7 +287,7 @@ pub struct RedactedConfig<'a>(pub &'a SlackAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 16; // always-present fields
+        let mut count = 17; // always-present fields
         count += c.signing_secret.is_some() as usize;
         count += !c.reaction_trigger_emojis.is_empty() as usize;
         count += c.model.is_some() as usize;
@@ -294,6 +307,7 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("group_policy", &c.group_policy)?;
         s.serialize_field("mention_mode", &c.mention_mode)?;
         s.serialize_field("allowlist", &c.allowlist)?;
+        s.serialize_field("operators", &c.operators)?;
         s.serialize_field("channel_allowlist", &c.channel_allowlist)?;
         if c.model.is_some() {
             s.serialize_field("model", &c.model)?;

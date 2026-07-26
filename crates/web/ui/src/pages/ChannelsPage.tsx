@@ -71,6 +71,8 @@ export interface ChannelConfig {
 	dm_policy?: string;
 	mention_mode?: string;
 	allowlist?: string[];
+	// Senders allowed to run /sh, shell command mode, and host-reaching tools.
+	operators?: string[];
 	model?: string;
 	model_provider?: string;
 	// Teams

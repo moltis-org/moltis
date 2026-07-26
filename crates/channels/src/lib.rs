@@ -12,6 +12,7 @@ pub mod error;
 pub mod gating;
 pub mod media_download;
 pub mod message_log;
+pub mod operators;
 pub mod otp;
 pub mod plugin;
 pub mod registry;

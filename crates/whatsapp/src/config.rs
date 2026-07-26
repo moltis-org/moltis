@@ -66,6 +66,13 @@ pub struct WhatsAppAccountConfig {
     /// User/peer allowlist for DMs (JID user parts or phone numbers).
     pub allowlist: Vec<String>,
 
+    /// Senders allowed to run privileged actions: `/sh`, shell command mode,
+    /// and host-reaching tools. Empty means "not configured" — the DM
+    /// allowlist is used instead, and if that is empty too, nobody is an
+    /// operator.
+    #[serde(default)]
+    pub operators: Vec<String>,
+
     /// Group JID allowlist.
     pub group_allowlist: Vec<String>,
 
@@ -101,6 +108,10 @@ impl std::fmt::Debug for WhatsAppAccountConfig {
 impl ChannelConfigView for WhatsAppAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.allowlist
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {
@@ -178,6 +189,7 @@ impl Default for WhatsAppAccountConfig {
             group_policy: GroupPolicy::default(),
             mention_mode: MentionMode::Always,
             allowlist: Vec::new(),
+            operators: Vec::new(),
             group_allowlist: Vec::new(),
             otp_self_approval: true,
             otp_cooldown_secs: 300,

@@ -10,8 +10,8 @@ use crate::{
 };
 
 use super::super::{
-    default_channel_session_key, resolve_channel_agent_id, resolve_channel_session,
-    start_channel_typing_loop,
+    default_channel_session_key, guest_tool_policy, resolve_channel_agent_id,
+    resolve_channel_session, resolve_sender_role, start_channel_typing_loop,
 };
 
 pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
@@ -143,6 +143,15 @@ pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
     });
     if let Some(ref documents) = meta.documents {
         params["_document_files"] = serde_json::json!(documents);
+    }
+
+    // Same privilege gate as the text path: an image or voice note from a
+    // guest must not hand the agent host-reaching tools either.
+    if !resolve_sender_role(state, &reply_to.account_id, meta.sender_id.as_deref())
+        .await
+        .is_operator()
+    {
+        params["_tool_policy"] = guest_tool_policy();
     }
 
     // Forward the channel's default model if configured

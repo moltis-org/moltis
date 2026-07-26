@@ -32,6 +32,7 @@ export function EditChannelModal(): VNode | null {
 	const editAgent = useSignal("");
 	const agentsList = useSignal<Array<{ id: string; name: string; emoji?: string }>>([]);
 	const allowlistItems = useSignal<string[]>([]);
+	const operatorItems = useSignal<string[]>([]);
 	const roomAllowlistItems = useSignal<string[]>([]);
 	const editCredential = useSignal("");
 	const editWebhookSecret = useSignal("");
@@ -60,6 +61,7 @@ export function EditChannelModal(): VNode | null {
 			ch?.config?.user_allowlist ||
 			ch?.config?.allowed_pubkeys ||
 			[]) as string[];
+		operatorItems.value = (ch?.config?.operators || []) as string[];
 		roomAllowlistItems.value = (ch?.config?.room_allowlist || ch?.config?.group_allowlist || []) as string[];
 		editCredential.value = "";
 		editWebhookSecret.value = (ch?.config?.webhook_secret as string) || "";
@@ -161,6 +163,7 @@ export function EditChannelModal(): VNode | null {
 		const dmFallback = isWhatsApp ? "open" : "allowlist";
 		updateConfig.dm_policy = (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement)?.value || dmFallback;
 		updateConfig.allowlist = allowlistItems.value;
+		updateConfig.operators = operatorItems.value;
 		if (isMatrix) {
 			updateConfig.user_allowlist = allowlistItems.value;
 			updateConfig.room_policy =
@@ -726,6 +729,22 @@ export function EditChannelModal(): VNode | null {
 						allowlistItems.value = v;
 					}}
 				/>
+				<label className="text-xs text-[var(--muted)]">Operators</label>
+				<AllowlistInput
+					value={operatorItems.value}
+					preserveAt={isMatrix}
+					placeholder="Type a user ID and press Enter"
+					onChange={(v) => {
+						operatorItems.value = v;
+					}}
+				/>
+				<p className="text-xs text-[var(--muted)]" data-testid="operators-hint">
+					{operatorItems.value.length > 0
+						? "Only these senders can use /sh, shell command mode, and tools that reach this host. Everyone else can still chat."
+						: allowlistItems.value.length > 0
+							? "No operators set — the DM allowlist above is used instead. Set operators explicitly for shared or public channels."
+							: "No operators and no DM allowlist — shell access and host tools are disabled for every sender on this channel."}
+				</p>
 				{isMatrix && (
 					<>
 						<label className="text-xs text-[var(--muted)]">Room Allowlist</label>

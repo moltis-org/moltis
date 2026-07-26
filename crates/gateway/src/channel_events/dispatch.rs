@@ -22,7 +22,46 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         } else {
             default_channel_session_key(&reply_to)
         };
-        let effective_text = if state.is_channel_command_mode_enabled(&session_key).await {
+        // Privilege is resolved per inbound message, never per session:
+        // command mode is shared by everyone in the chat, so an operator
+        // enabling it must not hand the shell to the other participants.
+        let sender_role =
+            resolve_sender_role(state, &reply_to.account_id, meta.sender_id.as_deref()).await;
+
+        // `/sh <cmd>` is deliberately not a registered channel command — it
+        // falls through to the agent, which force-executes it. Stop it here
+        // for guests, before it reaches the runner.
+        if !sender_role.is_operator()
+            && moltis_agents::runner::explicit_shell_command(text).is_some()
+        {
+            warn!(
+                account_id = %reply_to.account_id,
+                chat_id = %reply_to.chat_id,
+                sender_id = ?meta.sender_id,
+                "denied /sh from non-operator channel sender"
+            );
+            if let Some(done_tx) = typing_done {
+                let _ = done_tx.send(());
+            }
+            channel_ack_finish(state, &reply_to, false).await;
+            if let Some(outbound) = state.services.channel_outbound_arc()
+                && let Err(send_err) = outbound
+                    .send_text(
+                        &reply_to.account_id,
+                        &reply_to.outbound_to(),
+                        SHELL_DENIED_MESSAGE,
+                        reply_to.message_id.as_deref(),
+                    )
+                    .await
+            {
+                warn!("failed to send shell denial back to channel: {send_err}");
+            }
+            return;
+        }
+
+        let effective_text = if sender_role.is_operator()
+            && state.is_channel_command_mode_enabled(&session_key).await
+        {
             rewrite_for_shell_mode(text).unwrap_or_else(|| text.to_string())
         } else {
             text.to_string()
@@ -138,6 +177,13 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             // starts executing this message (after semaphore acquire).
             "_channel_reply_target": &reply_to,
         });
+
+        // Guests get the agent without its host-reaching tools. Blocking `/sh`
+        // alone would not be enough: a guest could otherwise just ask the
+        // agent in prose to run a command or read the owner's memory.
+        if !sender_role.is_operator() {
+            params["_tool_policy"] = guest_tool_policy();
+        }
 
         // Attach thread context if available.
         if let Some(thread_history) = thread_context {

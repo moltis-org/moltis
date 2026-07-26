@@ -119,6 +119,106 @@ fn shell_mode_rewrite_skips_peek_and_stop() {
     assert!(rewrite_for_shell_mode("/stop").is_none());
 }
 
+// ── shell access gating ────────────────────────────────────────
+
+/// `dispatch_to_chat` blocks `/sh <cmd>` from non-operators using
+/// `explicit_shell_command`. It must recognise every form the agent runner
+/// force-executes, or a guest could slip a command past the gate and still
+/// have it run.
+#[test]
+fn explicit_shell_command_detects_forms_the_runner_executes() {
+    use moltis_agents::runner::explicit_shell_command;
+
+    assert_eq!(explicit_shell_command("/sh pwd").as_deref(), Some("pwd"));
+    assert_eq!(
+        explicit_shell_command("/sh   cat /etc/passwd").as_deref(),
+        Some("cat /etc/passwd")
+    );
+    // Channel-mention form (Telegram/Discord append the bot name).
+    assert_eq!(
+        explicit_shell_command("/sh@mybot uname -a").as_deref(),
+        Some("uname -a")
+    );
+    // Case-insensitive head.
+    assert_eq!(
+        explicit_shell_command("/SH whoami").as_deref(),
+        Some("whoami")
+    );
+    // Leading whitespace must not hide the command from the gate.
+    assert_eq!(explicit_shell_command("  /sh id").as_deref(), Some("id"));
+}
+
+#[test]
+fn explicit_shell_command_ignores_ordinary_chat() {
+    use moltis_agents::runner::explicit_shell_command;
+
+    assert!(explicit_shell_command("hello there").is_none());
+    assert!(explicit_shell_command("/sh").is_none());
+    assert!(explicit_shell_command("/shell pwd").is_none());
+    assert!(explicit_shell_command("/context").is_none());
+    // Talking *about* the command is not a request to run it.
+    assert!(explicit_shell_command("what does /sh do?").is_none());
+}
+
+/// Guests must lose the tools that reach the host or the owner's private
+/// state, while keeping the informational ones.
+#[test]
+fn guest_tool_policy_denies_privileged_tools() {
+    let policy = moltis_tools::policy::ToolPolicy {
+        allow: Vec::new(),
+        deny: moltis_channels::operators::DEFAULT_GUEST_DENIED_TOOLS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
+    };
+
+    for denied in [
+        "exec",
+        "process",
+        "write_file",
+        "browser",
+        "memory_save",
+        "memory_search",
+        "sessions_list",
+        "sessions_send",
+        "spawn_agent",
+        "cron",
+        "webhook",
+        "write_skill_files",
+        "codebase_search",
+        "home_assistant",
+        "send_message",
+        "voice_call",
+        "get_user_location",
+        // Escalation: would let a guest add themselves to the operator list.
+        "update_channel_settings",
+        // Both the MCP management tools and the mcp__server__tool namespace.
+        "mcp_add",
+        "mcp__github__create_pull_request",
+    ] {
+        assert!(
+            !policy.is_allowed(denied),
+            "{denied} must be denied to guests"
+        );
+    }
+
+    for allowed in [
+        "web_search",
+        "web_fetch",
+        "calc",
+        "generate_image",
+        "send_image",
+        "send_document",
+        "show_map",
+        "task_list",
+    ] {
+        assert!(
+            policy.is_allowed(allowed),
+            "{allowed} should stay available to guests"
+        );
+    }
+}
+
 // ── unique_providers ───────────────────────────────────────────
 
 /// Regression test for GitHub issue #637: providers must be deduplicated

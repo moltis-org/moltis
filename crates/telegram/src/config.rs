@@ -65,6 +65,13 @@ pub struct TelegramAccountConfig {
     /// User/peer allowlist for DMs.
     pub allowlist: Vec<String>,
 
+    /// Senders allowed to run privileged actions: `/sh`, shell command mode,
+    /// and host-reaching tools. Empty means "not configured" — the DM
+    /// allowlist is used instead, and if that is empty too, nobody is an
+    /// operator.
+    #[serde(default)]
+    pub operators: Vec<String>,
+
     /// Group/chat ID allowlist.
     pub group_allowlist: Vec<String>,
 
@@ -138,7 +145,7 @@ pub struct RedactedConfig<'a>(pub &'a TelegramAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 14; // always-present fields
+        let mut count = 15; // always-present fields
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
         count += c.agent_id.is_some() as usize;
@@ -150,6 +157,7 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("group_policy", &c.group_policy)?;
         s.serialize_field("mention_mode", &c.mention_mode)?;
         s.serialize_field("allowlist", &c.allowlist)?;
+        s.serialize_field("operators", &c.operators)?;
         s.serialize_field("group_allowlist", &c.group_allowlist)?;
         s.serialize_field("stream_mode", &c.stream_mode)?;
         s.serialize_field("edit_throttle_ms", &c.edit_throttle_ms)?;
@@ -181,6 +189,10 @@ impl Serialize for RedactedConfig<'_> {
 impl ChannelConfigView for TelegramAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.allowlist
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {
@@ -252,6 +264,7 @@ impl Default for TelegramAccountConfig {
             group_policy: GroupPolicy::default(),
             mention_mode: MentionMode::default(),
             allowlist: Vec::new(),
+            operators: Vec::new(),
             group_allowlist: Vec::new(),
             stream_mode: StreamMode::default(),
             edit_throttle_ms: 2000,

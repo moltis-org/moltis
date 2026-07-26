@@ -15,6 +15,19 @@ pub trait ChannelConfigView: Send + Sync + std::fmt::Debug {
     /// Group/chat ID allowlist.
     fn group_allowlist(&self) -> &[String];
 
+    /// Senders allowed to run privileged actions (`/sh`, shell command mode,
+    /// host-reaching tools).
+    ///
+    /// Separate from [`Self::allowlist`], which only decides who may talk to
+    /// the bot. In a guild or group chat every member can pass the access
+    /// gate, so privilege needs its own list.
+    ///
+    /// An empty list means "not configured" — [`crate::operators::resolve_sender_role`]
+    /// then falls back to the DM allowlist and, failing that, denies everyone.
+    fn operators(&self) -> &[String] {
+        &[]
+    }
+
     /// DM access policy.
     fn dm_policy(&self) -> DmPolicy;
 

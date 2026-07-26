@@ -225,6 +225,72 @@ All allowlist fields across all channels share the same matching behavior:
 - **Glob wildcards** — `"admin_*"`, `"*@example.com"`, `"user_*_vip"`
 - **Multiple identifiers** — both the user's numeric ID and username are checked (where applicable)
 
+### Operators (Privileged Senders)
+
+Passing the access gate lets someone *talk* to the bot. It does not let them
+run commands on your machine. That is a separate list:
+
+```toml
+[channels.discord.my-bot]
+allowlist = ["owner-id"]        # who may DM the bot
+operators = ["owner-id"]        # who may run /sh and host-reaching tools
+```
+
+Operators may use `/sh`, shell command mode, `/approve`, `/deny`, and `/update`.
+Everyone else can chat normally but is refused shell access and runs the agent
+**without** the privileged tools:
+
+- **Host reach** — `exec`, `process`, `write_file`, `browser`,
+  `sandbox_packages`, `nodes_*`, and the external agent bridges (`codex`,
+  `opencode`, `anthropic`)
+- **Your private state** — `memory_*`, `sessions_*`, `codebase_*`, `caldav`,
+  `teams_*`, `get_user_location`, checkpoints and session branching
+- **Escalation** — `update_channel_settings`, which edits allowlists and this
+  operator list
+- **Persistence and side effects** — `cron`, `webhook`, `spawn_*`,
+  `send_message`, `voice_call`, `speak`, `notify`, `home_assistant`, skill
+  authoring, and every MCP tool (`mcp_*`)
+
+Guests keep `web_search`, `web_fetch`, `calc`, `generate_image`, `send_image`,
+`send_document`, and the other informational tools.
+
+Edit the list in the web UI under **Settings → Channels → Edit → Operators**.
+
+```admonish warning title="This matters most in group and guild chats"
+In a Discord guild or a group chat, every member who passes the group policy
+clears the access gate. Without an `operators` list, anything gated only on
+"can this person talk to the bot" is open to the whole room.
+```
+
+Resolution is **fail-closed**, in this order:
+
+| `operators` | `allowlist` | Who is an operator |
+|-------------|-------------|--------------------|
+| non-empty | anything | only senders matching `operators` |
+| empty | non-empty | senders matching `allowlist` (compatibility fallback) |
+| empty | empty | **nobody** — shell access is disabled entirely |
+
+A sender with no identifier (for example an unattributed button callback) is
+never an operator.
+
+`operators` uses the same matching rules as allowlists (case-insensitive, glob
+wildcards, user-part matching for suffixed IDs like WhatsApp JIDs) with one
+deliberate difference: **an empty `operators` list matches nobody**, whereas an
+empty `allowlist` means "open".
+
+```admonish note title="Interaction with OTP self-approval"
+OTP self-approval appends the approved sender to `allowlist`. On an account with
+no explicit `operators`, the fallback therefore promotes OTP-approved senders to
+operators. Set `operators` explicitly on any bot where people other than you can
+get onto the allowlist.
+```
+
+Guest tool restrictions stack with the per-channel tool policy
+(`channels.<type>.<account>.tools.groups.<chat_type>`), so you can tighten them
+further — but note that policy denials always win, so it cannot be used to hand
+a guest back a denied tool. Grant privileges by adding the sender to
+`operators`.
+
 ### OTP Self-Approval
 
 Channels that support OTP (Telegram, Microsoft Teams, Slack, Discord, Matrix, WhatsApp) allow non-allowlisted

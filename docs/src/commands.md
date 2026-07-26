@@ -39,10 +39,17 @@ Available in web UI, all channels, and via the `sessions.fork` RPC. See
 | `/mode [N\|name\|none]` | Switch session mode |
 | `/model [N]` | Switch provider/model |
 | `/sandbox [on\|off\|image N]` | Toggle sandbox and choose image |
-| `/sh [on\|off]` | Enter command mode (passthrough to shell) |
+| `/sh [on\|off]` | Enter command mode (passthrough to shell) — **operators only** |
 | `/stop` | Abort the current running agent |
 | `/peek` | Show current thinking/tool status |
-| `/update [version]` | Update moltis (owner-only) |
+| `/update [version]` | Update moltis (operators only) |
+
+```admonish warning title="Shell access is restricted on channels"
+`/sh`, shell command mode, `/approve`, `/deny`, and `/update` require the sender
+to be an **operator** of the channel account. Non-operators are refused and also
+run the agent without host-reaching tools. See
+[Channels → Operators](channels.md#operators-privileged-senders).
+```
 
 ## Quick Actions
 

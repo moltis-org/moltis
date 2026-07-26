@@ -82,6 +82,7 @@ offered = ["telegram", "discord"]
 | `mention_mode` | no | `"mention"` | When the bot responds in guilds: `"always"`, `"mention"` (only when @mentioned), or `"none"` |
 | `allowlist` | no | `[]` | Discord usernames allowed to DM the bot (when `dm_policy = "allowlist"`) |
 | `guild_allowlist` | no | `[]` | Guild (server) IDs allowed to interact with the bot |
+| `operators` | no | `[]` | Senders allowed to run `/sh`, shell command mode, and host-reaching tools. Empty falls back to `allowlist`; empty both means nobody. See [Operators](./channels.md#operators-privileged-senders) |
 | `model` | no | — | Override the default model for this channel |
 | `model_provider` | no | — | Provider for the overridden model |
 | `agent_id` | no | — | Default agent ID for this Discord bot |
@@ -106,6 +107,8 @@ group_policy = "open"
 mention_mode = "mention"
 allowlist = ["alice", "bob"]
 guild_allowlist = ["123456789012345678"]
+# Guild members clear the access gate, so shell access needs its own list.
+operators = ["alice"]
 reply_to_message = true
 ack_reaction = "👀"
 model = "gpt-4o"
