@@ -272,7 +272,7 @@ impl ChannelOutbound for NostrOutbound {
         };
 
         let glyph = crate::groups::ack_emoji_glyph(emoji);
-        let reaction = crate::groups::send_reaction(&client, target, glyph)
+        let reaction = crate::groups::send_reaction(&client, channel_id, target, glyph)
             .await
             .map_err(|e| moltis_channels::Error::external("nostr", e))?;
 
@@ -317,7 +317,7 @@ impl ChannelOutbound for NostrOutbound {
             return Ok(());
         };
 
-        if let Err(e) = crate::groups::delete_event(&client, reaction).await {
+        if let Err(e) = crate::groups::delete_event(&client, channel_id, reaction).await {
             tracing::debug!(account_id, "failed to retract reaction: {e}");
         }
         Ok(())

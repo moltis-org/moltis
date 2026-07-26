@@ -206,9 +206,14 @@ async fn reaction_round_trips_as_nip25_kind_7() {
     .await
     .expect("publish target");
 
-    let reaction_id = groups::send_reaction(&client, target, groups::ack_emoji_glyph("eyes"))
-        .await
-        .expect("publish reaction");
+    let reaction_id = groups::send_reaction(
+        &client,
+        "buzz-general",
+        target,
+        groups::ack_emoji_glyph("eyes"),
+    )
+    .await
+    .expect("publish reaction");
 
     let events = fetch_kind(&client, Kind::Reaction).await;
     let reaction = events
@@ -231,11 +236,11 @@ async fn retracting_a_reaction_publishes_nip09_deletion() {
     let (_relay, client, _keys) = connected_client().await;
 
     let target = EventId::all_zeros();
-    let reaction_id = groups::send_reaction(&client, target, "👀")
+    let reaction_id = groups::send_reaction(&client, "grp", target, "👀")
         .await
         .expect("publish reaction");
 
-    groups::delete_event(&client, reaction_id)
+    groups::delete_event(&client, "grp", reaction_id)
         .await
         .expect("publish deletion");
 
@@ -248,6 +253,10 @@ async fn retracting_a_reaction_publishes_nip09_deletion() {
         ["e".to_string(), reaction_id.to_hex()],
         "deletion must reference the reaction, not the reacted-to message"
     );
+    assert_eq!(tag_values(deletion, TagKind::h())[0], [
+        "h".to_string(),
+        "grp".to_string()
+    ]);
 }
 
 /// An `h`-tag subscription must deliver both dialects, since a Buzz channel can

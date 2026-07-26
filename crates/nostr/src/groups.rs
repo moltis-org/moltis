@@ -271,16 +271,24 @@ pub async fn edit_group_message(
 
 /// React to a message with an emoji (NIP-25 `kind:7`).
 ///
-/// Buzz's builder attaches only `["e", <target>]` and puts the emoji in the
-/// content, so this does the same. Returns the reaction's own event id, which
-/// is what a later NIP-09 deletion has to reference.
+/// The emoji goes in the content and `["e", <target>]` names the message, as in
+/// Buzz's own builder. The `["h", <group>]` tag is additional: NIP-29 scopes
+/// group events by `h`, and a strict relay will refuse an unscoped write, so
+/// omitting it would make acknowledgements fail everywhere except Buzz. Buzz
+/// itself does not require the tag, and an extra tag is inert there.
+///
+/// Returns the reaction's own event id, which is what a later NIP-09 deletion
+/// has to reference.
 pub async fn send_reaction(
     client: &Client,
+    group_id: &str,
     target: EventId,
     emoji: &str,
 ) -> Result<EventId, Error> {
-    let builder = EventBuilder::new(Kind::Reaction, emoji)
-        .tags([Tag::custom(TagKind::e(), [target.to_hex()])]);
+    let builder = EventBuilder::new(Kind::Reaction, emoji).tags([
+        Tag::custom(TagKind::h(), [group_id.to_string()]),
+        Tag::custom(TagKind::e(), [target.to_hex()]),
+    ]);
     let output = client.send_event_builder(builder).await?;
     require_accepted(output)
 }
@@ -288,10 +296,13 @@ pub async fn send_reaction(
 /// Request deletion of an event we published (NIP-09 `kind:5`).
 ///
 /// Used to retract an acknowledgement reaction once the turn finishes. Nostr
-/// deletion is a *request* — relays honour it at their discretion.
-pub async fn delete_event(client: &Client, target: EventId) -> Result<(), Error> {
-    let builder = EventBuilder::new(Kind::EventDeletion, "")
-        .tags([Tag::custom(TagKind::e(), [target.to_hex()])]);
+/// deletion is a *request* — relays honour it at their discretion. Carries the
+/// `h` tag for the same NIP-29 scoping reason as [`send_reaction`].
+pub async fn delete_event(client: &Client, group_id: &str, target: EventId) -> Result<(), Error> {
+    let builder = EventBuilder::new(Kind::EventDeletion, "").tags([
+        Tag::custom(TagKind::h(), [group_id.to_string()]),
+        Tag::custom(TagKind::e(), [target.to_hex()]),
+    ]);
     let output = client.send_event_builder(builder).await?;
     require_accepted(output)?;
     Ok(())
