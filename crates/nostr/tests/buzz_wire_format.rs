@@ -189,8 +189,9 @@ async fn edit_round_trips_as_kind_40003() {
     ]);
 }
 
-/// Acknowledgement reactions are NIP-25 kind:7 with the emoji as content and
-/// only an `e` tag, matching Buzz's build_reaction.
+/// Acknowledgement reactions are NIP-25 kind:7 with the emoji as content, an
+/// `e` tag naming the message (as in Buzz's build_reaction) and an `h` tag
+/// scoping them to the group, which NIP-29 relays require.
 #[tokio::test]
 async fn reaction_round_trips_as_nip25_kind_7() {
     let (_relay, client, _keys) = connected_client().await;
@@ -226,6 +227,11 @@ async fn reaction_round_trips_as_nip25_kind_7() {
     assert_eq!(tag_values(reaction, TagKind::e())[0], [
         "e".to_string(),
         target.to_hex()
+    ]);
+    // NIP-29 scopes group events by `h`; a strict relay refuses unscoped writes.
+    assert_eq!(tag_values(reaction, TagKind::h())[0], [
+        "h".to_string(),
+        "buzz-general".to_string()
     ]);
 }
 
