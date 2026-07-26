@@ -412,6 +412,53 @@ impl RedbCache {
         Ok(())
     }
 
+    /// Atomically extend the per-path chunk-PK index. Each path's existing PKs
+    /// are read, merged, and written back in one write transaction — redb
+    /// serializes these, so concurrent callers can't drop each other's PKs.
+    pub fn extend_chunk_pks_batch(&self, entries: &[(String, Vec<String>)]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let tx = self
+            .db
+            .begin_write()
+            .context("failed to begin write transaction for chunk index extend")?;
+        {
+            let mut table = tx
+                .open_table(CHUNK_INDEX)
+                .context("failed to open chunk_index table for extend")?;
+            for (path, new_pks) in entries {
+                if new_pks.is_empty() {
+                    continue;
+                }
+                // The txn sees its own prior writes within this loop.
+                let merged: Vec<String> = match table
+                    .get(path.as_str())
+                    .context("failed to read chunk pks for extend")?
+                {
+                    Some(guard) => {
+                        let mut existing: Vec<String> = serde_json::from_slice(guard.value())
+                            .context("failed to deserialize chunk pks for extend")?;
+                        for pk in new_pks {
+                            if !existing.contains(pk) {
+                                existing.push(pk.clone());
+                            }
+                        }
+                        existing
+                    },
+                    None => new_pks.clone(),
+                };
+                let encoded =
+                    serde_json::to_vec(&merged).context("failed to serialize merged chunk pks")?;
+                table
+                    .insert(path.as_str(), encoded.as_slice())
+                    .context("failed to insert merged chunk pks")?;
+            }
+        }
+        tx.commit().context("failed to commit chunk index extend")?;
+        Ok(())
+    }
+
     pub fn count_cached_embeddings(&self) -> Result<usize> {
         let tx = self
             .db
@@ -856,6 +903,108 @@ mod tests {
         for (a, b) in got.iter().zip(embedding.iter()) {
             assert!((a - b).abs() < 1e-3, "fp16 roundtrip precision: {a} vs {b}");
         }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── chunk-PK index atomic extend ──
+
+    #[test]
+    fn test_set_get_chunk_pks_roundtrip() {
+        let path = cache_path();
+        let _ = std::fs::remove_file(&path);
+        let cache = RedbCache::new(&path).unwrap();
+
+        assert!(cache.get_chunk_pks("missing").unwrap().is_empty());
+
+        let pks = vec!["a".to_string(), "b".to_string()];
+        cache.set_chunk_pks("file.md", &pks).unwrap();
+        assert_eq!(cache.get_chunk_pks("file.md").unwrap(), pks);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_extend_chunk_pks_batch_merges_and_dedups() {
+        let path = cache_path();
+        let _ = std::fs::remove_file(&path);
+        let cache = RedbCache::new(&path).unwrap();
+
+        // Seed an existing list for one file.
+        cache.set_chunk_pks("a.md", &["pk1".into()]).unwrap();
+
+        let entries = vec![
+            ("a.md".to_string(), vec![
+                "pk1".into(),
+                "pk2".into(),
+                "pk3".into(),
+            ]),
+            ("b.md".to_string(), vec!["bx".into()]),
+        ];
+        cache.extend_chunk_pks_batch(&entries).unwrap();
+
+        // a.md: pk1 deduped, pk2/pk3 appended.
+        assert_eq!(cache.get_chunk_pks("a.md").unwrap(), vec![
+            "pk1".to_string(),
+            "pk2".to_string(),
+            "pk3".to_string()
+        ]);
+        // b.md: freshly created.
+        assert_eq!(cache.get_chunk_pks("b.md").unwrap(), vec!["bx".to_string()]);
+        // Untouched file stays empty.
+        assert!(cache.get_chunk_pks("c.md").unwrap().is_empty());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_extend_chunk_pks_batch_empty_is_noop() {
+        let path = cache_path();
+        let _ = std::fs::remove_file(&path);
+        let cache = RedbCache::new(&path).unwrap();
+
+        cache.extend_chunk_pks_batch(&[]).unwrap();
+        cache
+            .extend_chunk_pks_batch(&[("x.md".to_string(), vec![])])
+            .unwrap();
+        assert!(cache.get_chunk_pks("x.md").unwrap().is_empty());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Concurrent extends of the same path must never lose a PK.
+    #[test]
+    fn test_extend_chunk_pks_batch_concurrent_no_loss() {
+        let path = cache_path();
+        let _ = std::fs::remove_file(&path);
+        let cache = std::sync::Arc::new(RedbCache::new(&path).unwrap());
+
+        let threads = 8usize;
+        let per_thread = 25usize;
+        let mut handles = Vec::with_capacity(threads);
+        for t in 0..threads {
+            let cache = std::sync::Arc::clone(&cache);
+            handles.push(std::thread::spawn(move || {
+                let mut pks = Vec::with_capacity(per_thread);
+                for i in 0..per_thread {
+                    pks.push(format!("pk-{t}-{i}"));
+                }
+                cache
+                    .extend_chunk_pks_batch(&[("shared.md".to_string(), pks)])
+                    .unwrap();
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let stored = cache.get_chunk_pks("shared.md").unwrap();
+        assert_eq!(
+            stored.len(),
+            threads * per_thread,
+            "concurrent extends must not drop any PKs, got {}",
+            stored.len()
+        );
 
         let _ = std::fs::remove_file(&path);
     }

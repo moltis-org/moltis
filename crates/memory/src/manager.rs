@@ -1,5 +1,5 @@
 /// Memory manager: orchestrates file sync, chunking, embedding, and search.
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use {
     async_trait::async_trait,
@@ -25,6 +25,9 @@ pub struct MemoryManager {
     config: MemoryConfig,
     store: Box<dyn MemoryStore>,
     embedder: Option<Box<dyn EmbeddingProvider>>,
+    /// Serializes sync operations so concurrent syncs of the same path can't
+    /// interleave their delete+upsert and corrupt the chunk-PK index.
+    sync_lock: Arc<tokio::sync::Semaphore>,
 }
 
 /// Status info about the memory system.
@@ -71,6 +74,7 @@ impl MemoryManager {
             config,
             store,
             embedder: Some(embedder),
+            sync_lock: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
 
@@ -80,6 +84,7 @@ impl MemoryManager {
             config,
             store,
             embedder: None,
+            sync_lock: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
 
@@ -118,8 +123,18 @@ impl MemoryManager {
             .map(|file| file.path))
     }
 
+    /// Acquire the single sync permit, held until the returned guard drops.
+    async fn acquire_sync_lock(&self) -> Result<tokio::sync::SemaphorePermit<'_>> {
+        self.sync_lock
+            .acquire()
+            .await
+            .map_err(|e| crate::error::Error::Backend(format!("memory sync semaphore closed: {e}")))
+    }
+
     /// Synchronize: walk configured directories, detect changed files, re-chunk and re-embed.
     pub async fn sync(&self) -> Result<SyncReport> {
+        // Serialize against concurrent sync_path/remove_path.
+        let _sync_permit = self.acquire_sync_lock().await?;
         let mut report = SyncReport::default();
 
         let mut discovered_paths = Vec::new();
@@ -202,6 +217,7 @@ impl MemoryManager {
 
     /// Sync a single file by path. Returns true if it was updated.
     pub async fn sync_path(&self, path: &Path) -> Result<bool> {
+        let _sync_permit = self.acquire_sync_lock().await?;
         let path_str = path.to_string_lossy().to_string();
         let mut report = SyncReport::default();
         self.sync_file(path, &path_str, &mut report).await
@@ -209,6 +225,7 @@ impl MemoryManager {
 
     /// Remove a file path from the memory index after the backing file is gone.
     pub async fn remove_path(&self, path: &Path) -> Result<bool> {
+        let _sync_permit = self.acquire_sync_lock().await?;
         let path_str = path.to_string_lossy().to_string();
         let had_file = self.store.get_file(&path_str).await?.is_some();
         let had_chunks = !self.store.get_chunks_for_file(&path_str).await?.is_empty();
@@ -951,11 +968,11 @@ mod tests {
             ..Default::default()
         };
 
-        let embedder = std::sync::Arc::new(CountingEmbedder::new());
-        let embedder_ref = std::sync::Arc::clone(&embedder);
+        let embedder = Arc::new(CountingEmbedder::new());
+        let embedder_ref = Arc::clone(&embedder);
 
         // Wrap in a forwarding provider that delegates to the Arc'd one.
-        struct ArcEmbedder(std::sync::Arc<CountingEmbedder>);
+        struct ArcEmbedder(Arc<CountingEmbedder>);
 
         #[async_trait]
         impl EmbeddingProvider for ArcEmbedder {

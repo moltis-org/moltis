@@ -71,6 +71,9 @@ pub struct ZvecMemoryStore {
     /// [`ZvecMemoryStore::disk_size_bytes`] measures all files sharing this
     /// stem. `None` for in-memory/test stores.
     collection_path: Option<PathBuf>,
+    /// Shutdown signal for the periodic-optimize task; dropping the store
+    /// closes it and the task exits.
+    shutdown: Option<tokio::sync::watch::Sender<()>>,
 }
 
 impl Drop for ZvecMemoryStore {
@@ -97,6 +100,7 @@ impl ZvecMemoryStore {
             cache: Arc::new(cache),
             dimension,
             collection_path: None,
+            shutdown: None,
         }
     }
 
@@ -124,6 +128,13 @@ impl ZvecMemoryStore {
     /// file sharing this stem.
     pub fn with_collection_disk_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.collection_path = Some(path.into());
+        self
+    }
+
+    /// Attach the shutdown signal for the periodic-optimize task; dropped (and
+    /// thus cancelled) when this store is dropped.
+    pub fn with_shutdown_signal(mut self, shutdown: tokio::sync::watch::Sender<()>) -> Self {
+        self.shutdown = Some(shutdown);
         self
     }
 
@@ -182,9 +193,10 @@ impl MemoryStore for ZvecMemoryStore {
         let collection = Arc::clone(&self.collection);
         blocking(move || crate::chunks::upsert_chunks(&collection, &docs).map_err(map_err)).await?;
 
-        // Maintain the per-path chunk-PK index in redb (exact-key, durable).
+        // Maintain the per-path chunk-PK index atomically: one write txn reads,
+        // merges, and writes each path's PKs, so concurrent upserts can't
+        // overwrite each other and orphan chunks.
         let cache = Arc::clone(&self.cache);
-        // Group PKs by path, merging with any existing PKs for that path.
         let mut by_path: std::collections::BTreeMap<String, Vec<String>> =
             std::collections::BTreeMap::new();
         for chunk in chunks {
@@ -193,20 +205,9 @@ impl MemoryStore for ZvecMemoryStore {
                 .or_default()
                 .push(ChunkDoc::safe_pk(&chunk.id));
         }
-        for (path, mut pks) in by_path {
-            let cache = Arc::clone(&cache);
-            blocking(move || -> MemoryResult<()> {
-                let mut existing = cache.get_chunk_pks(&path).map_err(map_err)?;
-                for pk in &pks {
-                    if !existing.contains(pk) {
-                        existing.push(pk.clone());
-                    }
-                }
-                pks = existing;
-                cache.set_chunk_pks(&path, &pks).map_err(map_err)
-            })
-            .await?;
-        }
+        let entries: Vec<(String, Vec<String>)> = by_path.into_iter().collect();
+        blocking(move || cache.extend_chunk_pks_batch(&entries).map_err(map_err)).await?;
+
         Ok(())
     }
 
@@ -997,6 +998,67 @@ mod tests {
         store.delete_chunks_for_file("gcf.md").await.unwrap();
         let after_delete = store.get_chunks_for_file("gcf.md").await.unwrap();
         assert!(after_delete.is_empty());
+
+        drop(store);
+    }
+
+    /// Regression test: concurrent upserts on the same path must not orphan
+    /// chunk PKs (the old read-then-write index update lost them).
+    #[tokio::test]
+    async fn test_concurrent_upserts_keep_all_chunk_pks() {
+        let (collection, cache, _dir) = make_collection();
+        let store = Arc::new(ZvecMemoryStore::with_cache_arc(collection, cache));
+
+        let emb_bytes: Vec<u8> = vec![1.0f32; 768]
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+        let path = "concurrent.md";
+
+        let groups = 6usize;
+        let per_group = 4usize;
+        let mut handles = Vec::new();
+        for g in 0..groups {
+            let store = Arc::clone(&store);
+            let emb_bytes = emb_bytes.clone();
+            handles.push(tokio::spawn(async move {
+                let chunks: Vec<ChunkRow> = (0..per_group)
+                    .map(|i| ChunkRow {
+                        id: format!("cc-{g}-{i}"),
+                        path: "concurrent.md".into(),
+                        source: "test".into(),
+                        start_line: ((g * per_group + i) as i64) * 10,
+                        end_line: ((g * per_group + i) as i64) * 10 + 9,
+                        hash: "h".into(),
+                        model: "m".into(),
+                        text: format!("chunk {g}-{i}"),
+                        embedding: Some(emb_bytes.clone()),
+                        updated_at: "2025-01-01T00:00:00Z".into(),
+                    })
+                    .collect();
+                store.upsert_chunks(&chunks).await.unwrap();
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        let fetched = store.get_chunks_for_file(path).await.unwrap();
+        assert_eq!(
+            fetched.len(),
+            groups * per_group,
+            "concurrent upserts must not orphan chunks; got {} of {}",
+            fetched.len(),
+            groups * per_group
+        );
+
+        // Cleanup must also reach every chunk now that the index is complete.
+        store.delete_chunks_for_file(path).await.unwrap();
+        let after_delete = store.get_chunks_for_file(path).await.unwrap();
+        assert!(
+            after_delete.is_empty(),
+            "delete after concurrent upserts must clear every chunk"
+        );
 
         drop(store);
     }

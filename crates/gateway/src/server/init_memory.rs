@@ -326,9 +326,13 @@ async fn try_init_zvec(
         cache_max_entries: 200_000,
     };
     let cache = moltis_memory_zvec::RedbCache::with_config(&cache_path, cache_config)?;
+
+    // Dropping the store drops the sender, cancelling the optimize task on shutdown.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
     let store = moltis_memory_zvec::ZvecMemoryStore::with_cache(collection, cache)
         .with_cache_dimension(dim)
-        .with_collection_disk_path(&collection_path);
+        .with_collection_disk_path(&collection_path)
+        .with_shutdown_signal(shutdown_tx);
 
     let zvec_collection = store.collection_arc();
 
@@ -343,20 +347,32 @@ async fn try_init_zvec(
         Err(join_err) => tracing::warn!("zvec: initial optimize task panicked: {join_err}"),
     }
 
+    // Periodic HNSW optimization; exits when `shutdown_rx` closes (store dropped).
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
-        interval.tick().await;
+        interval.tick().await; // skip the immediate first tick
+        let mut shutdown_rx = shutdown_rx;
         loop {
-            interval.tick().await;
-            // Same blocking-C-call concern as the initial optimize: run on the
-            // blocking pool so the periodic task never stalls the runtime thread.
-            let collection_for_periodic = Arc::clone(&zvec_collection);
-            match tokio::task::spawn_blocking(move || collection_for_periodic.optimize()).await {
-                Ok(Ok(())) => {},
-                Ok(Err(e)) => tracing::warn!("zvec: periodic optimize failed: {e}"),
-                Err(join_err) => {
-                    tracing::warn!("zvec: periodic optimize task panicked: {join_err}")
-                },
+            tokio::select! {
+                _ = interval.tick() => {
+                    // Same blocking-C-call concern as the initial optimize: run
+                    // on the blocking pool so the periodic task never stalls the
+                    // runtime thread.
+                    let collection_for_periodic = Arc::clone(&zvec_collection);
+                    match tokio::task::spawn_blocking(move || collection_for_periodic.optimize()).await {
+                        Ok(Ok(())) => {},
+                        Ok(Err(e)) => tracing::warn!("zvec: periodic optimize failed: {e}"),
+                        Err(join_err) => {
+                            tracing::warn!("zvec: periodic optimize task panicked: {join_err}")
+                        },
+                    }
+                }
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() {
+                        tracing::debug!("zvec: periodic optimize task stopped (store dropped)");
+                        break;
+                    }
+                }
             }
         }
     });
