@@ -504,6 +504,7 @@ pub fn batch_to_request(events: &[Event], ctx: &ExportContext) -> wire::ExportTr
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use serde_json::json;
 

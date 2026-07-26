@@ -304,6 +304,7 @@ pub fn build(config: &InstrumentationConfig, release: &str) -> BuildOutcome {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use secrecy::Secret;
 

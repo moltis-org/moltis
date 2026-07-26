@@ -348,6 +348,7 @@ impl Drop for StepGuard {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use std::sync::Mutex as StdMutex;
 

@@ -126,7 +126,7 @@ Verify releases with `gh attestation verify <artifact> -R moltis-org/moltis` or 
 - **Safer Agent Editing** — Automatic checkpoints before built-in skill and memory mutations, restore tooling, session branching
 - **Extensibility** — MCP servers (stdio + HTTP/SSE), skill system, 15 lifecycle hook events with circuit breaker, destructive command guard
 - **Security** — Encryption-at-rest vault (XChaCha20-Poly1305 + Argon2id), password + passkey + API key auth, sandbox isolation, SSRF/CSWSH protection
-- **Operations** — Cron scheduling, OpenTelemetry tracing, Prometheus metrics, cloud deploy (Fly.io, DigitalOcean), Tailscale integration, managed SSH deploy keys, host-pinned remote targets, live tool inventory in Settings, and CLI/web remote-exec doctor flows
+- **Operations** — Cron scheduling, agent instrumentation (Langfuse for LLM traces, OTLP for Grafana/Datadog), Prometheus metrics, cloud deploy (Fly.io, DigitalOcean), Tailscale integration, managed SSH deploy keys, host-pinned remote targets, live tool inventory in Settings, and CLI/web remote-exec doctor flows
 
 ## How It Works
 

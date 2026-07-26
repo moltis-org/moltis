@@ -243,7 +243,7 @@ impl TokenUsage {
     /// Key names match what Langfuse's ingestion recognises for cache-aware
     /// cost attribution.
     #[must_use]
-    pub fn to_usage_details(&self) -> BTreeMap<String, u32> {
+    pub fn to_usage_details(self) -> BTreeMap<String, u32> {
         let mut map = BTreeMap::new();
         map.insert("input".to_string(), self.input);
         map.insert("output".to_string(), self.output);
@@ -505,6 +505,7 @@ impl Event {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 

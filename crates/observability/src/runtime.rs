@@ -358,6 +358,7 @@ fn backoff_delay(config: &BatchConfig, attempt: u32) -> Duration {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use std::sync::Mutex;
 

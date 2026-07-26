@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! End-to-end tests over the real export path.
 //!
 //! The unit tests check the mapping in isolation; these drive a recorder
