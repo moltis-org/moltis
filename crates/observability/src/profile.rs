@@ -73,6 +73,14 @@ pub struct ExportProfile {
     /// Langfuse prices these; an APM generally has no model price table, so
     /// the same numbers are better served from the Prometheus endpoint.
     pub emit_usage: bool,
+    /// Whether to export the in-progress span emitted when a step opens.
+    ///
+    /// Langfuse upserts observations by id, so the eager start makes a
+    /// long-running turn visible while it is still executing and the closing
+    /// update fills in model, usage and output. A plain OTLP collector treats
+    /// spans as immutable: it would render the start and the completion as two
+    /// separate spans with the same id, duplicating every step in the trace.
+    pub emit_partial_spans: bool,
     /// Ceiling on any single exported attribute value, in bytes.
     pub max_attribute_bytes: usize,
 }
@@ -88,6 +96,7 @@ impl ExportProfile {
             emit_session_id: true,
             emit_tags: true,
             emit_usage: true,
+            emit_partial_spans: true,
             max_attribute_bytes: 32_768,
         }
     }
@@ -104,6 +113,7 @@ impl ExportProfile {
             emit_session_id: true,
             emit_tags: true,
             emit_usage: true,
+            emit_partial_spans: false,
             max_attribute_bytes: 4_096,
         }
     }
@@ -120,6 +130,7 @@ impl ExportProfile {
             emit_session_id: true,
             emit_tags: false,
             emit_usage: true,
+            emit_partial_spans: false,
             max_attribute_bytes: 4_096,
         }
     }
@@ -134,6 +145,12 @@ impl ExportProfile {
     #[must_use]
     pub const fn emits_bodies(&self) -> bool {
         self.content.allows_bodies()
+    }
+
+    /// Whether in-progress spans should be exported.
+    #[must_use]
+    pub const fn emits_partial_spans(&self) -> bool {
+        self.emit_partial_spans
     }
 
     /// Whether content-derived structural metadata (lengths, counts) may be
@@ -201,6 +218,16 @@ mod tests {
         // configured backend that forgot to set a profile.
         assert_eq!(ExportProfile::default(), ExportProfile::otel_generic());
         assert!(!ExportProfile::default().emits_bodies());
+    }
+
+    #[test]
+    fn only_langfuse_receives_in_progress_spans() {
+        // Langfuse upserts by observation id, so a start span becomes the
+        // live view. A plain OTLP collector treats spans as immutable and
+        // would render start and completion as two duplicate spans.
+        assert!(ExportProfile::langfuse().emits_partial_spans());
+        assert!(!ExportProfile::otel_generic().emits_partial_spans());
+        assert!(!ExportProfile::datadog().emits_partial_spans());
     }
 
     #[test]

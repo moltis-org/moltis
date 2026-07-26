@@ -476,9 +476,13 @@ pub fn batch_to_request(events: &[Event], ctx: &ExportContext) -> wire::ExportTr
         .iter()
         .filter_map(|event| match event {
             Event::Trace(trace) => Some(trace_to_span(trace, ctx)),
-            Event::ObservationStart(obs) | Event::ObservationEnd(obs) => {
-                Some(observation_to_span(obs, ctx))
-            },
+            // Backends that treat spans as immutable get only the completion,
+            // or the same step would appear twice in the trace.
+            Event::ObservationStart(obs) => ctx
+                .profile
+                .emits_partial_spans()
+                .then(|| observation_to_span(obs, ctx)),
+            Event::ObservationEnd(obs) => Some(observation_to_span(obs, ctx)),
             Event::Score(_) => None,
         })
         .collect();
@@ -953,6 +957,31 @@ mod tests {
             attr_value(&span, attr::GEN_AI_REQUEST_MAX_TOKENS),
             Some(json!({ "intValue": "4096" }))
         );
+    }
+
+    #[test]
+    fn in_progress_spans_are_dropped_for_immutable_span_backends() {
+        let mut obs = generation();
+        obs.end_time = None;
+        let events = vec![Event::ObservationStart(Box::new(obs))];
+
+        // Langfuse upserts by id, so the live view is worth the extra span.
+        let lf = batch_to_request(&events, &langfuse_ctx());
+        assert_eq!(lf.resource_spans[0].scope_spans[0].spans.len(), 1);
+
+        // Tempo and Datadog would render this and the later completion as two
+        // separate spans with the same id.
+        let otel = batch_to_request(&events, &otel_ctx());
+        assert!(otel.resource_spans[0].scope_spans[0].spans.is_empty());
+    }
+
+    #[test]
+    fn completed_spans_reach_every_backend() {
+        let events = vec![Event::ObservationEnd(Box::new(generation()))];
+        for context in [langfuse_ctx(), otel_ctx()] {
+            let request = batch_to_request(&events, &context);
+            assert_eq!(request.resource_spans[0].scope_spans[0].spans.len(), 1);
+        }
     }
 
     #[test]
