@@ -18,6 +18,8 @@ pub const OTEL_TRACES_PATH: &str = "/api/public/otel/v1/traces";
 pub const INGESTION_PATH: &str = "/api/public/ingestion";
 /// Unauthenticated liveness probe.
 pub const HEALTH_PATH: &str = "/api/public/health";
+/// Individual score resource, `{id}` appended, used for retraction.
+pub const SCORES_PATH: &str = "/api/public/scores";
 /// Managed-prompt retrieval, `{name}` appended.
 pub const PROMPTS_PATH: &str = "/api/public/v2/prompts";
 /// Dataset collection.

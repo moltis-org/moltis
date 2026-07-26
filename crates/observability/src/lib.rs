@@ -16,6 +16,7 @@
 
 pub mod builder;
 pub mod exporters;
+pub mod feedback;
 pub mod model;
 pub mod profile;
 pub mod recorder;
@@ -25,6 +26,9 @@ pub mod sink;
 
 pub use {
     builder::{BuildOutcome, BuiltInstrumentation, SkippedBackend, build},
+    feedback::{
+        FeedbackSignal, FeedbackVocabulary, USER_FEEDBACK_SCORE, feedback_score, feedback_score_id,
+    },
     model::{
         Event, Level, ObservationId, ObservationKind, ObservationRecord, ScoreRecord, ScoreValue,
         TokenUsage, TraceId, TraceRecord, TraceScope,

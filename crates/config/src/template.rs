@@ -612,6 +612,15 @@ port = {port}                           # Port number (auto-generated for this i
 # service = "moltis"
 # content = "metadata_only"
 
+# Reaction feedback. A thumbs up/down on a reply in Telegram, Discord or Slack
+# becomes a "user-feedback" score on the trace that produced it. Lists accept
+# raw emoji or shortcodes; empty means the built-in vocabulary.
+# [instrumentation.feedback]
+# enabled = true
+# positive = ["\U0001F44D", "+1", "thumbsup"]
+# negative = ["\U0001F44E", "-1", "thumbsdown"]
+# link_retention_days = 30          # How long a reply stays attributable
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CRON
 # ══════════════════════════════════════════════════════════════════════════════

@@ -78,6 +78,14 @@ impl LangfuseClient {
             .timeout(self.config.timeout)
     }
 
+    /// Authenticated DELETE against `path`.
+    pub(super) fn delete(&self, path: &str) -> reqwest::RequestBuilder {
+        self.http
+            .delete(self.config.url(path))
+            .headers(self.header_map())
+            .timeout(self.config.timeout)
+    }
+
     /// Authenticated header map.
     ///
     /// Header values are marked sensitive so they stay out of any middleware

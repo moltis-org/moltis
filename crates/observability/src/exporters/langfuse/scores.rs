@@ -17,7 +17,10 @@ use {
 };
 
 use {
-    super::{client::LangfuseClient, config::INGESTION_PATH},
+    super::{
+        client::LangfuseClient,
+        config::{INGESTION_PATH, SCORES_PATH},
+    },
     crate::{
         model::{Event, ScoreRecord, ScoreValue},
         runtime::{BatchConfig, BatchSink, Transport, TransportError},
@@ -128,6 +131,30 @@ impl LangfuseClient {
 
         debug!(count = scores.len(), "submitted scores to Langfuse");
         Ok(())
+    }
+
+    /// Delete a score by id.
+    ///
+    /// Backs reaction removal: a user who takes their thumb back has retracted
+    /// the opinion, and leaving the score in place would keep counting a vote
+    /// they withdrew. A 404 is success — the score is already gone, which is
+    /// the state the caller wanted.
+    pub async fn delete_score(&self, score_id: &str) -> anyhow::Result<()> {
+        let response = self
+            .delete(&format!("{SCORES_PATH}/{score_id}"))
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+
+        let body = response.text().await.unwrap_or_default();
+        Err(anyhow::anyhow!(
+            "Langfuse rejected the score deletion: HTTP {status}: {}",
+            body.chars().take(512).collect::<String>()
+        ))
     }
 }
 
@@ -362,6 +389,54 @@ mod tests {
         sink.flush(Duration::from_secs(5))
             .await
             .expect("flush should succeed");
+    }
+
+    #[tokio::test]
+    async fn retracting_a_score_deletes_it_by_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("{SCORES_PATH}/score-1")))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        LangfuseClient::new(config(server.uri()))
+            .delete_score("score-1")
+            .await
+            .expect("deletion should succeed");
+    }
+
+    #[tokio::test]
+    async fn deleting_an_already_absent_score_succeeds() {
+        let server = MockServer::start().await;
+        // Reaction-removal events can arrive twice, or after the score was
+        // cleaned up. Already-gone is the state the caller asked for.
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        LangfuseClient::new(config(server.uri()))
+            .delete_score("missing")
+            .await
+            .expect("404 is success for a deletion");
+    }
+
+    #[tokio::test]
+    async fn a_failed_deletion_is_surfaced() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let error = LangfuseClient::new(config(server.uri()))
+            .delete_score("score-1")
+            .await
+            .expect_err("500 should fail");
+
+        assert!(error.to_string().contains("500"), "{error}");
     }
 
     #[tokio::test]

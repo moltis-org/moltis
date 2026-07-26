@@ -63,6 +63,50 @@ impl ContentCaptureMode {
     pub const ALL: &'static [&'static str] = &["full", "metadata_only", "none"];
 }
 
+fn default_link_retention_days() -> u32 {
+    30
+}
+
+/// End-user feedback collected from chat reactions.
+///
+/// A thumb on a reply is the cheapest quality signal available, but attributing
+/// one to the turn that produced it needs the reply's trace to still be on
+/// record when the reaction arrives — hence the retention window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FeedbackSettings {
+    /// Collect reaction feedback. On by default once instrumentation is
+    /// enabled: a scoring pipeline with no scores in it is not useful.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Reaction tokens counted as approval. Empty uses the built-in list.
+    ///
+    /// Accepts raw emoji or shortcodes; skin tone and presentation selectors
+    /// are ignored when matching.
+    #[serde(default)]
+    pub positive: Vec<String>,
+    /// Reaction tokens counted as disapproval. Empty uses the built-in list.
+    #[serde(default)]
+    pub negative: Vec<String>,
+    /// How long a reply stays attributable to its trace, in days.
+    ///
+    /// Reactions often arrive long after the reply. Kept bounded because the
+    /// link table would otherwise grow without limit.
+    #[serde(default = "default_link_retention_days")]
+    pub link_retention_days: u32,
+}
+
+impl Default for FeedbackSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            positive: Vec::new(),
+            negative: Vec::new(),
+            link_retention_days: default_link_retention_days(),
+        }
+    }
+}
+
 /// Top-level instrumentation configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -104,6 +148,9 @@ pub struct InstrumentationConfig {
     /// Datadog backend, via Datadog's OTLP intake.
     #[serde(default)]
     pub datadog: DatadogSettings,
+    /// End-user reaction feedback.
+    #[serde(default)]
+    pub feedback: FeedbackSettings,
 }
 
 fn default_environment() -> String {
@@ -124,6 +171,7 @@ impl Default for InstrumentationConfig {
             langfuse: LangfuseSettings::default(),
             otlp: OtlpSettings::default(),
             datadog: DatadogSettings::default(),
+            feedback: FeedbackSettings::default(),
         }
     }
 }

@@ -555,6 +555,15 @@ pub(super) fn build_schema_map() -> KnownKeys {
                         ("timeout_secs", Leaf),
                     ])),
                 ),
+                (
+                    "feedback",
+                    Struct(HashMap::from([
+                        ("enabled", Leaf),
+                        ("positive", Leaf),
+                        ("negative", Leaf),
+                        ("link_retention_days", Leaf),
+                    ])),
+                ),
             ])),
         ),
         (

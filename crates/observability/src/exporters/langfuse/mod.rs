@@ -18,7 +18,7 @@ pub use {
     client::LangfuseClient,
     config::{
         DAILY_METRICS_PATH, DATASET_ITEMS_PATH, DATASET_RUN_ITEMS_PATH, DATASETS_PATH, HEALTH_PATH,
-        INGESTION_PATH, LangfuseConfig, MEDIA_PATH, OTEL_TRACES_PATH, PROMPTS_PATH,
+        INGESTION_PATH, LangfuseConfig, MEDIA_PATH, OTEL_TRACES_PATH, PROMPTS_PATH, SCORES_PATH,
     },
     scores::{ScoreSink, ScoreTransport},
 };
