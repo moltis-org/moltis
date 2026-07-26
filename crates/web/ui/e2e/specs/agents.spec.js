@@ -599,13 +599,13 @@ test.describe("Agents settings page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("ACP-only sessions retry auto-bind after a failed attempt", async ({ page }) => {
+	test("ACP-only sessions continue retrying failed auto-bind attempts", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await mockExternalAgentsRpc(
 			page,
 			[{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null }],
 			[],
-			1,
+			3,
 		);
 		await page.goto("/chats");
 		await expectPageContentMounted(page);
@@ -624,7 +624,7 @@ test.describe("Agents settings page", () => {
 					),
 				{ timeout: 10_000 },
 			)
-			.toBe(2);
+			.toBe(4);
 		await expect(page.locator("#modelComboLabel")).toHaveText("ACP: Copilot");
 		expect(pageErrors).toEqual([]);
 	});

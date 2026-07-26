@@ -15,6 +15,10 @@ let modelsLoaded = false;
 let switchingBackend = false;
 const acpAutoBindAttempted = new Set<string>();
 const acpAutoBindInFlight = new Set<string>();
+const acpAutoBindFailures = new Map<string, number>();
+const acpAutoBindRetryTimers = new Map<string, number>();
+const ACP_AUTO_BIND_RETRY_BASE_MS = 1_000;
+const ACP_AUTO_BIND_RETRY_MAX_MS = 30_000;
 
 function installedAcpAgents(): ExternalAgentInfo[] {
 	return externalAgents.filter((agent) => agent.installed && agent.isAcp);
@@ -78,6 +82,25 @@ function setExternalAgentKind(sessionKey: string, kind: string | null): void {
 	session.dataVersion.value++;
 }
 
+function clearAcpAutoBindRetry(sessionKey: string): void {
+	const timer = acpAutoBindRetryTimers.get(sessionKey);
+	if (timer !== undefined) window.clearTimeout(timer);
+	acpAutoBindRetryTimers.delete(sessionKey);
+	acpAutoBindFailures.delete(sessionKey);
+}
+
+function scheduleAcpAutoBindRetry(sessionKey: string): void {
+	if (acpAutoBindRetryTimers.has(sessionKey)) return;
+	const failures = (acpAutoBindFailures.get(sessionKey) || 0) + 1;
+	acpAutoBindFailures.set(sessionKey, failures);
+	const delay = Math.min(ACP_AUTO_BIND_RETRY_BASE_MS * 2 ** Math.min(failures - 1, 5), ACP_AUTO_BIND_RETRY_MAX_MS);
+	const timer = window.setTimeout(() => {
+		acpAutoBindRetryTimers.delete(sessionKey);
+		if (sessionStore.activeSessionKey.value === sessionKey) updateModelComboAvailability();
+	}, delay);
+	acpAutoBindRetryTimers.set(sessionKey, timer);
+}
+
 function maybeAutoBindAcp(): void {
 	const session = sessionStore.activeSession.value;
 	const sessionKey = sessionStore.activeSessionKey.value;
@@ -96,14 +119,20 @@ function maybeAutoBindAcp(): void {
 	const agent = installedAcpAgents()[0];
 	if (!agent) return;
 	acpAutoBindInFlight.add(sessionKey);
-	void bindAcpAgent(agent)
+	void bindAcpAgent(agent, false)
 		.then((bound) => {
-			if (bound) acpAutoBindAttempted.add(sessionKey);
+			if (bound) {
+				acpAutoBindAttempted.add(sessionKey);
+				clearAcpAutoBindRetry(sessionKey);
+			}
 		})
-		.finally(() => acpAutoBindInFlight.delete(sessionKey));
+		.finally(() => {
+			acpAutoBindInFlight.delete(sessionKey);
+			if (!acpAutoBindAttempted.has(sessionKey)) scheduleAcpAutoBindRetry(sessionKey);
+		});
 }
 
-async function bindAcpAgent(agent: ExternalAgentInfo): Promise<boolean> {
+async function bindAcpAgent(agent: ExternalAgentInfo, notifyFailure = true): Promise<boolean> {
 	if (switchingBackend) return false;
 	const sessionKey = sessionStore.activeSessionKey.value;
 	if (!sessionKey || sessionKey.startsWith("cron:")) return false;
@@ -116,14 +145,14 @@ async function bindAcpAgent(agent: ExternalAgentInfo): Promise<boolean> {
 	try {
 		const res = await sendRpc("external_agents.bind", { sessionKey, kind: agent.kind });
 		if (!res?.ok) {
-			showToast(res?.error?.message || "Failed to select ACP agent", "error");
+			if (notifyFailure) showToast(res?.error?.message || "Failed to select ACP agent", "error");
 			return false;
 		}
 		setExternalAgentKind(sessionKey, agent.kind);
 		closeModelDropdown();
 		return true;
 	} catch {
-		showToast("Failed to select ACP agent", "error");
+		if (notifyFailure) showToast("Failed to select ACP agent", "error");
 		return false;
 	} finally {
 		switchingBackend = false;
