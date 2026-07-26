@@ -9,6 +9,7 @@ pub mod commands;
 pub mod config_view;
 pub mod contract;
 pub mod error;
+pub mod feedback;
 pub mod gating;
 pub mod media_download;
 pub mod message_log;
@@ -26,6 +27,7 @@ pub use {
     },
     config_view::ChannelConfigView,
     error::{Error, Result},
+    feedback::{FeedbackOutcome, FeedbackService},
     media_download::{InboundMediaDownloader, InboundMediaSource},
     plugin::{
         ButtonRow, ButtonStyle, ChannelAttachment, ChannelCapabilities, ChannelDescriptor,

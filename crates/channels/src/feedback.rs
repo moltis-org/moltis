@@ -5,19 +5,20 @@
 //! correlation key. The send side writes (channel, account, chat, message) →
 //! trace; the reaction side reads it back.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use {
-    moltis_channels::{
-        ChannelType,
-        trace_link::{TraceLink, TraceLinkStore},
-    },
     moltis_config::FeedbackSettings,
     moltis_observability::{
         FeedbackSignal, FeedbackVocabulary, TraceId, exporters::langfuse::LangfuseClient,
         feedback_score, feedback_score_id,
     },
     tracing::{debug, warn},
+};
+
+use crate::{
+    ChannelType,
+    trace_link::{TraceLink, TraceLinkStore},
 };
 
 /// What happened to an inbound reaction.
@@ -35,34 +36,61 @@ pub enum FeedbackOutcome {
     Disabled,
 }
 
-/// Records reply/trace links and converts reactions into scores.
-pub struct FeedbackService {
+/// The parts of the service that only exist once startup has a database.
+struct Active {
     links: Arc<dyn TraceLinkStore>,
     vocabulary: FeedbackVocabulary,
     enabled: bool,
     environment: Option<String>,
 }
 
+/// Records reply/trace links and converts reactions into scores.
+///
+/// Constructed empty and filled in by [`FeedbackService::apply`] once startup
+/// has a database pool and the resolved configuration, mirroring how
+/// instrumentation itself is installed. Every operation is inert until then,
+/// so a reaction arriving mid-startup is ignored rather than panicking.
+#[derive(Default)]
+pub struct FeedbackService {
+    active: RwLock<Option<Active>>,
+}
+
 impl FeedbackService {
-    /// Build a service from the instrumentation settings.
-    #[must_use]
-    pub fn new(
+    /// Install the link store and settings.
+    ///
+    /// Replaces any previous setup so the settings UI can reconfigure feedback
+    /// without a restart.
+    pub fn apply(
+        &self,
         links: Arc<dyn TraceLinkStore>,
         settings: &FeedbackSettings,
         environment: Option<String>,
-    ) -> Self {
-        Self {
+    ) {
+        let next = Some(Active {
             links,
             vocabulary: FeedbackVocabulary::from_config(&settings.positive, &settings.negative),
             enabled: settings.enabled,
             environment,
+        });
+        match self.active.write() {
+            Ok(mut guard) => *guard = next,
+            Err(poisoned) => *poisoned.into_inner() = next,
         }
     }
 
     /// Whether feedback collection is on.
     #[must_use]
-    pub const fn enabled(&self) -> bool {
-        self.enabled
+    pub fn enabled(&self) -> bool {
+        self.read(|active| active.enabled).unwrap_or(false)
+    }
+
+    /// Run `f` against the installed configuration, if there is one.
+    fn read<T>(&self, f: impl FnOnce(&Active) -> T) -> Option<T> {
+        let guard = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.as_ref().map(f)
     }
 
     /// Record that `message_ids` were produced by `trace_id`.
@@ -78,7 +106,12 @@ impl FeedbackService {
         trace_id: &TraceId,
         session_key: Option<&str>,
     ) {
-        if !self.enabled || message_ids.is_empty() {
+        let Some((links, enabled)) =
+            self.read(|active| (Arc::clone(&active.links), active.enabled))
+        else {
+            return;
+        };
+        if !enabled || message_ids.is_empty() {
             return;
         }
         let created_at = now_unix();
@@ -92,7 +125,7 @@ impl FeedbackService {
                 session_key: session_key.map(str::to_string),
                 created_at,
             };
-            if let Err(error) = self.links.link(link).await {
+            if let Err(error) = links.link(link).await {
                 warn!(%error, channel_type, "failed to record trace link for reply");
             }
         }
@@ -114,22 +147,29 @@ impl FeedbackService {
         added: bool,
         langfuse: Option<&Arc<LangfuseClient>>,
     ) -> FeedbackOutcome {
-        if !self.enabled {
-            return FeedbackOutcome::Disabled;
-        }
-
         // Classify before the database lookup: most reactions in a busy chat
         // are not feedback, and they should not cost a query each.
-        let Some(signal) = self.vocabulary.classify(emoji) else {
+        let Some((links, signal, environment)) = self.read(|active| {
+            (
+                Arc::clone(&active.links),
+                active
+                    .enabled
+                    .then(|| active.vocabulary.classify(emoji))
+                    .flatten(),
+                active.environment.clone(),
+            )
+        }) else {
+            return FeedbackOutcome::Disabled;
+        };
+        if !self.enabled() {
+            return FeedbackOutcome::Disabled;
+        }
+        let Some(signal) = signal else {
             return FeedbackOutcome::NotFeedback;
         };
 
         let channel = channel_type.as_str();
-        let link = match self
-            .links
-            .lookup(channel, account_id, chat_id, message_id)
-            .await
-        {
+        let link = match links.lookup(channel, account_id, chat_id, message_id).await {
             Ok(Some(link)) => link,
             Ok(None) => {
                 debug!(
@@ -154,7 +194,7 @@ impl FeedbackService {
                 signal,
                 Some(&scoped_user),
                 Some(format!("{channel} reaction {emoji}")),
-                self.environment.clone(),
+                environment,
             );
             moltis_observability::record(moltis_observability::Event::Score(Box::new(score)));
             debug!(channel, ?signal, "recorded reaction feedback");
@@ -175,7 +215,10 @@ impl FeedbackService {
     /// Drop links older than `retention_days`.
     pub async fn prune(&self, retention_days: u32) -> u64 {
         let cutoff = now_unix() - i64::from(retention_days) * 86_400;
-        match self.links.prune(cutoff).await {
+        let Some(links) = self.read(|active| Arc::clone(&active.links)) else {
+            return 0;
+        };
+        match links.prune(cutoff).await {
             Ok(removed) => removed,
             Err(error) => {
                 warn!(%error, "failed to prune trace links");
@@ -192,7 +235,7 @@ fn now_unix() -> i64 {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use {moltis_channels::Result as ChannelResult, std::sync::Mutex, tokio::sync::OnceCell};
+    use {crate::Result as ChannelResult, std::sync::Mutex, tokio::sync::OnceCell};
 
     use super::*;
 
@@ -248,7 +291,8 @@ mod tests {
             enabled,
             ..FeedbackSettings::default()
         };
-        let service = FeedbackService::new(
+        let service = FeedbackService::default();
+        service.apply(
             Arc::clone(&links) as Arc<dyn TraceLinkStore>,
             &settings,
             Some("production".into()),
@@ -471,6 +515,72 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_uninitialized_service_is_inert() {
+        // A reaction arriving before startup finishes must be ignored rather
+        // than panicking or scoring against nothing.
+        let service = FeedbackService::default();
+
+        assert!(!service.enabled());
+        assert_eq!(
+            service
+                .on_reaction(
+                    ChannelType::Telegram,
+                    "bot-1",
+                    "chat-1",
+                    "42",
+                    "\u{1f44d}",
+                    "99",
+                    true,
+                    None,
+                )
+                .await,
+            FeedbackOutcome::Disabled
+        );
+        service
+            .record_reply(
+                "telegram",
+                "bot-1",
+                "chat-1",
+                &["1".into()],
+                &TraceId("trace-1".into()),
+                None,
+            )
+            .await;
+        assert_eq!(service.prune(30).await, 0);
+    }
+
+    #[tokio::test]
+    async fn reapplying_settings_takes_effect_without_a_restart() {
+        let (service, links) = service(true);
+        link_reply(&links, "42", "trace-1").await;
+
+        service.apply(
+            Arc::clone(&links) as Arc<dyn TraceLinkStore>,
+            &FeedbackSettings {
+                enabled: false,
+                ..FeedbackSettings::default()
+            },
+            None,
+        );
+
+        assert_eq!(
+            service
+                .on_reaction(
+                    ChannelType::Telegram,
+                    "bot-1",
+                    "chat-1",
+                    "42",
+                    "\u{1f44d}",
+                    "99",
+                    true,
+                    None,
+                )
+                .await,
+            FeedbackOutcome::Disabled
         );
     }
 

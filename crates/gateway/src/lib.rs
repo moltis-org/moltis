@@ -26,7 +26,6 @@ pub mod chat;
 pub mod chat_error;
 pub mod cron;
 pub mod external_agents;
-pub mod feedback;
 #[cfg(feature = "local-llm")]
 pub mod local_llm_setup;
 pub mod logs;

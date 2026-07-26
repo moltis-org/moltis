@@ -7300,16 +7300,19 @@ dependencies = [
 name = "moltis-channels"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bytes",
  "http 1.4.2",
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
+ "moltis-observability",
  "rand 0.10.1",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tracing",
  "url",
@@ -7332,6 +7335,7 @@ dependencies = [
  "moltis-config",
  "moltis-memory",
  "moltis-metrics",
+ "moltis-observability",
  "moltis-plugins",
  "moltis-projects",
  "moltis-providers",

@@ -455,6 +455,38 @@ pub(crate) async fn deliver_channel_error(
     }
 }
 
+/// Link the messages a reply produced to the trace that generated it.
+///
+/// Best-effort by design: a missing link costs feedback attribution for one
+/// reply, and the user already has the message.
+async fn record_reply_trace(
+    state: &Arc<dyn ChatRuntime>,
+    target: &moltis_channels::ChannelReplyTarget,
+    to: &str,
+    message_ids: &[String],
+    session_key: &str,
+) {
+    if message_ids.is_empty() {
+        return;
+    }
+    let Some(feedback) = state.feedback() else {
+        return;
+    };
+    let Some(trace_id) = moltis_observability::recent_trace(session_key) else {
+        return;
+    };
+    feedback
+        .record_reply(
+            target.channel_type.as_str(),
+            &target.account_id,
+            to,
+            message_ids,
+            &trace_id,
+            Some(session_key),
+        )
+        .await;
+}
+
 async fn deliver_channel_replies_to_targets(
     outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
     targets: Vec<moltis_channels::ChannelReplyTarget>,
@@ -612,9 +644,27 @@ async fn deliver_channel_replies_to_targets(
                     },
                     None => {
                         let result = if logbook_html.is_empty() {
-                            outbound
-                                .send_text(&target.account_id, &to, &text, reply_to)
+                            // Ask for the delivered message ids so a later
+                            // reaction can be attributed to this turn. Channels
+                            // that cannot report them return an empty list and
+                            // simply get no feedback attribution.
+                            match outbound
+                                .send_text_reporting_ids(&target.account_id, &to, &text, reply_to)
                                 .await
+                            {
+                                Ok(message_ids) => {
+                                    record_reply_trace(
+                                        &state,
+                                        &target,
+                                        &to,
+                                        &message_ids,
+                                        &session_key,
+                                    )
+                                    .await;
+                                    Ok(())
+                                },
+                                Err(e) => Err(e),
+                            }
                         } else {
                             outbound
                                 .send_text_with_suffix(

@@ -418,6 +418,8 @@ pub struct GatewayState {
     /// Live agent instrumentation (Langfuse / OTLP / Datadog).
     /// `Arc` because the RPC handlers and the shutdown path both reach it.
     pub instrumentation: Arc<crate::server::instrumentation::InstrumentationState>,
+    /// Reaction feedback: reply/trace correlation and score submission.
+    pub feedback: Arc<moltis_channels::FeedbackService>,
     /// Whether the server is bound to a loopback address (localhost/127.0.0.1/::1).
     pub localhost_only: bool,
     /// Whether the server is known to be behind a reverse proxy.
@@ -574,6 +576,8 @@ impl GatewayState {
             // Constructed empty; `apply` runs later from `prepare_core`, which
             // is inside a Tokio runtime (each backend spawns an export task).
             instrumentation: Arc::default(),
+            // Filled in by `prepare_core`, which has the database pool.
+            feedback: Arc::default(),
             localhost_only,
             behind_proxy,
             tls_active,

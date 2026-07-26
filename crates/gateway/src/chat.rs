@@ -39,6 +39,10 @@ impl ChatRuntime for GatewayChatRuntime {
         .await;
     }
 
+    fn feedback(&self) -> Option<Arc<moltis_channels::FeedbackService>> {
+        Some(Arc::clone(&self.state.feedback))
+    }
+
     // ── Channel reply queue ─────────────────────────────────────────────────
 
     async fn push_channel_reply(&self, session_key: &str, target: ChannelReplyTarget) {
