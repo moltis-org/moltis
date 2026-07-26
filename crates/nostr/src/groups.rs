@@ -158,6 +158,37 @@ pub fn check_group_access(group_id: &str, joined: &[String]) -> Result<(), Group
     }
 }
 
+/// Channel commands that must not be reachable by an arbitrary group member.
+///
+/// Group chat has no per-sender allowlist by design — NIP-29 makes the relay
+/// the authority on membership. That is fine for conversation, but these two
+/// commands control *code execution*: `/sh` turns subsequent messages in the
+/// session into shell commands, and `/sandbox` can move execution off the
+/// sandbox onto the host. Anyone the relay admits to a joined channel could
+/// otherwise reach them.
+///
+/// The gateway already gates `/approve`, `/deny` and `/update` centrally, so
+/// they are deliberately not repeated here.
+pub const OPERATOR_ONLY_COMMANDS: &[&str] = &["sh", "sandbox"];
+
+/// Whether `command` may only be run by an operator (see
+/// [`OPERATOR_ONLY_COMMANDS`]).
+#[must_use]
+pub fn is_operator_only_command(command: &str) -> bool {
+    OPERATOR_ONLY_COMMANDS.contains(&command)
+}
+
+/// Whether a group sender counts as an operator of this account.
+///
+/// Reuses the account's DM allowlist (`allowed_pubkeys`) as the operator list
+/// rather than inventing a second one: those are the keys the owner already
+/// nominated as trusted. An empty allowlist means nobody is an operator, so
+/// execution commands fail closed in groups.
+#[must_use]
+pub fn is_group_operator(sender: &PublicKey, allowed: &[PublicKey]) -> bool {
+    allowed.contains(sender)
+}
+
 /// Build the tags for an outbound group message: the required `h` tag scoping
 /// it to the group, plus an optional NIP-10 reply `e` tag and an author `p` tag
 /// mentioning the person being replied to.
@@ -547,6 +578,36 @@ mod tests {
         assert!(supports_edit(buzz_stream_message_kind()));
         // Plain NIP-29 has no edit kind, so streaming must not try to edit.
         assert!(!supports_edit(group_chat_kind()));
+    }
+
+    /// Only the execution-controlling commands are operator-gated; ordinary
+    /// ones must stay usable by anyone in the channel.
+    #[test]
+    fn only_execution_commands_are_operator_only() {
+        assert!(is_operator_only_command("sh"));
+        assert!(is_operator_only_command("sandbox"));
+        for open_cmd in ["help", "new", "clear", "context", "model", "compact"] {
+            assert!(
+                !is_operator_only_command(open_cmd),
+                "/{open_cmd} should not be operator-gated"
+            );
+        }
+    }
+
+    /// The DM allowlist doubles as the operator list; empty means nobody, so
+    /// execution commands fail closed rather than open.
+    #[test]
+    fn group_operator_is_drawn_from_the_allowlist() {
+        let operator = Keys::generate().public_key();
+        let stranger = Keys::generate().public_key();
+        let allowed = vec![operator];
+
+        assert!(is_group_operator(&operator, &allowed));
+        assert!(!is_group_operator(&stranger, &allowed));
+        assert!(
+            !is_group_operator(&operator, &[]),
+            "an empty allowlist must not make everyone an operator"
+        );
     }
 
     #[test]

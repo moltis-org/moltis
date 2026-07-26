@@ -176,7 +176,16 @@ async fn handle_event(
     // 0. Route group chat (kind:9 / kind:40002) separately from encrypted DMs.
     if crate::groups::is_group_message_kind(event.kind) {
         handle_group_event(
-            event, client, bot_pubkey, since, seen, config, reply_ctx, account_id, event_sink,
+            event,
+            client,
+            bot_pubkey,
+            since,
+            seen,
+            config,
+            cached_allowlist,
+            reply_ctx,
+            account_id,
+            event_sink,
         )
         .await;
         return;
@@ -411,6 +420,7 @@ async fn handle_group_event(
     since: Timestamp,
     seen: &mut SeenTracker,
     config: &Arc<RwLock<NostrAccountConfig>>,
+    cached_allowlist: &Arc<RwLock<Vec<PublicKey>>>,
     reply_ctx: &SharedReplyContexts,
     account_id: &str,
     event_sink: &Arc<dyn moltis_channels::ChannelEventSink>,
@@ -531,6 +541,37 @@ async fn handle_group_event(
     if let Some(cmd_text) = text.strip_prefix('/') {
         let cmd_name = cmd_text.split_whitespace().next().unwrap_or("");
         if moltis_channels::commands::is_channel_command(cmd_name, cmd_text) {
+            // `/sh` and `/sandbox` control code execution. Group membership is
+            // the relay's call, not ours, so restrict them to keys the owner
+            // nominated — and say so rather than ignoring the message.
+            if crate::groups::is_operator_only_command(cmd_name) {
+                let is_operator = {
+                    let allowed = cached_allowlist.read().unwrap_or_else(|e| e.into_inner());
+                    crate::groups::is_group_operator(&event.pubkey, &allowed)
+                };
+                if !is_operator {
+                    tracing::warn!(
+                        account_id,
+                        group = group_id,
+                        sender = sender_hex,
+                        command = cmd_name,
+                        "refused operator-only command from non-allowlisted group sender"
+                    );
+                    if let Err(e) = crate::groups::send_group_message(
+                        client,
+                        event.kind,
+                        &group_id,
+                        &format!("`/{cmd_name}` is restricted to this bot's operators."),
+                        Some(event.id),
+                        Some(event.pubkey),
+                    )
+                    .await
+                    {
+                        tracing::warn!(account_id, "failed to send command refusal: {e}");
+                    }
+                    return;
+                }
+            }
             let response = if cmd_name == "help" {
                 Ok(moltis_channels::commands::help_text())
             } else {
@@ -807,6 +848,7 @@ mod tests {
         bot: Keys,
         seen: SeenTracker,
         config: Arc<RwLock<NostrAccountConfig>>,
+        allowlist: Arc<RwLock<Vec<PublicKey>>>,
         reply_ctx: SharedReplyContexts,
         sink: Arc<RecordingSink>,
         since: Timestamp,
@@ -820,6 +862,7 @@ mod tests {
                 bot,
                 seen: SeenTracker::new(),
                 config: Arc::new(RwLock::new(config)),
+                allowlist: Arc::new(RwLock::new(Vec::new())),
                 reply_ctx: Arc::new(Mutex::new(ReplyContexts::new())),
                 sink: Arc::new(RecordingSink::default()),
                 since: Timestamp::from(0),
@@ -854,6 +897,7 @@ mod tests {
                 self.since,
                 &mut self.seen,
                 &self.config,
+                &self.allowlist,
                 &self.reply_ctx,
                 "acct",
                 &sink,
@@ -1018,6 +1062,42 @@ mod tests {
         let got = h.sink.dispatched();
         assert_eq!(got.len(), 1, "unknown slash text is just a message");
         assert_eq!(got[0].text, "/notacommand hello");
+    }
+
+    /// `/sh` grants shell execution, and group membership is the relay's call,
+    /// so a member who is not on the account's allowlist must not reach it.
+    #[tokio::test]
+    async fn operator_only_commands_are_refused_from_group_strangers() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Always);
+        let event = h.incoming("grp", "/sh on", groups::group_chat_kind(), false);
+        h.handle(&event).await;
+
+        assert!(
+            h.sink.dispatched().is_empty(),
+            "/sh from a non-operator must not reach the command handler"
+        );
+    }
+
+    /// The same command from an allowlisted key is intercepted as a command
+    /// (handled, not forwarded to the model).
+    #[tokio::test]
+    async fn operator_only_commands_are_allowed_from_operators() {
+        let author = Keys::generate();
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Always);
+        {
+            let mut allowed = h.allowlist.write().unwrap_or_else(|e| e.into_inner());
+            allowed.push(author.public_key());
+        }
+        let event = EventBuilder::new(groups::group_chat_kind(), "/sh on")
+            .tags(groups::build_group_message_tags("grp", None, None))
+            .sign_with_keys(&author)
+            .expect("sign");
+        h.handle(&event).await;
+
+        assert!(
+            h.sink.dispatched().is_empty(),
+            "commands are handled by the command path, not dispatched to the model"
+        );
     }
 
     /// Accepted messages record who to `p`-tag and which dialect to answer in.

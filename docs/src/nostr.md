@@ -245,6 +245,14 @@ membership, so anyone the relay admits to a joined channel can address the bot
 there. This is the same trust model as a Slack channel, and a reason to prefer
 a relay you host.
 
+The exception is commands that control code execution. `/sh` (which turns
+subsequent messages into shell commands) and `/sandbox` (which can move
+execution off the sandbox onto the host) are refused in groups unless the
+sender's key is in `allowed_pubkeys` — the same list that gates DMs, reused
+here as the operator list. An empty `allowed_pubkeys` means nobody may run
+them, so they fail closed. The refusal is posted in the channel rather than
+ignored.
+
 ### Setup
 
 1. Generate the bot's key pair (see [Prerequisites](#prerequisites)) and share
