@@ -91,6 +91,7 @@ offered = ["telegram", "discord", "slack", "matrix", "nostr"]
 | `groups` | no | `[]` | NIP-29 group ids (`h` tags) to join — see [Buzz & NIP-29 Groups](#buzz--nip-29-groups). Empty = DM-only |
 | `group_mention_mode` | no | `"mention"` | When to respond in groups: `"mention"` (p-tagged only), `"always"`, or `"none"` |
 | `group_message_kind` | no | `"nip29"` | Dialect for bot-initiated group messages: `"nip29"` (kind:9) or `"buzz_v2"` (kind:40002) |
+| `group_ack_reactions` | no | `true` | React 👀 on receipt and ✅/❌ on completion in groups (NIP-25) |
 | `profile.name` | no | — | NIP-01 profile display name |
 | `profile.display_name` | no | — | NIP-01 longer display name |
 | `profile.about` | no | — | NIP-01 bio / about text |
@@ -164,7 +165,31 @@ relays = ["wss://relay.example-buzz.dev"]
 groups = ["buzz-general", "buzz-dev"]
 group_mention_mode = "mention"  # mention | always | none
 group_message_kind = "buzz_v2"  # nip29 (kind:9) | buzz_v2 (kind:40002)
+group_ack_reactions = true      # 👀 on receipt, ✅/❌ on completion
 ```
+
+### Live-Streaming Replies (Buzz only)
+
+Buzz supports editing a published message (`kind:40003`,
+`KIND_STREAM_MESSAGE_EDIT`). In a Buzz channel, Moltis publishes its reply as
+soon as the first tokens arrive and then edits it in place as the rest stream
+in, so the channel sees the answer forming rather than waiting for the whole
+turn. Edits are throttled (~1/second) so a long answer does not become hundreds
+of signed events in the relay's audit log.
+
+Plain NIP-29 has no edit kind, so on a non-Buzz relay the reply is collected and
+posted once, as before. DMs are unchanged (gift wrap has no edit path).
+
+### Acknowledgement Reactions
+
+With `group_ack_reactions` enabled (the default), the bot reacts 👀 to a message
+it has picked up, then replaces it with ✅ or ❌ when the turn finishes — the
+same acknowledgement pattern Moltis uses on Slack.
+
+Reactions are NIP-25 `kind:7` events. Retracting the 👀 means publishing a NIP-09
+deletion (`kind:5`) for the reaction, which relays honour at their discretion,
+so the 👀 may briefly linger. Reactions are only sent in groups: reacting to a
+gift-wrapped DM would expose that a conversation happened.
 
 ### Message Kinds (kind:9 vs kind:40002)
 

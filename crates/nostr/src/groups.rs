@@ -158,9 +158,13 @@ pub fn check_group_access(group_id: &str, joined: &[String]) -> Result<(), Group
     }
 }
 
-/// Build the tags for an outbound NIP-29 group message: the required `h` tag
-/// scoping it to the group, plus an optional NIP-10 reply `e` tag and an author
-/// `p` tag mentioning the person being replied to.
+/// Build the tags for an outbound group message: the required `h` tag scoping
+/// it to the group, plus an optional NIP-10 reply `e` tag and an author `p` tag
+/// mentioning the person being replied to.
+///
+/// The reply tag carries the NIP-10 `"reply"` marker (`["e", <id>, "", "reply"]`)
+/// rather than a bare `["e", <id>]`, matching how Buzz's own SDK builds threaded
+/// messages — an unmarked `e` tag is not recognised as a threaded reply.
 #[must_use]
 pub fn build_group_message_tags(
     group_id: &str,
@@ -169,7 +173,11 @@ pub fn build_group_message_tags(
 ) -> Vec<Tag> {
     let mut tags = vec![Tag::custom(TagKind::h(), [group_id.to_string()])];
     if let Some(event_id) = reply_to {
-        tags.push(Tag::event(event_id));
+        tags.push(Tag::custom(TagKind::e(), [
+            event_id.to_hex(),
+            String::new(),
+            "reply".to_string(),
+        ]));
     }
     if let Some(pubkey) = mention {
         tags.push(Tag::public_key(pubkey));
@@ -191,11 +199,90 @@ pub async fn send_group_message(
     text: &str,
     reply_to: Option<EventId>,
     mention: Option<PublicKey>,
-) -> Result<(), Error> {
+) -> Result<EventId, Error> {
     let tags = build_group_message_tags(group_id, reply_to, mention);
     let builder = EventBuilder::new(kind, text).tags(tags);
+    let output = client.send_event_builder(builder).await?;
+    Ok(*output.id())
+}
+
+/// Buzz's stream-message edit kind (`kind:40003`, `KIND_STREAM_MESSAGE_EDIT`).
+pub const BUZZ_STREAM_MESSAGE_EDIT_KIND: u16 = 40_003;
+
+/// The edit [`Kind`] (`kind:40003`).
+#[must_use]
+pub fn buzz_edit_kind() -> Kind {
+    Kind::from_u16(BUZZ_STREAM_MESSAGE_EDIT_KIND)
+}
+
+/// Whether messages in this dialect can be edited in place.
+///
+/// Editing is a Buzz extension (`kind:40003`); a plain NIP-29 relay has no
+/// equivalent, so callers must fall back to posting a single final message.
+#[must_use]
+pub fn supports_edit(kind: Kind) -> bool {
+    kind == buzz_stream_message_kind()
+}
+
+/// Replace the text of a previously published group message (Buzz `kind:40003`).
+///
+/// Tags mirror Buzz's own builder exactly: `["h", <group>]` and
+/// `["e", <target>]`, with the full replacement text as the content.
+pub async fn edit_group_message(
+    client: &Client,
+    group_id: &str,
+    target: EventId,
+    text: &str,
+) -> Result<(), Error> {
+    let builder = EventBuilder::new(buzz_edit_kind(), text).tags([
+        Tag::custom(TagKind::h(), [group_id.to_string()]),
+        Tag::custom(TagKind::e(), [target.to_hex()]),
+    ]);
     client.send_event_builder(builder).await?;
     Ok(())
+}
+
+/// React to a message with an emoji (NIP-25 `kind:7`).
+///
+/// Buzz's builder attaches only `["e", <target>]` and puts the emoji in the
+/// content, so this does the same. Returns the reaction's own event id, which
+/// is what a later NIP-09 deletion has to reference.
+pub async fn send_reaction(
+    client: &Client,
+    target: EventId,
+    emoji: &str,
+) -> Result<EventId, Error> {
+    let builder = EventBuilder::new(Kind::Reaction, emoji)
+        .tags([Tag::custom(TagKind::e(), [target.to_hex()])]);
+    let output = client.send_event_builder(builder).await?;
+    Ok(*output.id())
+}
+
+/// Request deletion of an event we published (NIP-09 `kind:5`).
+///
+/// Used to retract an acknowledgement reaction once the turn finishes. Nostr
+/// deletion is a *request* — relays honour it at their discretion.
+pub async fn delete_event(client: &Client, target: EventId) -> Result<(), Error> {
+    let builder = EventBuilder::new(Kind::EventDeletion, "")
+        .tags([Tag::custom(TagKind::e(), [target.to_hex()])]);
+    client.send_event_builder(builder).await?;
+    Ok(())
+}
+
+/// Translate the gateway's Slack-style ack shortcodes into emoji glyphs.
+///
+/// The gateway emits shortcodes (`eyes`, `white_check_mark`, `x`) because Slack's
+/// Web API wants them, but NIP-25 expects the literal glyph (or `+`/`-`).
+/// Anything unrecognised is passed through, so callers can supply a glyph
+/// directly.
+#[must_use]
+pub fn ack_emoji_glyph(shortcode: &str) -> &str {
+    match shortcode {
+        "eyes" => "👀",
+        "white_check_mark" | "heavy_check_mark" => "✅",
+        "x" | "negative_squared_cross_mark" => "❌",
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -352,6 +439,43 @@ mod tests {
         // e tag and p tag present.
         assert!(tags.iter().any(|t| t.kind() == TagKind::e()));
         assert!(tags.iter().any(|t| t.kind() == TagKind::p()));
+    }
+
+    /// Buzz threads on the NIP-10 `"reply"` marker; a bare `["e", id]` is not
+    /// recognised as a threaded reply.
+    #[test]
+    fn reply_tag_carries_nip10_reply_marker() {
+        let event_id = EventId::all_zeros();
+        let tags = build_group_message_tags("grp", Some(event_id), None);
+        let reply = tags
+            .iter()
+            .find(|t| t.kind() == TagKind::e())
+            .expect("e tag present");
+        assert_eq!(reply.as_slice(), &[
+            "e".to_string(),
+            event_id.to_hex(),
+            String::new(),
+            "reply".to_string()
+        ]);
+    }
+
+    #[test]
+    fn edit_kind_is_40003_and_only_buzz_supports_it() {
+        assert_eq!(buzz_edit_kind().as_u16(), 40_003);
+        assert!(supports_edit(buzz_stream_message_kind()));
+        // Plain NIP-29 has no edit kind, so streaming must not try to edit.
+        assert!(!supports_edit(group_chat_kind()));
+    }
+
+    #[test]
+    fn ack_shortcodes_map_to_nip25_glyphs() {
+        // The gateway speaks Slack shortcodes; NIP-25 wants the glyph.
+        assert_eq!(ack_emoji_glyph("eyes"), "👀");
+        assert_eq!(ack_emoji_glyph("white_check_mark"), "✅");
+        assert_eq!(ack_emoji_glyph("x"), "❌");
+        // Already a glyph, or unknown: pass through untouched.
+        assert_eq!(ack_emoji_glyph("🎉"), "🎉");
+        assert_eq!(ack_emoji_glyph("+"), "+");
     }
 
     #[test]

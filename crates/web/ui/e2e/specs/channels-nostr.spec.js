@@ -104,6 +104,13 @@ test.describe("Nostr channel", () => {
 		await messageKindSelect.selectOption("buzz_v2");
 		await expect(messageKindSelect).toHaveValue("buzz_v2");
 
+		// Ack reactions are on by default and can be turned off.
+		const ackToggle = page.locator('input[data-field="groupAckReactions"]');
+		await expect(ackToggle).toBeVisible();
+		await expect(ackToggle).toBeChecked();
+		await ackToggle.uncheck();
+		await expect(ackToggle).not.toBeChecked();
+
 		expect(pageErrors).toEqual([]);
 	});
 

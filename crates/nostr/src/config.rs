@@ -62,6 +62,10 @@ pub struct NostrAccountConfig {
     /// pubkey is `p`-tagged — the default), `always`, or `none`.
     pub group_mention_mode: MentionMode,
 
+    /// Acknowledge inbound group messages with reactions: 👀 on receipt, then
+    /// ✅ or ❌ when the turn finishes (NIP-25 `kind:7`, retracted via NIP-09).
+    pub group_ack_reactions: bool,
+
     /// Dialect for group messages that are not replies: `nip29` (`kind:9`) or
     /// `buzz_v2` (`kind:40002`).
     ///
@@ -105,6 +109,7 @@ impl Default for NostrAccountConfig {
             allowed_pubkeys: Vec::new(),
             groups: Vec::new(),
             group_mention_mode: MentionMode::Mention,
+            group_ack_reactions: true,
             group_message_kind: GroupMessageKind::default(),
             enabled: true,
             profile: None,
@@ -134,6 +139,7 @@ impl std::fmt::Debug for NostrAccountConfig {
             .field("allowed_pubkeys", &self.allowed_pubkeys)
             .field("groups", &self.groups)
             .field("group_mention_mode", &self.group_mention_mode)
+            .field("group_ack_reactions", &self.group_ack_reactions)
             .field("group_message_kind", &self.group_message_kind)
             .field("enabled", &self.enabled)
             .field("profile", &self.profile)
@@ -152,7 +158,7 @@ pub struct RedactedConfig<'a>(pub &'a NostrAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 14;
+        let mut count = 15;
         count += c.agent_id.is_some() as usize;
         let mut s = serializer.serialize_struct("NostrAccountConfig", count)?;
         s.serialize_field("secret_key", "[REDACTED]")?;
@@ -161,6 +167,7 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("allowed_pubkeys", &c.allowed_pubkeys)?;
         s.serialize_field("groups", &c.groups)?;
         s.serialize_field("group_mention_mode", &c.group_mention_mode)?;
+        s.serialize_field("group_ack_reactions", &c.group_ack_reactions)?;
         s.serialize_field("group_message_kind", &c.group_message_kind)?;
         s.serialize_field("enabled", &c.enabled)?;
         s.serialize_field("profile", &c.profile)?;

@@ -5,7 +5,7 @@ import type { VNode } from "preact";
 
 import { addChannel, parseChannelConfigPatch } from "../../../channel-utils";
 import { models as modelsSig } from "../../../stores/model-store";
-import { targetValue } from "../../../typed-events";
+import { targetChecked, targetValue } from "../../../typed-events";
 import { ChannelType } from "../../../types";
 import { Modal, ModelSelect } from "../../../ui";
 import { type ChannelConfig, ConnectionModeHint, loadChannels, showAddNostr } from "../../ChannelsPage";
@@ -22,6 +22,7 @@ export function AddNostrModal(): VNode {
 	const groupsDraft = useSignal("");
 	const groupMentionMode = useSignal("mention");
 	const groupMessageKind = useSignal("nip29");
+	const groupAckReactions = useSignal(true);
 	const advancedConfigPatch = useSignal("");
 
 	function onSubmit(e: Event): void {
@@ -65,6 +66,7 @@ export function AddNostrModal(): VNode {
 			addConfig.groups = groups;
 			addConfig.group_mention_mode = groupMentionMode.value;
 			addConfig.group_message_kind = groupMessageKind.value;
+			addConfig.group_ack_reactions = groupAckReactions.value;
 		}
 		if (addModel.value) {
 			addConfig.model = addModel.value;
@@ -85,6 +87,7 @@ export function AddNostrModal(): VNode {
 				groupsDraft.value = "";
 				groupMentionMode.value = "mention";
 				groupMessageKind.value = "nip29";
+				groupAckReactions.value = true;
 				advancedConfigPatch.value = "";
 				loadChannels();
 			} else {
@@ -220,6 +223,17 @@ export function AddNostrModal(): VNode {
 					Both kinds are always read and replies match the message they answer. This only sets the kind for messages the
 					bot starts itself.
 				</div>
+				<label className="flex items-center gap-2 text-xs text-[var(--muted)]">
+					<input
+						data-field="groupAckReactions"
+						type="checkbox"
+						checked={groupAckReactions.value}
+						onChange={(e) => {
+							groupAckReactions.value = targetChecked(e);
+						}}
+					/>
+					Acknowledge group messages with reactions
+				</label>
 				<AdvancedConfigPatchField
 					value={advancedConfigPatch.value}
 					onInput={(value) => {

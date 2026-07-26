@@ -112,6 +112,7 @@ export interface ChannelConfig {
 	groups?: string[];
 	group_mention_mode?: string;
 	group_message_kind?: string;
+	group_ack_reactions?: boolean;
 	// Signal
 	account?: string;
 	account_uuid?: string;

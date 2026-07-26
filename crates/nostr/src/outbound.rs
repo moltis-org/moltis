@@ -101,7 +101,58 @@ impl NostrOutbound {
     }
 }
 
+/// Minimum gap between edit events while streaming a reply.
+///
+/// Every token would otherwise be a signed event on the relay; this keeps the
+/// reply visibly live without flooding the channel or the audit log.
+const STREAM_EDIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(900);
+
 impl NostrOutbound {
+    /// Drain a stream and send the result as one message.
+    ///
+    /// Used for DMs and plain NIP-29 groups, neither of which can edit in place.
+    async fn collect_then_send(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> ChannelResult<()> {
+        self.collect_remaining_then_send(account_id, to, reply_to, stream, String::new())
+            .await
+    }
+
+    /// Same as [`Self::collect_then_send`], but keeping text already received.
+    async fn collect_remaining_then_send(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        mut stream: StreamReceiver,
+        mut buffer: String,
+    ) -> ChannelResult<()> {
+        while let Some(event) = stream.recv().await {
+            match event {
+                StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk) => {
+                    buffer.push_str(&chunk);
+                },
+                StreamEvent::Done => break,
+                StreamEvent::Error(e) => {
+                    tracing::warn!(account_id, "stream error: {e}");
+                    if buffer.is_empty() {
+                        buffer.push_str("[Error generating response]");
+                    }
+                    break;
+                },
+            }
+        }
+
+        if !buffer.is_empty() {
+            self.send_text(account_id, to, &buffer, reply_to).await?;
+        }
+        Ok(())
+    }
+
     /// Look up account state and resolve the target: a configured group id is
     /// treated as a NIP-29 group send; anything else is parsed as a DM pubkey.
     async fn resolve(
@@ -200,6 +251,78 @@ impl ChannelOutbound for NostrOutbound {
         Ok(())
     }
 
+    /// React to a group message (NIP-25 `kind:7`), used for ack reactions.
+    ///
+    /// The gateway passes Slack-style shortcodes, which are translated to the
+    /// emoji glyph NIP-25 expects. Reactions only make sense on group messages;
+    /// DMs are gift-wrapped, so reacting would leak the conversation.
+    async fn add_reaction(
+        &self,
+        account_id: &str,
+        channel_id: &str,
+        message_id: &str,
+        emoji: &str,
+    ) -> ChannelResult<()> {
+        let Ok((client, _, SendTarget::Group(_))) = self.resolve(account_id, channel_id).await
+        else {
+            return Ok(());
+        };
+        let Ok(target) = EventId::parse(message_id) else {
+            return Ok(());
+        };
+
+        let glyph = crate::groups::ack_emoji_glyph(emoji);
+        let reaction = crate::groups::send_reaction(&client, target, glyph)
+            .await
+            .map_err(|e| moltis_channels::Error::external("nostr", e))?;
+
+        // Remember it so `remove_reaction` can retract it via NIP-09.
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accounts.get(account_id) {
+            let mut ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+            ctxs.record_reaction(target, glyph, reaction);
+        }
+        Ok(())
+    }
+
+    /// Retract a reaction by publishing a NIP-09 deletion (`kind:5`) for it.
+    ///
+    /// Nostr has no "unreact", and deletion is only a request the relay may
+    /// honour — so this is best-effort and silently no-ops when the reaction
+    /// id is no longer known.
+    async fn remove_reaction(
+        &self,
+        account_id: &str,
+        channel_id: &str,
+        message_id: &str,
+        emoji: &str,
+    ) -> ChannelResult<()> {
+        let Ok((client, _, SendTarget::Group(_))) = self.resolve(account_id, channel_id).await
+        else {
+            return Ok(());
+        };
+        let Ok(target) = EventId::parse(message_id) else {
+            return Ok(());
+        };
+        let glyph = crate::groups::ack_emoji_glyph(emoji);
+
+        let reaction = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            accounts.get(account_id).and_then(|state| {
+                let mut ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+                ctxs.take_reaction(target, glyph)
+            })
+        };
+        let Some(reaction) = reaction else {
+            return Ok(());
+        };
+
+        if let Err(e) = crate::groups::delete_event(&client, reaction).await {
+            tracing::debug!(account_id, "failed to retract reaction: {e}");
+        }
+        Ok(())
+    }
+
     async fn send_media(
         &self,
         _account_id: &str,
@@ -222,14 +345,33 @@ impl ChannelStreamOutbound for NostrOutbound {
         reply_to: Option<&str>,
         mut stream: StreamReceiver,
     ) -> ChannelResult<()> {
-        // Nostr doesn't support edit-in-place streaming.
-        // Collect all chunks and send as a single message.
+        // Buzz groups support edit-in-place (kind:40003), so the reply can be
+        // published early and revised as tokens arrive. Plain NIP-29 has no
+        // edit kind, and DMs are gift-wrapped, so both collect and send once.
+        let live = match self.resolve(account_id, to).await {
+            Ok((client, _, SendTarget::Group(group_id))) => {
+                let plan = self.plan_group_send(account_id, &group_id, reply_to);
+                crate::groups::supports_edit(plan.kind).then_some((client, group_id, plan))
+            },
+            _ => None,
+        };
+
+        let Some((client, group_id, plan)) = live else {
+            return self
+                .collect_then_send(account_id, to, reply_to, stream)
+                .await;
+        };
+
+        let reply_event = reply_to.and_then(|id| EventId::parse(id).ok());
         let mut buffer = String::new();
+        let mut published: Option<EventId> = None;
+        let mut last_edit = tokio::time::Instant::now();
+        let mut pending_edit = false;
 
         while let Some(event) = stream.recv().await {
             match event {
                 StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk) => {
-                    buffer.push_str(&chunk)
+                    buffer.push_str(&chunk);
                 },
                 StreamEvent::Done => break,
                 StreamEvent::Error(e) => {
@@ -240,11 +382,76 @@ impl ChannelStreamOutbound for NostrOutbound {
                     break;
                 },
             }
+
+            if buffer.trim().is_empty() {
+                continue;
+            }
+
+            match published {
+                // First non-empty chunk: publish so the channel sees a reply
+                // forming instead of waiting for the whole turn.
+                None => {
+                    match crate::groups::send_group_message(
+                        &client,
+                        plan.kind,
+                        &group_id,
+                        &buffer,
+                        reply_event,
+                        plan.mention,
+                    )
+                    .await
+                    {
+                        Ok(id) => {
+                            published = Some(id);
+                            last_edit = tokio::time::Instant::now();
+                        },
+                        Err(e) => {
+                            tracing::warn!(account_id, "failed to publish streamed reply: {e}");
+                            return self
+                                .collect_remaining_then_send(
+                                    account_id, to, reply_to, stream, buffer,
+                                )
+                                .await;
+                        },
+                    }
+                },
+                // Throttle edits: every token would be an event on the relay.
+                Some(target) => {
+                    if last_edit.elapsed() >= STREAM_EDIT_INTERVAL {
+                        if let Err(e) =
+                            crate::groups::edit_group_message(&client, &group_id, target, &buffer)
+                                .await
+                        {
+                            tracing::debug!(account_id, "streamed edit failed: {e}");
+                        }
+                        last_edit = tokio::time::Instant::now();
+                        pending_edit = false;
+                    } else {
+                        pending_edit = true;
+                    }
+                },
+            }
         }
 
-        if !buffer.is_empty() {
-            self.send_text(account_id, to, &buffer, reply_to).await?;
+        match published {
+            // Always land the final text, even if the last chunks were
+            // throttled — otherwise the message stays truncated.
+            Some(target) => {
+                if pending_edit
+                    && let Err(e) =
+                        crate::groups::edit_group_message(&client, &group_id, target, &buffer).await
+                {
+                    tracing::warn!(account_id, "final streamed edit failed: {e}");
+                }
+            },
+            None if !buffer.trim().is_empty() => {
+                self.send_text(account_id, to, &buffer, reply_to).await?;
+            },
+            None => {},
         }
+
+        #[cfg(feature = "metrics")]
+        counter!(nostr_metrics::MESSAGES_SENT_TOTAL).increment(1);
 
         Ok(())
     }
@@ -411,6 +618,64 @@ mod tests {
         let plan = outbound.plan_group_send("acct", "grp", Some("not-an-event-id"));
         assert_eq!(plan.kind, group_chat_kind());
         assert_eq!(plan.mention, None);
+    }
+
+    /// Streaming edits are a Buzz extension; a plain NIP-29 group must fall
+    /// back to collecting and sending once.
+    #[test]
+    fn only_buzz_dialect_streams_via_edits() {
+        let outbound = outbound_with_groups(vec!["grp".into()]);
+        record_inbound(&outbound, "grp", buzz_stream_message_kind());
+        assert!(crate::groups::supports_edit(
+            outbound.plan_group_send("acct", "grp", None).kind
+        ));
+
+        let plain = outbound_with_groups(vec!["grp".into()]);
+        record_inbound(&plain, "grp", group_chat_kind());
+        assert!(!crate::groups::supports_edit(
+            plain.plan_group_send("acct", "grp", None).kind
+        ));
+    }
+
+    /// Reacting to a DM would leak a gift-wrapped conversation, so it no-ops.
+    #[tokio::test]
+    async fn reactions_are_ignored_for_dm_targets() {
+        let outbound = outbound_with_groups(vec!["grp".into()]);
+        let peer = Keys::generate().public_key().to_hex();
+        let event_id = EventId::from_byte_array(Keys::generate().public_key().to_bytes());
+        let result = outbound
+            .add_reaction("acct", &peer, &event_id.to_hex(), "eyes")
+            .await;
+        assert!(result.is_ok(), "DM reaction must be a silent no-op");
+    }
+
+    /// A malformed message id must not panic or publish anything.
+    #[tokio::test]
+    async fn reactions_ignore_unparseable_message_id() {
+        let outbound = outbound_with_groups(vec!["grp".into()]);
+        assert!(
+            outbound
+                .add_reaction("acct", "grp", "not-an-event-id", "eyes")
+                .await
+                .is_ok()
+        );
+        assert!(
+            outbound
+                .remove_reaction("acct", "grp", "not-an-event-id", "eyes")
+                .await
+                .is_ok()
+        );
+    }
+
+    /// Retracting a reaction we never recorded is a no-op, not an error.
+    #[tokio::test]
+    async fn removing_unknown_reaction_is_noop() {
+        let outbound = outbound_with_groups(vec!["grp".into()]);
+        let event_id = EventId::from_byte_array(Keys::generate().public_key().to_bytes());
+        let result = outbound
+            .remove_reaction("acct", "grp", &event_id.to_hex(), "eyes")
+            .await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

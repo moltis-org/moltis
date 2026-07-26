@@ -436,9 +436,13 @@ async fn handle_group_event(
     };
 
     // Read group config fields (drop the guard before any .await).
-    let (groups, mention_mode) = {
+    let (groups, mention_mode, ack_reactions) = {
         let cfg = config.read().unwrap_or_else(|e| e.into_inner());
-        (cfg.groups.clone(), cfg.group_mention_mode.clone())
+        (
+            cfg.groups.clone(),
+            cfg.group_mention_mode.clone(),
+            cfg.group_ack_reactions,
+        )
     };
 
     // Re-check membership against the configured join list. The relay is
@@ -511,8 +515,10 @@ async fn handle_group_event(
 
     // Reply routes back to the group (chat_id = group id), threaded to this
     // message so NIP-29 clients render it as a reply.
+    // Setting `ack_message_id` opts this message into the gateway's
+    // acknowledgement reactions (👀 on receipt, ✅/❌ on completion).
     let reply_to = moltis_channels::ChannelReplyTarget {
-        ack_message_id: None,
+        ack_message_id: ack_reactions.then(|| event.id.to_hex()),
         channel_type: moltis_channels::ChannelType::Nostr,
         account_id: account_id.to_string(),
         chat_id: group_id.clone(),

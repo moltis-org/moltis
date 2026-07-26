@@ -36,6 +36,12 @@ pub struct ReplyContexts {
     entries: HashMap<EventId, (ReplyContext, u64)>,
     /// group id -> most recent message kind observed in that group
     group_kinds: HashMap<String, Kind>,
+    /// (reacted-to event, emoji) -> our reaction's own event id.
+    ///
+    /// NIP-25 has no "unreact": retracting means publishing a NIP-09 deletion
+    /// that references the reaction event, so its id has to be kept around
+    /// between adding 👀 and replacing it with ✅/❌.
+    reactions: HashMap<(EventId, String), EventId>,
     capacity: usize,
     seq: u64,
 }
@@ -51,6 +57,7 @@ impl ReplyContexts {
         Self {
             entries: HashMap::new(),
             group_kinds: HashMap::new(),
+            reactions: HashMap::new(),
             capacity: capacity.max(1),
             seq: 0,
         }
@@ -77,6 +84,16 @@ impl ReplyContexts {
     #[must_use]
     pub fn kind_for_group(&self, group_id: &str) -> Option<Kind> {
         self.group_kinds.get(group_id).copied()
+    }
+
+    /// Remember the reaction event we published, so it can be retracted later.
+    pub fn record_reaction(&mut self, target: EventId, emoji: &str, reaction: EventId) {
+        self.reactions.insert((target, emoji.to_string()), reaction);
+    }
+
+    /// Take back the id of a reaction we published, if we still know it.
+    pub fn take_reaction(&mut self, target: EventId, emoji: &str) -> Option<EventId> {
+        self.reactions.remove(&(target, emoji.to_string()))
     }
 
     /// Drop the oldest ~10% of entries (at least one) to stay under capacity.
@@ -171,6 +188,33 @@ mod tests {
         ctxs.record(event_id(), "grp", author, Kind::from_u16(9));
         ctxs.record(event_id(), "grp", author, Kind::from_u16(40002));
         assert_eq!(ctxs.kind_for_group("grp"), Some(Kind::from_u16(40002)));
+    }
+
+    #[test]
+    fn reaction_ids_round_trip_for_retraction() {
+        let mut ctxs = ReplyContexts::new();
+        let target = event_id();
+        let reaction = event_id();
+        ctxs.record_reaction(target, "\u{1F440}", reaction);
+
+        // Taking it returns the id once, then forgets it.
+        assert_eq!(ctxs.take_reaction(target, "\u{1F440}"), Some(reaction));
+        assert_eq!(ctxs.take_reaction(target, "\u{1F440}"), None);
+    }
+
+    #[test]
+    fn reactions_are_keyed_by_target_and_emoji() {
+        let mut ctxs = ReplyContexts::new();
+        let target = event_id();
+        let eyes = event_id();
+        let check = event_id();
+        ctxs.record_reaction(target, "\u{1F440}", eyes);
+        ctxs.record_reaction(target, "\u{2705}", check);
+
+        assert_eq!(ctxs.take_reaction(target, "\u{2705}"), Some(check));
+        // Removing one must not disturb the other.
+        assert_eq!(ctxs.take_reaction(target, "\u{1F440}"), Some(eyes));
+        assert_eq!(ctxs.take_reaction(event_id(), "\u{1F440}"), None);
     }
 
     #[test]
