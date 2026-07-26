@@ -904,6 +904,29 @@ pub trait ChannelOutbound: Send + Sync {
         payload: &ReplyPayload,
         reply_to: Option<&str>,
     ) -> Result<()>;
+    /// Send text and report the ids of the messages it produced.
+    ///
+    /// Feedback attribution needs the id of the message the user will react
+    /// to, and most channel APIs return it from the send call and then throw
+    /// it away. Returns a list rather than one id because channels split long
+    /// replies into several messages, and a reader may react to any of them —
+    /// reporting only the last would leave a thumb on an earlier chunk
+    /// unattributable.
+    ///
+    /// Channels that can report ids override this; the default delegates to
+    /// [`Self::send_text`] and reports none, so a channel that cannot loses
+    /// feedback attribution rather than losing the message.
+    async fn send_text_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_text(account_id, to, text, reply_to).await?;
+        Ok(Vec::new())
+    }
+
     /// Send a "typing" indicator. No-op by default.
     async fn send_typing(&self, _account_id: &str, _to: &str) -> Result<()> {
         Ok(())

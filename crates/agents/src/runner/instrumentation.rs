@@ -109,6 +109,10 @@ pub fn begin_turn(
     let scope = trace_scope(session_key, channel, environment, release);
     let recorder = TurnRecorder::begin("agent-run", scope, settings)?;
 
+    // The reply for this turn is sent by a dispatcher far from here, and needs
+    // the trace id to attribute a later reaction to the right run.
+    moltis_observability::remember_trace(session_key, recorder.trace_id());
+
     recorder.set_metadata("provider", serde_json::Value::String(provider.to_string()));
     recorder.set_metadata("model", serde_json::Value::String(model.to_string()));
     recorder.set_input(user_content_to_json(user_content));

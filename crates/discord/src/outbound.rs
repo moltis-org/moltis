@@ -23,7 +23,7 @@ use {
 };
 
 use crate::{
-    handler::{send_discord_message, send_discord_text},
+    handler::{send_discord_message, send_discord_message_all, send_discord_text},
     state::AccountStateMap,
 };
 
@@ -417,6 +417,31 @@ impl ChannelOutbound for DiscordOutbound {
         .increment(1);
 
         Ok(())
+    }
+
+    /// Discord splits long replies across messages, so every id is reported.
+    async fn send_text_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
+        let http = self.resolve_http(account_id)?;
+        let channel_id = Self::parse_channel_id(to)?;
+        let reference = self.resolve_reference(account_id, reply_to);
+        let sent = send_discord_message_all(&http, channel_id, text, reference)
+            .await
+            .map_err(|e| ChannelError::external("Discord send", std::io::Error::other(e)))?;
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            moltis_metrics::channels::MESSAGES_SENT_TOTAL,
+            moltis_metrics::labels::CHANNEL => "discord"
+        )
+        .increment(1);
+
+        Ok(sent.into_iter().map(|m| m.id.to_string()).collect())
     }
 
     async fn send_media(

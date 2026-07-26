@@ -73,6 +73,49 @@ impl ChannelOutbound for TelegramOutbound {
         Ok(())
     }
 
+    /// Telegram splits long replies into several messages, so every chunk id
+    /// is reported: a reader may react to any of them.
+    async fn send_text_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let bot = self.get_bot(account_id)?;
+        let (chat_id, thread_id) = parse_chat_target(to)?;
+        let rp = self.reply_params(account_id, reply_to);
+
+        let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+
+        let chunks = markdown::chunk_markdown_html(text, TELEGRAM_MAX_MESSAGE_LEN);
+        let mut ids = Vec::with_capacity(chunks.len());
+        for chunk in chunks.iter() {
+            let reply_params = rp.as_ref();
+            let id = self
+                .send_chunk_with_fallback(
+                    &bot,
+                    account_id,
+                    to,
+                    chat_id,
+                    thread_id,
+                    chunk,
+                    reply_params,
+                    false,
+                )
+                .await?;
+            ids.push(id.0.to_string());
+        }
+
+        info!(
+            account_id,
+            chat_id = to,
+            chunk_count = ids.len(),
+            "telegram outbound text sent with ids"
+        );
+        Ok(ids)
+    }
+
     async fn send_text_with_suffix(
         &self,
         account_id: &str,

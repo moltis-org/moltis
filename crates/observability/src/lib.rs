@@ -19,6 +19,7 @@ pub mod exporters;
 pub mod feedback;
 pub mod model;
 pub mod profile;
+pub mod recent;
 pub mod recorder;
 pub mod redact;
 pub mod runtime;
@@ -34,6 +35,7 @@ pub use {
         TokenUsage, TraceId, TraceRecord, TraceScope,
     },
     profile::{ContentCapture, ExportProfile, Vocabulary},
+    recent::{recent_trace, remember_trace},
     recorder::{RecorderSettings, StepGuard, TurnRecorder},
     redact::RedactionPolicy,
     runtime::{BatchConfig, BatchSink, SinkStatsSnapshot, Transport, TransportError},

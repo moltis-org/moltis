@@ -486,6 +486,36 @@ impl ChannelOutbound for SlackOutbound {
         Ok(())
     }
 
+    /// Slack identifies a message by its `ts`, which is what a
+    /// `reaction_added` event carries back.
+    async fn send_text_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
+        let (client, token) = self.get_session(account_id)?;
+        let thread_ts = self.get_thread_ts(account_id, to, reply_to);
+        let slack_text = markdown_to_slack(text);
+
+        let chunks = chunk_message(&slack_text, SLACK_MAX_MESSAGE_LEN);
+        let mut ids = Vec::new();
+        for chunk in chunks {
+            let ts = post_message(&client, &token, to, chunk, thread_ts.as_deref()).await?;
+            ids.push(ts.to_string());
+        }
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            moltis_metrics::channels::MESSAGES_SENT_TOTAL,
+            moltis_metrics::labels::CHANNEL => "slack"
+        )
+        .increment(1);
+
+        Ok(ids)
+    }
+
     async fn send_media(
         &self,
         account_id: &str,

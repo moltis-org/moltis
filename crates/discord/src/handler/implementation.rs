@@ -1362,12 +1362,28 @@ pub async fn send_discord_message(
     text: &str,
     reference: Option<MessageId>,
 ) -> Result<Message, String> {
+    let mut sent = send_discord_message_all(http, channel_id, text, reference).await?;
+    // Always `Some` because `text` is non-empty and every chunk is sent.
+    sent.pop().ok_or_else(|| "no chunks produced".into())
+}
+
+/// Send `text`, returning every message the send produced.
+///
+/// Long replies are split across several Discord messages and a reader may
+/// react to any of them, so feedback attribution needs all the ids rather than
+/// just the last.
+pub async fn send_discord_message_all(
+    http: &serenity::http::Http,
+    channel_id: serenity::all::ChannelId,
+    text: &str,
+    reference: Option<MessageId>,
+) -> Result<Vec<Message>, String> {
     if text.is_empty() {
         return Err("empty message".into());
     }
 
     let chunks = chunk_message(text, 2000);
-    let mut last_msg = None;
+    let mut sent = Vec::with_capacity(chunks.len());
     for (i, chunk) in chunks.iter().enumerate() {
         let mut create = CreateMessage::new().content(*chunk);
         // Only the first chunk gets the reply reference.
@@ -1376,15 +1392,14 @@ pub async fn send_discord_message(
         {
             create = create.reference_message((channel_id, ref_id));
         }
-        last_msg = Some(
+        sent.push(
             channel_id
                 .send_message(http, create)
                 .await
                 .map_err(|e| format!("Discord send: {e}"))?,
         );
     }
-    // `last_msg` is always `Some` because `text` is non-empty.
-    last_msg.ok_or_else(|| "no chunks produced".into())
+    Ok(sent)
 }
 
 /// Split a message into chunks of at most `max_len` characters.
