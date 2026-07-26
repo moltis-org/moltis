@@ -90,6 +90,7 @@ offered = ["telegram", "discord", "slack", "matrix", "nostr"]
 | `otp_cooldown_secs` | no | `300` | Cooldown after 3 failed OTP attempts |
 | `groups` | no | `[]` | NIP-29 group ids (`h` tags) to join — see [Buzz & NIP-29 Groups](#buzz--nip-29-groups). Empty = DM-only |
 | `group_mention_mode` | no | `"mention"` | When to respond in groups: `"mention"` (p-tagged only), `"always"`, or `"none"` |
+| `group_message_kind` | no | `"nip29"` | Dialect for bot-initiated group messages: `"nip29"` (kind:9) or `"buzz_v2"` (kind:40002) |
 | `profile.name` | no | — | NIP-01 profile display name |
 | `profile.display_name` | no | — | NIP-01 longer display name |
 | `profile.about` | no | — | NIP-01 bio / about text |
@@ -162,7 +163,23 @@ relays = ["wss://relay.example-buzz.dev"]
 # The NIP-29 group ids (h tags) the bot joins. Empty keeps DM-only mode.
 groups = ["buzz-general", "buzz-dev"]
 group_mention_mode = "mention"  # mention | always | none
+group_message_kind = "buzz_v2"  # nip29 (kind:9) | buzz_v2 (kind:40002)
 ```
+
+### Message Kinds (kind:9 vs kind:40002)
+
+Buzz defines two chat kinds and posts channel messages as **`kind:40002`**
+(`KIND_STREAM_MESSAGE_V2`), while plain NIP-29 relays use **`kind:9`**. Per
+Buzz's own architecture notes, a client filtering `kind:9` alone never receives
+`kind:40002` messages and vice versa — so speaking only one dialect makes the
+bot invisible in the other.
+
+Moltis therefore **always reads both**, and **replies mirror the kind of the
+message they answer**, which makes Buzz channels work without any configuration.
+`group_message_kind` only decides bot-*initiated* messages in a group nothing
+has been received from yet; once a message arrives, the group's observed dialect
+is used. Set it to `buzz_v2` on a Buzz relay so even the first proactive message
+lands correctly.
 
 ### How Responses Are Triggered
 

@@ -40,10 +40,65 @@ pub struct NostrOutbound {
 
 /// Where an outbound message should go: a NIP-29 group or a DM recipient.
 enum SendTarget {
-    /// A configured NIP-29 group id (`h` tag value).
+    /// A configured group id (`h` tag value).
     Group(String),
     /// A DM recipient pubkey.
     Dm(PublicKey),
+}
+
+/// How to publish a group reply: which dialect, and whom to notify.
+struct GroupSendPlan {
+    kind: Kind,
+    mention: Option<PublicKey>,
+}
+
+impl NostrOutbound {
+    /// Decide the dialect and `p`-tag for a group send.
+    ///
+    /// Prefer the exact message being replied to (mirrors its kind and
+    /// notifies its author), then the last kind seen in that group, then the
+    /// account's configured default. Buzz uses `kind:40002` while plain NIP-29
+    /// uses `kind:9`, and a client filtering one never sees the other — so
+    /// answering in the wrong dialect makes the bot invisible.
+    fn plan_group_send(
+        &self,
+        account_id: &str,
+        group_id: &str,
+        reply_to: Option<&str>,
+    ) -> GroupSendPlan {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        let Some(state) = accounts.get(account_id) else {
+            return GroupSendPlan {
+                kind: crate::groups::group_chat_kind(),
+                mention: None,
+            };
+        };
+
+        let reply_event = reply_to.and_then(|id| EventId::parse(id).ok());
+        let ctx = reply_event.and_then(|id| {
+            let ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+            ctxs.get(&id)
+        });
+        if let Some(ctx) = ctx {
+            return GroupSendPlan {
+                kind: ctx.kind,
+                mention: Some(ctx.author),
+            };
+        }
+
+        let learned = {
+            let ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+            ctxs.kind_for_group(group_id)
+        };
+        let kind = learned.unwrap_or_else(|| {
+            let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
+            Kind::from(cfg.group_message_kind)
+        });
+        GroupSendPlan {
+            kind,
+            mention: None,
+        }
+    }
 }
 
 impl NostrOutbound {
@@ -92,18 +147,33 @@ impl ChannelOutbound for NostrOutbound {
 
         match target {
             SendTarget::Group(group_id) => {
-                // NIP-29 group chat reply (kind:9). `reply_to` is the inbound
-                // event id, threaded via a NIP-10 `e` tag.
+                // Group chat reply. `reply_to` is the inbound event id,
+                // threaded via a NIP-10 `e` tag; the plan mirrors that
+                // message's kind and `p`-tags its author so they are notified.
                 let reply_event = reply_to.and_then(|id| EventId::parse(id).ok());
-                crate::groups::send_group_message(&client, &group_id, text, reply_event, None)
-                    .await
-                    .map_err(|e| {
-                        #[cfg(feature = "metrics")]
-                        counter!(nostr_metrics::MESSAGE_SEND_ERRORS_TOTAL, "reason" => "group")
-                            .increment(1);
-                        moltis_channels::Error::external("nostr", e)
-                    })?;
-                tracing::debug!(account_id, group = %group_id, len = text.len(), "sent group message");
+                let plan = self.plan_group_send(account_id, &group_id, reply_to);
+                crate::groups::send_group_message(
+                    &client,
+                    plan.kind,
+                    &group_id,
+                    text,
+                    reply_event,
+                    plan.mention,
+                )
+                .await
+                .map_err(|e| {
+                    #[cfg(feature = "metrics")]
+                    counter!(nostr_metrics::MESSAGE_SEND_ERRORS_TOTAL, "reason" => "group")
+                        .increment(1);
+                    moltis_channels::Error::external("nostr", e)
+                })?;
+                tracing::debug!(
+                    account_id,
+                    group = %group_id,
+                    kind = plan.kind.as_u16(),
+                    len = text.len(),
+                    "sent group message"
+                );
             },
             SendTarget::Dm(recipient) => {
                 // NIP-59 gift-wrapped DM (kind:1059).
@@ -193,7 +263,12 @@ impl std::fmt::Debug for NostrOutbound {
 #[cfg(test)]
 mod tests {
     use {
-        crate::{config::NostrAccountConfig, state::AccountState},
+        crate::{
+            config::NostrAccountConfig,
+            groups::{GroupMessageKind, buzz_stream_message_kind, group_chat_kind},
+            reply_ctx::ReplyContexts,
+            state::AccountState,
+        },
         tokio_util::sync::CancellationToken,
     };
 
@@ -202,12 +277,15 @@ mod tests {
     /// Build an outbound adapter with one account whose config names `groups`.
     /// No relay connection is made — `resolve` is pure routing logic.
     fn outbound_with_groups(groups: Vec<String>) -> NostrOutbound {
-        let keys = Keys::generate();
-        let client = Client::new(keys.clone());
-        let config = NostrAccountConfig {
+        outbound_with_config(NostrAccountConfig {
             groups,
             ..Default::default()
-        };
+        })
+    }
+
+    fn outbound_with_config(config: NostrAccountConfig) -> NostrOutbound {
+        let keys = Keys::generate();
+        let client = Client::new(keys.clone());
         let state = AccountState {
             client,
             keys,
@@ -217,6 +295,7 @@ mod tests {
             otp: Arc::new(std::sync::Mutex::new(moltis_channels::otp::OtpState::new(
                 300,
             ))),
+            reply_ctx: Arc::new(std::sync::Mutex::new(ReplyContexts::new())),
         };
         let accounts: AccountStateMap = Arc::new(RwLock::new(HashMap::new()));
         accounts
@@ -253,6 +332,85 @@ mod tests {
             resolved.is_err(),
             "group send must fail once the group is no longer configured"
         );
+    }
+
+    /// Record an inbound message so the reply can mirror it.
+    fn record_inbound(outbound: &NostrOutbound, group: &str, kind: Kind) -> (EventId, PublicKey) {
+        let event_id = EventId::from_byte_array(Keys::generate().public_key().to_bytes());
+        let author = Keys::generate().public_key();
+        let accounts = outbound.accounts.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accounts.get("acct") {
+            let mut ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+            ctxs.record(event_id, group, author, kind);
+        }
+        (event_id, author)
+    }
+
+    /// A reply to a Buzz kind:40002 message must go back as kind:40002 — a
+    /// Buzz client filtering v2 would never see a kind:9 answer.
+    #[test]
+    fn reply_mirrors_buzz_dialect_and_tags_author() {
+        let outbound = outbound_with_groups(vec!["buzz-general".into()]);
+        let (event_id, author) =
+            record_inbound(&outbound, "buzz-general", buzz_stream_message_kind());
+
+        let plan = outbound.plan_group_send("acct", "buzz-general", Some(&event_id.to_hex()));
+        assert_eq!(plan.kind, buzz_stream_message_kind());
+        assert_eq!(plan.mention, Some(author));
+    }
+
+    #[test]
+    fn reply_mirrors_nip29_dialect() {
+        let outbound = outbound_with_groups(vec!["grp".into()]);
+        let (event_id, author) = record_inbound(&outbound, "grp", group_chat_kind());
+
+        let plan = outbound.plan_group_send("acct", "grp", Some(&event_id.to_hex()));
+        assert_eq!(plan.kind, group_chat_kind());
+        assert_eq!(plan.mention, Some(author));
+    }
+
+    /// With no specific message to answer, fall back to the dialect last seen
+    /// in that group rather than the configured default.
+    #[test]
+    fn non_reply_uses_dialect_learned_from_group() {
+        let outbound = outbound_with_groups(vec!["buzz-general".into()]);
+        record_inbound(&outbound, "buzz-general", buzz_stream_message_kind());
+
+        let plan = outbound.plan_group_send("acct", "buzz-general", None);
+        assert_eq!(plan.kind, buzz_stream_message_kind());
+        // Nobody specific to notify on a proactive send.
+        assert_eq!(plan.mention, None);
+    }
+
+    /// Cold start with nothing learned falls back to the configured default.
+    #[test]
+    fn cold_start_uses_configured_dialect() {
+        let nip29 = outbound_with_groups(vec!["grp".into()]);
+        assert_eq!(
+            nip29.plan_group_send("acct", "grp", None).kind,
+            group_chat_kind(),
+            "default config is the interoperable kind:9"
+        );
+
+        let buzz = outbound_with_config(NostrAccountConfig {
+            groups: vec!["grp".into()],
+            group_message_kind: GroupMessageKind::BuzzV2,
+            ..Default::default()
+        });
+        assert_eq!(
+            buzz.plan_group_send("acct", "grp", None).kind,
+            buzz_stream_message_kind(),
+            "buzz_v2 config must post kind:40002"
+        );
+    }
+
+    /// An unparseable or unknown reply id must not panic or mis-tag.
+    #[test]
+    fn unknown_reply_id_falls_back_without_mention() {
+        let outbound = outbound_with_groups(vec!["grp".into()]);
+        let plan = outbound.plan_group_send("acct", "grp", Some("not-an-event-id"));
+        assert_eq!(plan.kind, group_chat_kind());
+        assert_eq!(plan.mention, None);
     }
 
     #[tokio::test]

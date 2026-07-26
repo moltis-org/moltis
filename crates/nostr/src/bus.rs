@@ -1,8 +1,8 @@
 //! Nostr relay subscription loop — inbound DM and group-chat pipeline.
 //!
 //! Subscribes to kind:4 (NIP-04 encrypted DMs) and kind:1059 (NIP-59 gift
-//! wraps) addressed to the bot's pubkey, plus kind:9 (NIP-29 group chat, e.g.
-//! Buzz channels) scoped to the configured groups via the `h` tag. Events flow
+//! wraps) addressed to the bot's pubkey, plus group chat (kind:9 NIP-29 and
+//! kind:40002 Buzz) scoped to the configured groups via the `h` tag. Events flow
 //! through dedup, self-message filtering, access control, and (for DMs)
 //! decryption/unwrapping before being dispatched to the gateway via
 //! `ChannelEventSink`.
@@ -21,7 +21,7 @@ use crate::{
     access::{self, AccessDenied},
     config::NostrAccountConfig,
     seen::SeenTracker,
-    state::SharedOtp,
+    state::{SharedOtp, SharedReplyContexts},
 };
 
 #[cfg(feature = "metrics")]
@@ -45,6 +45,7 @@ pub async fn run_subscription_loop(
     config: Arc<RwLock<NostrAccountConfig>>,
     cached_allowlist: Arc<RwLock<Vec<PublicKey>>>,
     otp: SharedOtp,
+    reply_ctx: SharedReplyContexts,
     account_id: String,
     event_sink: Arc<dyn moltis_channels::ChannelEventSink>,
     cancel: CancellationToken,
@@ -90,15 +91,17 @@ pub async fn run_subscription_loop(
         cfg.groups.clone()
     };
     if !group_ids.is_empty() {
+        // Both dialects: standard NIP-29 kind:9 and Buzz kind:40002. A client
+        // filtering only one never sees the other, so read both.
         let group_filter = Filter::new()
-            .kind(crate::groups::group_chat_kind())
+            .kinds(crate::groups::group_message_kinds())
             .custom_tags(crate::groups::h_tag(), group_ids.clone())
             .since(since);
         filters.push(group_filter);
         tracing::info!(
             account_id,
             groups = ?group_ids,
-            "subscribing to NIP-29 group chat (kind:9)"
+            "subscribing to group chat (kind:9 + kind:40002)"
         );
     }
 
@@ -130,6 +133,7 @@ pub async fn run_subscription_loop(
                             &config,
                             &cached_allowlist,
                             &otp,
+                            &reply_ctx,
                             &account_id,
                             &event_sink,
                         ).await;
@@ -165,13 +169,14 @@ async fn handle_event(
     config: &Arc<RwLock<NostrAccountConfig>>,
     cached_allowlist: &Arc<RwLock<Vec<PublicKey>>>,
     otp: &SharedOtp,
+    reply_ctx: &SharedReplyContexts,
     account_id: &str,
     event_sink: &Arc<dyn moltis_channels::ChannelEventSink>,
 ) {
-    // 0. Route NIP-29 group chat (kind:9) separately from encrypted DMs.
-    if event.kind == crate::groups::group_chat_kind() {
+    // 0. Route group chat (kind:9 / kind:40002) separately from encrypted DMs.
+    if crate::groups::is_group_message_kind(event.kind) {
         handle_group_event(
-            event, bot_pubkey, since, seen, config, account_id, event_sink,
+            event, client, bot_pubkey, since, seen, config, reply_ctx, account_id, event_sink,
         )
         .await;
         return;
@@ -390,19 +395,23 @@ async fn handle_event(
     event_sink.dispatch_to_chat(text, reply_to, meta).await;
 }
 
-/// Process an inbound NIP-29 group chat message (`kind:9`, e.g. a Buzz channel).
+/// Process an inbound group chat message (`kind:9` NIP-29 or `kind:40002`
+/// Buzz, e.g. a Buzz channel).
 ///
 /// Group messages are plaintext (the relay enforces membership), so there is
 /// no decryption or OTP flow. The event is deduped, filtered for self-messages
-/// and staleness, gated by group policy and mention mode, then dispatched to
-/// the gateway with the group id as the session/chat id so replies route back
-/// to the group.
+/// and staleness, gated by group membership and mention mode, then dispatched
+/// to the gateway with the group id as the session/chat id so replies route
+/// back to the group.
+#[allow(clippy::too_many_arguments)]
 async fn handle_group_event(
     event: &Event,
+    client: &Client,
     bot_pubkey: &PublicKey,
     since: Timestamp,
     seen: &mut SeenTracker,
     config: &Arc<RwLock<NostrAccountConfig>>,
+    reply_ctx: &SharedReplyContexts,
     account_id: &str,
     event_sink: &Arc<dyn moltis_channels::ChannelEventSink>,
 ) {
@@ -477,6 +486,14 @@ async fn handle_group_event(
         .to_bech32()
         .unwrap_or_else(|_| sender_hex.clone());
 
+    // Remember who wrote this and in which dialect, so the reply can `p`-tag
+    // them and answer with the same kind. Outbound only receives the chat id
+    // and this event id, so it cannot recover either on its own.
+    {
+        let mut ctxs = reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+        ctxs.record(event.id, &group_id, event.pubkey, event.kind);
+    }
+
     #[cfg(feature = "metrics")]
     counter!(nostr_metrics::MESSAGES_RECEIVED_TOTAL).increment(1);
 
@@ -498,10 +515,42 @@ async fn handle_group_event(
         ack_message_id: None,
         channel_type: moltis_channels::ChannelType::Nostr,
         account_id: account_id.to_string(),
-        chat_id: group_id,
+        chat_id: group_id.clone(),
         message_id: Some(event.id.to_hex()),
         thread_id: None,
     };
+
+    // Intercept slash commands before the LLM, matching DM behaviour so
+    // `/help` and friends work the same way in a Buzz channel.
+    if let Some(cmd_text) = text.strip_prefix('/') {
+        let cmd_name = cmd_text.split_whitespace().next().unwrap_or("");
+        if moltis_channels::commands::is_channel_command(cmd_name, cmd_text) {
+            let response = if cmd_name == "help" {
+                Ok(moltis_channels::commands::help_text())
+            } else {
+                event_sink
+                    .dispatch_command(cmd_text, reply_to, Some(&sender_hex))
+                    .await
+            };
+            let reply_text = match response {
+                Ok(msg) => msg,
+                Err(e) => format!("Error: {e}"),
+            };
+            if let Err(e) = crate::groups::send_group_message(
+                client,
+                event.kind,
+                &group_id,
+                &reply_text,
+                Some(event.id),
+                Some(event.pubkey),
+            )
+            .await
+            {
+                tracing::warn!(account_id, "failed to send group command response: {e}");
+            }
+            return;
+        }
+    }
 
     let meta = moltis_channels::ChannelMessageMeta {
         channel_type: moltis_channels::ChannelType::Nostr,
@@ -666,11 +715,285 @@ async fn handle_otp_challenge(
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
-    use super::*;
+    use std::sync::Mutex;
+
+    use {
+        async_trait::async_trait,
+        moltis_channels::{
+            ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget,
+            Result as ChannelResult,
+        },
+        nostr_sdk::prelude::{EventBuilder, Keys},
+    };
+
+    use {
+        super::*,
+        crate::{groups, reply_ctx::ReplyContexts},
+    };
+
+    /// What a dispatched message looked like, for assertions.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct Dispatched {
+        text: String,
+        chat_id: String,
+        message_id: Option<String>,
+    }
+
+    /// Recording `ChannelEventSink` — captures dispatches instead of running
+    /// the agent, so the inbound gate can be exercised without a gateway.
+    #[derive(Default)]
+    struct RecordingSink {
+        dispatched: Mutex<Vec<Dispatched>>,
+    }
+
+    impl RecordingSink {
+        fn dispatched(&self) -> Vec<Dispatched> {
+            self.dispatched
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl ChannelEventSink for RecordingSink {
+        async fn emit(&self, _event: ChannelEvent) {}
+
+        async fn dispatch_to_chat(
+            &self,
+            text: &str,
+            reply_to: ChannelReplyTarget,
+            _meta: ChannelMessageMeta,
+        ) {
+            self.dispatched
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(Dispatched {
+                    text: text.to_string(),
+                    chat_id: reply_to.chat_id,
+                    message_id: reply_to.message_id,
+                });
+        }
+
+        async fn dispatch_command(
+            &self,
+            _command: &str,
+            _reply_to: ChannelReplyTarget,
+            _sender_id: Option<&str>,
+        ) -> ChannelResult<String> {
+            Ok(String::new())
+        }
+
+        async fn request_disable_account(
+            &self,
+            _channel_type: &str,
+            _account_id: &str,
+            _reason: &str,
+        ) {
+        }
+    }
+
+    /// Fixtures for driving `handle_group_event` without any network.
+    struct Harness {
+        client: Client,
+        bot: Keys,
+        seen: SeenTracker,
+        config: Arc<RwLock<NostrAccountConfig>>,
+        reply_ctx: SharedReplyContexts,
+        sink: Arc<RecordingSink>,
+        since: Timestamp,
+    }
+
+    impl Harness {
+        fn new(config: NostrAccountConfig) -> Self {
+            let bot = Keys::generate();
+            Self {
+                client: Client::new(bot.clone()),
+                bot,
+                seen: SeenTracker::new(),
+                config: Arc::new(RwLock::new(config)),
+                reply_ctx: Arc::new(Mutex::new(ReplyContexts::new())),
+                sink: Arc::new(RecordingSink::default()),
+                since: Timestamp::from(0),
+            }
+        }
+
+        fn with_groups(groups: Vec<&str>, mention_mode: MentionModeAlias) -> Self {
+            Self::new(NostrAccountConfig {
+                groups: groups.into_iter().map(String::from).collect(),
+                group_mention_mode: mention_mode,
+                ..Default::default()
+            })
+        }
+
+        /// Build a signed group message from a third party.
+        fn incoming(&self, group: &str, text: &str, kind: Kind, mention_bot: bool) -> Event {
+            let author = Keys::generate();
+            let mention = mention_bot.then(|| self.bot.public_key());
+            EventBuilder::new(kind, text)
+                .tags(groups::build_group_message_tags(group, None, mention))
+                .sign_with_keys(&author)
+                .expect("sign group event")
+        }
+
+        async fn handle(&mut self, event: &Event) {
+            let sink: Arc<dyn ChannelEventSink> =
+                Arc::clone(&self.sink) as Arc<dyn ChannelEventSink>;
+            handle_group_event(
+                event,
+                &self.client,
+                &self.bot.public_key(),
+                self.since,
+                &mut self.seen,
+                &self.config,
+                &self.reply_ctx,
+                "acct",
+                &sink,
+            )
+            .await;
+        }
+    }
+
+    type MentionModeAlias = moltis_channels::gating::MentionMode;
 
     #[test]
     fn max_message_size_is_reasonable() {
         assert_eq!(MAX_MESSAGE_BYTES, 64 * 1024);
+    }
+
+    #[tokio::test]
+    async fn dispatches_mentioned_message_from_joined_group() {
+        let mut h = Harness::with_groups(vec!["buzz-general"], MentionModeAlias::Mention);
+        let event = h.incoming("buzz-general", "hello bot", groups::group_chat_kind(), true);
+        h.handle(&event).await;
+
+        let got = h.sink.dispatched();
+        assert_eq!(got.len(), 1, "mentioned message should reach the agent");
+        assert_eq!(got[0].text, "hello bot");
+        // The group id becomes the session/chat id so replies route back.
+        assert_eq!(got[0].chat_id, "buzz-general");
+        assert_eq!(got[0].message_id, Some(event.id.to_hex()));
+    }
+
+    /// Buzz posts kind:40002; it must be accepted just like kind:9.
+    #[tokio::test]
+    async fn accepts_buzz_v2_message_kind() {
+        let mut h = Harness::with_groups(vec!["buzz-general"], MentionModeAlias::Always);
+        let event = h.incoming(
+            "buzz-general",
+            "from buzz",
+            groups::buzz_stream_message_kind(),
+            false,
+        );
+        h.handle(&event).await;
+        assert_eq!(h.sink.dispatched().len(), 1);
+    }
+
+    /// The core security property: a relay can push a kind:9/40002 for a group
+    /// we never joined, and it must never reach the agent.
+    #[tokio::test]
+    async fn drops_message_from_unjoined_group() {
+        let mut h = Harness::with_groups(vec!["buzz-general"], MentionModeAlias::Always);
+        let event = h.incoming(
+            "attacker-group",
+            "ignore me",
+            groups::group_chat_kind(),
+            true,
+        );
+        h.handle(&event).await;
+        assert!(
+            h.sink.dispatched().is_empty(),
+            "unjoined group must not reach the agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn drops_group_message_when_no_groups_configured() {
+        let mut h = Harness::with_groups(vec![], MentionModeAlias::Always);
+        let event = h.incoming("anything", "hi", groups::group_chat_kind(), true);
+        h.handle(&event).await;
+        assert!(h.sink.dispatched().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mention_mode_filters_unmentioned_messages() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Mention);
+        let event = h.incoming(
+            "grp",
+            "chatter between humans",
+            groups::group_chat_kind(),
+            false,
+        );
+        h.handle(&event).await;
+        assert!(h.sink.dispatched().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mention_mode_none_never_responds() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::None);
+        let event = h.incoming("grp", "hey bot", groups::group_chat_kind(), true);
+        h.handle(&event).await;
+        assert!(h.sink.dispatched().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ignores_message_without_h_tag() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Always);
+        let author = Keys::generate();
+        let event = EventBuilder::new(groups::group_chat_kind(), "no group")
+            .sign_with_keys(&author)
+            .expect("sign");
+        h.handle(&event).await;
+        assert!(h.sink.dispatched().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deduplicates_replayed_events() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Always);
+        let event = h.incoming("grp", "once", groups::group_chat_kind(), false);
+        h.handle(&event).await;
+        h.handle(&event).await;
+        assert_eq!(h.sink.dispatched().len(), 1, "replay must be deduped");
+    }
+
+    #[tokio::test]
+    async fn ignores_own_messages() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Always);
+        let own = EventBuilder::new(groups::group_chat_kind(), "my own reply")
+            .tags(groups::build_group_message_tags("grp", None, None))
+            .sign_with_keys(&h.bot)
+            .expect("sign");
+        h.handle(&own).await;
+        assert!(
+            h.sink.dispatched().is_empty(),
+            "bot must not answer itself and loop"
+        );
+    }
+
+    #[tokio::test]
+    async fn skips_blank_messages() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Always);
+        let event = h.incoming("grp", "   ", groups::group_chat_kind(), false);
+        h.handle(&event).await;
+        assert!(h.sink.dispatched().is_empty());
+    }
+
+    /// Accepted messages record who to `p`-tag and which dialect to answer in.
+    #[tokio::test]
+    async fn records_reply_context_for_accepted_message() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Always);
+        let event = h.incoming("grp", "hi", groups::buzz_stream_message_kind(), false);
+        h.handle(&event).await;
+
+        let ctxs = h.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+        let ctx = ctxs.get(&event.id).expect("context recorded");
+        assert_eq!(ctx.author, event.pubkey);
+        assert_eq!(ctx.kind, groups::buzz_stream_message_kind());
+        assert_eq!(
+            ctxs.kind_for_group("grp"),
+            Some(groups::buzz_stream_message_kind())
+        );
     }
 }

@@ -111,6 +111,7 @@ export interface ChannelConfig {
 	allowed_pubkeys?: string[];
 	groups?: string[];
 	group_mention_mode?: string;
+	group_message_kind?: string;
 	// Signal
 	account?: string;
 	account_uuid?: string;

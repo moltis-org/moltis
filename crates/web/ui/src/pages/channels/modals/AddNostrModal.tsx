@@ -21,6 +21,7 @@ export function AddNostrModal(): VNode {
 	const relaysDraft = useSignal("wss://relay.damus.io, wss://relay.nostr.band, wss://nos.lol");
 	const groupsDraft = useSignal("");
 	const groupMentionMode = useSignal("mention");
+	const groupMessageKind = useSignal("nip29");
 	const advancedConfigPatch = useSignal("");
 
 	function onSubmit(e: Event): void {
@@ -63,6 +64,7 @@ export function AddNostrModal(): VNode {
 			// separate group policy to send.
 			addConfig.groups = groups;
 			addConfig.group_mention_mode = groupMentionMode.value;
+			addConfig.group_message_kind = groupMessageKind.value;
 		}
 		if (addModel.value) {
 			addConfig.model = addModel.value;
@@ -82,6 +84,7 @@ export function AddNostrModal(): VNode {
 				relaysDraft.value = "wss://relay.damus.io, wss://relay.nostr.band, wss://nos.lol";
 				groupsDraft.value = "";
 				groupMentionMode.value = "mention";
+				groupMessageKind.value = "nip29";
 				advancedConfigPatch.value = "";
 				loadChannels();
 			} else {
@@ -201,6 +204,22 @@ export function AddNostrModal(): VNode {
 					<option value="always">Always respond</option>
 					<option value="none">Never respond</option>
 				</select>
+				<label className="text-xs text-[var(--muted)]">Group Message Kind</label>
+				<select
+					data-field="groupMessageKind"
+					className="channel-select"
+					value={groupMessageKind.value}
+					onChange={(e) => {
+						groupMessageKind.value = targetValue(e);
+					}}
+				>
+					<option value="nip29">Standard NIP-29 (kind 9)</option>
+					<option value="buzz_v2">Buzz (kind 40002)</option>
+				</select>
+				<div className="text-xs text-[var(--muted)]">
+					Both kinds are always read and replies match the message they answer. This only sets the kind for messages the
+					bot starts itself.
+				</div>
 				<AdvancedConfigPatchField
 					value={advancedConfigPatch.value}
 					onInput={(value) => {

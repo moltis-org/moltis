@@ -10,6 +10,8 @@ use {
     serde::{Deserialize, Serialize, ser::SerializeStruct},
 };
 
+use crate::groups::GroupMessageKind;
+
 /// NIP-01 profile metadata to publish on connect.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -60,6 +62,14 @@ pub struct NostrAccountConfig {
     /// pubkey is `p`-tagged — the default), `always`, or `none`.
     pub group_mention_mode: MentionMode,
 
+    /// Dialect for group messages that are not replies: `nip29` (`kind:9`) or
+    /// `buzz_v2` (`kind:40002`).
+    ///
+    /// Both kinds are always *read*, and replies mirror whatever kind they
+    /// answer, so this only affects cold-start sends into a group we have not
+    /// yet received a message from. Set it to `buzz_v2` for a Buzz workspace.
+    pub group_message_kind: GroupMessageKind,
+
     /// Whether this account is enabled.
     pub enabled: bool,
 
@@ -95,6 +105,7 @@ impl Default for NostrAccountConfig {
             allowed_pubkeys: Vec::new(),
             groups: Vec::new(),
             group_mention_mode: MentionMode::Mention,
+            group_message_kind: GroupMessageKind::default(),
             enabled: true,
             profile: None,
             model: None,
@@ -123,6 +134,7 @@ impl std::fmt::Debug for NostrAccountConfig {
             .field("allowed_pubkeys", &self.allowed_pubkeys)
             .field("groups", &self.groups)
             .field("group_mention_mode", &self.group_mention_mode)
+            .field("group_message_kind", &self.group_message_kind)
             .field("enabled", &self.enabled)
             .field("profile", &self.profile)
             .field("model", &self.model)
@@ -140,7 +152,7 @@ pub struct RedactedConfig<'a>(pub &'a NostrAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 13;
+        let mut count = 14;
         count += c.agent_id.is_some() as usize;
         let mut s = serializer.serialize_struct("NostrAccountConfig", count)?;
         s.serialize_field("secret_key", "[REDACTED]")?;
@@ -149,6 +161,7 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("allowed_pubkeys", &c.allowed_pubkeys)?;
         s.serialize_field("groups", &c.groups)?;
         s.serialize_field("group_mention_mode", &c.group_mention_mode)?;
+        s.serialize_field("group_message_kind", &c.group_message_kind)?;
         s.serialize_field("enabled", &c.enabled)?;
         s.serialize_field("profile", &c.profile)?;
         s.serialize_field("model", &c.model)?;

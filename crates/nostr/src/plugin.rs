@@ -172,12 +172,15 @@ impl ChannelPlugin for NostrPlugin {
         let shared_otp = Arc::new(std::sync::Mutex::new(moltis_channels::otp::OtpState::new(
             otp_cooldown,
         )));
+        let shared_reply_ctx =
+            Arc::new(std::sync::Mutex::new(crate::reply_ctx::ReplyContexts::new()));
 
         let loop_client = client.clone();
         let loop_keys = bot_keys.clone();
         let loop_config = Arc::clone(&shared_config);
         let loop_allowlist = Arc::clone(&cached_allowlist);
         let loop_otp = Arc::clone(&shared_otp);
+        let loop_reply_ctx = Arc::clone(&shared_reply_ctx);
         let loop_account_id = account_id.to_string();
         let loop_cancel = cancel.clone();
         let loop_sink = Arc::clone(&event_sink);
@@ -189,6 +192,7 @@ impl ChannelPlugin for NostrPlugin {
                 loop_config,
                 loop_allowlist,
                 loop_otp,
+                loop_reply_ctx,
                 loop_account_id,
                 loop_sink,
                 loop_cancel,
@@ -204,6 +208,7 @@ impl ChannelPlugin for NostrPlugin {
             cached_allowlist,
             cancel,
             otp: shared_otp,
+            reply_ctx: shared_reply_ctx,
         };
 
         self.accounts
@@ -411,6 +416,7 @@ mod tests {
             cached_allowlist,
             cancel,
             otp,
+            reply_ctx: Arc::new(std::sync::Mutex::new(crate::reply_ctx::ReplyContexts::new())),
         };
 
         let plugin = NostrPlugin::new();

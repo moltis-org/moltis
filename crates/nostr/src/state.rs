@@ -8,7 +8,7 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-use crate::config::NostrAccountConfig;
+use crate::{config::NostrAccountConfig, reply_ctx::ReplyContexts};
 
 /// Shared config reference — the bus loop and plugin both read/write through
 /// this same `Arc` so runtime config updates (DM policy, allowlist) take
@@ -21,6 +21,11 @@ pub type SharedConfig = Arc<RwLock<NostrAccountConfig>>;
 
 /// Shared OTP state — bus loop initiates challenges, plugin reads pending list.
 pub type SharedOtp = Arc<Mutex<OtpState>>;
+
+/// Shared group reply context — the bus loop records inbound group messages,
+/// the outbound adapter reads them to mirror the message kind and `p`-tag the
+/// author it is replying to.
+pub type SharedReplyContexts = Arc<Mutex<ReplyContexts>>;
 
 /// Runtime state for a single active Nostr account.
 pub struct AccountState {
@@ -36,6 +41,8 @@ pub struct AccountState {
     pub cancel: CancellationToken,
     /// OTP self-approval state — shared with bus loop.
     pub otp: SharedOtp,
+    /// Group reply context — shared with bus loop.
+    pub reply_ctx: SharedReplyContexts,
 }
 
 impl std::fmt::Debug for AccountState {

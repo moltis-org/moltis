@@ -97,6 +97,13 @@ test.describe("Nostr channel", () => {
 		await mentionModeSelect.selectOption("always");
 		await expect(mentionModeSelect).toHaveValue("always");
 
+		// Message kind defaults to the interoperable NIP-29 kind:9 and offers Buzz's kind:40002.
+		const messageKindSelect = page.locator('select[data-field="groupMessageKind"]');
+		await expect(messageKindSelect).toBeVisible();
+		await expect(messageKindSelect).toHaveValue("nip29");
+		await messageKindSelect.selectOption("buzz_v2");
+		await expect(messageKindSelect).toHaveValue("buzz_v2");
+
 		expect(pageErrors).toEqual([]);
 	});
 
