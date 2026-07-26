@@ -12,14 +12,27 @@
 
 #![allow(clippy::expect_used)]
 
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, RwLock},
+    time::Duration,
+};
 
 use {
-    moltis_nostr::groups,
+    moltis_channels::{ChannelStreamOutbound, StreamReceiver, otp::OtpState, plugin::StreamEvent},
+    moltis_nostr::{
+        config::NostrAccountConfig,
+        groups::{self, GroupMessageKind},
+        outbound::{AccountStateMap, NostrOutbound},
+        reply_ctx::ReplyContexts,
+        state::AccountState,
+    },
     nostr_relay_builder::MockRelay,
     nostr_sdk::prelude::{
         Client, Event, EventBuilder, EventId, Filter, Keys, Kind, PublicKey, Tag, TagKind,
     },
+    tokio::sync::mpsc,
+    tokio_util::sync::CancellationToken,
 };
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -351,4 +364,151 @@ async fn message_without_channel_tag_has_no_group_id() {
         .expect("stored by relay");
 
     assert_eq!(groups::extract_group_id(stored), None);
+}
+
+// ── Streaming replies ────────────────────────────────────────────────────
+
+/// Build an outbound adapter whose single account talks to `relay`.
+async fn outbound_for(relay: &MockRelay, config: NostrAccountConfig) -> NostrOutbound {
+    let keys = Keys::generate();
+    let client = Client::new(keys.clone());
+    client
+        .add_relay(relay.url().await)
+        .await
+        .expect("add relay");
+    client.connect().await;
+
+    let state = AccountState {
+        client,
+        keys,
+        config: Arc::new(RwLock::new(config)),
+        cached_allowlist: Arc::new(RwLock::new(Vec::new())),
+        cancel: CancellationToken::new(),
+        otp: Arc::new(Mutex::new(OtpState::new(300))),
+        reply_ctx: Arc::new(Mutex::new(ReplyContexts::new())),
+    };
+    let accounts: AccountStateMap = Arc::new(RwLock::new(HashMap::new()));
+    accounts
+        .write()
+        .expect("lock")
+        .insert("acct".to_string(), state);
+    NostrOutbound { accounts }
+}
+
+/// Feed a finished stream of chunks.
+fn stream_of(chunks: &[&str]) -> StreamReceiver {
+    let (tx, rx) = mpsc::channel(16);
+    for chunk in chunks {
+        tx.try_send(StreamEvent::Delta((*chunk).to_string()))
+            .expect("queue chunk");
+    }
+    tx.try_send(StreamEvent::Done).expect("queue done");
+    rx
+}
+
+fn group_config(group: &str, kind: GroupMessageKind) -> NostrAccountConfig {
+    NostrAccountConfig {
+        groups: vec![group.to_string()],
+        group_message_kind: kind,
+        ..Default::default()
+    }
+}
+
+/// In a Buzz channel the reply is published early and then revised, so the
+/// channel watches the answer form. Chunks arrive faster than the throttle, so
+/// the intermediate edits collapse into a single final edit carrying the whole
+/// text — the message must never be left truncated.
+#[tokio::test]
+async fn buzz_stream_publishes_then_edits_to_final_text() {
+    let relay = MockRelay::run().await.expect("relay");
+    let outbound = outbound_for(
+        &relay,
+        group_config("buzz-general", GroupMessageKind::BuzzV2),
+    )
+    .await;
+
+    outbound
+        .send_stream(
+            "acct",
+            "buzz-general",
+            None,
+            stream_of(&["Hello", ", ", "world"]),
+        )
+        .await
+        .expect("stream");
+
+    let client = {
+        let accounts = outbound.accounts.read().expect("lock");
+        accounts.get("acct").expect("account").client.clone()
+    };
+
+    let messages = fetch_kind(&client, groups::buzz_stream_message_kind()).await;
+    assert_eq!(messages.len(), 1, "exactly one message, then edits");
+    assert_eq!(messages[0].content, "Hello", "published on the first chunk");
+
+    let edits = fetch_kind(&client, groups::buzz_edit_kind()).await;
+    assert_eq!(edits.len(), 1, "throttled into one final edit");
+    assert_eq!(
+        edits[0].content, "Hello, world",
+        "final edit must carry the complete answer"
+    );
+    assert_eq!(
+        tag_values(&edits[0], TagKind::e())[0],
+        ["e".to_string(), messages[0].id.to_hex()],
+        "edit must target the published message"
+    );
+}
+
+/// A plain NIP-29 relay has no edit kind, so the reply is collected and posted
+/// once — publishing a partial message there would strand it truncated.
+#[tokio::test]
+async fn nip29_stream_sends_one_complete_message_without_edits() {
+    let relay = MockRelay::run().await.expect("relay");
+    let outbound = outbound_for(&relay, group_config("grp", GroupMessageKind::Nip29)).await;
+
+    outbound
+        .send_stream("acct", "grp", None, stream_of(&["Hello", ", ", "world"]))
+        .await
+        .expect("stream");
+
+    let client = {
+        let accounts = outbound.accounts.read().expect("lock");
+        accounts.get("acct").expect("account").client.clone()
+    };
+
+    let messages = fetch_kind(&client, groups::group_chat_kind()).await;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].content, "Hello, world", "sent once, complete");
+    assert!(
+        fetch_kind(&client, groups::buzz_edit_kind())
+            .await
+            .is_empty(),
+        "must not emit Buzz edit kinds on a plain NIP-29 relay"
+    );
+}
+
+/// A stream that errors before producing text still says something rather than
+/// leaving the channel silent.
+#[tokio::test]
+async fn stream_error_before_any_text_still_replies() {
+    let relay = MockRelay::run().await.expect("relay");
+    let outbound = outbound_for(&relay, group_config("grp", GroupMessageKind::Nip29)).await;
+
+    let (tx, rx) = mpsc::channel(4);
+    tx.try_send(StreamEvent::Error("boom".into()))
+        .expect("queue");
+    drop(tx);
+
+    outbound
+        .send_stream("acct", "grp", None, rx)
+        .await
+        .expect("stream");
+
+    let client = {
+        let accounts = outbound.accounts.read().expect("lock");
+        accounts.get("acct").expect("account").client.clone()
+    };
+    let messages = fetch_kind(&client, groups::group_chat_kind()).await;
+    assert_eq!(messages.len(), 1, "no silent failure");
+    assert!(messages[0].content.contains("Error"));
 }
