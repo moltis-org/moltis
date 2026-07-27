@@ -108,18 +108,21 @@ impl SlackOutbound {
     }
 
     /// Native Slack streaming using chat.startStream/appendStream/stopStream.
+    ///
+    /// Returns the timestamp of the message Slack created for the stream, so a
+    /// reaction on a natively streamed reply resolves like any other.
     async fn send_stream_native(
         &self,
         account_id: &str,
         to: &str,
         thread_ts: Option<&str>,
         stream: &mut StreamReceiver,
-    ) -> ChannelResult<()> {
+    ) -> ChannelResult<Vec<String>> {
         let (bot_token, api_base_url, throttle) = self.get_native_stream_config(account_id)?;
         let http = moltis_common::http_client::build_default_http_client();
 
-        let stream_id =
-            start_native_stream(&http, &api_base_url, &bot_token, to, thread_ts).await?;
+        let started = start_native_stream(&http, &api_base_url, &bot_token, to, thread_ts).await?;
+        let stream_id = started.stream_id;
 
         let mut pending = String::new();
         let mut last_append = tokio::time::Instant::now();
@@ -168,12 +171,18 @@ impl SlackOutbound {
             }
         }
 
-        // Finalize the stream.
-        if let Err(e) = stop_native_stream(&http, &api_base_url, &bot_token, &stream_id).await {
-            warn!(account_id, to, "chat.stopStream failed: {e}");
-        }
+        // Finalize the stream. Either call may carry the message timestamp;
+        // prefer the one from startStream and fall back to stopStream.
+        let stopped_ts =
+            match stop_native_stream(&http, &api_base_url, &bot_token, &stream_id).await {
+                Ok(ts) => ts,
+                Err(e) => {
+                    warn!(account_id, to, "chat.stopStream failed: {e}");
+                    None
+                },
+            };
 
-        Ok(())
+        Ok(started.ts.or(stopped_ts).into_iter().collect())
     }
 
     /// Edit-in-place streaming: post → throttled edits → final update.
@@ -299,10 +308,8 @@ impl SlackOutbound {
     /// Drive a stream in whichever mode the account is configured for,
     /// returning the timestamps of the messages the reply occupies.
     ///
-    /// Native streaming reports none: Slack's `chat.startStream` owns the
-    /// message and does not hand back a timestamp the reaction side could
-    /// match, so those replies lose attribution rather than gaining a wrong
-    /// one.
+    /// All three modes report ids, so a reaction resolves the same way however
+    /// the account happens to be configured.
     async fn send_stream_ids(
         &self,
         account_id: &str,
@@ -316,8 +323,7 @@ impl SlackOutbound {
         match stream_mode {
             StreamMode::Native => {
                 self.send_stream_native(account_id, to, thread_ts.as_deref(), stream)
-                    .await?;
-                Ok(Vec::new())
+                    .await
             },
             StreamMode::EditInPlace => {
                 self.send_stream_edit_in_place(account_id, to, thread_ts.as_deref(), stream)
@@ -772,13 +778,22 @@ impl ChannelOutbound for SlackOutbound {
 /// Start a native Slack stream via `chat.startStream`.
 ///
 /// Returns `(stream_id, channel)` on success.
+/// What `chat.startStream` hands back.
+struct NativeStream {
+    stream_id: String,
+    /// Timestamp of the message Slack created to hold the stream, when the API
+    /// reports one. This is the id a later reaction is keyed on, so dropping it
+    /// would leave natively streamed replies unattributable.
+    ts: Option<String>,
+}
+
 async fn start_native_stream(
     http: &reqwest::Client,
     api_base_url: &str,
     bot_token: &str,
     channel: &str,
     thread_ts: Option<&str>,
-) -> ChannelResult<String> {
+) -> ChannelResult<NativeStream> {
     let mut body = serde_json::json!({ "channel": channel });
     if let Some(ts) = thread_ts {
         body["thread_ts"] = serde_json::json!(ts);
@@ -807,10 +822,13 @@ async fn start_native_stream(
         )));
     }
 
-    json.get("stream_id")
+    let stream_id = json
+        .get("stream_id")
         .and_then(|v| v.as_str())
         .map(String::from)
-        .ok_or_else(|| ChannelError::unavailable("chat.startStream: missing stream_id"))
+        .ok_or_else(|| ChannelError::unavailable("chat.startStream: missing stream_id"))?;
+    let ts = json.get("ts").and_then(|v| v.as_str()).map(String::from);
+    Ok(NativeStream { stream_id, ts })
 }
 
 /// Append text to a native Slack stream via `chat.appendStream`.
@@ -853,12 +871,15 @@ async fn append_native_stream(
 }
 
 /// Finalize a native Slack stream via `chat.stopStream`.
+/// Finalize a native stream, reporting the resulting message timestamp when
+/// Slack includes one — a fallback for the `chat.startStream` response that
+/// omits it.
 async fn stop_native_stream(
     http: &reqwest::Client,
     api_base_url: &str,
     bot_token: &str,
     stream_id: &str,
-) -> ChannelResult<()> {
+) -> ChannelResult<Option<String>> {
     let body = serde_json::json!({ "stream_id": stream_id });
 
     let resp = http
@@ -884,7 +905,7 @@ async fn stop_native_stream(
         )));
     }
 
-    Ok(())
+    Ok(json.get("ts").and_then(|v| v.as_str()).map(String::from))
 }
 
 #[async_trait]

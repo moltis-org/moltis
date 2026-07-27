@@ -186,29 +186,21 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                                         "failed to send channel voice reply: {e}"
                                     );
                                 }
-                                let text_result = if logbook_html.is_empty() {
-                                    outbound
-                                        .send_text(&target.account_id, &to, &transcript, None)
-                                        .await
-                                } else {
-                                    outbound
-                                        .send_text_with_suffix(
-                                            &target.account_id,
-                                            &to,
-                                            &transcript,
-                                            &logbook_html,
-                                            None,
-                                        )
-                                        .await
-                                };
-                                if let Err(e) = text_result {
-                                    warn!(
-                                        account_id = target.account_id,
-                                        chat_id = target.chat_id,
-                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                        "failed to send transcript follow-up: {e}"
-                                    );
-                                }
+                                // The transcript follow-up is the readable form
+                                // of this turn's answer, so it is as much a
+                                // reaction target as a plain text reply and
+                                // goes out through the same attributing path.
+                                deliver_text_reply(
+                                    &outbound,
+                                    feedback.as_deref(),
+                                    &target,
+                                    &to,
+                                    &transcript,
+                                    &logbook_html,
+                                    None,
+                                    &session_key,
+                                )
+                                .await;
                             }
                         }
                     },
