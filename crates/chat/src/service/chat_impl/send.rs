@@ -488,7 +488,19 @@ impl LiveChatService {
                             }
                         },
                         MessageQueueMode::Collect => {
-                            let combined: Vec<&str> = queued
+                            // Merge only messages that share an authorization
+                            // context; the rest goes back on the queue and is
+                            // replayed under its own policy.
+                            let (group, rest) = tool_policy::split_by_request_tool_policy(queued);
+                            if !rest.is_empty() {
+                                message_queue
+                                    .write()
+                                    .await
+                                    .entry(session_key_clone.clone())
+                                    .or_default()
+                                    .extend(rest);
+                            }
+                            let combined: Vec<&str> = group
                                 .iter()
                                 .filter_map(|m| m.params.get("text").and_then(|v| v.as_str()))
                                 .collect();
@@ -498,7 +510,7 @@ impl LiveChatService {
                                     count = combined.len(),
                                     "replaying collected messages"
                                 );
-                                let Some(last) = queued.last() else {
+                                let Some(last) = group.last() else {
                                     return;
                                 };
                                 let mut merged = last.params.clone();
@@ -1448,7 +1460,19 @@ impl LiveChatService {
                         }
                     },
                     MessageQueueMode::Collect => {
-                        let combined: Vec<&str> = queued
+                        // Merge only messages that share an authorization
+                        // context; the rest goes back on the queue and is
+                        // replayed under its own policy.
+                        let (group, rest) = tool_policy::split_by_request_tool_policy(queued);
+                        if !rest.is_empty() {
+                            message_queue
+                                .write()
+                                .await
+                                .entry(session_key_clone.clone())
+                                .or_default()
+                                .extend(rest);
+                        }
+                        let combined: Vec<&str> = group
                             .iter()
                             .filter_map(|m| m.params.get("text").and_then(|v| v.as_str()))
                             .collect();
@@ -1458,8 +1482,10 @@ impl LiveChatService {
                                 count = combined.len(),
                                 "replaying collected messages"
                             );
-                            // Use the last queued message as the base params, override text.
-                            let Some(last) = queued.last() else {
+                            // Use the group's last message as the base params,
+                            // override text. Every message in the group carries
+                            // the same `_tool_policy`, so this cannot widen it.
+                            let Some(last) = group.last() else {
                                 return;
                             };
                             let mut merged = last.params.clone();
