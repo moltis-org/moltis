@@ -178,7 +178,11 @@ impl ZvecMemoryStore {
         }
         let collection = self.collection_arc();
         blocking(move || crate::flush_collection(&collection).map_err(map_err)).await?;
-        self.optimize()?;
+        blocking({
+            let coll = Arc::clone(&self.collection);
+            move || coll.optimize().map_err(|e| Error::Backend(e.to_string()))
+        })
+        .await?;
         Ok(total)
     }
 }
