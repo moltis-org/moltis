@@ -8,7 +8,7 @@ use {
     tracing::{debug, info, warn},
 };
 
-use {moltis_config::MessageQueueMode, moltis_service_traits::ServiceResult};
+use moltis_service_traits::ServiceResult;
 
 #[cfg(feature = "local-llm")]
 use moltis_providers::model_id::raw_model_id;
@@ -457,72 +457,14 @@ impl LiveChatService {
                 drop(permit);
 
                 // Drain queued messages for this session.
-                let queued = message_queue
-                    .write()
-                    .await
-                    .remove(&session_key_clone)
-                    .unwrap_or_default();
-                if !queued.is_empty() {
-                    let queue_mode = message_queue_mode;
-                    let chat = state_for_drain.chat_service().await;
-                    match queue_mode {
-                        MessageQueueMode::Followup => {
-                            let mut iter = queued.into_iter();
-                            let Some(first) = iter.next() else {
-                                return;
-                            };
-                            let rest: Vec<QueuedMessage> = iter.collect();
-                            if !rest.is_empty() {
-                                message_queue
-                                    .write()
-                                    .await
-                                    .entry(session_key_clone.clone())
-                                    .or_default()
-                                    .extend(rest);
-                            }
-                            info!(session = %session_key_clone, "replaying queued message (followup)");
-                            let mut replay_params = first.params;
-                            replay_params["_queued_replay"] = serde_json::json!(true);
-                            if let Err(e) = chat.send(replay_params).await {
-                                warn!(session = %session_key_clone, error = %e, "failed to replay queued message");
-                            }
-                        },
-                        MessageQueueMode::Collect => {
-                            // Merge only messages that share an authorization
-                            // context; the rest goes back on the queue and is
-                            // replayed under its own policy.
-                            let (group, rest) = tool_policy::split_by_request_tool_policy(queued);
-                            if !rest.is_empty() {
-                                message_queue
-                                    .write()
-                                    .await
-                                    .entry(session_key_clone.clone())
-                                    .or_default()
-                                    .extend(rest);
-                            }
-                            let combined: Vec<&str> = group
-                                .iter()
-                                .filter_map(|m| m.params.get("text").and_then(|v| v.as_str()))
-                                .collect();
-                            if !combined.is_empty() {
-                                info!(
-                                    session = %session_key_clone,
-                                    count = combined.len(),
-                                    "replaying collected messages"
-                                );
-                                let Some(last) = group.last() else {
-                                    return;
-                                };
-                                let mut merged = last.params.clone();
-                                merged["text"] = serde_json::json!(combined.join("\n\n"));
-                                merged["_queued_replay"] = serde_json::json!(true);
-                                if let Err(e) = chat.send(merged).await {
-                                    warn!(session = %session_key_clone, error = %e, "failed to replay collected messages");
-                                }
-                            }
-                        },
-                    }
-                }
+                let chat = state_for_drain.chat_service().await;
+                queue_drain::drain_queued_messages(
+                    &message_queue,
+                    &session_key_clone,
+                    message_queue_mode,
+                    &chat,
+                )
+                .await;
             });
 
             self.active_runs
@@ -1427,77 +1369,14 @@ impl LiveChatService {
             drop(permit);
 
             // Drain queued messages for this session.
-            let queued = message_queue
-                .write()
-                .await
-                .remove(&session_key_clone)
-                .unwrap_or_default();
-            if !queued.is_empty() {
-                let queue_mode = message_queue_mode;
-                let chat = state_for_drain.chat_service().await;
-                match queue_mode {
-                    MessageQueueMode::Followup => {
-                        let mut iter = queued.into_iter();
-                        let Some(first) = iter.next() else {
-                            return;
-                        };
-                        // Put remaining messages back so the replayed run's
-                        // own drain loop picks them up after it completes.
-                        let rest: Vec<QueuedMessage> = iter.collect();
-                        if !rest.is_empty() {
-                            message_queue
-                                .write()
-                                .await
-                                .entry(session_key_clone.clone())
-                                .or_default()
-                                .extend(rest);
-                        }
-                        info!(session = %session_key_clone, "replaying queued message (followup)");
-                        let mut replay_params = first.params;
-                        replay_params["_queued_replay"] = serde_json::json!(true);
-                        if let Err(e) = chat.send(replay_params).await {
-                            warn!(session = %session_key_clone, error = %e, "failed to replay queued message");
-                        }
-                    },
-                    MessageQueueMode::Collect => {
-                        // Merge only messages that share an authorization
-                        // context; the rest goes back on the queue and is
-                        // replayed under its own policy.
-                        let (group, rest) = tool_policy::split_by_request_tool_policy(queued);
-                        if !rest.is_empty() {
-                            message_queue
-                                .write()
-                                .await
-                                .entry(session_key_clone.clone())
-                                .or_default()
-                                .extend(rest);
-                        }
-                        let combined: Vec<&str> = group
-                            .iter()
-                            .filter_map(|m| m.params.get("text").and_then(|v| v.as_str()))
-                            .collect();
-                        if !combined.is_empty() {
-                            info!(
-                                session = %session_key_clone,
-                                count = combined.len(),
-                                "replaying collected messages"
-                            );
-                            // Use the group's last message as the base params,
-                            // override text. Every message in the group carries
-                            // the same `_tool_policy`, so this cannot widen it.
-                            let Some(last) = group.last() else {
-                                return;
-                            };
-                            let mut merged = last.params.clone();
-                            merged["text"] = serde_json::json!(combined.join("\n\n"));
-                            merged["_queued_replay"] = serde_json::json!(true);
-                            if let Err(e) = chat.send(merged).await {
-                                warn!(session = %session_key_clone, error = %e, "failed to replay collected messages");
-                            }
-                        }
-                    },
-                }
-            }
+            let chat = state_for_drain.chat_service().await;
+            queue_drain::drain_queued_messages(
+                &message_queue,
+                &session_key_clone,
+                message_queue_mode,
+                &chat,
+            )
+            .await;
         });
 
         self.active_runs

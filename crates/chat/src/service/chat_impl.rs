@@ -1,5 +1,6 @@
 //! `ChatService` trait implementation for `LiveChatService`.
 
+mod queue_drain;
 mod send;
 mod tool_policy;
 
