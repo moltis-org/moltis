@@ -290,11 +290,22 @@ function updateBadge(count: number | undefined): void {
  */
 async function isSessionVisible(sessionKey: string | undefined): Promise<boolean> {
 	if (!sessionKey) return false;
+	const target = `/chats/${sessionKey.replace(/:/g, "/")}`;
 	const clients = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
 	return clients.some((client) => {
 		const windowClient = client as WindowClient;
 		if (windowClient.visibilityState !== "visible") return false;
-		return client.url.includes(`/chats/${sessionKey.replace(/:/g, "/")}`);
+
+		let pathname: string;
+		try {
+			pathname = new URL(client.url).pathname;
+		} catch {
+			return false;
+		}
+		// Compare the whole path, not a substring: `/chats/main-2` contains
+		// `/chats/main`, so a substring test would treat a different chat as
+		// on-screen and silence a notification the user needed.
+		return pathname === target || pathname === `${target}/`;
 	});
 }
 

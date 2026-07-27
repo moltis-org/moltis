@@ -115,6 +115,16 @@ test.describe("service worker", () => {
 		expect(source).toContain("renotify");
 	});
 
+	test("matches the visible session by whole path, not substring", async ({ page }) => {
+		const source = await (await page.request.get("/sw.js")).text();
+
+		// `/chats/main-2` contains `/chats/main`, so a substring test would treat
+		// a different chat as on-screen and silence a notification for one the
+		// user cannot see.
+		expect(source).toContain("new URL(client.url).pathname");
+		expect(source).not.toMatch(/client\.url\.includes\(`\/chats\//);
+	});
+
 	test("badges the app icon only when it is installed, and never blocks on it", async ({ page }) => {
 		const source = await (await page.request.get("/sw.js")).text();
 
