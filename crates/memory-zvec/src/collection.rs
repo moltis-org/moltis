@@ -78,6 +78,20 @@ pub fn initialize(db_path: &Path, dimension: Option<u32>) -> Result<Collection> 
             Ok(collection)
         },
         Err(open_err) => {
+            if let Some(lock_path) = stale_lock_path(&path_str) {
+                debug!(path = %path_str, "removing stale zvec lock file and retrying open");
+                if let Err(e) = std::fs::remove_file(&lock_path) {
+                    debug!(path = %lock_path.display(), error = %e, "failed to remove stale lock");
+                }
+                if let Ok(collection) = Collection::open(&path_str, None) {
+                    debug!(
+                        "opened zvec collection after stale-lock cleanup at {}",
+                        path_str
+                    );
+                    return Ok(collection);
+                }
+                debug!(path = %path_str, "open still failed after stale-lock removal; falling through to create");
+            }
             debug!(path = %path_str, error = %open_err, "open failed; creating new zvec collection");
             let dim = dimension.unwrap_or(DEFAULT_VECTOR_DIM);
             let schema = build_schema(dim)?;
@@ -100,6 +114,11 @@ pub fn shutdown(collection: Collection) -> Result<()> {
     Ok(())
 }
 
+fn stale_lock_path(collection_path: &str) -> Option<std::path::PathBuf> {
+    let lock = Path::new(collection_path).join("LOCK");
+    lock.exists().then_some(lock)
+}
+
 pub fn open_or_create_collection(db_path: &Path, dimension: Option<u32>) -> Result<Collection> {
     let path_str = collection_path(db_path, dimension);
     match Collection::open(&path_str, None) {
@@ -108,6 +127,23 @@ pub fn open_or_create_collection(db_path: &Path, dimension: Option<u32>) -> Resu
             Ok(collection)
         },
         Err(open_err) => {
+            // If the collection directory exists from a previous run, a stale
+            // LOCK file left behind by a killed process can block the open.
+            // Try removing it and retrying before falling through to create.
+            if let Some(lock_path) = stale_lock_path(&path_str) {
+                debug!(path = %path_str, "removing stale zvec lock file and retrying open");
+                if let Err(e) = std::fs::remove_file(&lock_path) {
+                    debug!(path = %lock_path.display(), error = %e, "failed to remove stale lock");
+                }
+                if let Ok(collection) = Collection::open(&path_str, None) {
+                    debug!(
+                        "opened zvec collection after stale-lock cleanup at {}",
+                        path_str
+                    );
+                    return Ok(collection);
+                }
+                debug!(path = %path_str, "open still failed after stale-lock removal; falling through to create");
+            }
             debug!(path = %path_str, error = %open_err, "open failed; creating new zvec collection");
             let dim = dimension.unwrap_or(DEFAULT_VECTOR_DIM);
             let schema = build_schema(dim)?;
@@ -363,6 +399,51 @@ mod tests {
         let collection = open_or_create_collection(&path, Some(768)).unwrap();
         let dim = read_dimension_meta(&collection).unwrap();
         assert_eq!(dim, Some(768), "new collection must have meta doc");
+        collection.flush().unwrap();
+        drop(collection);
+    }
+
+    #[test]
+    fn test_open_or_create_collection_recovers_from_stale_lock() {
+        ensure_zvec_initialized().unwrap();
+        let (_dir, path) = temp_db_path();
+
+        // Create the collection normally.
+        {
+            let collection = open_or_create_collection(&path, Some(768)).unwrap();
+            let chunk = chunks::ChunkDoc {
+                id: "stale-lock-1".into(),
+                path: "p".into(),
+                source: "s".into(),
+                start_line: 1,
+                end_line: 2,
+                hash: "h".into(),
+                model: "m".into(),
+                text: "stale lock recovery data".into(),
+                embedding: vec![0.0f32; 768],
+                updated_at: "2025-01-01T00:00:00Z".into(),
+                mtime: 0,
+                size: 0,
+            };
+            chunks::upsert_chunks(&collection, &[chunk]).unwrap();
+            collection.flush().unwrap();
+        }
+
+        // Simulate a stale LOCK left behind by a killed process.
+        let coll_dir = collection_path(&path, Some(768));
+        let lock_path = Path::new(&coll_dir).join("LOCK");
+        std::fs::write(&lock_path, b"").unwrap();
+        assert!(lock_path.exists(), "stale LOCK must exist before reopen");
+
+        // Reopen — should remove the stale lock and successfully open the
+        // existing collection (not overwrite it).
+        let collection = open_or_create_collection(&path, Some(768)).unwrap();
+        let fetched = get_chunk_by_id(&collection, "stale-lock-1").unwrap();
+        assert!(
+            fetched.is_some(),
+            "existing data must survive stale-lock recovery"
+        );
+        assert_eq!(fetched.unwrap().text, "stale lock recovery data");
         collection.flush().unwrap();
         drop(collection);
     }
