@@ -152,6 +152,35 @@ impl ZvecMemoryStore {
             .optimize()
             .map_err(|e| Error::Backend(e.to_string()))
     }
+
+    /// Rebuild the zvec full-text-search index from the durable documents on
+    /// disk.
+    ///
+    /// zvec's FTS index lives in memory and is only persisted by `optimize()`.
+    /// `flush()` persists documents but **not** the FTS index. If a writer
+    /// exits (e.g. the gateway is killed) after flushing documents but before
+    /// optimizing, the reopened collection has all its documents but an empty
+    /// FTS index, so keyword search returns nothing.
+    ///
+    /// This method recovers by re-feeding every stored chunk back into the
+    /// collection (rebuilding the in-memory FTS index) and then flushing +
+    /// optimizing to persist it. Returns the number of chunks re-ingested.
+    pub async fn rebuild_keyword_index(&self) -> MemoryResult<usize> {
+        let files = self.list_files().await?;
+        let mut total = 0usize;
+        for file in files {
+            let chunks = self.get_chunks_for_file(&file.path).await?;
+            if chunks.is_empty() {
+                continue;
+            }
+            total += chunks.len();
+            self.upsert_chunks(&chunks).await?;
+        }
+        let collection = self.collection_arc();
+        blocking(move || crate::flush_collection(&collection).map_err(map_err)).await?;
+        self.optimize()?;
+        Ok(total)
+    }
 }
 
 #[async_trait]
@@ -187,7 +216,10 @@ impl MemoryStore for ZvecMemoryStore {
 
     #[tracing::instrument(skip(self, chunks), fields(count = chunks.len()))]
     async fn upsert_chunks(&self, chunks: &[ChunkRow]) -> MemoryResult<()> {
-        let docs: Vec<ChunkDoc> = chunks.iter().map(ChunkDoc::from_chunk_row).collect();
+        let docs: Vec<ChunkDoc> = chunks
+            .iter()
+            .map(|c| ChunkDoc::from_chunk_row(c, self.dimension))
+            .collect();
 
         // Upsert chunk docs into the zvec collection (for vector/keyword search).
         let collection = Arc::clone(&self.collection);
@@ -957,6 +989,54 @@ mod tests {
         drop(store);
     }
 
+    /// Regression test for keyword-only mode (P1): upserting chunks with no
+    /// embedding must not fail with a zvec dimension-mismatch error. This
+    /// happens when `memory.embedding_dimension` is set but no embedding
+    /// provider is configured — the manager runs keyword-only, produces
+    /// `ChunkRow`s with `embedding: None`, and the store must substitute a
+    /// zero vector matching the collection dimension.
+    #[tokio::test]
+    async fn test_store_upsert_chunks_keyword_only_no_embedding() {
+        let (collection, cache, _dir) = make_collection();
+        let store = ZvecMemoryStore::with_cache_arc(Arc::clone(&collection), cache);
+
+        let chunks = vec![ChunkRow {
+            id: "kw-store-1".into(),
+            path: "kw-store.md".into(),
+            source: "test".into(),
+            start_line: 1,
+            end_line: 5,
+            hash: "h".into(),
+            model: String::new(),
+            text: "keyword-only store chunk".into(),
+            embedding: None,
+            updated_at: "2025-01-01T00:00:00Z".into(),
+        }];
+        store
+            .upsert_chunks(&chunks)
+            .await
+            .expect("keyword-only upsert must succeed via zero-vector fallback");
+
+        let chunk = store
+            .get_chunk_by_id("kw-store-1")
+            .await
+            .expect("fetch must succeed")
+            .expect("keyword-only chunk must be retrievable");
+        assert_eq!(chunk.text, "keyword-only store chunk");
+
+        // Keyword search must still find it — the whole point of keyword-only mode.
+        let results = store
+            .hybrid_search(&[], "keyword-only", 0.0, 1.0, MergeStrategy::Weighted, 10)
+            .await
+            .unwrap();
+        assert!(
+            results.iter().any(|r| r.chunk_id == "kw-store-1"),
+            "keyword search must find the keyword-only chunk"
+        );
+
+        drop(store);
+    }
+
     #[tokio::test]
     async fn test_store_get_chunks_for_file_with_data() {
         let (collection, cache, _dir) = make_collection();
@@ -1164,6 +1244,116 @@ mod tests {
         assert!(results.is_empty());
 
         drop(store);
+    }
+
+    /// Re-opening a collection whose FTS index was not persisted (writer
+    /// flushed docs but never optimized) must produce a stale state:
+    /// documents exist but keyword search returns nothing. Calling
+    /// `rebuild_keyword_index()` re-ingests all chunks, rebuilds the FTS
+    /// index in memory, and persists it via flush + optimize so that
+    /// keyword search works after reopen.
+    #[tokio::test]
+    async fn test_rebuild_keyword_index_recovers_stale_fts() {
+        ensure_init();
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("rebuilddb");
+        let cache_path = dir.path().join("rebuild.cache");
+
+        // Phase 1: write chunks, flush docs, do NOT optimize, drop.
+        {
+            let collection = crate::open_or_create_collection(&db_path, Some(768)).unwrap();
+            let cache = RedbCache::new(&cache_path).unwrap();
+            let store = ZvecMemoryStore::with_cache(collection, cache).with_cache_dimension(768);
+            // Register the file first — list_files reads the file-row table.
+            store
+                .upsert_file(&FileRow {
+                    path: "rb.md".into(),
+                    source: "rb.md".into(),
+                    hash: "h".into(),
+                    mtime: 1,
+                    size: 100,
+                })
+                .await
+                .unwrap();
+            let chunks: Vec<ChunkRow> = (0..3)
+                .map(|i| ChunkRow {
+                    id: format!("rb-{i}"),
+                    path: "rb.md".into(),
+                    source: "test".into(),
+                    start_line: i + 1,
+                    end_line: i + 5,
+                    hash: format!("h{i}"),
+                    model: "m".into(),
+                    text: format!("rebuild keyword index chunk {i}"),
+                    embedding: Some(vec![0u8; 768 * 4]),
+                    updated_at: "2025-01-01T00:00:00Z".into(),
+                })
+                .collect();
+            store.upsert_chunks(&chunks).await.unwrap();
+            let coll = store.collection_arc();
+            crate::flush_collection(&coll).unwrap();
+            // explicitly do NOT optimize — simulate killed writer
+        }
+
+        // Phase 2: reopen — FTS is stale, then rebuild it.
+        {
+            let collection = crate::open_or_create_collection(&db_path, Some(768)).unwrap();
+            let cache = RedbCache::new(&cache_path).unwrap();
+            let store = ZvecMemoryStore::with_cache(collection, cache).with_cache_dimension(768);
+
+            // Doc persistence is fine.
+            assert!(
+                store.get_chunk_by_id("rb-0").await.unwrap().is_some(),
+                "docs must survive flush across reopen"
+            );
+
+            // Keyword search is empty (stale FTS).
+            let stale = store
+                .hybrid_search(&[], "rebuild", 0.0, 1.0, MergeStrategy::Weighted, 10)
+                .await
+                .unwrap();
+            assert!(
+                stale.is_empty(),
+                "keyword search must be empty when FTS is stale"
+            );
+
+            // Rebuild recovers the FTS index and returns the chunk count.
+            let count = store.rebuild_keyword_index().await.unwrap();
+            assert_eq!(count, 3, "rebuild must re-ingest all 3 chunks");
+
+            // Keyword search now works.
+            let results = store
+                .hybrid_search(&[], "chunk", 0.0, 1.0, MergeStrategy::Weighted, 10)
+                .await
+                .unwrap();
+            assert_eq!(
+                results.len(),
+                3,
+                "all 3 chunks must be keyword-findable after rebuild"
+            );
+            assert!(results.iter().any(|r| r.chunk_id == "rb-0"));
+            assert!(results.iter().any(|r| r.chunk_id == "rb-1"));
+            assert!(results.iter().any(|r| r.chunk_id == "rb-2"));
+
+            // Verify FTS persists across reopen (no second rebuild needed).
+            drop(store);
+        }
+
+        // Phase 3: reopen a second time — FTS must still work (no rebuild).
+        {
+            let collection = crate::open_or_create_collection(&db_path, Some(768)).unwrap();
+            let cache = RedbCache::new(&cache_path).unwrap();
+            let store = ZvecMemoryStore::with_cache(collection, cache).with_cache_dimension(768);
+            let results = store
+                .hybrid_search(&[], "chunk", 0.0, 1.0, MergeStrategy::Weighted, 10)
+                .await
+                .unwrap();
+            assert_eq!(
+                results.len(),
+                3,
+                "keyword search must survive another reopen after rebuild"
+            );
+        }
     }
 
     // RRF vs weighted divergence is covered in moltis-memory's `search::tests`,

@@ -55,9 +55,154 @@ pub async fn handle_memory(action: MemoryAction) -> anyhow::Result<()> {
     }
 }
 
-/// Resolve the memory.db path using the data directory.
+/// Resolve the memory.db path using the data directory. (Used by the
+/// SQLite-backed tests below.)
+#[cfg(test)]
 fn memory_db_path() -> std::path::PathBuf {
     moltis_config::data_dir().join("memory.db")
+}
+
+/// The active memory store plus its on-disk location, or a pre-formatted
+/// "not found" message when no backing data exists yet.
+///
+/// `search_memory` and `show_status` route through this so they query the
+/// backend the gateway actually writes to (SQLite for `Builtin`, zvec for
+/// `Zvec`) instead of always opening `memory.db` — which is empty/absent when
+/// zvec is active.
+enum ActiveStore {
+    Open {
+        store: Box<dyn moltis_memory::store::MemoryStore>,
+        display_path: std::path::PathBuf,
+    },
+    NotFound {
+        message: String,
+    },
+}
+
+/// Load config and open whichever memory backend the gateway writes to.
+async fn open_active_store() -> anyhow::Result<ActiveStore> {
+    let config = moltis_config::discover_and_load();
+    let data_dir = moltis_config::data_dir();
+    open_store_for_backend(&config.memory, &data_dir).await
+}
+
+/// Backend-dispatching core of [`open_active_store`], factored out so tests can
+/// drive it with an explicit config + data dir (without relying on the global
+/// config file).
+#[allow(unused_variables)]
+async fn open_store_for_backend(
+    mem_cfg: &moltis_config::schema::MemoryEmbeddingConfig,
+    data_dir: &std::path::Path,
+) -> anyhow::Result<ActiveStore> {
+    match mem_cfg.backend {
+        #[cfg(feature = "zvec")]
+        moltis_config::MemoryBackend::Zvec => open_zvec_store(mem_cfg, data_dir).await,
+        _ => open_sqlite_store(data_dir).await,
+    }
+}
+
+/// Open the built-in SQLite backend at `<data_dir>/memory.db`.
+async fn open_sqlite_store(data_dir: &std::path::Path) -> anyhow::Result<ActiveStore> {
+    let db_path = data_dir.join("memory.db");
+    if !db_path.exists() {
+        return Ok(ActiveStore::NotFound {
+            message: format!(
+                "Memory database not found at {}. Start the gateway first to index memories.",
+                db_path.display()
+            ),
+        });
+    }
+    let db_url = format!("sqlite:{}?mode=ro", db_path.display());
+    let pool = sqlx::SqlitePool::connect(&db_url).await?;
+    let store: Box<dyn moltis_memory::store::MemoryStore> =
+        Box::new(moltis_memory::store_sqlite::SqliteMemoryStore::new(pool));
+    Ok(ActiveStore::Open {
+        store,
+        display_path: db_path,
+    })
+}
+
+/// Open the zvec backend's collection under `<data_dir>/<db_path>`.
+///
+/// The collection only exists once the gateway has run; before that we return
+/// [`ActiveStore::NotFound`] so callers can tell the user to start the gateway.
+#[cfg(feature = "zvec")]
+async fn open_zvec_store(
+    mem_cfg: &moltis_config::schema::MemoryEmbeddingConfig,
+    data_dir: &std::path::Path,
+) -> anyhow::Result<ActiveStore> {
+    let db_name = mem_cfg.db_path.as_deref().unwrap_or("memory.zvec");
+    let collection_stem = data_dir.join(db_name);
+    let default_dim = mem_cfg.embedding_dimension.unwrap_or(768);
+    let dim = resolve_zvec_dimension(&collection_stem, mem_cfg.embedding_dimension, default_dim);
+
+    // zvec writes the HNSW collection to `<stem>_<dim>`. If that file isn't on
+    // disk, the gateway hasn't indexed anything yet — don't silently create an
+    // empty collection.
+    let collection_file = format!("{}_{}", collection_stem.display(), dim);
+    if !std::path::Path::new(&collection_file).exists() {
+        return Ok(ActiveStore::NotFound {
+            message: format!(
+                "Memory collection not found at {collection_file}. \
+                 Start the gateway first to index memories."
+            ),
+        });
+    }
+
+    moltis_memory_zvec::ensure_zvec_initialized()?;
+
+    let cache_path = {
+        let mut p = collection_stem.clone();
+        p.as_mut_os_string().push(".cache");
+        p
+    };
+    let display_path = collection_stem.clone();
+    let store = {
+        let stem = collection_stem;
+        let cp = cache_path;
+        tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let collection = moltis_memory_zvec::open_or_create_collection(&stem, Some(dim))?;
+            let cache = moltis_memory_zvec::RedbCache::new(&cp)?;
+            Ok(
+                moltis_memory_zvec::ZvecMemoryStore::with_cache(collection, cache)
+                    .with_cache_dimension(dim)
+                    .with_collection_disk_path(stem.as_path()),
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn_blocking join failed: {e}"))??
+    };
+
+    // If a writer (e.g. a killed gateway) flushed documents but exited before
+    // optimizing, the reopened collection has its documents but an empty FTS
+    // index — keyword search returns nothing. Probe the FTS index with a token
+    // from an existing chunk; if it's stale, rebuild it via re-ingestion.
+    #[cfg(feature = "zvec")]
+    {
+        use moltis_memory::store::{MemoryStore as _, MergeStrategy};
+        let probe = &store;
+        if let Ok(files) = probe.list_files().await
+            && !files.is_empty()
+            && let Ok(chunks) = probe.get_chunks_for_file(&files[0].path).await
+            && let Some(first) = chunks.first()
+            && let Some(token) = first.text.split_whitespace().next()
+            && !token.is_empty()
+            && let Ok(results) = probe
+                .hybrid_search(&[], token, 0.0, 1.0, MergeStrategy::Weighted, 1)
+                .await
+            && results.is_empty()
+        {
+            let count = store.rebuild_keyword_index().await?;
+            eprintln!(
+                "Keyword index was stale (likely a non-optimized writer exit); rebuilt {count} chunks."
+            );
+        }
+    }
+
+    Ok(ActiveStore::Open {
+        store: Box::new(store),
+        display_path,
+    })
 }
 
 /// Resolve the embedding dimension for a zvec collection stem.
@@ -112,7 +257,9 @@ fn resolve_zvec_dimension(
     first_found.unwrap_or_else(|| config_dim.unwrap_or(default_dim))
 }
 
-/// Open a read-only SQLite connection pool to memory.db.
+/// Open a read-only SQLite connection pool to memory.db. (Used by the
+/// SQLite-backed tests below.)
+#[cfg(test)]
 async fn open_memory_pool() -> anyhow::Result<sqlx::SqlitePool> {
     let db_path = memory_db_path();
     if !db_path.exists() {
@@ -127,9 +274,11 @@ async fn open_memory_pool() -> anyhow::Result<sqlx::SqlitePool> {
 }
 
 async fn search_memory(query: &str, limit: usize, json: bool) -> anyhow::Result<()> {
-    let pool = open_memory_pool().await?;
-    let store = moltis_memory::store_sqlite::SqliteMemoryStore::new(pool);
-    let results = moltis_memory::search::keyword_only_search(&store, query, limit).await?;
+    let store = match open_active_store().await? {
+        ActiveStore::Open { store, .. } => store,
+        ActiveStore::NotFound { message } => anyhow::bail!(message),
+    };
+    let results = moltis_memory::search::keyword_only_search(store.as_ref(), query, limit).await?;
 
     if results.is_empty() {
         if json {
@@ -187,29 +336,31 @@ fn print_human(results: &[moltis_memory::search::SearchResult]) {
 }
 
 async fn show_status() -> anyhow::Result<()> {
-    let db_path = memory_db_path();
-    if !db_path.exists() {
-        println!("Memory database not found at {}.", db_path.display());
-        println!("Start the gateway to begin indexing memories.");
-        return Ok(());
-    }
-
-    let pool = open_memory_pool().await?;
-    let store = moltis_memory::store_sqlite::SqliteMemoryStore::new(pool);
+    let (store, display_path) = match open_active_store().await? {
+        ActiveStore::Open {
+            store,
+            display_path,
+        } => (store, display_path),
+        ActiveStore::NotFound { message } => {
+            println!("{message}");
+            return Ok(());
+        },
+    };
 
     let config = moltis_memory::config::MemoryConfig {
-        db_path: db_path.to_string_lossy().to_string(),
+        db_path: display_path.to_string_lossy().to_string(),
         ..Default::default()
     };
-    let manager = moltis_memory::manager::MemoryManager::keyword_only(config, Box::new(store));
+    let manager = moltis_memory::manager::MemoryManager::keyword_only(config, store);
     let status = manager.status().await?;
 
     println!("Memory status:");
     println!("  Files:           {}", status.total_files);
     println!("  Chunks:          {}", status.total_chunks);
     println!("  Embedding model: {}", status.embedding_model);
+    println!("  Backend:         {}", status.backend_type);
     println!("  Database size:   {}", status.db_size_display());
-    println!("  Database path:   {}", db_path.display());
+    println!("  Database path:   {}", display_path.display());
 
     Ok(())
 }
@@ -719,6 +870,125 @@ mod tests {
             let stem = std::path::PathBuf::from("nonexistent_test_stem_12345");
             let dim = resolve_zvec_dimension(&stem, None, 768);
             assert_eq!(dim, 768);
+        }
+    }
+
+    /// Backend routing: `search_memory`/`show_status` must query the zvec
+    /// collection (not the always-empty `memory.db`) when zvec is active.
+    #[cfg(feature = "zvec")]
+    mod zvec_routing {
+        use {
+            super::*, moltis_config::schema::MemoryEmbeddingConfig,
+            moltis_memory::store::MemoryStore as _,
+        };
+
+        fn mem_cfg_zvec(db_name: &str, dim: Option<u32>) -> MemoryEmbeddingConfig {
+            MemoryEmbeddingConfig {
+                backend: moltis_config::MemoryBackend::Zvec,
+                db_path: Some(db_name.to_string()),
+                embedding_dimension: dim,
+                ..Default::default()
+            }
+        }
+
+        #[tokio::test]
+        async fn not_found_when_collection_missing() {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let cfg = mem_cfg_zvec("memory.zvec", Some(768));
+            match open_store_for_backend(&cfg, tmp.path()).await.unwrap() {
+                ActiveStore::NotFound { message } => {
+                    assert!(message.contains("not found"), "{message}");
+                },
+                ActiveStore::Open { .. } => {
+                    panic!("expected NotFound when no collection exists on disk")
+                },
+            }
+        }
+
+        #[tokio::test]
+        async fn sqlite_not_found_for_builtin_backend() {
+            // Builtin backend must keep using the SQLite path.
+            let tmp = tempfile::TempDir::new().unwrap();
+            let cfg = MemoryEmbeddingConfig::default(); // backend = Builtin
+            match open_store_for_backend(&cfg, tmp.path()).await.unwrap() {
+                ActiveStore::NotFound { message } => {
+                    assert!(message.contains("Memory database not found"), "{message}");
+                },
+                ActiveStore::Open { .. } => {
+                    panic!("expected NotFound when no memory.db exists")
+                },
+            }
+        }
+
+        #[tokio::test]
+        async fn opens_existing_collection_and_searches() {
+            // Seed a real zvec collection with one chunk, then route through
+            // open_store_for_backend and verify keyword search finds it.
+            moltis_memory_zvec::ensure_zvec_initialized().unwrap();
+            let tmp = tempfile::TempDir::new().unwrap();
+            let stem = tmp.path().join("memory.zvec");
+            let cache_path = {
+                let mut p = stem.clone();
+                p.as_mut_os_string().push(".cache");
+                p
+            };
+
+            {
+                let collection =
+                    moltis_memory_zvec::open_or_create_collection(&stem, Some(768)).unwrap();
+                let cache = moltis_memory_zvec::RedbCache::new(&cache_path).unwrap();
+                let store = moltis_memory_zvec::ZvecMemoryStore::with_cache(collection, cache);
+                let emb_bytes: Vec<u8> = vec![0.0f32; 768]
+                    .iter()
+                    .flat_map(|f| f.to_le_bytes())
+                    .collect();
+                let chunks = vec![moltis_memory::schema::ChunkRow {
+                    id: "route-1".into(),
+                    path: "route.md".into(),
+                    source: "test".into(),
+                    start_line: 1,
+                    end_line: 5,
+                    hash: "h".into(),
+                    model: "m".into(),
+                    text: "routing cli commands to the zvec backend".into(),
+                    embedding: Some(emb_bytes),
+                    updated_at: "2025-01-01T00:00:00Z".into(),
+                }];
+                store.upsert_chunks(&chunks).await.unwrap();
+                // zvec buffers writes; flush + optimize so the reopened handle
+                // can see them (including the FTS index). The gateway achieves
+                // this steady state via its periodic-optimize background task.
+                let coll = store.collection_arc();
+                moltis_memory_zvec::flush_collection(&coll).unwrap();
+                store.optimize().unwrap();
+            }
+
+            let cfg = mem_cfg_zvec("memory.zvec", Some(768));
+            match open_store_for_backend(&cfg, tmp.path()).await.unwrap() {
+                ActiveStore::Open {
+                    store,
+                    display_path,
+                } => {
+                    assert_eq!(display_path, stem);
+                    // Diagnostic: confirm the chunk persisted across reopen.
+                    let persisted = store.get_chunk_by_id("route-1").await.unwrap();
+                    assert!(
+                        persisted.is_some(),
+                        "seeded chunk must persist across collection reopen"
+                    );
+                    let results =
+                        moltis_memory::search::keyword_only_search(store.as_ref(), "routing", 5)
+                            .await
+                            .unwrap();
+                    assert!(
+                        results.iter().any(|r| r.chunk_id == "route-1"),
+                        "keyword search should find the seeded chunk, got {results:?}"
+                    );
+                },
+                ActiveStore::NotFound { message } => {
+                    panic!("expected Open, collection was seeded: {message}")
+                },
+            }
         }
     }
 }

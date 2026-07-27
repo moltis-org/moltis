@@ -29,7 +29,14 @@ impl ChunkDoc {
 
     /// Build a [`ChunkDoc`] from a stored [`ChunkRow`]. `mtime`/`size` are not
     /// tracked on chunks, so they default to `0`.
-    pub fn from_chunk_row(c: &moltis_memory::schema::ChunkRow) -> Self {
+    ///
+    /// `dimension` is the zvec collection's vector dimension. When `c.embedding`
+    /// is `None` (keyword-only mode, no embedding provider configured), a zero
+    /// vector of the configured dimension is substituted so the resulting zvec
+    /// doc satisfies the collection schema's fixed-dimension vector field.
+    /// Without this, zvec rejects the upsert with a dimension-mismatch error
+    /// and every chunk sync silently fails, leaving the collection empty.
+    pub fn from_chunk_row(c: &moltis_memory::schema::ChunkRow, dimension: u32) -> Self {
         let embedding = c
             .embedding
             .as_ref()
@@ -38,7 +45,7 @@ impl ChunkDoc {
                     .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| vec![0.0f32; dimension as usize]);
         Self {
             id: c.id.clone(),
             path: c.path.clone(),
@@ -282,5 +289,69 @@ mod tests {
         // The stored id field must still be the original value
         let stored_id = doc.get_string("id").unwrap().unwrap();
         assert_eq!(stored_id, chunk.id, "id field must preserve original path");
+    }
+
+    /// Regression test for keyword-only mode: a `ChunkRow` with no embedding
+    /// must produce a `ChunkDoc` carrying a zero vector of the collection's
+    /// dimension, not an empty vector. An empty vector is rejected by zvec
+    /// (dimension mismatch), silently breaking every chunk upsert when no
+    /// embedding provider is configured.
+    #[test]
+    fn test_from_chunk_row_none_embedding_fills_zero_vector() {
+        let row = moltis_memory::schema::ChunkRow {
+            id: "kw-1".into(),
+            path: "kw.md".into(),
+            source: "test".into(),
+            start_line: 1,
+            end_line: 5,
+            hash: "h".into(),
+            model: String::new(),
+            text: "keyword-only chunk".into(),
+            embedding: None,
+            updated_at: "2025-01-01T00:00:00Z".into(),
+        };
+        let doc = ChunkDoc::from_chunk_row(&row, 768);
+        assert_eq!(
+            doc.embedding.len(),
+            768,
+            "missing embedding must be backfilled"
+        );
+        assert!(
+            doc.embedding.iter().all(|f| *f == 0.0),
+            "backfilled embedding must be all zeros"
+        );
+        assert_eq!(doc.id, "kw-1");
+        assert_eq!(doc.text, "keyword-only chunk");
+    }
+
+    /// End-to-end regression: upserting a chunk with no embedding (keyword-only
+    /// mode) must not return a dimension-mismatch error from zvec, and the
+    /// chunk must remain retrievable.
+    #[test]
+    fn test_upsert_chunks_keyword_only_no_embedding() {
+        let guard = TestGuard::new();
+
+        let row = moltis_memory::schema::ChunkRow {
+            id: "kw-upsert-1".into(),
+            path: "kw-upsert.md".into(),
+            source: "test".into(),
+            start_line: 1,
+            end_line: 5,
+            hash: "h".into(),
+            model: String::new(),
+            text: "keyword-only upsert".into(),
+            embedding: None,
+            updated_at: "2025-01-01T00:00:00Z".into(),
+        };
+        let doc = ChunkDoc::from_chunk_row(&row, 768);
+        upsert_chunks(&guard, &[doc]).expect(
+            "keyword-only chunk upsert must succeed (zero-vector fallback prevents \
+             zvec dimension-mismatch)",
+        );
+
+        let fetched = crate::files::get_chunk_by_id(&guard, "kw-upsert-1")
+            .unwrap()
+            .expect("keyword-only chunk must be retrievable after upsert");
+        assert_eq!(fetched.text, "keyword-only upsert");
     }
 }
