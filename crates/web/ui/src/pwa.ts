@@ -178,11 +178,28 @@ export function getNotificationPermission(): NotificationPermission {
 }
 
 /**
- * Set or clear the installed-app badge.
+ * Tell the service worker whether this app is running installed.
  *
- * Badging lives here rather than in the service worker: calling it from a
- * worker crashes the renderer in some Chromium builds, and a crash is not
- * catchable. In a page it is safe and merely a no-op where unsupported.
+ * The worker badges the app icon when a push arrives with no page open, but it
+ * cannot see display-mode itself and a badge is meaningless in a browser tab.
+ * Reporting it here — and having the worker persist it — is what lets a closed
+ * app still show a count.
+ */
+function reportInstalledState(): void {
+	navigator.serviceWorker?.ready
+		.then((registration) => {
+			registration.active?.postMessage({ type: "PWA_INSTALLED", installed: isStandalone() });
+		})
+		.catch(() => {
+			// No worker yet; the next page load reports again.
+		});
+}
+
+/**
+ * Set or clear the installed-app badge from the page.
+ *
+ * The worker handles the app-closed case; this keeps a running app in sync
+ * immediately rather than waiting on the platform call.
  */
 function setAppBadge(count: number): void {
 	const nav = navigator as Navigator & {
@@ -221,8 +238,16 @@ export function initPWA(): void {
 	// that is already watching the session.
 	initPresenceReporting();
 
-	// The service worker delegates badge updates here — see setAppBadge().
+	// The service worker mirrors badge updates here — see setAppBadge().
 	setupBadgeHandler();
+
+	// Let the worker badge the icon while the app is closed.
+	reportInstalledState();
+	window.addEventListener("appinstalled", reportInstalledState);
+	window.matchMedia("(display-mode: standalone)").addEventListener("change", () => {
+		syncStandaloneClass();
+		reportInstalledState();
+	});
 
 	// Handle notification clicks — route in-place so the SPA keeps its state
 	// and open WebSocket instead of doing a full document reload.

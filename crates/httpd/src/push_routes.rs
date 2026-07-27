@@ -347,3 +347,345 @@ pub fn push_router() -> Router<AppState> {
         .route("/test", post(test_handler))
         .route("/status", get(status_handler))
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use {
+        axum::body::to_bytes,
+        moltis_gateway::{
+            auth, methods::MethodRegistry, push::PushService, services::GatewayServices,
+            state::GatewayState,
+        },
+        std::sync::Arc,
+    };
+
+    #[cfg(feature = "ngrok")]
+    use std::sync::Weak;
+
+    #[cfg(feature = "netbird")]
+    use crate::server::NetbirdController;
+    #[cfg(feature = "ngrok")]
+    use crate::server::NgrokRuntimeStatus;
+    use crate::server::{AppState, CloudflareTunnelController};
+
+    use super::*;
+
+    // ── Device name parsing ─────────────────────────────────────────────────
+
+    #[test]
+    fn device_name_recognises_mobile_devices() {
+        assert_eq!(parse_device_name(Some("... iPhone ...")), "iPhone");
+        assert_eq!(parse_device_name(Some("... iPad ...")), "iPad");
+        assert_eq!(
+            parse_device_name(Some("... Android ... Mobile ...")),
+            "Android Phone"
+        );
+        assert_eq!(parse_device_name(Some("... Android ...")), "Android Tablet");
+    }
+
+    #[test]
+    fn device_name_combines_browser_and_os() {
+        assert_eq!(
+            parse_device_name(Some("Mozilla/5.0 (Macintosh) Safari/605")),
+            "Safari on macOS"
+        );
+        assert_eq!(
+            parse_device_name(Some("Mozilla/5.0 (Windows NT 10.0) Chrome/120")),
+            "Chrome on Windows"
+        );
+        assert_eq!(
+            parse_device_name(Some("Mozilla/5.0 (X11; Linux) Firefox/121")),
+            "Firefox on Linux"
+        );
+        assert_eq!(
+            parse_device_name(Some("Mozilla/5.0 (Windows NT 10.0) Chrome/120 Edg/120")),
+            "Edge on Windows"
+        );
+    }
+
+    #[test]
+    fn device_name_falls_back_when_unknown_or_missing() {
+        assert_eq!(parse_device_name(None), "Unknown device");
+        assert_eq!(parse_device_name(Some("")), "Unknown device");
+        assert_eq!(parse_device_name(Some("curl/8.0")), "Unknown device");
+    }
+
+    // ── Client IP extraction ────────────────────────────────────────────────
+
+    fn addr() -> SocketAddr {
+        "10.0.0.1:5000".parse().expect("addr")
+    }
+
+    #[test]
+    fn client_ip_prefers_leftmost_forwarded_for() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "203.0.113.5, 70.41.3.18".parse().unwrap(),
+        );
+        assert_eq!(extract_client_ip(&headers, addr()), "203.0.113.5");
+    }
+
+    #[test]
+    fn client_ip_falls_through_proxy_headers_in_order() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "198.51.100.7".parse().unwrap());
+        assert_eq!(extract_client_ip(&headers, addr()), "198.51.100.7");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("cf-connecting-ip", "198.51.100.9".parse().unwrap());
+        assert_eq!(extract_client_ip(&headers, addr()), "198.51.100.9");
+    }
+
+    #[test]
+    fn client_ip_ignores_blank_headers_and_uses_the_connection() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "   ".parse().unwrap());
+        assert_eq!(extract_client_ip(&headers, addr()), "10.0.0.1");
+        assert_eq!(extract_client_ip(&HeaderMap::new(), addr()), "10.0.0.1");
+    }
+
+    // ── Handlers ────────────────────────────────────────────────────────────
+
+    fn test_state(push_service: Option<Arc<PushService>>) -> AppState {
+        let gateway = GatewayState::new(auth::resolve_auth(None, None), GatewayServices::noop());
+        let cloudflare_tunnel_runtime = Arc::new(tokio::sync::RwLock::new(None));
+        #[cfg(feature = "netbird")]
+        let netbird_runtime = Arc::new(tokio::sync::RwLock::new(None));
+
+        AppState {
+            gateway: Arc::clone(&gateway),
+            methods: Arc::new(MethodRegistry::new()),
+            request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
+            webauthn_registry: None,
+            #[cfg(feature = "ngrok")]
+            ngrok_controller_owner: None,
+            #[cfg(feature = "ngrok")]
+            ngrok_controller: Weak::new(),
+            #[cfg(feature = "ngrok")]
+            ngrok_runtime: Arc::new(tokio::sync::RwLock::new(None::<NgrokRuntimeStatus>)),
+            cloudflare_tunnel_controller: Arc::new(CloudflareTunnelController::new(
+                Arc::clone(&gateway),
+                None,
+                Arc::clone(&cloudflare_tunnel_runtime),
+            )),
+            cloudflare_tunnel_runtime,
+            #[cfg(feature = "netbird")]
+            netbird_controller: Arc::new(NetbirdController::new(Arc::clone(&netbird_runtime))),
+            #[cfg(feature = "netbird")]
+            netbird_runtime,
+            #[cfg(feature = "tailscale")]
+            tailscale_manager: moltis_gateway::tailscale::CachedTailscaleManager::new_with_prefetch(
+            ),
+            push_service,
+            #[cfg(feature = "graphql")]
+            graphql_schema: crate::graphql_routes::build_graphql_schema(GatewayState::new(
+                auth::resolve_auth(None, None),
+                GatewayServices::noop(),
+            )),
+        }
+    }
+
+    async fn state_with_push() -> (AppState, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service = PushService::new(dir.path()).await.expect("push service");
+        (test_state(Some(service)), dir)
+    }
+
+    fn subscribe_request(endpoint: &str, replaces: Option<&str>) -> SubscribeRequest {
+        SubscribeRequest {
+            endpoint: endpoint.to_string(),
+            keys: SubscriptionKeys {
+                p256dh: "p256dh".to_string(),
+                auth: "auth".to_string(),
+            },
+            replaces: replaces.map(ToString::to_string),
+        }
+    }
+
+    #[tokio::test]
+    async fn routes_report_not_implemented_without_a_push_service() {
+        let state = test_state(None);
+
+        assert_eq!(
+            vapid_key_handler(State(state.clone())).await.err(),
+            Some(StatusCode::NOT_IMPLEMENTED)
+        );
+        assert_eq!(
+            presence_handler(
+                State(state.clone()),
+                Json(PresenceRequest {
+                    endpoint: "https://push.example/a".into(),
+                    session_key: None,
+                    visible: true,
+                }),
+            )
+            .await
+            .err(),
+            Some(StatusCode::NOT_IMPLEMENTED)
+        );
+        assert_eq!(
+            test_handler(State(state)).await.err(),
+            Some(StatusCode::NOT_IMPLEMENTED)
+        );
+    }
+
+    #[tokio::test]
+    async fn status_reports_disabled_without_a_push_service() {
+        let response = status_handler(State(test_state(None))).await;
+        assert!(!response.0.enabled);
+        assert_eq!(response.0.subscription_count, 0);
+        assert!(response.0.subscriptions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn subscribe_then_status_lists_the_device() {
+        let (state, _dir) = state_with_push().await;
+        let mut headers = HeaderMap::new();
+        headers.insert("user-agent", "Mozilla/5.0 (iPhone) Safari".parse().unwrap());
+        headers.insert("x-forwarded-for", "203.0.113.5".parse().unwrap());
+
+        let response = subscribe_handler(
+            State(state.clone()),
+            ConnectInfo(addr()),
+            headers,
+            Json(subscribe_request("https://push.example/a", None)),
+        )
+        .await
+        .expect("subscribe")
+        .into_response();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let status = status_handler(State(state)).await;
+        assert!(status.0.enabled);
+        assert_eq!(status.0.subscription_count, 1);
+        let entry = &status.0.subscriptions[0];
+        assert_eq!(entry.device, "iPhone");
+        assert_eq!(entry.ip.as_deref(), Some("203.0.113.5"));
+        assert_eq!(entry.endpoint, "https://push.example/a");
+    }
+
+    #[tokio::test]
+    async fn subscribing_with_replaces_retires_the_rotated_endpoint() {
+        let (state, _dir) = state_with_push().await;
+
+        for endpoint in ["https://push.example/old", "https://push.example/other"] {
+            subscribe_handler(
+                State(state.clone()),
+                ConnectInfo(addr()),
+                HeaderMap::new(),
+                Json(subscribe_request(endpoint, None)),
+            )
+            .await
+            .expect("subscribe");
+        }
+
+        subscribe_handler(
+            State(state.clone()),
+            ConnectInfo(addr()),
+            HeaderMap::new(),
+            Json(subscribe_request(
+                "https://push.example/new",
+                Some("https://push.example/old"),
+            )),
+        )
+        .await
+        .expect("subscribe");
+
+        let status = status_handler(State(state)).await;
+        let endpoints: Vec<&str> = status
+            .0
+            .subscriptions
+            .iter()
+            .map(|s| s.endpoint.as_str())
+            .collect();
+        assert!(!endpoints.contains(&"https://push.example/old"));
+        assert!(endpoints.contains(&"https://push.example/new"));
+        assert!(
+            endpoints.contains(&"https://push.example/other"),
+            "replacing one endpoint must not disturb the others"
+        );
+    }
+
+    #[tokio::test]
+    async fn presence_is_accepted_for_known_endpoints_and_rejected_otherwise() {
+        let (state, _dir) = state_with_push().await;
+
+        // An endpoint the server never stored is how a client learns its
+        // subscription is stale, so it must not be silently accepted.
+        let unknown = presence_handler(
+            State(state.clone()),
+            Json(PresenceRequest {
+                endpoint: "https://push.example/unknown".into(),
+                session_key: Some("main".into()),
+                visible: true,
+            }),
+        )
+        .await;
+        assert_eq!(unknown.err(), Some(StatusCode::NOT_FOUND));
+
+        subscribe_handler(
+            State(state.clone()),
+            ConnectInfo(addr()),
+            HeaderMap::new(),
+            Json(subscribe_request("https://push.example/a", None)),
+        )
+        .await
+        .expect("subscribe");
+
+        let known = presence_handler(
+            State(state),
+            Json(PresenceRequest {
+                endpoint: "https://push.example/a".into(),
+                session_key: Some("main".into()),
+                visible: true,
+            }),
+        )
+        .await
+        .expect("presence")
+        .into_response();
+        assert_eq!(known.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_removes_the_device() {
+        let (state, _dir) = state_with_push().await;
+        subscribe_handler(
+            State(state.clone()),
+            ConnectInfo(addr()),
+            HeaderMap::new(),
+            Json(subscribe_request("https://push.example/a", None)),
+        )
+        .await
+        .expect("subscribe");
+
+        let response = unsubscribe_handler(
+            State(state.clone()),
+            Json(UnsubscribeRequest {
+                endpoint: "https://push.example/a".into(),
+            }),
+        )
+        .await
+        .expect("unsubscribe")
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(status_handler(State(state)).await.0.subscription_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_notification_reports_zero_without_subscribers() {
+        let (state, _dir) = state_with_push().await;
+
+        let response = test_handler(State(state))
+            .await
+            .expect("test")
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["sent"], 0);
+    }
+}

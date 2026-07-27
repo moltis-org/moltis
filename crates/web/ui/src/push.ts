@@ -242,15 +242,30 @@ async function reconcileSubscription(subscription: PushSubscription): Promise<vo
 	}
 }
 
+/** Clear the worker's "rotation could not be registered" flag once repaired. */
+async function clearRotationPending(): Promise<void> {
+	try {
+		const cache = await caches.open("moltis-state");
+		await cache.delete("/__moltis__/rotation-pending");
+	} catch {
+		// Nothing to clear, or Cache API unavailable.
+	}
+}
+
 /**
  * Initialize push notification state.
- * Call this on page load to sync with existing subscription.
+ *
+ * Runs on every page load, not just from the settings page: an endpoint the
+ * server has forgotten — or a rotation the worker could not register while the
+ * app was closed — leaves the browser believing it is subscribed while nothing
+ * can ever be delivered. This load is the only chance to repair that.
  */
 export async function initPushState(): Promise<void> {
 	const subscription = await getCurrentSubscription();
 	if (!subscription) return;
 	try {
 		await reconcileSubscription(subscription);
+		await clearRotationPending();
 	} catch (e) {
 		console.warn("Failed to reconcile push subscription:", e);
 	}
@@ -376,11 +391,56 @@ export function reportPresence(): void {
 		headers: { "Content-Type": "application/json" },
 		body: payload,
 		keepalive: true,
-	}).catch(() => {
-		// Presence is an optimisation — a failed report only means the device
-		// may receive a notification it could have suppressed.
-		lastPresence = "";
-	});
+	})
+		.then((response) => {
+			if (response.ok) return;
+
+			// `fetch` resolves for 4xx, so a 404 here would otherwise look like a
+			// successful report — and the cached payload would suppress every
+			// retry. 404 is the server saying it does not know this endpoint,
+			// which means push delivery is broken too, not just suppression.
+			lastPresence = "";
+			if (response.status === 404) {
+				void recoverUnknownSubscription();
+			}
+		})
+		.catch(() => {
+			// Presence is an optimisation — a failed report only means the device
+			// may receive a notification it could have suppressed.
+			lastPresence = "";
+		});
+}
+
+/** Guards against several concurrent recovery attempts. */
+let recovering = false;
+/** When recovery last ran, to bound retries if the server keeps rejecting. */
+let lastRecoveryAt = 0;
+const RECOVERY_COOLDOWN_MS = 60_000;
+
+/**
+ * Re-register a subscription the server has forgotten.
+ *
+ * Reached when presence reports 404. Left alone, the browser would keep a
+ * subscription that receives nothing while the server has no record to push to.
+ *
+ * Recovery re-reports presence on success, so a server that answers 404 even
+ * after accepting the registration would otherwise drive an endless
+ * register/report loop. The cooldown bounds that to one attempt a minute.
+ */
+async function recoverUnknownSubscription(): Promise<void> {
+	if (recovering || !currentSubscription) return;
+	if (Date.now() - lastRecoveryAt < RECOVERY_COOLDOWN_MS) return;
+
+	recovering = true;
+	lastRecoveryAt = Date.now();
+	try {
+		await registerWithServer(currentSubscription);
+		reportPresence();
+	} catch (e) {
+		console.warn("Failed to re-register push subscription:", e);
+	} finally {
+		recovering = false;
+	}
 }
 
 /** Ask the service worker to clear notifications for the session in view. */
@@ -413,9 +473,10 @@ export function initPresenceReporting(): void {
 	window.addEventListener("pagehide", reportPresence);
 	activeSessionKey.subscribe(onForeground);
 
-	// Resolving the subscription is async, so send the first report once it is
-	// known — the listeners above only fire on a later change.
-	getCurrentSubscription()
+	// Reconcile before the first report: this is the app-startup path, so it is
+	// where a subscription the server has forgotten gets re-registered rather
+	// than silently receiving nothing until someone opens Settings.
+	initPushState()
 		.then(() => onForeground())
 		.catch(() => {
 			// No subscription: presence stays a no-op, which is correct.

@@ -114,6 +114,86 @@ test.describe("service worker", () => {
 		const source = await (await page.request.get("/sw.js")).text();
 		expect(source).toContain("renotify");
 	});
+
+	test("badges the app icon only when it is installed, and never blocks on it", async ({ page }) => {
+		const source = await (await page.request.get("/sw.js")).text();
+
+		// The Badging API neither resolves nor rejects where there is no badge
+		// target — it hangs. Awaiting it, or gating a waitUntil on it, wedges the
+		// worker and the push handler never shows its notification.
+		expect(source).toContain("isInstalled()");
+		expect(source).not.toMatch(/await\s+nav\.(set|clear)AppBadge/);
+		expect(source).not.toMatch(/waitUntil\(\s*updateBadge/);
+	});
+
+	// Headed only, by necessity: headless Chromium has no badge target, and the
+	// platform call there does not merely fail — it takes the page down. That is
+	// exactly what the installed gate exists to avoid, so this test verifies the
+	// real installed path where the API actually works. Run with `--headed`.
+	test("an installed app badges from the service worker", async ({ page }) => {
+		test.skip(test.info().project.use.headless !== false, "Badging API is non-functional in headless Chromium");
+
+		// Emulate standalone display-mode so the page reports itself installed,
+		// both now and after the reload.
+		await page.addInitScript(() => {
+			const original = window.matchMedia.bind(window);
+			window.matchMedia = (query) => {
+				if (query.includes("display-mode: standalone")) {
+					return {
+						matches: true,
+						media: query,
+						onchange: null,
+						addEventListener() {},
+						removeEventListener() {},
+						addListener() {},
+						removeListener() {},
+						dispatchEvent: () => false,
+					};
+				}
+				return original(query);
+			};
+		});
+
+		await navigateAndWait(page, "/chats");
+
+		const readFlag = () =>
+			page.evaluate(async () => {
+				const cache = await caches.open("moltis-state");
+				return Boolean(await cache.match("/__moltis__/installed"));
+			});
+
+		await expect.poll(readFlag, { timeout: 5000 }).toBe(true);
+
+		// Drive the badge path with the flag on — the platform call runs for real.
+		await page.evaluate(async () => {
+			const registration = await navigator.serviceWorker.ready;
+			registration.active?.postMessage({ type: "CLEAR_NOTIFICATIONS", sessionKey: "main" });
+		});
+
+		await page.reload();
+		await expect(page.locator("body")).toBeVisible();
+
+		// The flag has to outlive the page, or a push arriving with the app closed
+		// would have nothing to tell it the icon is badgeable.
+		expect(await readFlag()).toBe(true);
+	});
+
+	test("a badge update leaves the service worker responsive", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/chats");
+
+		// Drive the badge path the same way the app does on focus.
+		await page.evaluate(async () => {
+			const registration = await navigator.serviceWorker.ready;
+			registration.active?.postMessage({ type: "CLEAR_NOTIFICATIONS", sessionKey: "main" });
+		});
+
+		// A wedged worker shows up as the next navigation dying, which is exactly
+		// how the original badge bug surfaced.
+		await page.reload();
+		await expect(page.locator("body")).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
 });
 
 test.describe("push settings", () => {

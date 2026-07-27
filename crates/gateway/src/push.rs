@@ -110,12 +110,23 @@ impl PushPayload {
     /// Messages sharing a topic supersede each other while the device is
     /// offline, so a phone that was away for an hour wakes to the latest
     /// message per session instead of a backlog of every one it missed.
+    ///
+    /// The Topic header is capped at 32 base64url characters, which is shorter
+    /// than many session keys. Truncating the encoded key itself would make any
+    /// two keys sharing a long prefix — `telegram:bot123:chat…`, or the nested
+    /// project/session keys this app generates — collapse onto one another, so
+    /// one chat would silently swallow another chat's pending notification.
+    /// Hashing first keeps the whole key significant.
     fn topic(&self) -> Option<String> {
-        // Push services cap the Topic header at 32 base64url characters.
-        self.session_key
-            .as_ref()
-            .map(|key| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key))
-            .map(|encoded| encoded.chars().take(32).collect())
+        use sha2::{Digest, Sha256};
+
+        self.session_key.as_ref().map(|key| {
+            let digest = Sha256::digest(key.as_bytes());
+            let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
+            // 32 base64url chars of SHA-256 keeps 192 bits — collisions are not
+            // a practical concern.
+            encoded.chars().take(32).collect()
+        })
     }
 }
 
@@ -565,6 +576,35 @@ mod tests {
     #[test]
     fn topic_is_absent_without_a_session() {
         assert!(PushPayload::new("t", "b", None, None).topic().is_none());
+    }
+
+    #[test]
+    fn topics_differ_for_session_keys_sharing_a_long_prefix() {
+        // Encoding the key directly and truncating to the header's 32-character
+        // limit made any two keys agreeing on their first ~24 bytes collapse
+        // onto one topic, so one chat's pending notification would supersede
+        // another's. Nested and channel-scoped keys share prefixes routinely.
+        let a = PushPayload::new(
+            "t",
+            "b",
+            None,
+            Some("telegram:bot123456789:chat-aaaa".into()),
+        );
+        let b = PushPayload::new(
+            "t",
+            "b",
+            None,
+            Some("telegram:bot123456789:chat-bbbb".into()),
+        );
+        assert_ne!(a.topic(), b.topic());
+
+        let long_a = PushPayload::new("t", "b", None, Some(format!("{}-a", "x".repeat(200))));
+        let long_b = PushPayload::new("t", "b", None, Some(format!("{}-b", "x".repeat(200))));
+        assert_ne!(
+            long_a.topic(),
+            long_b.topic(),
+            "keys must stay distinct however long they get"
+        );
     }
 
     #[test]

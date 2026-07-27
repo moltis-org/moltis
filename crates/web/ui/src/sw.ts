@@ -10,6 +10,16 @@ const sw = self as unknown as ServiceWorkerGlobalScope;
 const CACHE_NAME = "moltis-v3";
 const OFFLINE_URL = "/offline.html";
 
+/**
+ * Small persistent flag store, kept out of `CACHE_NAME` so a cache version bump
+ * does not wipe it. The service worker has no localStorage, and this is the only
+ * state it needs to survive the app being closed.
+ */
+const STATE_CACHE = "moltis-state";
+const INSTALLED_KEY = "/__moltis__/installed";
+/** Set when an endpoint rotation could not be registered with the server. */
+const ROTATION_PENDING_KEY = "/__moltis__/rotation-pending";
+
 // Best-effort precache. Generated assets (style.css, dist bundles) may not exist
 // in every build, so these are cached individually — never with `cache.addAll`,
 // which is atomic and would fail the whole install on a single 404.
@@ -54,7 +64,9 @@ sw.addEventListener("activate", (event: ExtendableEvent) => {
 	event.waitUntil(
 		(async () => {
 			const cacheNames = await caches.keys();
-			await Promise.all(cacheNames.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name)));
+			await Promise.all(
+				cacheNames.filter((name) => name !== CACHE_NAME && name !== STATE_CACHE).map((name) => caches.delete(name)),
+			);
 			await sw.clients.claim();
 		})(),
 	);
@@ -205,21 +217,89 @@ async function buildBody(data: PushData, tag: string): Promise<{ body: string; c
 	return { body: `${body}\n… and ${count - 1} earlier message${count - 1 === 1 ? "" : "s"}`, count };
 }
 
-/**
- * Ask open pages to reflect the unread count on the app icon.
- *
- * The Badging API is deliberately *not* called from this worker. Invoking
- * `navigator.clearAppBadge()` in a service worker crashes the renderer outright
- * in at least some Chromium builds — and a process crash is not something a
- * try/catch can contain, so it would take the whole app down for the sake of a
- * cosmetic number. The page owns the badge instead (see `pwa.ts`); when no page
- * is open there is nothing to update, which is the honest fallback.
- */
-async function updateBadge(count: number | undefined): Promise<void> {
-	const clients = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
-	for (const client of clients) {
-		client.postMessage({ type: "badge-count", count: count ?? 0 });
+/** Has this app ever run as an installed PWA on this device? */
+async function isInstalled(): Promise<boolean> {
+	try {
+		const cache = await caches.open(STATE_CACHE);
+		return Boolean(await cache.match(INSTALLED_KEY));
+	} catch {
+		return false;
 	}
+}
+
+/**
+ * Flag an endpoint rotation the server never accepted.
+ *
+ * The worker cannot usefully retry on its own — it may not run again before the
+ * user next opens the app — so the page reads this on load and reconciles.
+ */
+async function setRotationPending(pending: boolean): Promise<void> {
+	try {
+		const cache = await caches.open(STATE_CACHE);
+		if (pending) {
+			await cache.put(ROTATION_PENDING_KEY, new Response("1"));
+		} else {
+			await cache.delete(ROTATION_PENDING_KEY);
+		}
+	} catch {
+		// Reconciliation on load still catches it, just less directly.
+	}
+}
+
+/** Record whether the app is installed, so a closed app can still badge. */
+async function setInstalled(installed: boolean): Promise<void> {
+	try {
+		const cache = await caches.open(STATE_CACHE);
+		if (installed) {
+			await cache.put(INSTALLED_KEY, new Response("1"));
+		} else {
+			await cache.delete(INSTALLED_KEY);
+		}
+	} catch {
+		// Without the flag the badge is simply left to open pages.
+	}
+}
+
+/**
+ * Reflect the unread count on the installed app icon.
+ *
+ * Two rules make this safe to call from a service worker:
+ *
+ * 1. **Never awaited, never inside `waitUntil`.** Where the platform has no
+ *    badge target the Badging API neither resolves nor rejects — it just hangs.
+ *    Awaiting it would wedge the push handler and the notification would never
+ *    be shown. Nothing here may block the caller.
+ * 2. **Only when the app is installed.** A badge is meaningless in a plain
+ *    browser tab, and merely *invoking* the API in a headless environment wedges
+ *    the worker, so the flag keeps us away from it entirely unless there is a
+ *    real app icon to draw on.
+ *
+ * Open pages are told the count too, so a running app updates immediately
+ * without waiting on the platform call.
+ */
+function updateBadge(count: number | undefined): void {
+	const value = count ?? 0;
+
+	void sw.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+		for (const client of clients) {
+			client.postMessage({ type: "badge-count", count: value });
+		}
+	});
+
+	void isInstalled().then((installed) => {
+		if (!installed) return;
+		const nav = navigator as Navigator & {
+			setAppBadge?: (count?: number) => Promise<void>;
+			clearAppBadge?: () => Promise<void>;
+		};
+		try {
+			// Fire and forget — see rule 1 above.
+			const pending = value > 0 ? nav.setAppBadge?.(value) : nav.clearAppBadge?.();
+			pending?.catch(() => undefined);
+		} catch {
+			// Badging is unsupported here; the open-page path still applies.
+		}
+	});
 }
 
 /**
@@ -284,7 +364,7 @@ sw.addEventListener("push", (event: PushEvent) => {
 			};
 
 			await sw.registration.showNotification(data.title || "moltis", options);
-			await updateBadge(data.badgeCount ?? count);
+			updateBadge(data.badgeCount ?? count);
 		})(),
 	);
 });
@@ -318,7 +398,7 @@ sw.addEventListener("pushsubscriptionchange", (event: Event) => {
 		}
 
 		const json = subscription.toJSON();
-		await fetch("/api/push/subscribe", {
+		const registered = await fetch("/api/push/subscribe", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
@@ -327,11 +407,27 @@ sw.addEventListener("pushsubscriptionchange", (event: Event) => {
 				replaces: oldEndpoint,
 			}),
 		});
+
+		// `fetch` resolves for 4xx/5xx too. Without this check a rejected
+		// registration looks like success, and the browser is left holding an
+		// endpoint the server never stored — push stays dead with nothing to
+		// signal it. Marking the rotation pending lets the next page load repair
+		// it via reconcileSubscription().
+		if (!registered.ok) {
+			await setRotationPending(true);
+			throw new Error(`push re-registration failed: ${registered.status}`);
+		}
+		await setRotationPending(false);
 	};
 
-	// A failed re-subscribe must not reject the event handler; push simply stays
-	// off until the page next syncs its subscription on load.
-	subscriptionEvent.waitUntil(resubscribe().catch(() => undefined));
+	// A failed re-subscribe must not reject the event handler; the pending flag
+	// above is what gets it retried, on the next page load.
+	subscriptionEvent.waitUntil(
+		resubscribe().catch(async (error) => {
+			console.warn("push re-subscribe failed:", error);
+			await setRotationPending(true);
+		}),
+	);
 });
 
 // Notification click event
@@ -339,7 +435,7 @@ sw.addEventListener("notificationclick", (event: NotificationEvent) => {
 	event.notification.close();
 
 	if (event.action === "dismiss") {
-		event.waitUntil(updateBadge(0));
+		updateBadge(0);
 		return;
 	}
 
@@ -348,7 +444,7 @@ sw.addEventListener("notificationclick", (event: NotificationEvent) => {
 
 	event.waitUntil(
 		(async () => {
-			await updateBadge(0);
+			updateBadge(0);
 			const clientList = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
 			const sameOrigin = clientList.filter((client) => new URL(client.url).origin === sw.location.origin);
 
@@ -379,7 +475,7 @@ sw.addEventListener("notificationclose", (event: NotificationEvent) => {
 		(async () => {
 			const remaining = await sw.registration.getNotifications();
 			if (remaining.length === 0) {
-				await updateBadge(0);
+				updateBadge(0);
 			}
 		})(),
 	);
@@ -389,6 +485,13 @@ sw.addEventListener("notificationclose", (event: NotificationEvent) => {
 sw.addEventListener("message", (event: ExtendableMessageEvent) => {
 	if (event.data?.type === "SKIP_WAITING") {
 		sw.skipWaiting();
+		return;
+	}
+	// Only an installed app has an icon to badge, and the worker cannot detect
+	// display-mode itself — so the page tells it, and the answer is persisted for
+	// the pushes that arrive once every page is gone.
+	if (event.data?.type === "PWA_INSTALLED") {
+		event.waitUntil(setInstalled(event.data.installed === true));
 		return;
 	}
 	// The page reports focus so the badge and any stale notifications for the
@@ -404,7 +507,7 @@ sw.addEventListener("message", (event: ExtendableMessageEvent) => {
 				}
 				const remaining = await sw.registration.getNotifications();
 				if (remaining.length === 0) {
-					await updateBadge(0);
+					updateBadge(0);
 				}
 			})(),
 		);

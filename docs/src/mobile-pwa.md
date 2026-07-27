@@ -31,10 +31,10 @@ When installed as a PWA, moltis provides:
 - **Fast loading**: Assets are cached locally
 - **Home screen icon**: Quick access from your device's home screen
 - **App shortcuts**: Long-press the icon to jump straight to Chats, Projects, or Settings
-- **App badge**: The icon shows an unread count while notifications are pending
-  (Android, Windows, macOS Dock). The badge is driven by the page rather than the
-  service worker, so it updates while the app is open or backgrounded — a fully
-  closed app picks the count up when it is next opened.
+- **App badge**: The installed app icon shows an unread count while notifications
+  are pending (Android, Windows, macOS Dock), including when the app is fully
+  closed — the service worker badges the icon as the push arrives. Badging only
+  applies to an installed app; in a plain browser tab there is no icon to draw on.
 - **Safe area support**: Proper spacing for notched devices (iPhone X+)
 - **Non-disruptive updates**: A new version installs in the background and only takes over when the page asks it to, so an update never reloads the app mid-conversation
 
