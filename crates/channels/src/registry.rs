@@ -428,6 +428,23 @@ impl ChannelOutbound for RegistryOutboundRouter {
         outbound.send_html(account_id, to, html, reply_to).await
     }
 
+    async fn send_html_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let outbound = self
+            .registry
+            .resolve_outbound(account_id)
+            .await
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        outbound
+            .send_html_reporting_ids(account_id, to, html, reply_to)
+            .await
+    }
+
     async fn send_text_silent(
         &self,
         account_id: &str,

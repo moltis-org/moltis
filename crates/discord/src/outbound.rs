@@ -623,6 +623,21 @@ impl ChannelOutbound for DiscordOutbound {
         Ok(())
     }
 
+    async fn send_html_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
+        let http = self.resolve_http(account_id)?;
+        let channel_id = Self::parse_channel_id(to)?;
+        let id = self
+            .send_activity_log_embed(account_id, &http, channel_id, html, reply_to)
+            .await?;
+        Ok(id.map(|id| id.to_string()).into_iter().collect())
+    }
+
     async fn send_location(
         &self,
         account_id: &str,

@@ -134,6 +134,8 @@ pub(crate) async fn deliver_channel_replies(
             Arc::clone(&outbound),
             streamed_targets,
             &logbook_html,
+            state.feedback(),
+            session_key,
         )
         .await;
     }
@@ -180,32 +182,53 @@ pub(crate) fn format_logbook_html(entries: &[String]) -> String {
     html
 }
 
+/// Send the activity logbook after a streamed reply.
+///
+/// The stream delivered the answer itself, so this follow-up is the only
+/// message this path creates — and a reader rating the turn may well land on
+/// it. It is therefore linked to the trace like any other reply message.
 async fn send_channel_logbook_follow_up_to_targets(
     outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
     targets: Vec<moltis_channels::ChannelReplyTarget>,
     logbook_html: &str,
+    feedback: Option<Arc<moltis_channels::FeedbackService>>,
+    session_key: &str,
 ) {
     if targets.is_empty() || logbook_html.is_empty() {
         return;
     }
 
     let html = logbook_html.to_string();
+    let session_key = session_key.to_string();
     let mut tasks = Vec::with_capacity(targets.len());
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let html = html.clone();
+        let feedback = feedback.clone();
+        let session_key = session_key.clone();
         let to = target.outbound_to().into_owned();
         tasks.push(tokio::spawn(async move {
-            if let Err(e) = outbound
-                .send_html(&target.account_id, &to, &html, None)
+            match outbound
+                .send_html_reporting_ids(&target.account_id, &to, &html, None)
                 .await
             {
-                warn!(
-                    account_id = target.account_id,
-                    chat_id = target.chat_id,
-                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                    "failed to send logbook follow-up: {e}"
-                );
+                Ok(message_ids) => {
+                    crate::channel_feedback::record_reply_trace(
+                        feedback.as_deref(),
+                        &target,
+                        &message_ids,
+                        &session_key,
+                    )
+                    .await;
+                },
+                Err(e) => {
+                    warn!(
+                        account_id = target.account_id,
+                        chat_id = target.chat_id,
+                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                        "failed to send logbook follow-up: {e}"
+                    );
+                },
             }
         }));
     }

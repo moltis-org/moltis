@@ -603,6 +603,20 @@ impl ChannelOutbound for SlackOutbound {
             .await
     }
 
+    /// Slack renders no HTML either, so the inherited `send_html` posts the
+    /// markup as text. Report its ids rather than inheriting the default that
+    /// drops them.
+    async fn send_html_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
+        self.send_text_reporting_ids(account_id, to, html, reply_to)
+            .await
+    }
+
     async fn send_media(
         &self,
         account_id: &str,

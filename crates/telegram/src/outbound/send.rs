@@ -22,6 +22,39 @@ use crate::{
 use super::{TelegramOutbound, retry::RequestResultExt};
 
 impl TelegramOutbound {
+    /// Send raw HTML chunks, returning every message id they produced.
+    async fn send_html_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let bot = self.get_bot(account_id)?;
+        let (chat_id, thread_id) = parse_chat_target(to)?;
+        let rp = self.reply_params(account_id, reply_to);
+
+        // Send raw HTML chunks without markdown conversion.
+        let chunks = markdown::chunk_message(html, TELEGRAM_MAX_MESSAGE_LEN);
+        let mut ids = Vec::with_capacity(chunks.len());
+        for chunk in &chunks {
+            let id = self
+                .send_chunk_with_fallback(
+                    &bot,
+                    account_id,
+                    to,
+                    chat_id,
+                    thread_id,
+                    chunk,
+                    rp.as_ref(),
+                    false,
+                )
+                .await?;
+            ids.push(id.0.to_string());
+        }
+        Ok(ids)
+    }
+
     /// Send `text` with `suffix_html` appended, returning every message id it
     /// produced.
     ///
@@ -264,26 +297,18 @@ impl ChannelOutbound for TelegramOutbound {
         html: &str,
         reply_to: Option<&str>,
     ) -> Result<()> {
-        let bot = self.get_bot(account_id)?;
-        let (chat_id, thread_id) = parse_chat_target(to)?;
-        let rp = self.reply_params(account_id, reply_to);
-
-        // Send raw HTML chunks without markdown conversion.
-        let chunks = markdown::chunk_message(html, TELEGRAM_MAX_MESSAGE_LEN);
-        for chunk in &chunks {
-            self.send_chunk_with_fallback(
-                &bot,
-                account_id,
-                to,
-                chat_id,
-                thread_id,
-                chunk,
-                rp.as_ref(),
-                false,
-            )
-            .await?;
-        }
+        self.send_html_ids(account_id, to, html, reply_to).await?;
         Ok(())
+    }
+
+    async fn send_html_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_html_ids(account_id, to, html, reply_to).await
     }
 
     async fn send_typing(&self, account_id: &str, to: &str) -> Result<()> {

@@ -699,6 +699,22 @@ pub trait ChannelOutbound: Send + Sync {
     ) -> Result<()> {
         self.send_text(account_id, to, html, reply_to).await
     }
+
+    /// [`Self::send_html`], reporting the ids of the messages it produced.
+    ///
+    /// The activity logbook that follows a streamed reply is delivered this
+    /// way. It belongs to the same turn, so a reaction on it should score that
+    /// turn rather than resolve to nothing.
+    async fn send_html_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_html(account_id, to, html, reply_to).await?;
+        Ok(Vec::new())
+    }
     /// Send a text message without notification (silent). Falls back to send_text by default.
     async fn send_text_silent(
         &self,
