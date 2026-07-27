@@ -66,6 +66,12 @@ async function openEditModal(page, channel) {
 	return modal;
 }
 
+// The tag list rendered by <AllowlistInput> for the Operators field. Scoping to
+// it keeps assertions off the Allowlist field above, which holds the same IDs.
+function operatorsField(modal) {
+	return modal.locator("label", { hasText: "Operators" }).locator("xpath=following-sibling::div[1]");
+}
+
 // The Operators list decides who may use /sh and host-reaching tools, so the
 // edit modal must load it, save it, and state which rule is currently in force.
 test.describe("Channel operators", () => {
@@ -76,15 +82,15 @@ test.describe("Channel operators", () => {
 
 		const modal = await openEditModal(page, discordChannel({ allowlist: ["owner-id"], operators: ["owner-id"] }));
 
-		// Existing operator renders as a tag.
-		await expect(modal.getByText("owner-id", { exact: true }).first()).toBeVisible();
+		// Existing operator renders as a tag. Each tag is a <span> holding the
+		// value plus a "×" remove button, so match on the tag rather than on
+		// text equal to the value alone.
+		const operators = operatorsField(modal);
+		await expect(operators.getByText("owner-id")).toBeVisible();
 		await expect(modal.getByTestId("operators-hint")).toContainText("Only these senders can use /sh");
 
 		// Add a second operator via the tag input.
-		const operatorsInput = modal
-			.locator("label", { hasText: "Operators" })
-			.locator("xpath=following-sibling::div[1]")
-			.locator("input");
+		const operatorsInput = operators.locator("input");
 		await operatorsInput.fill("trusted-admin");
 		await operatorsInput.press("Enter");
 
