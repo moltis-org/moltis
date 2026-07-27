@@ -20,12 +20,19 @@ use std::{
 /// stderr. Kills the child if it outlives the deadline.
 fn run_acp(args: &[&str], input: &str) -> (String, String) {
     let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::write(
+        temp.path().join("moltis.toml"),
+        "[providers]\noffered = [\"test-disabled\"]\n\n[code_index]\nenabled = false\n",
+    )
+    .expect("write isolated config");
     let mut child = Command::new(env!("CARGO_BIN_EXE_moltis"))
         .args(["--log-level", "trace"])
         // Keep the test off the developer's real ~/.moltis.
         .args(["--config-dir", &temp.path().to_string_lossy()])
         .args(["--data-dir", &temp.path().to_string_lossy()])
         .args(args)
+        .env("HOME", temp.path())
+        .env("XDG_CONFIG_HOME", temp.path())
         .env("RUST_LOG", "trace")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -54,7 +61,10 @@ fn run_acp(args: &[&str], input: &str) -> (String, String) {
     let mut stdin = child.stdin.take().expect("stdin");
     stdin.write_all(input.as_bytes()).expect("write request");
     stdin.flush().expect("flush");
-    match first_frame_rx.recv_timeout(Duration::from_secs(60)) {
+    // A debug binary links the complete gateway and can be CPU-starved when
+    // nextest runs the full workspace concurrently. This is a startup deadline,
+    // not a sleep; focused runs normally answer in about ten seconds.
+    match first_frame_rx.recv_timeout(Duration::from_secs(180)) {
         Ok(frame) if !frame.trim().is_empty() => {},
         result => {
             let _ = child.kill();
