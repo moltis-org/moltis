@@ -232,6 +232,8 @@ pub struct LiveChatService {
         Arc<RwLock<HashMap<String, tokio::task::JoinHandle<String>>>>,
     pub(in crate::service) terminal_runs: Arc<RwLock<HashSet<String>>>,
     pub(in crate::service) tool_registry: Arc<RwLock<ToolRegistry>>,
+    pub(in crate::service) session_tool_overlays:
+        Arc<RwLock<HashMap<String, Arc<RwLock<ToolRegistry>>>>>,
     pub(in crate::service) session_store: Arc<SessionStore>,
     pub(in crate::service) session_metadata: Arc<SqliteSessionMetadata>,
     pub(in crate::service) session_state_store: Option<Arc<SessionStateStore>>,
@@ -277,6 +279,7 @@ impl LiveChatService {
             active_event_forwarders: Arc::new(RwLock::new(HashMap::new())),
             terminal_runs: Arc::new(RwLock::new(HashSet::new())),
             tool_registry: Arc::new(RwLock::new(ToolRegistry::new())),
+            session_tool_overlays: Arc::new(RwLock::new(HashMap::new())),
             session_store,
             session_metadata,
             session_state_store: None,
@@ -306,6 +309,32 @@ impl LiveChatService {
     pub fn with_tools(mut self, registry: Arc<RwLock<ToolRegistry>>) -> Self {
         self.tool_registry = registry;
         self
+    }
+
+    pub async fn set_session_tool_overlay(
+        &self,
+        session_key: &str,
+        registry: Arc<RwLock<ToolRegistry>>,
+    ) {
+        self.session_tool_overlays
+            .write()
+            .await
+            .insert(session_key.to_string(), registry);
+    }
+
+    pub async fn remove_session_tool_overlay(&self, session_key: &str) {
+        self.session_tool_overlays.write().await.remove(session_key);
+    }
+
+    pub async fn bind_session_project(&self, session_key: &str, project_id: &str) {
+        let _ = self.session_metadata.upsert(session_key, None).await;
+        self.session_metadata
+            .set_project_id(session_key, Some(project_id.to_string()))
+            .await;
+    }
+
+    pub async fn session_exists(&self, session_key: &str) -> bool {
+        self.session_metadata.get(session_key).await.is_some()
     }
 
     pub fn with_session_state_store(mut self, store: Arc<SessionStateStore>) -> Self {
@@ -616,7 +645,7 @@ impl LiveChatService {
         &self,
         session_key: &str,
         conn_id: Option<&str>,
-    ) -> Option<String> {
+    ) -> (Option<String>, Option<PathBuf>) {
         let (project_context, working_dir) =
             self.resolve_project_context(session_key, conn_id).await;
         let command_context = moltis_common::context_command::run_context_command(
@@ -624,7 +653,10 @@ impl LiveChatService {
             working_dir.as_deref(),
         )
         .await;
-        merge_context_sections(project_context, command_context)
+        (
+            merge_context_sections(project_context, command_context),
+            working_dir,
+        )
     }
 }
 

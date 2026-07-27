@@ -10,8 +10,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::{
-    io::Write,
+    io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
+    sync::mpsc,
     time::Duration,
 };
 
@@ -31,30 +32,56 @@ fn run_acp(args: &[&str], input: &str) -> (String, String) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn moltis acp");
+    let child_stdout = child.stdout.take().expect("stdout");
+    let (first_frame_tx, first_frame_rx) = mpsc::sync_channel(1);
+    let stdout_reader = std::thread::spawn(move || {
+        let mut reader = BufReader::new(child_stdout);
+        let mut output = String::new();
+        reader.read_line(&mut output).expect("read first frame");
+        let _ = first_frame_tx.send(output.clone());
+        reader.read_to_string(&mut output).expect("read stdout");
+        output
+    });
+    let mut child_stderr = child.stderr.take().expect("stderr");
+    let stderr_reader = std::thread::spawn(move || {
+        let mut output = String::new();
+        child_stderr
+            .read_to_string(&mut output)
+            .expect("read stderr");
+        output
+    });
 
-    {
-        let mut stdin = child.stdin.take().expect("stdin");
-        stdin.write_all(input.as_bytes()).expect("write request");
-        stdin.flush().expect("flush");
-        // Dropping stdin signals EOF, which ends the protocol loop.
+    let mut stdin = child.stdin.take().expect("stdin");
+    stdin.write_all(input.as_bytes()).expect("write request");
+    stdin.flush().expect("flush");
+    match first_frame_rx.recv_timeout(Duration::from_secs(60)) {
+        Ok(frame) if !frame.trim().is_empty() => {},
+        result => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("moltis acp did not return a response frame: {result:?}");
+        },
     }
+    // The client closes only after receiving its response; dropping stdin then
+    // signals EOF and exercises graceful backend cleanup.
+    drop(stdin);
 
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    loop {
+    let status = loop {
         match child.try_wait().expect("wait") {
-            Some(_) => break,
+            Some(status) => break status,
             None if std::time::Instant::now() >= deadline => {
                 let _ = child.kill();
                 panic!("moltis acp did not exit after stdin closed");
             },
             None => std::thread::sleep(Duration::from_millis(50)),
         }
-    }
+    };
+    assert!(status.success(), "moltis acp exited with {status}");
 
-    let output = child.wait_with_output().expect("collect output");
     (
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
+        stdout_reader.join().expect("stdout reader"),
+        stderr_reader.join().expect("stderr reader"),
     )
 }
 
@@ -101,10 +128,9 @@ fn initialize_reports_moltis_as_the_agent() {
 }
 
 #[test]
-fn without_echo_the_command_fails_loudly_and_writes_nothing_to_stdout() {
+fn without_echo_boots_the_real_backend_and_serves_protocol() {
     let (stdout, _stderr) = run_acp(&["acp"], INITIALIZE);
-    assert!(
-        stdout.trim().is_empty(),
-        "a refused command must not emit protocol traffic: {stdout}"
-    );
+    let frame: serde_json::Value = serde_json::from_str(stdout.trim()).expect("valid JSON-RPC");
+    assert_eq!(frame["result"]["agentInfo"]["name"], "moltis");
+    assert_eq!(frame["result"]["agentCapabilities"]["loadSession"], true);
 }

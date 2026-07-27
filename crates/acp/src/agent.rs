@@ -20,6 +20,7 @@ use {
 use crate::{
     backend::{AcpBackend, TurnUpdates},
     session::{ACP_SESSION_NAMESPACE, SessionKey, SessionRegistry},
+    setup::SessionSetup,
 };
 
 /// Protocol handler bridging an ACP client to a Moltis backend.
@@ -77,25 +78,20 @@ impl MoltisAgent {
     }
 }
 
-/// Flattens a prompt's content blocks into the plain text Moltis consumes.
-///
-/// Non-text blocks are represented by a short placeholder rather than dropped,
-/// so a turn that is entirely an image does not reach the model as an empty
-/// message.
-#[must_use]
-pub fn prompt_text(blocks: &[acp::ContentBlock]) -> String {
+/// Flattens the supported prompt blocks into the plain text Moltis consumes.
+/// Blocks outside the advertised capabilities are rejected instead of being
+/// silently replaced or dropped.
+pub fn prompt_text(blocks: &[acp::ContentBlock]) -> acp::Result<String> {
     blocks
         .iter()
         .map(|block| match block {
-            acp::ContentBlock::Text(text) => text.text.clone(),
-            acp::ContentBlock::Image(_) => "<image>".to_string(),
-            acp::ContentBlock::Audio(_) => "<audio>".to_string(),
-            acp::ContentBlock::ResourceLink(link) => link.uri.to_string(),
-            acp::ContentBlock::Resource(_) => "<resource>".to_string(),
-            _ => "<content>".to_string(),
+            acp::ContentBlock::Text(text) => Ok(text.text.clone()),
+            acp::ContentBlock::ResourceLink(link) => Ok(link.uri.to_string()),
+            _ => Err(acp::Error::invalid_params()
+                .data("prompt contains content the agent did not advertise")),
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect::<acp::Result<Vec<_>>>()
+        .map(|parts| parts.join("\n"))
 }
 
 #[async_trait(?Send)]
@@ -105,15 +101,22 @@ impl acp::Agent for MoltisAgent {
         &self,
         args: acp::InitializeRequest,
     ) -> acp::Result<acp::InitializeResponse> {
-        // Negotiate down to whatever both sides understand.
-        let version = args.protocol_version.min(acp::ProtocolVersion::LATEST);
+        let version = if args.protocol_version == acp::ProtocolVersion::V1 {
+            acp::ProtocolVersion::V1
+        } else {
+            acp::ProtocolVersion::LATEST
+        };
         let capabilities = self.backend.capabilities();
         Ok(acp::InitializeResponse::new(version)
             .agent_capabilities(
                 acp::AgentCapabilities::new().load_session(capabilities.load_session),
             )
             .agent_info(
-                acp::Implementation::new("moltis", env!("CARGO_PKG_VERSION")).title("Moltis"),
+                acp::Implementation::new(
+                    "moltis",
+                    option_env!("MOLTIS_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
+                )
+                .title("Moltis"),
             ))
     }
 
@@ -131,13 +134,10 @@ impl acp::Agent for MoltisAgent {
         &self,
         args: acp::NewSessionRequest,
     ) -> acp::Result<acp::NewSessionResponse> {
-        let key = self
-            .backend
-            .create_session(&args.cwd)
-            .await
-            .map_err(|error| {
-                acp::Error::internal_error().data(format!("failed to create session: {error}"))
-            })?;
+        let setup = SessionSetup::new(args.cwd, args.mcp_servers).await?;
+        let key = self.backend.create_session(&setup).await.map_err(|error| {
+            acp::Error::internal_error().data(format!("failed to create session: {error}"))
+        })?;
         // A backend minting keys outside the namespace would quietly hand the
         // client an id that `load_session` must then refuse. That is our bug,
         // not the client's, so it is an internal error rather than bad input.
@@ -171,27 +171,35 @@ impl acp::Agent for MoltisAgent {
                 "session id {key} is outside the `{ACP_SESSION_NAMESPACE}:` namespace"
             )));
         }
-        let history = self.backend.load_session(&key).await.map_err(|error| {
-            acp::Error::invalid_params().data(format!("failed to load session {key}: {error}"))
-        })?;
-        self.sessions.insert(key);
+        let _setup_guard = self.sessions.begin_setup(&key)?;
+        let setup = SessionSetup::new(args.cwd, args.mcp_servers).await?;
+        let history = self
+            .backend
+            .load_session(&key, &setup)
+            .await
+            .map_err(|error| {
+                acp::Error::invalid_params().data(format!("failed to load session {key}: {error}"))
+            })?;
 
         // The spec asks the agent to stream the whole conversation back before
         // resolving the request.
         let connection = self.connection()?;
         for update in history {
             if !Self::notify(&connection, &args.session_id, update).await {
-                break;
+                return Err(acp::Error::internal_error()
+                    .data("ACP client disconnected during session replay"));
             }
         }
+        self.sessions.insert(key);
         Ok(acp::LoadSessionResponse::new())
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, args)))]
     async fn prompt(&self, args: acp::PromptRequest) -> acp::Result<acp::PromptResponse> {
         let key = self.sessions.resolve(&args.session_id)?;
+        let text = prompt_text(&args.prompt)?;
+        let _prompt = self.sessions.begin_prompt(&key)?;
         let connection = self.connection()?;
-        let text = prompt_text(&args.prompt);
         self.sessions.clear_cancelled(&key);
 
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -207,6 +215,7 @@ impl acp::Agent for MoltisAgent {
                 biased;
                 Some(update) = rx.recv() => {
                     if !Self::notify(&connection, &args.session_id, update).await {
+                        let _ = self.backend.cancel(&key).await;
                         break Ok(acp::StopReason::Cancelled);
                     }
                 },
@@ -244,5 +253,34 @@ impl acp::Agent for MoltisAgent {
         self.backend.cancel(&key).await.map_err(|error| {
             acp::Error::internal_error().data(format!("failed to cancel turn: {error}"))
         })
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_text_joins_supported_text_blocks() {
+        let blocks = vec![
+            acp::ContentBlock::from("first"),
+            acp::ContentBlock::from("second"),
+        ];
+        assert_eq!(
+            prompt_text(&blocks).expect("supported prompt"),
+            "first\nsecond"
+        );
+    }
+
+    #[test]
+    fn prompt_text_rejects_unadvertised_content() {
+        let image = serde_json::from_value::<acp::ContentBlock>(serde_json::json!({
+            "type": "image",
+            "data": "AA==",
+            "mimeType": "image/png"
+        }))
+        .expect("valid ACP image block");
+        assert!(prompt_text(&[image]).is_err());
     }
 }

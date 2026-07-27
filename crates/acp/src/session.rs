@@ -78,6 +78,7 @@ pub struct SessionRegistry {
 #[derive(Debug, Default)]
 struct RegistryState {
     known: HashSet<SessionKey>,
+    in_flight: HashSet<SessionKey>,
     /// Sessions whose in-flight turn has been cancelled but not yet observed.
     cancelled: HashMap<SessionKey, bool>,
     next_id: u64,
@@ -118,6 +119,30 @@ impl SessionRegistry {
         Err(acp::Error::invalid_params().data(format!("unknown session id {id}")))
     }
 
+    /// Marks a prompt active, rejecting overlapping turns for one session.
+    pub fn begin_prompt(&self, key: &SessionKey) -> acp::Result<PromptGuard> {
+        if !self.inner.borrow_mut().in_flight.insert(key.clone()) {
+            return Err(acp::Error::invalid_params()
+                .data(format!("session {key} already has an active prompt")));
+        }
+        Ok(PromptGuard {
+            registry: self.clone(),
+            key: key.clone(),
+        })
+    }
+
+    /// Blocks session setup changes while another setup or prompt is active.
+    pub fn begin_setup(&self, key: &SessionKey) -> acp::Result<PromptGuard> {
+        if !self.inner.borrow_mut().in_flight.insert(key.clone()) {
+            return Err(acp::Error::invalid_params()
+                .data(format!("session {key} already has an active operation")));
+        }
+        Ok(PromptGuard {
+            registry: self.clone(),
+            key: key.clone(),
+        })
+    }
+
     /// Marks the session's in-flight turn as cancelled.
     pub fn mark_cancelled(&self, key: &SessionKey) {
         self.inner.borrow_mut().cancelled.insert(key.clone(), true);
@@ -135,6 +160,18 @@ impl SessionRegistry {
             .cancelled
             .remove(key)
             .unwrap_or(false)
+    }
+}
+
+/// Removes a session's active-prompt marker on every exit path.
+pub struct PromptGuard {
+    registry: SessionRegistry,
+    key: SessionKey,
+}
+
+impl Drop for PromptGuard {
+    fn drop(&mut self) {
+        self.registry.inner.borrow_mut().in_flight.remove(&self.key);
     }
 }
 
@@ -199,5 +236,21 @@ mod tests {
         let first = registry.next_local_id();
         let second = registry.next_local_id();
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn setup_and_prompt_operations_are_mutually_exclusive() {
+        let registry = SessionRegistry::new();
+        let key = SessionKey::namespaced("busy");
+        registry.insert(key.clone());
+
+        let setup = registry.begin_setup(&key).expect("first operation");
+        assert!(registry.begin_prompt(&key).is_err());
+        drop(setup);
+
+        let prompt = registry.begin_prompt(&key).expect("operation released");
+        assert!(registry.begin_setup(&key).is_err());
+        drop(prompt);
+        assert!(registry.begin_setup(&key).is_ok());
     }
 }

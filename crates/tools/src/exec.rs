@@ -472,6 +472,13 @@ impl AgentTool for ExecTool {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
+            .or_else(|| {
+                params
+                    .get("_working_dir")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+            })
             .or_else(|| self.working_dir.clone());
 
         let runs_on_host = !(is_sandboxed && has_container_backend);

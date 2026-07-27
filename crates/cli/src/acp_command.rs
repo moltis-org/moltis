@@ -48,12 +48,12 @@ async fn resolve_backend(args: &AcpArgs) -> anyhow::Result<Arc<dyn AcpBackend>> 
 
 /// Boots the Moltis stack in-process.
 ///
-/// `prepare_gateway_core` is the transport-agnostic half of startup: it wires
+/// `prepare_gateway_core_with_profile` is the transport-agnostic half of startup: it wires
 /// providers, sessions, memory and tools but binds no socket, so serving ACP
 /// does not stand up an HTTP listener or collide with a running gateway on a
 /// port. The bind address it takes is only recorded for OAuth callbacks.
-async fn boot_core(args: &AcpArgs) -> anyhow::Result<Arc<moltis_gateway::state::GatewayState>> {
-    let core = moltis_gateway::server::prepare_gateway_core(
+async fn boot_core(args: &AcpArgs) -> anyhow::Result<moltis_gateway::server::PreparedGatewayCore> {
+    let core = moltis_gateway::server::prepare_gateway_core_with_profile(
         "127.0.0.1",
         0,
         true,
@@ -63,9 +63,10 @@ async fn boot_core(args: &AcpArgs) -> anyhow::Result<Arc<moltis_gateway::state::
         None,
         None,
         None,
+        moltis_gateway::server::CoreStartupProfile::Headless,
     )
     .await?;
-    Ok(core.state)
+    Ok(core)
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]

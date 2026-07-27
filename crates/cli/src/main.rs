@@ -28,6 +28,8 @@ static malloc_conf: &[u8] = b"dirty_decay_ms:1000,muzzy_decay_ms:1000,background
 mod acp_backend;
 #[cfg(feature = "acp")]
 mod acp_command;
+#[cfg(feature = "acp")]
+mod acp_mcp;
 mod auth_commands;
 mod browser_commands;
 mod channel_commands;

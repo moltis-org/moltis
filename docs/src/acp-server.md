@@ -27,6 +27,14 @@ back as `session/update` notifications while it runs.
 `moltis acp` boots the Moltis stack inside the spawned process and binds no
 socket, so you do not start `moltis serve` first and it will not take a port.
 
+Startup uses a headless profile. Providers, tools, memory, sessions, and
+configured MCP servers are ready before the protocol starts, while channel
+accounts and server-only background workers are not started.
+
+If sandbox networking is set to `trusted`, HTTP tools fail closed in ACP mode.
+The trusted-domain approval proxy is not started because ACP has no domain
+approval UI and the headless process does not bind listener ports.
+
 It does open the databases under the data directory, which is what lets an ACP
 session show up in the Web UI's session list. A gateway running at the same time
 shares that state rather than being talked to over a socket.
@@ -82,6 +90,23 @@ id outside `acp:` with `invalid_params` before the backend is consulted, so a
 client cannot name a Web UI or channel session and drive it. `session/new`
 likewise refuses to return a key a backend minted outside the namespace.
 
+The absolute `cwd` supplied by the ACP client becomes the session's Moltis
+project and the working directory used by filesystem and execution tools. The
+directory must exist. Loading an existing session rebinds it to the `cwd` in
+that load request.
+
+### Client-provided MCP servers
+
+`session/new` and `session/load` accept stdio MCP servers. They are scoped to
+that ACP session: their tools are added only to that session and they are shut
+down when the client disconnects or replaces the session setup. HTTP and SSE
+MCP transports are not advertised or accepted.
+
+For process isolation, each MCP command must be an absolute path. It runs in
+the session `cwd` with only the environment variables explicitly supplied in
+the ACP request; it does not inherit the Moltis process environment. Server
+names and environment variable names must be unique within the request.
+
 ## Protocol support
 
 | Method | Status |
@@ -96,6 +121,10 @@ likewise refuses to return a key a backend minted outside the namespace.
 | `session/request_permission` | Not yet routed through Moltis's tool gate |
 
 Unknown session ids are rejected with `invalid_params`.
+
+Only text and resource-link prompt blocks are accepted. Image, audio, and
+embedded-resource blocks are rejected because those capabilities are not
+advertised.
 
 ### What a turn streams
 

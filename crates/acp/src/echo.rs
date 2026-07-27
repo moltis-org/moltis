@@ -6,7 +6,6 @@
 
 use std::{
     collections::HashMap,
-    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -18,6 +17,7 @@ use {agent_client_protocol as acp, async_trait::async_trait};
 use crate::{
     backend::{AcpBackend, BackendCapabilities, TurnUpdates},
     session::SessionKey,
+    setup::SessionSetup,
 };
 
 /// Echoes the prompt back as a streamed agent message.
@@ -44,7 +44,7 @@ impl EchoBackend {
 
 #[async_trait]
 impl AcpBackend for EchoBackend {
-    async fn create_session(&self, _cwd: &Path) -> anyhow::Result<SessionKey> {
+    async fn create_session(&self, _setup: &SessionSetup) -> anyhow::Result<SessionKey> {
         let id = self
             .next_id
             .fetch_add(1, Ordering::Relaxed)
@@ -92,15 +92,21 @@ impl AcpBackend for EchoBackend {
 mod tests {
     use {super::*, tokio::sync::mpsc};
 
+    async fn setup() -> SessionSetup {
+        SessionSetup::new(std::env::temp_dir(), Vec::new())
+            .await
+            .expect("setup")
+    }
+
     #[tokio::test]
     async fn sessions_are_namespaced_and_unique() {
         let backend = EchoBackend::new();
         let first = backend
-            .create_session(Path::new("."))
+            .create_session(&setup().await)
             .await
             .expect("session");
         let second = backend
-            .create_session(Path::new("."))
+            .create_session(&setup().await)
             .await
             .expect("session");
         assert!(first.is_namespaced());
@@ -111,7 +117,7 @@ mod tests {
     async fn prompt_streams_chunks_then_ends_turn() {
         let backend = EchoBackend::new();
         let key = backend
-            .create_session(Path::new("."))
+            .create_session(&setup().await)
             .await
             .expect("session");
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -142,7 +148,7 @@ mod tests {
     async fn cancel_stops_the_turn() {
         let backend = EchoBackend::new();
         let key = backend
-            .create_session(Path::new("."))
+            .create_session(&setup().await)
             .await
             .expect("session");
         backend.cancel(&key).await.expect("cancel");
@@ -160,7 +166,7 @@ mod tests {
     async fn turn_ends_when_the_client_stops_listening() {
         let backend = EchoBackend::new();
         let key = backend
-            .create_session(Path::new("."))
+            .create_session(&setup().await)
             .await
             .expect("session");
         let (tx, rx) = mpsc::unbounded_channel();

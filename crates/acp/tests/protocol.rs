@@ -8,7 +8,6 @@
 
 use std::{
     cell::RefCell,
-    path::Path,
     pin::Pin,
     rc::Rc,
     sync::{
@@ -32,7 +31,8 @@ use {
 };
 
 use moltis_acp::{
-    AcpBackend, BackendCapabilities, EchoBackend, MoltisAgent, SessionKey, TurnUpdates,
+    AcpBackend, BackendCapabilities, EchoBackend, MoltisAgent, SessionKey, SessionSetup,
+    TurnUpdates,
 };
 
 /// Every await in these tests should settle in milliseconds; the budget exists
@@ -108,7 +108,7 @@ struct BlockingBackend {
 
 #[async_trait]
 impl AcpBackend for BlockingBackend {
-    async fn create_session(&self, _cwd: &Path) -> anyhow::Result<SessionKey> {
+    async fn create_session(&self, _setup: &SessionSetup) -> anyhow::Result<SessionKey> {
         Ok(SessionKey::namespaced("blocking"))
     }
 
@@ -137,7 +137,7 @@ struct FailingBackend;
 
 #[async_trait]
 impl AcpBackend for FailingBackend {
-    async fn create_session(&self, _cwd: &Path) -> anyhow::Result<SessionKey> {
+    async fn create_session(&self, _setup: &SessionSetup) -> anyhow::Result<SessionKey> {
         Err(anyhow::anyhow!("no sessions today"))
     }
 
@@ -160,11 +160,15 @@ struct ResumableBackend;
 
 #[async_trait]
 impl AcpBackend for ResumableBackend {
-    async fn create_session(&self, _cwd: &Path) -> anyhow::Result<SessionKey> {
+    async fn create_session(&self, _setup: &SessionSetup) -> anyhow::Result<SessionKey> {
         Ok(SessionKey::namespaced("resumable"))
     }
 
-    async fn load_session(&self, _key: &SessionKey) -> anyhow::Result<Vec<acp::SessionUpdate>> {
+    async fn load_session(
+        &self,
+        _key: &SessionKey,
+        _setup: &SessionSetup,
+    ) -> anyhow::Result<Vec<acp::SessionUpdate>> {
         Ok(vec![
             acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(acp::ContentBlock::from(
                 "earlier question".to_string(),
@@ -202,11 +206,15 @@ struct EscapingBackend {
 
 #[async_trait]
 impl AcpBackend for EscapingBackend {
-    async fn create_session(&self, _cwd: &Path) -> anyhow::Result<SessionKey> {
+    async fn create_session(&self, _setup: &SessionSetup) -> anyhow::Result<SessionKey> {
         Ok(SessionKey::new("web:escaped"))
     }
 
-    async fn load_session(&self, _key: &SessionKey) -> anyhow::Result<Vec<acp::SessionUpdate>> {
+    async fn load_session(
+        &self,
+        _key: &SessionKey,
+        _setup: &SessionSetup,
+    ) -> anyhow::Result<Vec<acp::SessionUpdate>> {
         self.loaded.store(true, Ordering::SeqCst);
         Ok(Vec::new())
     }

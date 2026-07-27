@@ -66,49 +66,53 @@ name = "moltis"
 path = "src/main.rs"
 
 [dependencies]
-agent-client-protocol  = { optional = true, workspace = true }
-anyhow                 = { workspace = true }
-async-trait            = { workspace = true }
-clap                   = { workspace = true }
-dotenvy                = { workspace = true }
-moltis-acp             = { optional = true, workspace = true }
-moltis-agents          = { workspace = true }
-moltis-browser         = { workspace = true }
-moltis-claude-import   = { optional = true, workspace = true }
-moltis-codex-import    = { optional = true, workspace = true }
-moltis-common          = { workspace = true }
-moltis-config          = { workspace = true }
-moltis-cron            = { workspace = true }
-moltis-gateway         = { workspace = true }
-moltis-hermes-import   = { optional = true, workspace = true }
-moltis-httpd           = { workspace = true }
-moltis-import-core     = { workspace = true }
-moltis-memory          = { workspace = true }
-moltis-node-host       = { workspace = true }
-moltis-oauth           = { workspace = true }
-moltis-onboarding      = { workspace = true }
-moltis-openclaw-import = { optional = true, workspace = true }
-moltis-plugins         = { workspace = true }
-moltis-portable        = { workspace = true }
-moltis-projects        = { workspace = true }
-moltis-protocol        = { workspace = true }
-moltis-providers       = { workspace = true }
-moltis-sessions        = { workspace = true }
-moltis-skills          = { workspace = true }
-moltis-tools           = { workspace = true }
-moltis-web             = { optional = true, workspace = true }
-open                   = { workspace = true }
-rand                   = { workspace = true }
-reqwest                = { workspace = true }
-secrecy                = { workspace = true }
-serde_json             = { workspace = true }
-sqlx                   = { workspace = true }
-time                   = { workspace = true }
-tokio                  = { workspace = true }
-tracing                = { workspace = true }
-tracing-subscriber     = { workspace = true }
-uuid                   = { workspace = true }
-which                  = { workspace = true }
+agent-client-protocol   = { optional = true, workspace = true }
+anyhow                  = { workspace = true }
+async-trait             = { workspace = true }
+clap                    = { workspace = true }
+dotenvy                 = { workspace = true }
+moltis-acp              = { optional = true, workspace = true }
+moltis-agents           = { workspace = true }
+moltis-browser          = { workspace = true }
+moltis-chat             = { optional = true, workspace = true }
+moltis-claude-import    = { optional = true, workspace = true }
+moltis-codex-import     = { optional = true, workspace = true }
+moltis-common           = { workspace = true }
+moltis-config           = { workspace = true }
+moltis-cron             = { workspace = true }
+moltis-gateway          = { workspace = true }
+moltis-hermes-import    = { optional = true, workspace = true }
+moltis-httpd            = { workspace = true }
+moltis-import-core      = { workspace = true }
+moltis-mcp              = { optional = true, workspace = true }
+moltis-mcp-agent-bridge = { optional = true, workspace = true }
+moltis-memory           = { workspace = true }
+moltis-node-host        = { workspace = true }
+moltis-oauth            = { workspace = true }
+moltis-onboarding       = { workspace = true }
+moltis-openclaw-import  = { optional = true, workspace = true }
+moltis-plugins          = { workspace = true }
+moltis-portable         = { workspace = true }
+moltis-projects         = { workspace = true }
+moltis-protocol         = { workspace = true }
+moltis-providers        = { workspace = true }
+moltis-service-traits   = { optional = true, workspace = true }
+moltis-sessions         = { workspace = true }
+moltis-skills           = { workspace = true }
+moltis-tools            = { workspace = true }
+moltis-web              = { optional = true, workspace = true }
+open                    = { workspace = true }
+rand                    = { workspace = true }
+reqwest                 = { workspace = true }
+secrecy                 = { workspace = true }
+serde_json              = { workspace = true }
+sqlx                    = { workspace = true }
+time                    = { workspace = true }
+tokio                   = { workspace = true }
+tracing                 = { workspace = true }
+tracing-subscriber      = { workspace = true }
+uuid                    = { workspace = true }
+which                   = { workspace = true }
 
 [target.'cfg(all(not(target_os = "windows"), not(all(target_os = "linux", target_arch = "aarch64"))))'.dependencies]
 tikv-jemallocator = { optional = true, workspace = true }
@@ -117,11 +121,18 @@ tikv-jemallocator = { optional = true, workspace = true }
 tempfile = { workspace = true }
 
 [features]
-acp               = ["dep:agent-client-protocol", "dep:moltis-acp"]
-agent             = ["moltis-gateway/agent", "moltis-web?/agent"]
-caldav            = ["moltis-gateway/caldav"]
+acp = [
+  "dep:agent-client-protocol",
+  "dep:moltis-acp",
+  "dep:moltis-chat",
+  "dep:moltis-mcp",
+  "dep:moltis-mcp-agent-bridge",
+  "dep:moltis-service-traits",
+]
+agent = ["moltis-gateway/agent", "moltis-web?/agent"]
+caldav = ["moltis-gateway/caldav"]
 cloudflare-tunnel = ["moltis-httpd/cloudflare-tunnel", "moltis-web?/cloudflare-tunnel"]
-home-assistant    = ["moltis-gateway/home-assistant"]
+home-assistant = ["moltis-gateway/home-assistant"]
 # User-facing integrations stay default-on in the CLI crate per workspace policy,
 # even when the underlying implementation remains feature-gated in lower crates.
 #

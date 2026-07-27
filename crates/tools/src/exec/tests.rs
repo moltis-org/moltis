@@ -105,6 +105,21 @@ async fn test_exec_tool_empty_working_dir() {
 }
 
 #[tokio::test]
+async fn test_exec_tool_uses_internal_working_dir_default() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let tool = ExecTool::default();
+    let result = tool
+        .execute(serde_json::json!({
+            "command": "pwd",
+            "_working_dir": temp_dir.path(),
+        }))
+        .await
+        .unwrap();
+    let reported = std::fs::canonicalize(result["stdout"].as_str().unwrap().trim()).unwrap();
+    assert_eq!(reported, temp_dir.path().canonicalize().unwrap());
+}
+
+#[tokio::test]
 async fn test_exec_tool_safe_command_no_approval_needed() {
     let mgr = Arc::new(ApprovalManager::default());
     let bc = Arc::new(TestBroadcaster::new());

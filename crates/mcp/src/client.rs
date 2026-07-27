@@ -20,7 +20,7 @@ use crate::{
     remote::ResolvedRemoteConfig,
     sse_transport::SseTransport,
     traits::{McpClientTrait, McpTransport},
-    transport::StdioTransport,
+    transport::{StdioLaunchOptions, StdioTransport},
     types::{
         ClientCapabilities, ClientInfo, InitializeParams, InitializeResult, McpToolDef,
         McpTransportError, PROTOCOL_VERSION, ToolsCallParams, ToolsCallResult, ToolsListResult,
@@ -58,9 +58,29 @@ impl McpClient {
         env: &HashMap<String, Secret<String>>,
         request_timeout: Duration,
     ) -> Result<Self> {
-        info!(server = %server_name, command = %command, args = ?args, "connecting to MCP server");
+        Self::connect_with_options(
+            server_name,
+            command,
+            args,
+            env,
+            request_timeout,
+            &StdioLaunchOptions::default(),
+        )
+        .await
+    }
+
+    pub async fn connect_with_options(
+        server_name: &str,
+        command: &str,
+        args: &[String],
+        env: &HashMap<String, Secret<String>>,
+        request_timeout: Duration,
+        options: &StdioLaunchOptions,
+    ) -> Result<Self> {
+        info!(server = %server_name, command = %command, arg_count = args.len(), "connecting to MCP server");
         let transport =
-            StdioTransport::spawn_with_timeout(command, args, env, request_timeout).await?;
+            StdioTransport::spawn_with_options(command, args, env, request_timeout, options)
+                .await?;
 
         let mut client = Self {
             server_name: server_name.into(),

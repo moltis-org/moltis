@@ -24,25 +24,31 @@
 mod updates;
 
 use std::{
-    path::Path,
+    collections::HashMap,
+    path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
 use {
     agent_client_protocol as acp,
     async_trait::async_trait,
-    moltis_acp::{AcpBackend, BackendCapabilities, SessionKey, TurnUpdates},
+    moltis_acp::{AcpBackend, BackendCapabilities, SessionKey, SessionSetup, TurnUpdates},
+    moltis_chat::LiveChatService,
     moltis_gateway::state::GatewayState,
     moltis_protocol::{ClientInfo, ConnectParams, PROTOCOL_VERSION},
+    moltis_service_traits::ChatService,
     serde_json::{Value, json},
-    tokio::sync::mpsc,
+    tokio::sync::{Notify, RwLock, mpsc},
     tracing::{debug, warn},
 };
 
-use self::updates::{FrameAction, FrameMapper};
+use {
+    self::updates::{FrameAction, FrameMapper},
+    crate::acp_mcp::SessionMcpRuntime,
+};
 
 /// Frames buffered for one turn before the gateway starts dropping them.
 ///
@@ -53,19 +59,106 @@ const FRAME_BUFFER: usize = 1024;
 
 /// Serves ACP prompts by running real Moltis turns.
 pub struct MoltisBackend {
+    core: moltis_gateway::server::PreparedGatewayCore,
     state: Arc<GatewayState>,
+    chat: Arc<LiveChatService>,
+    sessions: RwLock<HashMap<SessionKey, SessionRuntime>>,
+    active_prompts: RwLock<HashMap<SessionKey, Arc<PromptSignal>>>,
     /// Distinguishes the synthetic clients this backend registers, so two
     /// concurrent turns cannot collide on a connection id.
     next_conn: AtomicU64,
 }
 
+struct SessionRuntime {
+    cwd: PathBuf,
+    mcp: Option<SessionMcpRuntime>,
+}
+
+#[derive(Default)]
+struct PromptSignal {
+    cancelled: AtomicBool,
+    notify: Notify,
+}
+
 impl MoltisBackend {
     #[must_use]
-    pub fn new(state: Arc<GatewayState>) -> Self {
+    pub fn new(core: moltis_gateway::server::PreparedGatewayCore) -> Self {
+        let state = Arc::clone(&core.state);
+        let chat = Arc::clone(&core.live_chat);
         Self {
+            core,
             state,
+            chat,
+            sessions: RwLock::new(HashMap::new()),
+            active_prompts: RwLock::new(HashMap::new()),
             next_conn: AtomicU64::new(0),
         }
+    }
+
+    async fn canonical_cwd(setup: &SessionSetup) -> anyhow::Result<PathBuf> {
+        let cwd = tokio::fs::canonicalize(setup.cwd())
+            .await
+            .map_err(|error| anyhow::anyhow!("invalid session cwd: {error}"))?;
+        if !cwd.is_dir() {
+            anyhow::bail!("session cwd is not a directory");
+        }
+        Ok(cwd)
+    }
+
+    async fn bind_project(&self, key: &SessionKey, cwd: &Path) -> anyhow::Result<()> {
+        let listed = self.state.services.project.list().await?;
+        let projects = serde_json::from_value::<Vec<moltis_projects::Project>>(listed)?;
+        let existing = projects.iter().find(|project| {
+            std::fs::canonicalize(&project.directory).is_ok_and(|directory| directory == cwd)
+        });
+        let project_id = if let Some(project) = existing {
+            project.id.clone()
+        } else {
+            let mut project = moltis_projects::detect::detect_project(cwd)
+                .ok_or_else(|| anyhow::anyhow!("failed to detect project for {}", cwd.display()))?;
+            if projects.iter().any(|existing| existing.id == project.id) {
+                project.id = format!("{}-{}", project.id, uuid::Uuid::new_v4().simple());
+            }
+            self.state
+                .services
+                .project
+                .upsert(serde_json::to_value(&project)?)
+                .await?;
+            project.id
+        };
+        self.chat
+            .bind_session_project(key.as_str(), &project_id)
+            .await;
+        Ok(())
+    }
+
+    async fn install_session(&self, key: &SessionKey, setup: &SessionSetup) -> anyhow::Result<()> {
+        let cwd = Self::canonical_cwd(setup).await?;
+        let mcp = SessionMcpRuntime::start(setup).await?;
+        if let Err(error) = self.bind_project(key, &cwd).await {
+            if let Some(runtime) = mcp {
+                runtime.shutdown().await;
+            }
+            return Err(error);
+        }
+        if let Some(runtime) = mcp.as_ref() {
+            self.chat
+                .set_session_tool_overlay(key.as_str(), runtime.tools())
+                .await;
+        } else {
+            self.chat.remove_session_tool_overlay(key.as_str()).await;
+        }
+        let previous = self
+            .sessions
+            .write()
+            .await
+            .insert(key.clone(), SessionRuntime { cwd, mcp });
+        if let Some(previous) = previous
+            && let Some(mcp) = previous.mcp
+        {
+            mcp.shutdown().await;
+        }
+        Ok(())
     }
 
     /// Registers a broadcast client and returns its id plus the frame stream.
@@ -108,7 +201,7 @@ fn acp_connect_params() -> ConnectParams {
         client: ClientInfo {
             id: "moltis-acp".to_string(),
             display_name: Some("ACP client".to_string()),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            version: moltis_config::VERSION.to_string(),
             platform: std::env::consts::OS.to_string(),
             device_family: None,
             model_identifier: None,
@@ -141,6 +234,9 @@ struct TurnClient {
 
 impl Drop for TurnClient {
     fn drop(&mut self) {
+        if self.conn_id.is_empty() {
+            return;
+        }
         let state = Arc::clone(&self.state);
         let conn_id = std::mem::take(&mut self.conn_id);
         // Drop runs outside async context, and removal takes a write lock.
@@ -150,22 +246,37 @@ impl Drop for TurnClient {
     }
 }
 
+impl TurnClient {
+    async fn close(mut self) {
+        let conn_id = std::mem::take(&mut self.conn_id);
+        self.state.remove_client(&conn_id).await;
+    }
+}
+
 #[async_trait]
 impl AcpBackend for MoltisBackend {
-    async fn create_session(&self, cwd: &Path) -> anyhow::Result<SessionKey> {
+    async fn create_session(&self, setup: &SessionSetup) -> anyhow::Result<SessionKey> {
         // Moltis materializes a session on first write, so there is nothing to
         // create here beyond choosing the key. The `acp:` namespace is what
         // keeps these from colliding with Web UI and channel sessions, and the
         // protocol layer rejects anything outside it.
         let key = SessionKey::namespaced(uuid::Uuid::new_v4().to_string());
-        debug!(session = %key, cwd = %cwd.display(), "ACP session created");
+        self.install_session(&key, setup).await?;
+        debug!(session = %key, cwd = %setup.cwd().display(), "ACP session created");
         Ok(key)
     }
 
-    async fn load_session(&self, key: &SessionKey) -> anyhow::Result<Vec<acp::SessionUpdate>> {
+    async fn load_session(
+        &self,
+        key: &SessionKey,
+        setup: &SessionSetup,
+    ) -> anyhow::Result<Vec<acp::SessionUpdate>> {
+        if !self.chat.session_exists(key.as_str()).await {
+            anyhow::bail!("session does not exist");
+        }
+        self.install_session(key, setup).await?;
         let history = self
-            .state
-            .chat()
+            .chat
             .history(json!({ "_session_key": key.as_str() }))
             .await
             .map_err(|error| anyhow::anyhow!("failed to read session history: {error}"))?;
@@ -178,86 +289,164 @@ impl AcpBackend for MoltisBackend {
         prompt: String,
         updates: TurnUpdates,
     ) -> anyhow::Result<acp::StopReason> {
-        let (conn_id, mut frames) = self.register().await;
-        let _client = TurnClient {
-            state: Arc::clone(&self.state),
-            conn_id,
-        };
+        let signal = Arc::new(PromptSignal::default());
+        let mut active_prompts = self.active_prompts.write().await;
+        if active_prompts.contains_key(key) {
+            anyhow::bail!("session {key} already has an active prompt");
+        }
+        active_prompts.insert(key.clone(), Arc::clone(&signal));
+        drop(active_prompts);
 
-        let chat = self.state.chat();
-        let turn = chat.send_sync(json!({
-            "text": prompt,
-            "_session_key": key.as_str(),
-        }));
-        let mut turn = std::pin::pin!(turn);
+        let result = async {
+            if signal.cancelled.load(Ordering::Acquire) {
+                return Ok(acp::StopReason::Cancelled);
+            }
+            let (conn_id, mut frames) = self.register().await;
+            let client = TurnClient {
+                state: Arc::clone(&self.state),
+                conn_id,
+            };
 
-        let mut mapper = FrameMapper::new();
-        let mut reported_error: Option<String> = None;
+            let turn = self.chat.send_sync(json!({
+                "text": prompt,
+                "_session_key": key.as_str(),
+            }));
+            let mut turn = std::pin::pin!(turn);
 
-        // Forward frames while the turn runs. `send_sync` resolving is what ends
-        // the turn — the broadcast has no terminal frame to wait for, and
-        // waiting for the channel to close would hang, since the gateway holds
-        // the sender until the client is unregistered.
-        let outcome = loop {
-            tokio::select! {
-                result = &mut turn => break result,
-                frame = frames.recv() => match frame {
-                    Some(frame) => match mapper.map(&frame, key.as_str()) {
-                        FrameAction::Emit(batch) => {
-                            for update in batch {
-                                if !updates.send(update) {
-                                    // The client hung up. Let the turn finish so
-                                    // the reply is still persisted, but stop
-                                    // formatting updates nobody will read.
-                                    debug!("ACP client stopped reading updates mid-turn");
-                                    break;
-                                }
-                            }
-                        },
-                        FrameAction::Failed(message) => reported_error = Some(message),
-                        FrameAction::Ignore => {},
+            let mut mapper = FrameMapper::new();
+            let mut reported_error: Option<String> = None;
+            let mut cancelled = false;
+
+            // Forward frames while the turn runs. `send_sync` resolving is what ends
+            // the turn — the broadcast has no terminal frame to wait for, and
+            // waiting for the channel to close would hang, since the gateway holds
+            // the sender until the client is unregistered.
+            let outcome = 'turn: loop {
+                tokio::select! {
+                    biased;
+                    _ = signal.notify.notified() => {
+                        let _ = self
+                            .chat
+                            .abort(json!({ "sessionKey": key.as_str() }))
+                            .await;
+                        cancelled = true;
+                        break Ok(json!({}));
                     },
-                    // The gateway dropped our registration; the turn still owns
-                    // the outcome, so wait for it rather than guessing.
-                    None => break (&mut turn).await,
-                },
-            }
-        };
+                    result = &mut turn => break result,
+                    frame = frames.recv() => match frame {
+                        Some(frame) => match mapper.map(&frame, key.as_str()) {
+                            FrameAction::Emit(batch) => {
+                                for update in batch {
+                                    if !updates.send(update) {
+                                        debug!("ACP client stopped reading updates mid-turn");
+                                        let _ = self
+                                            .chat
+                                            .abort(json!({ "sessionKey": key.as_str() }))
+                                            .await;
+                                        cancelled = true;
+                                        break 'turn Ok(json!({}));
+                                    }
+                                }
+                            },
+                            FrameAction::Failed(message) => reported_error = Some(message),
+                            FrameAction::Ignore => {},
+                        },
+                        // The gateway dropped our registration; the turn still owns
+                        // the outcome, so wait for it rather than guessing.
+                        None => break (&mut turn).await,
+                    },
+                }
+            };
 
-        // Frames already queued when the turn resolved are still this turn's
-        // output; dropping them would truncate the visible reply.
-        while let Ok(frame) = frames.try_recv() {
-            match mapper.map(&frame, key.as_str()) {
-                FrameAction::Emit(batch) => {
-                    for update in batch {
-                        if !updates.send(update) {
-                            break;
+            // Frames already queued when the turn resolved are still this turn's
+            // output; dropping them would truncate the visible reply.
+            while !cancelled && let Ok(frame) = frames.try_recv() {
+                match mapper.map(&frame, key.as_str()) {
+                    FrameAction::Emit(batch) => {
+                        for update in batch {
+                            if !updates.send(update) {
+                                break;
+                            }
                         }
-                    }
-                },
-                FrameAction::Failed(message) => reported_error = Some(message),
-                FrameAction::Ignore => {},
+                    },
+                    FrameAction::Failed(message) => reported_error = Some(message),
+                    FrameAction::Ignore => {},
+                }
+            }
+
+            client.close().await;
+
+            if cancelled {
+                Ok(acp::StopReason::Cancelled)
+            } else {
+                match outcome {
+                    Ok(result) if result.get("rejected").and_then(Value::as_bool) == Some(true) => {
+                        let reason = result
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .unwrap_or("prompt rejected");
+                        Err(anyhow::anyhow!(reason.to_string()))
+                    },
+                    Ok(_) => Ok(acp::StopReason::EndTurn),
+                    Err(error) => {
+                        // Prefer the broadcast's message: `send_sync` reports a generic
+                        // failure while the frame carries the provider's own words.
+                        let detail = reported_error.unwrap_or_else(|| error.to_string());
+                        warn!(session = %key, "ACP turn failed: {detail}");
+                        Err(anyhow::anyhow!(detail))
+                    },
+                }
             }
         }
+        .await;
 
-        match outcome {
-            Ok(_) => Ok(acp::StopReason::EndTurn),
-            Err(error) => {
-                // Prefer the broadcast's message: `send_sync` reports a generic
-                // failure while the frame carries the provider's own words.
-                let detail = reported_error.unwrap_or_else(|| error.to_string());
-                warn!(session = %key, "ACP turn failed: {detail}");
-                Err(anyhow::anyhow!(detail))
-            },
+        let mut active_prompts = self.active_prompts.write().await;
+        if active_prompts
+            .get(key)
+            .is_some_and(|active| Arc::ptr_eq(active, &signal))
+        {
+            active_prompts.remove(key);
         }
+        result
     }
 
     async fn cancel(&self, key: &SessionKey) -> anyhow::Result<()> {
-        self.state
-            .chat()
+        let signal = self.active_prompts.read().await.get(key).cloned();
+        if let Some(signal) = signal.as_ref() {
+            signal.cancelled.store(true, Ordering::Release);
+            signal.notify.notify_one();
+        }
+        let result = self
+            .chat
             .abort(json!({ "sessionKey": key.as_str() }))
             .await
             .map_err(|error| anyhow::anyhow!("failed to abort turn: {error}"))?;
+        if result.get("aborted").and_then(Value::as_bool) != Some(true) && signal.is_none() {
+            anyhow::bail!("no active turn found for session {key}");
+        }
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> anyhow::Result<()> {
+        debug!("shutting down ACP backend");
+        for signal in self.active_prompts.read().await.values() {
+            signal.cancelled.store(true, Ordering::Release);
+            signal.notify.notify_one();
+        }
+        let sessions = {
+            let mut sessions = self.sessions.write().await;
+            std::mem::take(&mut *sessions)
+        };
+        for (key, runtime) in sessions {
+            let _ = self.chat.abort(json!({ "sessionKey": key.as_str() })).await;
+            self.chat.remove_session_tool_overlay(key.as_str()).await;
+            if let Some(mcp) = runtime.mcp {
+                mcp.shutdown().await;
+            }
+            debug!(session = %key, cwd = %runtime.cwd.display(), "ACP session shut down");
+        }
+        self.core.mcp_manager.shutdown_all().await;
+        debug!("ACP backend shut down");
         Ok(())
     }
 

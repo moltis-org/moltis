@@ -23,6 +23,7 @@ pub mod backend;
 pub mod echo;
 pub mod server;
 pub mod session;
+pub mod setup;
 
 pub use crate::{
     agent::MoltisAgent,
@@ -30,4 +31,5 @@ pub use crate::{
     echo::EchoBackend,
     server::{run_stdio, serve},
     session::{ACP_SESSION_NAMESPACE, SessionKey, SessionRegistry},
+    setup::SessionSetup,
 };

@@ -23,6 +23,7 @@ use crate::{
     remote::{ResolvedRemoteConfig, header_names, sanitize_url_for_display},
     tool_bridge::McpToolBridge,
     traits::McpClientTrait,
+    transport::StdioLaunchOptions,
     types::{McpManagerError, McpToolDef, McpTransportError},
 };
 
@@ -195,6 +196,16 @@ impl McpManager {
     /// For SSE servers: attempts unauthenticated first. On 401 Unauthorized,
     /// stores auth context and returns `McpManagerError::OAuthRequired`.
     pub async fn start_server(&self, name: &str, config: &McpServerConfig) -> Result<()> {
+        self.start_server_with_options(name, config, &StdioLaunchOptions::default())
+            .await
+    }
+
+    pub async fn start_server_with_options(
+        &self,
+        name: &str,
+        config: &McpServerConfig,
+        stdio_options: &StdioLaunchOptions,
+    ) -> Result<()> {
         // Shut down existing connection if any.
         self.stop_server(name).await;
 
@@ -459,12 +470,13 @@ impl McpManager {
                 }
             },
             TransportType::Stdio => {
-                let client = McpClient::connect(
+                let client = McpClient::connect_with_options(
                     name,
                     &config.command,
                     &config.args,
                     &config.env,
                     self.effective_timeout_for(config),
+                    stdio_options,
                 )
                 .await?;
                 (client, None)

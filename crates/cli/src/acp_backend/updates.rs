@@ -80,13 +80,7 @@ impl FrameMapper {
             Some("thinking_text") => self.reasoning_delta(text()),
             Some("tool_call_start") => FrameAction::Emit(vec![tool_call_start(payload)]),
             Some("tool_call_end") => FrameAction::Emit(vec![tool_call_end(payload)]),
-            Some("error") => FrameAction::Failed(first_non_empty(
-                &[
-                    payload.get("error").and_then(Value::as_str),
-                    payload.get("text").and_then(Value::as_str),
-                ],
-                "agent run failed",
-            )),
+            Some("error") => FrameAction::Failed(error_message(payload)),
             // `user_message` echoes what the client just sent us, `queued`,
             // `iteration`, `thinking`, and the rest are Web-UI affordances with
             // no ACP equivalent. Dropping them keeps the client's transcript to
@@ -133,6 +127,7 @@ fn tool_call_id(payload: &Value) -> String {
         &[
             payload.get("toolCallId").and_then(Value::as_str),
             payload.get("id").and_then(Value::as_str),
+            payload.get("toolName").and_then(Value::as_str),
             payload.get("tool").and_then(Value::as_str),
             payload.get("name").and_then(Value::as_str),
         ],
@@ -143,10 +138,31 @@ fn tool_call_id(payload: &Value) -> String {
 fn tool_name(payload: &Value) -> String {
     first_non_empty(
         &[
+            payload.get("toolName").and_then(Value::as_str),
             payload.get("tool").and_then(Value::as_str),
             payload.get("name").and_then(Value::as_str),
         ],
         "tool",
+    )
+}
+
+fn error_message(payload: &Value) -> String {
+    let error = payload.get("error");
+    first_non_empty(
+        &[
+            error.and_then(Value::as_str),
+            error
+                .and_then(|value| value.get("detail"))
+                .and_then(Value::as_str),
+            error
+                .and_then(|value| value.get("message"))
+                .and_then(Value::as_str),
+            error
+                .and_then(|value| value.get("title"))
+                .and_then(Value::as_str),
+            payload.get("text").and_then(Value::as_str),
+        ],
+        "agent run failed",
     )
 }
 
@@ -161,10 +177,9 @@ fn tool_call_start(payload: &Value) -> acp::SessionUpdate {
 }
 
 fn tool_call_end(payload: &Value) -> acp::SessionUpdate {
-    // Moltis reports a failed tool call with an `error` field; without one the
-    // call completed. Reporting a failure as completed would leave the client
-    // showing a green tool call for something that did not work.
-    let status = if payload.get("error").is_some() {
+    let failed = payload.get("success").and_then(Value::as_bool) == Some(false)
+        || payload.get("error").is_some_and(|error| !error.is_null());
+    let status = if failed {
         acp::ToolCallStatus::Failed
     } else {
         acp::ToolCallStatus::Completed
@@ -297,7 +312,7 @@ mod tests {
         let raw = frame(json!({
             "sessionKey": SESSION,
             "state": "error",
-            "error": "provider exploded",
+            "error": { "detail": "provider exploded" },
         }));
         assert_eq!(
             mapper.map(&raw, SESSION),
@@ -321,7 +336,7 @@ mod tests {
         let start = frame(json!({
             "sessionKey": SESSION,
             "state": "tool_call_start",
-            "tool": "read_file",
+            "toolName": "read_file",
         }));
         let FrameAction::Emit(updates) = mapper.map(&start, SESSION) else {
             panic!("tool call start must be forwarded");
@@ -337,7 +352,7 @@ mod tests {
         let end = frame(json!({
             "sessionKey": SESSION,
             "state": "tool_call_end",
-            "tool": "read_file",
+            "toolName": "read_file",
         }));
         let FrameAction::Emit(updates) = mapper.map(&end, SESSION) else {
             panic!("tool call end must be forwarded");
@@ -356,7 +371,7 @@ mod tests {
         let end = frame(json!({
             "sessionKey": SESSION,
             "state": "tool_call_end",
-            "tool": "exec",
+            "toolName": "exec",
             "error": "non-zero exit",
         }));
         let FrameAction::Emit(updates) = mapper.map(&end, SESSION) else {
@@ -371,13 +386,64 @@ mod tests {
     }
 
     #[test]
+    fn unsuccessful_tool_call_is_failed_without_an_error_field() {
+        let mut mapper = FrameMapper::new();
+        let action = mapper.map(
+            &serde_json::json!({
+                "event": "chat",
+                "payload": {
+                    "sessionKey": SESSION,
+                    "state": "tool_call_end",
+                    "toolName": "exec",
+                    "success": false
+                }
+            })
+            .to_string(),
+            SESSION,
+        );
+        let FrameAction::Emit(updates) = action else {
+            panic!("expected tool update");
+        };
+        let acp::SessionUpdate::ToolCallUpdate(update) = &updates[0] else {
+            panic!("expected tool call update");
+        };
+        assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
+    }
+
+    #[test]
+    fn null_tool_error_does_not_mark_a_successful_call_failed() {
+        let mut mapper = FrameMapper::new();
+        let action = mapper.map(
+            &serde_json::json!({
+                "event": "chat",
+                "payload": {
+                    "sessionKey": SESSION,
+                    "state": "tool_call_end",
+                    "toolName": "exec",
+                    "success": true,
+                    "error": null
+                }
+            })
+            .to_string(),
+            SESSION,
+        );
+        let FrameAction::Emit(updates) = action else {
+            panic!("expected tool update");
+        };
+        let acp::SessionUpdate::ToolCallUpdate(update) = &updates[0] else {
+            panic!("expected tool call update");
+        };
+        assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Completed));
+    }
+
+    #[test]
     fn tool_call_ids_pair_start_with_end() {
         let mut mapper = FrameMapper::new();
         let start = frame(json!({
-            "sessionKey": SESSION, "state": "tool_call_start", "tool": "grep",
+            "sessionKey": SESSION, "state": "tool_call_start", "toolName": "grep",
         }));
         let end = frame(json!({
-            "sessionKey": SESSION, "state": "tool_call_end", "tool": "grep",
+            "sessionKey": SESSION, "state": "tool_call_end", "toolName": "grep",
         }));
         let (FrameAction::Emit(started), FrameAction::Emit(ended)) =
             (mapper.map(&start, SESSION), mapper.map(&end, SESSION))

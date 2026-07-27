@@ -13,11 +13,9 @@
 //! task it likes, and the protocol side forwards them as `session/update`
 //! notifications from the local thread.
 
-use std::path::Path;
-
 use {agent_client_protocol as acp, async_trait::async_trait, tokio::sync::mpsc};
 
-use crate::session::SessionKey;
+use crate::{session::SessionKey, setup::SessionSetup};
 
 /// Sink for `session/update` notifications emitted while a turn is running.
 ///
@@ -76,14 +74,18 @@ pub struct BackendCapabilities {
 /// more than one.
 #[async_trait]
 pub trait AcpBackend: Send + Sync + 'static {
-    /// Creates a new session rooted at `cwd` and returns its Moltis key.
-    async fn create_session(&self, cwd: &Path) -> anyhow::Result<SessionKey>;
+    /// Creates a new session and returns its Moltis key.
+    async fn create_session(&self, setup: &SessionSetup) -> anyhow::Result<SessionKey>;
 
     /// Resumes an existing session, returning its history so the protocol layer
     /// can replay it to the client as `session/update` notifications.
     ///
     /// Only called when [`BackendCapabilities::load_session`] is set.
-    async fn load_session(&self, _key: &SessionKey) -> anyhow::Result<Vec<acp::SessionUpdate>> {
+    async fn load_session(
+        &self,
+        _key: &SessionKey,
+        _setup: &SessionSetup,
+    ) -> anyhow::Result<Vec<acp::SessionUpdate>> {
         Err(anyhow::anyhow!("session/load is not supported"))
     }
 
@@ -105,6 +107,11 @@ pub trait AcpBackend: Send + Sync + 'static {
     /// on that turn. The pending `prompt` is expected to wind up promptly
     /// afterwards.
     async fn cancel(&self, key: &SessionKey) -> anyhow::Result<()>;
+
+    /// Releases connection-scoped turns, processes, and registrations.
+    async fn shutdown(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 
     fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities::default()

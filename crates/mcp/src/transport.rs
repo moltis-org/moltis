@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     process::Stdio,
     sync::{
         Arc,
@@ -9,6 +10,22 @@ use std::{
     },
     time::Duration,
 };
+
+/// Process isolation options for a stdio MCP server launch.
+#[derive(Clone, Debug)]
+pub struct StdioLaunchOptions {
+    pub current_dir: Option<PathBuf>,
+    pub inherit_parent_env: bool,
+}
+
+impl Default for StdioLaunchOptions {
+    fn default() -> Self {
+        Self {
+            current_dir: None,
+            inherit_parent_env: true,
+        }
+    }
+}
 
 use {
     secrecy::{ExposeSecret, Secret},
@@ -54,11 +71,25 @@ impl StdioTransport {
         env: &HashMap<String, Secret<String>>,
         request_timeout: Duration,
     ) -> Result<Arc<Self>> {
-        info!(
-            command = %command,
-            args = ?args,
-            "spawning MCP server process"
-        );
+        Self::spawn_with_options(
+            command,
+            args,
+            env,
+            request_timeout,
+            &StdioLaunchOptions::default(),
+        )
+        .await
+    }
+
+    /// Spawn with explicit process isolation and working-directory behavior.
+    pub async fn spawn_with_options(
+        command: &str,
+        args: &[String],
+        env: &HashMap<String, Secret<String>>,
+        request_timeout: Duration,
+        options: &StdioLaunchOptions,
+    ) -> Result<Arc<Self>> {
+        info!(command = %command, arg_count = args.len(), "spawning MCP server process");
 
         let mut cmd = Command::new(command);
         cmd.args(args)
@@ -66,6 +97,12 @@ impl StdioTransport {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if !options.inherit_parent_env {
+            cmd.env_clear();
+        }
+        if let Some(current_dir) = options.current_dir.as_ref() {
+            cmd.current_dir(current_dir);
+        }
         for (name, value) in env {
             cmd.env(name, value.expose_secret());
         }

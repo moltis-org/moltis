@@ -28,7 +28,7 @@ where
     R: AsyncRead + Unpin + 'static,
     W: AsyncWrite + Unpin + 'static,
 {
-    let agent = Rc::new(MoltisAgent::new(backend));
+    let agent = Rc::new(MoltisAgent::new(Arc::clone(&backend)));
     let (connection, io_task) = acp::AgentSideConnection::new(
         Rc::clone(&agent),
         output.compat_write(),
@@ -42,9 +42,11 @@ where
     let connection = Rc::new(connection);
     agent.set_connection(&connection);
 
-    io_task
+    let result = io_task
         .await
-        .map_err(|error| anyhow::anyhow!("ACP connection failed: {error}"))
+        .map_err(|error| anyhow::anyhow!("ACP connection failed: {error}"));
+    let shutdown = backend.shutdown().await;
+    result.and(shutdown)
 }
 
 /// Serves one client over stdio, creating the [`tokio::task::LocalSet`].
