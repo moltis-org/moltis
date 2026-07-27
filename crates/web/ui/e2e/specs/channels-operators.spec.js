@@ -74,10 +74,7 @@ test.describe("Channel operators", () => {
 		await navigateAndWait(page, "/settings/channels");
 		await waitForWsConnected(page);
 
-		const modal = await openEditModal(
-			page,
-			discordChannel({ allowlist: ["owner-id"], operators: ["owner-id"] }),
-		);
+		const modal = await openEditModal(page, discordChannel({ allowlist: ["owner-id"], operators: ["owner-id"] }));
 
 		// Existing operator renders as a tag.
 		await expect(modal.getByText("owner-id", { exact: true }).first()).toBeVisible();
@@ -93,9 +90,11 @@ test.describe("Channel operators", () => {
 
 		await modal.getByRole("button", { name: "Save Changes", exact: true }).click();
 
-		await expect.poll(() => page.evaluate(() => window.__channelUpdateRequest)).toMatchObject({
-			config: { operators: ["owner-id", "trusted-admin"] },
-		});
+		await expect
+			.poll(() => page.evaluate(() => window.__channelUpdateRequest))
+			.toMatchObject({
+				config: { operators: ["owner-id", "trusted-admin"] },
+			});
 
 		expect(pageErrors).toEqual([]);
 	});
