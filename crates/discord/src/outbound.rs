@@ -336,9 +336,9 @@ impl DiscordOutbound {
         channel_id: ChannelId,
         suffix_html: &str,
         reply_to: Option<&str>,
-    ) -> ChannelResult<()> {
+    ) -> ChannelResult<Option<MessageId>> {
         let Some(rendered) = render_activity_log_for_discord(suffix_html) else {
-            return Ok(());
+            return Ok(None);
         };
 
         let color: u32 = if rendered.has_errors {
@@ -355,19 +355,19 @@ impl DiscordOutbound {
             msg = msg.reference_message((channel_id, reference));
         }
 
-        channel_id.send_message(http, msg).await.map_err(|e| {
+        let sent = channel_id.send_message(http, msg).await.map_err(|e| {
             ChannelError::external("Discord send embed", std::io::Error::other(e.to_string()))
         })?;
-        Ok(())
+        Ok(Some(sent.id))
     }
 
     /// Inner implementation for `send_text_with_suffix` that does not handle
     /// ack reaction removal -- the caller is responsible for that.
     ///
-    /// Returns the ids of the messages the reply text occupied so a later
-    /// reaction can be attributed to the turn that wrote them. The activity-log
-    /// embed is deliberately not among them: it is a separate artifact from the
-    /// reply, and rating it is not rating the answer.
+    /// Returns every message id the reply produced, the activity-log embed
+    /// included: a reader rating "the bot's answer" may land on any of them,
+    /// and each maps back to the same turn, so being forgiving here costs
+    /// nothing and recovers scores that would otherwise be dropped.
     async fn send_text_with_suffix_inner(
         &self,
         account_id: &str,
@@ -384,10 +384,13 @@ impl DiscordOutbound {
             .map_err(|e| ChannelError::external("Discord send", std::io::Error::other(e)))?;
 
         // Send the activity log as a separate embed message.
-        self.send_activity_log_embed(account_id, http, channel_id, suffix_html, None)
+        let embed_id = self
+            .send_activity_log_embed(account_id, http, channel_id, suffix_html, None)
             .await?;
 
-        Ok(sent.into_iter().map(|m| m.id.to_string()).collect())
+        let mut ids: Vec<String> = sent.into_iter().map(|m| m.id.to_string()).collect();
+        ids.extend(embed_id.map(|id| id.to_string()));
+        Ok(ids)
     }
 }
 
@@ -616,7 +619,8 @@ impl ChannelOutbound for DiscordOutbound {
         let http = self.resolve_http(account_id)?;
         let channel_id = Self::parse_channel_id(to)?;
         self.send_activity_log_embed(account_id, &http, channel_id, html, reply_to)
-            .await
+            .await?;
+        Ok(())
     }
 
     async fn send_location(

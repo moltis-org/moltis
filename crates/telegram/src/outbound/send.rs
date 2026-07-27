@@ -91,8 +91,9 @@ impl TelegramOutbound {
                             true,
                         )
                         .await?;
-                    // The logbook is part of the same reply, so a thumb on it
-                    // still means "rate this turn".
+                    // A reader rating "the bot's answer" may land on the
+                    // logbook, and it maps back to the same turn, so linking it
+                    // recovers a score that would otherwise be dropped.
                     ids.push(suffix_id.0.to_string());
                     info!(
                         account_id,
