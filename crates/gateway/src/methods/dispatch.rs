@@ -776,6 +776,54 @@ mod tests {
         );
     }
 
+    /// Guards the fix end to end rather than only at `authorize_method`: the
+    /// method was reachable with `operator.read` while writing a score, so a
+    /// read-scoped client could forge or retract feedback.
+    #[test]
+    fn feedback_submit_is_rejected_for_read_scoped_clients() {
+        use crate::{
+            auth::{AuthMode, ResolvedAuth},
+            services::GatewayServices,
+            state::GatewayState,
+        };
+
+        let reg = MethodRegistry::new();
+        let ctx = MethodContext {
+            request_id: "test".into(),
+            method: "feedback.submit".into(),
+            params: serde_json::json!({
+                "sessionKey": "someone-elses-session",
+                "messageId": "run-1",
+                "signal": "positive",
+                // Ignored by the handler, which attributes to the
+                // authenticated operator; present here to prove the request
+                // cannot choose whose vote it writes.
+                "userId": "victim",
+            }),
+            client_conn_id: "conn-1".into(),
+            client_role: "operator".into(),
+            client_scopes: scopes(&["operator.read"]),
+            state: GatewayState::new(
+                ResolvedAuth {
+                    mode: AuthMode::Token,
+                    token: None,
+                    password: None,
+                },
+                GatewayServices::noop(),
+            ),
+            channel: None,
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        let resp = rt.block_on(reg.dispatch(ctx));
+        assert!(!resp.ok);
+        assert_eq!(
+            resp.error.as_ref().map(|e| e.code.as_str()),
+            Some("UNAUTHORIZED")
+        );
+    }
+
     #[test]
     fn chat_send_sync_is_registered_and_authorized() {
         let reg = MethodRegistry::new();
