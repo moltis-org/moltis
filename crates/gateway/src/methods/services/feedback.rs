@@ -79,12 +79,23 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     },
                 };
 
-                // The score is attributed to the authenticated web operator,
-                // never to an identity named in the request: a caller-chosen
-                // `userId` would let one client overwrite or retract another's
-                // vote, since the score id is derived from (trace, name, user).
-                // A stable value is required for that upsert to keep working
-                // across reconnects, which rules out the connection id.
+                // The score is attributed to the authenticated operator, never
+                // to an identity named in the request: a caller-chosen `userId`
+                // would let one client overwrite or retract another's vote,
+                // since the score id is derived from (trace, name, user). A
+                // stable value is required for that upsert to keep working
+                // across reconnects, which also rules out the connection id.
+                //
+                // The web surface has exactly one identity because Moltis has
+                // exactly one account: a single password, no user table, and
+                // passkeys registered as "owner". `AuthIdentity` carries only a
+                // method and scopes, so there is no per-person id to derive
+                // here — everyone who authenticates *is* the owner, and one
+                // constant states that honestly rather than manufacturing a
+                // per-connection identity that would break the toggle.
+                //
+                // If Moltis ever grows real accounts, this is the line that has
+                // to change, and the score id derivation will follow.
                 let user_id = moltis_channels::trace_link::WEB_CHANNEL;
 
                 let outcome = ctx
