@@ -21,6 +21,121 @@ use crate::{
 
 use super::{TelegramOutbound, retry::RequestResultExt};
 
+impl TelegramOutbound {
+    /// Send `text` with `suffix_html` appended, returning every message id it
+    /// produced.
+    ///
+    /// Shared by both trait entry points so the chunking and suffix-overflow
+    /// rules exist once; the non-reporting one simply discards the ids.
+    async fn send_text_with_suffix_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let bot = self.get_bot(account_id)?;
+        let (chat_id, thread_id) = parse_chat_target(to)?;
+        let rp = self.reply_params(account_id, reply_to);
+
+        // Send typing indicator
+        let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+
+        // Append the pre-formatted suffix (e.g. activity logbook) to the last chunk.
+        let chunks = markdown::chunk_markdown_html(text, TELEGRAM_MAX_MESSAGE_LEN);
+        let last_idx = chunks.len().saturating_sub(1);
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            text_len = text.len(),
+            suffix_len = suffix_html.len(),
+            chunk_count = chunks.len(),
+            "telegram outbound text+suffix send start"
+        );
+
+        let mut ids = Vec::with_capacity(chunks.len());
+        for (i, chunk) in chunks.iter().enumerate() {
+            let content = if i == last_idx {
+                // Append suffix to the last chunk. If it would exceed the limit,
+                // the suffix becomes a separate final message.
+                let combined = format!("{chunk}\n\n{suffix_html}");
+                if combined.len() <= TELEGRAM_MAX_MESSAGE_LEN {
+                    combined
+                } else {
+                    // Send this chunk first, then the suffix as a separate message.
+                    let id = self
+                        .send_chunk_with_fallback(
+                            &bot,
+                            account_id,
+                            to,
+                            chat_id,
+                            thread_id,
+                            chunk,
+                            rp.as_ref(),
+                            false,
+                        )
+                        .await?;
+                    ids.push(id.0.to_string());
+                    // Send suffix as the final message (no reply threading).
+                    let suffix_id = self
+                        .send_chunk_with_fallback(
+                            &bot,
+                            account_id,
+                            to,
+                            chat_id,
+                            thread_id,
+                            suffix_html,
+                            rp.as_ref(),
+                            true,
+                        )
+                        .await?;
+                    // The logbook is part of the same reply, so a thumb on it
+                    // still means "rate this turn".
+                    ids.push(suffix_id.0.to_string());
+                    info!(
+                        account_id,
+                        chat_id = to,
+                        reply_to = ?reply_to,
+                        text_len = text.len(),
+                        suffix_len = suffix_html.len(),
+                        chunk_count = chunks.len(),
+                        "telegram outbound text+suffix sent (separate suffix message)"
+                    );
+                    return Ok(ids);
+                }
+            } else {
+                chunk.clone()
+            };
+            let id = self
+                .send_chunk_with_fallback(
+                    &bot,
+                    account_id,
+                    to,
+                    chat_id,
+                    thread_id,
+                    &content,
+                    rp.as_ref(),
+                    false,
+                )
+                .await?;
+            ids.push(id.0.to_string());
+        }
+
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            text_len = text.len(),
+            suffix_len = suffix_html.len(),
+            chunk_count = chunks.len(),
+            "telegram outbound text+suffix sent"
+        );
+        Ok(ids)
+    }
+}
+
 #[async_trait]
 impl ChannelOutbound for TelegramOutbound {
     async fn send_text(
@@ -124,95 +239,21 @@ impl ChannelOutbound for TelegramOutbound {
         suffix_html: &str,
         reply_to: Option<&str>,
     ) -> Result<()> {
-        let bot = self.get_bot(account_id)?;
-        let (chat_id, thread_id) = parse_chat_target(to)?;
-        let rp = self.reply_params(account_id, reply_to);
-
-        // Send typing indicator
-        let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
-
-        // Append the pre-formatted suffix (e.g. activity logbook) to the last chunk.
-        let chunks = markdown::chunk_markdown_html(text, TELEGRAM_MAX_MESSAGE_LEN);
-        let last_idx = chunks.len().saturating_sub(1);
-        info!(
-            account_id,
-            chat_id = to,
-            reply_to = ?reply_to,
-            text_len = text.len(),
-            suffix_len = suffix_html.len(),
-            chunk_count = chunks.len(),
-            "telegram outbound text+suffix send start"
-        );
-
-        for (i, chunk) in chunks.iter().enumerate() {
-            let content = if i == last_idx {
-                // Append suffix to the last chunk. If it would exceed the limit,
-                // the suffix becomes a separate final message.
-                let combined = format!("{chunk}\n\n{suffix_html}");
-                if combined.len() <= TELEGRAM_MAX_MESSAGE_LEN {
-                    combined
-                } else {
-                    // Send this chunk first, then the suffix as a separate message.
-                    self.send_chunk_with_fallback(
-                        &bot,
-                        account_id,
-                        to,
-                        chat_id,
-                        thread_id,
-                        chunk,
-                        rp.as_ref(),
-                        false,
-                    )
-                    .await?;
-                    // Send suffix as the final message (no reply threading).
-                    self.send_chunk_with_fallback(
-                        &bot,
-                        account_id,
-                        to,
-                        chat_id,
-                        thread_id,
-                        suffix_html,
-                        rp.as_ref(),
-                        true,
-                    )
-                    .await?;
-                    info!(
-                        account_id,
-                        chat_id = to,
-                        reply_to = ?reply_to,
-                        text_len = text.len(),
-                        suffix_len = suffix_html.len(),
-                        chunk_count = chunks.len(),
-                        "telegram outbound text+suffix sent (separate suffix message)"
-                    );
-                    return Ok(());
-                }
-            } else {
-                chunk.clone()
-            };
-            self.send_chunk_with_fallback(
-                &bot,
-                account_id,
-                to,
-                chat_id,
-                thread_id,
-                &content,
-                rp.as_ref(),
-                false,
-            )
+        self.send_text_with_suffix_ids(account_id, to, text, suffix_html, reply_to)
             .await?;
-        }
-
-        info!(
-            account_id,
-            chat_id = to,
-            reply_to = ?reply_to,
-            text_len = text.len(),
-            suffix_len = suffix_html.len(),
-            chunk_count = chunks.len(),
-            "telegram outbound text+suffix sent"
-        );
         Ok(())
+    }
+
+    async fn send_text_with_suffix_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_text_with_suffix_ids(account_id, to, text, suffix_html, reply_to)
+            .await
     }
 
     async fn send_html(

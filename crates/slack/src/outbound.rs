@@ -177,13 +177,16 @@ impl SlackOutbound {
     }
 
     /// Edit-in-place streaming: post → throttled edits → final update.
+    ///
+    /// Returns the timestamps of the messages the reply occupies, which are
+    /// what a later reaction is keyed on.
     async fn send_stream_edit_in_place(
         &self,
         account_id: &str,
         to: &str,
         thread_ts: Option<&str>,
         stream: &mut StreamReceiver,
-    ) -> ChannelResult<()> {
+    ) -> ChannelResult<Vec<String>> {
         let (client, token) = self.get_session(account_id)?;
         let throttle = self.get_edit_throttle(account_id);
 
@@ -258,35 +261,97 @@ impl SlackOutbound {
         }
 
         if accumulated.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let final_text = markdown_to_slack(&accumulated);
         let chunks = chunk_message(&final_text, SLACK_MAX_MESSAGE_LEN);
+        let mut ids = Vec::with_capacity(chunks.len());
 
         match &sent_ts {
             Some(ts) => {
+                ids.push(ts.to_string());
                 if let Some(first) = chunks.first()
                     && let Err(e) = update_message(&client, &token, to, ts, first).await
                 {
                     warn!(account_id, to, "failed to finalize stream message: {e}");
                 }
                 for chunk in chunks.iter().skip(1) {
-                    if let Err(e) = post_message(&client, &token, to, chunk, thread_ts).await {
-                        warn!(account_id, to, "failed to send overflow chunk: {e}");
+                    match post_message(&client, &token, to, chunk, thread_ts).await {
+                        Ok(ts) => ids.push(ts.to_string()),
+                        Err(e) => warn!(account_id, to, "failed to send overflow chunk: {e}"),
                     }
                 }
             },
             None => {
                 for chunk in &chunks {
-                    if let Err(e) = post_message(&client, &token, to, chunk, thread_ts).await {
-                        warn!(account_id, to, "failed to send stream message: {e}");
+                    match post_message(&client, &token, to, chunk, thread_ts).await {
+                        Ok(ts) => ids.push(ts.to_string()),
+                        Err(e) => warn!(account_id, to, "failed to send stream message: {e}"),
                     }
                 }
             },
         }
 
-        Ok(())
+        Ok(ids)
+    }
+
+    /// Drive a stream in whichever mode the account is configured for,
+    /// returning the timestamps of the messages the reply occupies.
+    ///
+    /// Native streaming reports none: Slack's `chat.startStream` owns the
+    /// message and does not hand back a timestamp the reaction side could
+    /// match, so those replies lose attribution rather than gaining a wrong
+    /// one.
+    async fn send_stream_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: &mut StreamReceiver,
+    ) -> ChannelResult<Vec<String>> {
+        let stream_mode = self.get_stream_mode(account_id);
+        let thread_ts = self.get_thread_ts(account_id, to, reply_to);
+
+        match stream_mode {
+            StreamMode::Native => {
+                self.send_stream_native(account_id, to, thread_ts.as_deref(), stream)
+                    .await?;
+                Ok(Vec::new())
+            },
+            StreamMode::EditInPlace => {
+                self.send_stream_edit_in_place(account_id, to, thread_ts.as_deref(), stream)
+                    .await
+            },
+            StreamMode::Off => {
+                // Streaming disabled — accumulate and send once.
+                let mut accumulated = String::new();
+                loop {
+                    match stream.recv().await {
+                        Some(StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk)) => {
+                            accumulated.push_str(&chunk)
+                        },
+                        Some(StreamEvent::Error(e)) => {
+                            accumulated.push_str(&format!("\n\n:warning: {e}"));
+                            break;
+                        },
+                        Some(StreamEvent::Done) | None => break,
+                    }
+                }
+                let mut ids = Vec::new();
+                if !accumulated.is_empty() {
+                    let (client, token) = self.get_session(account_id)?;
+                    let final_text = markdown_to_slack(&accumulated);
+                    for chunk in chunk_message(&final_text, SLACK_MAX_MESSAGE_LEN) {
+                        match post_message(&client, &token, to, chunk, thread_ts.as_deref()).await {
+                            Ok(ts) => ids.push(ts.to_string()),
+                            Err(e) => warn!(account_id, to, "failed to send stream message: {e}"),
+                        }
+                    }
+                }
+                Ok(ids)
+            },
+        }
     }
 }
 
@@ -514,6 +579,22 @@ impl ChannelOutbound for SlackOutbound {
         .increment(1);
 
         Ok(ids)
+    }
+
+    /// Slack has no suffix rendering, so the inherited `send_text_with_suffix`
+    /// drops it and posts the text alone. Route the reporting variant to
+    /// `send_text_reporting_ids` rather than the trait default, which would
+    /// throw away ids Slack can perfectly well supply.
+    async fn send_text_with_suffix_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        _suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
+        self.send_text_reporting_ids(account_id, to, text, reply_to)
+            .await
     }
 
     async fn send_media(
@@ -815,47 +896,20 @@ impl ChannelStreamOutbound for SlackOutbound {
         reply_to: Option<&str>,
         mut stream: StreamReceiver,
     ) -> ChannelResult<()> {
-        let stream_mode = self.get_stream_mode(account_id);
-        let thread_ts = self.get_thread_ts(account_id, to, reply_to);
+        self.send_stream_ids(account_id, to, reply_to, &mut stream)
+            .await?;
+        Ok(())
+    }
 
-        match stream_mode {
-            StreamMode::Native => {
-                self.send_stream_native(account_id, to, thread_ts.as_deref(), &mut stream)
-                    .await
-            },
-            StreamMode::EditInPlace => {
-                self.send_stream_edit_in_place(account_id, to, thread_ts.as_deref(), &mut stream)
-                    .await
-            },
-            StreamMode::Off => {
-                // Streaming disabled — accumulate and send once.
-                let mut accumulated = String::new();
-                loop {
-                    match stream.recv().await {
-                        Some(StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk)) => {
-                            accumulated.push_str(&chunk)
-                        },
-                        Some(StreamEvent::Error(e)) => {
-                            accumulated.push_str(&format!("\n\n:warning: {e}"));
-                            break;
-                        },
-                        Some(StreamEvent::Done) | None => break,
-                    }
-                }
-                if !accumulated.is_empty() {
-                    let (client, token) = self.get_session(account_id)?;
-                    let final_text = markdown_to_slack(&accumulated);
-                    for chunk in chunk_message(&final_text, SLACK_MAX_MESSAGE_LEN) {
-                        if let Err(e) =
-                            post_message(&client, &token, to, chunk, thread_ts.as_deref()).await
-                        {
-                            warn!(account_id, to, "failed to send stream message: {e}");
-                        }
-                    }
-                }
-                Ok(())
-            },
-        }
+    async fn send_stream_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        mut stream: StreamReceiver,
+    ) -> ChannelResult<Vec<String>> {
+        self.send_stream_ids(account_id, to, reply_to, &mut stream)
+            .await
     }
 
     async fn is_stream_enabled(&self, account_id: &str) -> bool {

@@ -665,6 +665,27 @@ pub trait ChannelOutbound: Send + Sync {
         let _ = suffix_html;
         self.send_text(account_id, to, text, reply_to).await
     }
+
+    /// [`Self::send_text_with_suffix`], reporting the ids of the messages it
+    /// produced.
+    ///
+    /// A reply that carries an activity logbook is still a reply someone can
+    /// react to, so it needs the same attribution as a plain one. Kept as a
+    /// separate method for the same reason as
+    /// [`Self::send_text_reporting_ids`]: channels that cannot report ids
+    /// inherit the default and lose attribution, not the message.
+    async fn send_text_with_suffix_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_text_with_suffix(account_id, to, text, suffix_html, reply_to)
+            .await?;
+        Ok(Vec::new())
+    }
     /// Send pre-formatted HTML without markdown conversion.
     ///
     /// Used for content that is already valid Telegram HTML (e.g. the activity
@@ -797,6 +818,25 @@ pub trait ChannelStreamOutbound: Send + Sync {
         reply_to: Option<&str>,
         stream: StreamReceiver,
     ) -> Result<()>;
+
+    /// [`Self::send_stream`], reporting the ids of the messages it left behind.
+    ///
+    /// Edit-in-place streaming delivers the final reply itself, so the normal
+    /// send path never runs and never records a trace link. Without this the
+    /// message a reader actually reacts to would have no attribution at all.
+    ///
+    /// Channels that cannot report ids inherit the default and lose feedback
+    /// attribution for streamed replies, not the reply.
+    async fn send_stream_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> Result<Vec<String>> {
+        self.send_stream(account_id, to, reply_to, stream).await?;
+        Ok(Vec::new())
+    }
 
     /// Whether streaming is enabled for this account.
     async fn is_stream_enabled(&self, _account_id: &str) -> bool {

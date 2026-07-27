@@ -1,6 +1,7 @@
 mod agent_loop;
 mod channel_compaction;
 mod channel_feedback;
+mod channel_reply_delivery;
 mod channels;
 mod compaction;
 mod compaction_run;

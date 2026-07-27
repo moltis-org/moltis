@@ -163,6 +163,12 @@ pub(crate) struct ChannelStreamDispatcher {
     workers: Vec<ChannelStreamWorker>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
     completed: Arc<Mutex<HashSet<ChannelReplyTargetKey>>>,
+    /// Ids of the messages each stream left behind, so a reaction on a
+    /// streamed reply is attributable. The normal send path never runs for
+    /// these targets, so this is the only place the link can be recorded.
+    delivered: Arc<Mutex<Vec<(moltis_channels::ChannelReplyTarget, Vec<String>)>>>,
+    feedback: Option<Arc<moltis_channels::FeedbackService>>,
+    session_key: String,
     started: bool,
     sent_final_delta: bool,
 }
@@ -187,6 +193,9 @@ impl ChannelStreamDispatcher {
             workers: Vec::new(),
             tasks: Vec::new(),
             completed: Arc::new(Mutex::new(HashSet::new())),
+            delivered: Arc::new(Mutex::new(Vec::new())),
+            feedback: state.feedback(),
+            session_key: session_key.to_string(),
             started: false,
             sent_final_delta: false,
         };
@@ -222,10 +231,12 @@ impl ChannelStreamDispatcher {
             let (tx, rx) = mpsc::channel(CHANNEL_STREAM_BUFFER_SIZE);
             let outbound = Arc::clone(&self.outbound);
             let completed = Arc::clone(&self.completed);
+            let delivered = Arc::clone(&self.delivered);
             let account_id = target.account_id.clone();
             let to = target.outbound_to().into_owned();
             let reply_to = target.message_id.clone();
             let key_for_insert = key.clone();
+            let target_for_link = target.clone();
             let account_for_log = account_id.clone();
             let chat_for_log = target.chat_id.clone();
             let thread_for_log = target.thread_id.clone();
@@ -236,12 +247,15 @@ impl ChannelStreamDispatcher {
             });
             self.tasks.push(tokio::spawn(async move {
                 match outbound
-                    .send_stream(&account_id, &to, reply_to.as_deref(), rx)
+                    .send_stream_reporting_ids(&account_id, &to, reply_to.as_deref(), rx)
                     .await
                 {
-                    Ok(()) => {
+                    Ok(message_ids) => {
                         if streams_final_replies {
                             completed.lock().await.insert(key_for_insert);
+                        }
+                        if !message_ids.is_empty() {
+                            delivered.lock().await.push((target_for_link, message_ids));
                         }
                     },
                     Err(e) => {
@@ -294,6 +308,24 @@ impl ChannelStreamDispatcher {
     pub(crate) async fn finish(&mut self) {
         self.send_terminal(moltis_channels::StreamEvent::Done).await;
         self.join_workers().await;
+        self.record_delivered_trace_links().await;
+    }
+
+    /// Attribute the streamed messages to the trace that produced them.
+    ///
+    /// Runs after the workers are joined so every id is in hand, and before
+    /// the caller decides which targets to skip on the normal send path.
+    async fn record_delivered_trace_links(&self) {
+        let delivered = std::mem::take(&mut *self.delivered.lock().await);
+        for (target, message_ids) in delivered {
+            crate::channel_feedback::record_reply_trace(
+                self.feedback.as_deref(),
+                &target,
+                &message_ids,
+                &self.session_key,
+            )
+            .await;
+        }
     }
 
     async fn send_terminal(&mut self, event: moltis_channels::StreamEvent) {
@@ -627,6 +659,19 @@ mod tests {
             Ok(())
         }
 
+        /// Report an id the way a real edit-in-place channel does, so the
+        /// dispatcher's trace-link recording is exercised rather than skipped.
+        async fn send_stream_reporting_ids(
+            &self,
+            account_id: &str,
+            to: &str,
+            reply_to: Option<&str>,
+            stream: moltis_channels::StreamReceiver,
+        ) -> moltis_channels::Result<Vec<String>> {
+            self.send_stream(account_id, to, reply_to, stream).await?;
+            Ok(vec!["streamed-1".into()])
+        }
+
         async fn is_stream_enabled(&self, _account_id: &str) -> bool {
             true
         }
@@ -658,6 +703,9 @@ mod tests {
             workers: Vec::new(),
             tasks: Vec::new(),
             completed: Arc::new(Mutex::new(HashSet::new())),
+            delivered: Arc::new(Mutex::new(Vec::new())),
+            feedback: None,
+            session_key: "session".into(),
             started: false,
             sent_final_delta: false,
         }
@@ -692,6 +740,78 @@ mod tests {
         let events = events.lock().await;
         assert_eq!(event_kinds(&events), vec!["progress", "delta", "done"]);
         assert!(dispatcher.completed_target_keys().await.is_empty());
+    }
+
+    /// Edit-in-place streaming delivers the reply itself, so the normal send
+    /// path never runs for that target. If the dispatcher did not record the
+    /// link, a reaction on a streamed reply would resolve as `UnknownMessage`.
+    #[tokio::test]
+    async fn streamed_replies_get_a_trace_link() {
+        use {
+            async_trait::async_trait as link_async_trait,
+            moltis_channels::trace_link::{TraceLink, TraceLinkStore},
+        };
+
+        #[derive(Default)]
+        struct RecordingLinks {
+            links: std::sync::Mutex<Vec<TraceLink>>,
+        }
+
+        #[link_async_trait]
+        impl TraceLinkStore for RecordingLinks {
+            async fn link(&self, link: TraceLink) -> moltis_channels::Result<()> {
+                self.links
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(link);
+                Ok(())
+            }
+
+            async fn lookup(
+                &self,
+                _channel_type: &str,
+                _account_id: &str,
+                _chat_id: &str,
+                _message_id: &str,
+            ) -> moltis_channels::Result<Option<TraceLink>> {
+                Ok(None)
+            }
+
+            async fn prune(&self, _cutoff: i64) -> moltis_channels::Result<u64> {
+                Ok(0)
+            }
+        }
+
+        let session_key = "streamed-link-test-session";
+        let links = Arc::new(RecordingLinks::default());
+        let feedback = Arc::new(moltis_channels::FeedbackService::default());
+        feedback.apply(
+            Arc::clone(&links) as Arc<dyn TraceLinkStore>,
+            &moltis_config::FeedbackSettings::default(),
+            None,
+        );
+        moltis_observability::remember_trace(
+            session_key,
+            &moltis_observability::TraceId("trace-streamed".into()),
+        );
+
+        let outbound = Arc::new(RecordingStreamOutbound {
+            streams_final_replies: true,
+            receives_progress_deltas: false,
+            events: Arc::new(Mutex::new(Vec::new())),
+        });
+        let mut dispatcher = dispatcher_with(outbound);
+        dispatcher.feedback = Some(feedback);
+        dispatcher.session_key = session_key.to_string();
+
+        dispatcher.send_delta("final").await;
+        dispatcher.finish().await;
+
+        let recorded = links.links.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].message_id, "streamed-1");
+        assert_eq!(recorded[0].chat_id, "chat");
+        assert_eq!(recorded[0].trace_id, "trace-streamed");
     }
 
     #[tokio::test]

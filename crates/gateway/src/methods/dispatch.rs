@@ -96,7 +96,6 @@ const READ_METHODS: &[&str] = &[
     "webhooks.delivery.payload",
     "webhooks.delivery.actions",
     "feedback.status",
-    "feedback.submit",
     "instrumentation.status",
     "heartbeat.status",
     "heartbeat.runs",
@@ -258,6 +257,8 @@ const WRITE_METHODS: &[&str] = &[
     "webhooks.create",
     "webhooks.update",
     "webhooks.delete",
+    // Writes a score against a trace: a mutation, not a read.
+    "feedback.submit",
     "instrumentation.test",
     "heartbeat.update",
     "heartbeat.run",
@@ -501,6 +502,22 @@ mod tests {
         assert_error_code(
             authorize_method("channels.senders.list", "operator", &scopes(&[])),
             "UNAUTHORIZED",
+        );
+    }
+
+    #[test]
+    fn feedback_status_requires_read_but_submit_requires_write() {
+        // Submitting writes a score against a trace. A read-scoped client must
+        // not be able to record or retract one.
+        assert!(
+            authorize_method("feedback.status", "operator", &scopes(&["operator.read"])).is_none()
+        );
+        assert_error_code(
+            authorize_method("feedback.submit", "operator", &scopes(&["operator.read"])),
+            "UNAUTHORIZED",
+        );
+        assert!(
+            authorize_method("feedback.submit", "operator", &scopes(&["operator.write"])).is_none()
         );
     }
 

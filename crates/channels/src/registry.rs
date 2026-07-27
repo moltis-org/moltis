@@ -333,6 +333,26 @@ impl ChannelOutbound for RegistryOutboundRouter {
         outbound.send_text(account_id, to, text, reply_to).await
     }
 
+    /// Delegate rather than inherit the trait default: the default reports no
+    /// ids, which would silently strip attribution from every channel behind
+    /// this facade even though the concrete outbound can report them.
+    async fn send_text_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let outbound = self
+            .registry
+            .resolve_outbound(account_id)
+            .await
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        outbound
+            .send_text_reporting_ids(account_id, to, text, reply_to)
+            .await
+    }
+
     async fn send_media(
         &self,
         account_id: &str,
@@ -372,6 +392,24 @@ impl ChannelOutbound for RegistryOutboundRouter {
             .ok_or_else(|| Error::unknown_account(account_id))?;
         outbound
             .send_text_with_suffix(account_id, to, text, suffix_html, reply_to)
+            .await
+    }
+
+    async fn send_text_with_suffix_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let outbound = self
+            .registry
+            .resolve_outbound(account_id)
+            .await
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        outbound
+            .send_text_with_suffix_reporting_ids(account_id, to, text, suffix_html, reply_to)
             .await
     }
 
@@ -494,6 +532,23 @@ impl ChannelStreamOutbound for RegistryOutboundRouter {
             .ok_or_else(|| Error::unknown_account(account_id))?;
         stream_out
             .send_stream(account_id, to, reply_to, stream)
+            .await
+    }
+
+    async fn send_stream_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> Result<Vec<String>> {
+        let stream_out = self
+            .registry
+            .resolve_stream(account_id)
+            .await
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        stream_out
+            .send_stream_reporting_ids(account_id, to, reply_to, stream)
             .await
     }
 
@@ -692,6 +747,29 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
+
+        // Sentinel ids: the trait defaults report none, so a router that
+        // inherits them instead of delegating produces an empty list.
+        async fn send_text_reporting_ids(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<Vec<String>> {
+            Ok(vec!["text-1".into()])
+        }
+
+        async fn send_text_with_suffix_reporting_ids(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<Vec<String>> {
+            Ok(vec!["suffix-1".into()])
+        }
     }
 
     struct NullStreamOutbound {
@@ -714,6 +792,17 @@ mod tests {
                 }
             }
             Ok(())
+        }
+
+        async fn send_stream_reporting_ids(
+            &self,
+            account_id: &str,
+            to: &str,
+            reply_to: Option<&str>,
+            stream: StreamReceiver,
+        ) -> Result<Vec<String>> {
+            self.send_stream(account_id, to, reply_to, stream).await?;
+            Ok(vec!["stream-1".into()])
         }
 
         async fn streams_final_replies(&self, _: &str) -> bool {
@@ -864,6 +953,51 @@ mod tests {
         // Should resolve and delegate (NullOutbound returns Ok)
         let result = router.send_text("bot1", "42", "hello", None).await;
         assert!(result.is_ok());
+    }
+
+    /// The id-reporting sends must be delegated, not inherited.
+    ///
+    /// Every channel reaches the outbound trait through this router, so a
+    /// router that fell back to the trait defaults would report no ids for any
+    /// channel and silently strip feedback attribution from the whole system.
+    #[tokio::test]
+    async fn outbound_router_delegates_id_reporting_sends() {
+        let mut registry = ChannelRegistry::new();
+        registry
+            .register(Arc::new(RwLock::new(TestPlugin::new("telegram"))))
+            .await;
+        registry
+            .start_account("telegram", "bot1", serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let router = RegistryOutboundRouter::new(Arc::new(registry));
+
+        assert_eq!(
+            router
+                .send_text_reporting_ids("bot1", "42", "hello", None)
+                .await
+                .unwrap(),
+            vec!["text-1".to_string()]
+        );
+        assert_eq!(
+            router
+                .send_text_with_suffix_reporting_ids("bot1", "42", "hello", "<i>log</i>", None)
+                .await
+                .unwrap(),
+            vec!["suffix-1".to_string()]
+        );
+
+        let (tx, rx) = mpsc::channel(8);
+        tx.send(StreamEvent::Done).await.unwrap();
+        drop(tx);
+        assert_eq!(
+            router
+                .send_stream_reporting_ids("bot1", "42", None, rx)
+                .await
+                .unwrap(),
+            vec!["stream-1".to_string()]
+        );
     }
 
     #[tokio::test]

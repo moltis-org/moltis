@@ -3,6 +3,10 @@
 //! The web is treated as one more channel: a reply gets a link keyed on the
 //! session and the message index, and a thumb resolves that link the same way
 //! a Telegram reaction does.
+//!
+//! `feedback.status` is a read. `feedback.submit` writes a score and is
+//! authorized as a write, with the scoring identity taken from the
+//! authenticated operator rather than from the request.
 
 use {
     moltis_channels::FeedbackOutcome,
@@ -75,11 +79,13 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     },
                 };
 
-                let user_id = ctx
-                    .params
-                    .get("userId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("web");
+                // The score is attributed to the authenticated web operator,
+                // never to an identity named in the request: a caller-chosen
+                // `userId` would let one client overwrite or retract another's
+                // vote, since the score id is derived from (trace, name, user).
+                // A stable value is required for that upsert to keep working
+                // across reconnects, which rules out the connection id.
+                let user_id = moltis_channels::trace_link::WEB_CHANNEL;
 
                 let outcome = ctx
                     .state

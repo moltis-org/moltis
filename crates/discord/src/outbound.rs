@@ -23,7 +23,7 @@ use {
 };
 
 use crate::{
-    handler::{send_discord_message, send_discord_message_all, send_discord_text},
+    handler::{send_discord_message, send_discord_message_all},
     state::AccountStateMap,
 };
 
@@ -363,6 +363,11 @@ impl DiscordOutbound {
 
     /// Inner implementation for `send_text_with_suffix` that does not handle
     /// ack reaction removal -- the caller is responsible for that.
+    ///
+    /// Returns the ids of the messages the reply text occupied so a later
+    /// reaction can be attributed to the turn that wrote them. The activity-log
+    /// embed is deliberately not among them: it is a separate artifact from the
+    /// reply, and rating it is not rating the answer.
     async fn send_text_with_suffix_inner(
         &self,
         account_id: &str,
@@ -371,10 +376,10 @@ impl DiscordOutbound {
         text: &str,
         suffix_html: &str,
         reply_to: Option<&str>,
-    ) -> ChannelResult<()> {
+    ) -> ChannelResult<Vec<String>> {
         // Send main response text.
         let reference = self.resolve_reference(account_id, reply_to);
-        send_discord_message(http, channel_id, text, reference)
+        let sent = send_discord_message_all(http, channel_id, text, reference)
             .await
             .map_err(|e| ChannelError::external("Discord send", std::io::Error::other(e)))?;
 
@@ -382,7 +387,7 @@ impl DiscordOutbound {
         self.send_activity_log_embed(account_id, http, channel_id, suffix_html, None)
             .await?;
 
-        Ok(())
+        Ok(sent.into_iter().map(|m| m.id.to_string()).collect())
     }
 }
 
@@ -566,6 +571,19 @@ impl ChannelOutbound for DiscordOutbound {
         suffix_html: &str,
         reply_to: Option<&str>,
     ) -> ChannelResult<()> {
+        self.send_text_with_suffix_reporting_ids(account_id, to, text, suffix_html, reply_to)
+            .await?;
+        Ok(())
+    }
+
+    async fn send_text_with_suffix_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
         let http = self.resolve_http(account_id)?;
         let channel_id = Self::parse_channel_id(to)?;
 
@@ -691,15 +709,19 @@ fn truncate_at_char_boundary(s: &str, max: usize) -> &str {
     &s[..end]
 }
 
-#[async_trait]
-impl ChannelStreamOutbound for DiscordOutbound {
-    async fn send_stream(
+impl DiscordOutbound {
+    /// Drive an edit-in-place stream, returning the ids of the messages the
+    /// final reply ended up occupying.
+    ///
+    /// Both trait entry points share this so the streaming state machine
+    /// exists once; [`ChannelStreamOutbound::send_stream`] discards the ids.
+    async fn send_stream_ids(
         &self,
         account_id: &str,
         to: &str,
         reply_to: Option<&str>,
         mut stream: StreamReceiver,
-    ) -> ChannelResult<()> {
+    ) -> ChannelResult<Vec<String>> {
         let http = self.resolve_http(account_id)?;
         let channel_id = Self::parse_channel_id(to)?;
         let reference = self.resolve_reference(account_id, reply_to);
@@ -783,6 +805,9 @@ impl ChannelStreamOutbound for DiscordOutbound {
             }
         }
 
+        // Ids of messages this stream created besides the edited one.
+        let mut extra_ids: Vec<String> = Vec::new();
+
         // Phase 3: final update with the complete text.
         if !accumulated.is_empty() {
             if accumulated.len() <= DISCORD_MAX_MESSAGE_LEN {
@@ -798,11 +823,12 @@ impl ChannelStreamOutbound for DiscordOutbound {
                         );
                     }
                 } else {
-                    send_discord_message(&http, channel_id, &accumulated, None)
+                    let msg = send_discord_message(&http, channel_id, &accumulated, None)
                         .await
                         .map_err(|e| {
                             ChannelError::external("Discord send", std::io::Error::other(e))
                         })?;
+                    extra_ids.push(msg.id.to_string());
                 }
             } else {
                 // Content overflows -- edit the first message with the first 2000 chars,
@@ -811,13 +837,15 @@ impl ChannelStreamOutbound for DiscordOutbound {
                 if let Some(msg_id) = sent_message_id {
                     let edit = EditMessage::new().content(first);
                     let _ = channel_id.edit_message(&http, msg_id, edit).await;
-                } else {
-                    let _ = send_discord_text(&http, channel_id, first).await;
+                } else if let Ok(sent) =
+                    send_discord_message_all(&http, channel_id, first, None).await
+                {
+                    extra_ids.extend(sent.into_iter().map(|m| m.id.to_string()));
                 }
 
                 let rest = &accumulated[first.len()..];
                 if !rest.is_empty() {
-                    send_discord_text(&http, channel_id, rest)
+                    let sent = send_discord_message_all(&http, channel_id, rest, None)
                         .await
                         .map_err(|e| {
                             ChannelError::external(
@@ -825,6 +853,7 @@ impl ChannelStreamOutbound for DiscordOutbound {
                                 std::io::Error::other(e),
                             )
                         })?;
+                    extra_ids.extend(sent.into_iter().map(|m| m.id.to_string()));
                 }
             }
         }
@@ -840,7 +869,35 @@ impl ChannelStreamOutbound for DiscordOutbound {
             streamed = sent_message_id.is_some(),
             "discord stream completed"
         );
+        let mut ids = Vec::with_capacity(extra_ids.len() + 1);
+        ids.extend(sent_message_id.map(|id| id.to_string()));
+        ids.extend(extra_ids);
+        Ok(ids)
+    }
+}
+
+#[async_trait]
+impl ChannelStreamOutbound for DiscordOutbound {
+    async fn send_stream(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> ChannelResult<()> {
+        self.send_stream_ids(account_id, to, reply_to, stream)
+            .await?;
         Ok(())
+    }
+
+    async fn send_stream_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> ChannelResult<Vec<String>> {
+        self.send_stream_ids(account_id, to, reply_to, stream).await
     }
 
     async fn is_stream_enabled(&self, _account_id: &str) -> bool {

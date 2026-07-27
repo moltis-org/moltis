@@ -3,7 +3,7 @@
 //! Split from the main channel delivery module to keep both inside the
 //! file-size limit; the compaction notice is a self-contained concern.
 
-use {serde_json::Value, std::sync::Arc, tracing::warn};
+use {std::sync::Arc, tracing::warn};
 
 use crate::{compaction_run, runtime::ChatRuntime};
 
