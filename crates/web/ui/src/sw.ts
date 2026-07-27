@@ -17,8 +17,6 @@ const OFFLINE_URL = "/offline.html";
  */
 const STATE_CACHE = "moltis-state";
 const INSTALLED_KEY = "/__moltis__/installed";
-/** Set when an endpoint rotation could not be registered with the server. */
-const ROTATION_PENDING_KEY = "/__moltis__/rotation-pending";
 
 // Best-effort precache. Generated assets (style.css, dist bundles) may not exist
 // in every build, so these are cached individually — never with `cache.addAll`,
@@ -227,25 +225,6 @@ async function isInstalled(): Promise<boolean> {
 	}
 }
 
-/**
- * Flag an endpoint rotation the server never accepted.
- *
- * The worker cannot usefully retry on its own — it may not run again before the
- * user next opens the app — so the page reads this on load and reconciles.
- */
-async function setRotationPending(pending: boolean): Promise<void> {
-	try {
-		const cache = await caches.open(STATE_CACHE);
-		if (pending) {
-			await cache.put(ROTATION_PENDING_KEY, new Response("1"));
-		} else {
-			await cache.delete(ROTATION_PENDING_KEY);
-		}
-	} catch {
-		// Reconciliation on load still catches it, just less directly.
-	}
-}
-
 /** Record whether the app is installed, so a closed app can still badge. */
 async function setInstalled(installed: boolean): Promise<void> {
 	try {
@@ -411,21 +390,19 @@ sw.addEventListener("pushsubscriptionchange", (event: Event) => {
 		// `fetch` resolves for 4xx/5xx too. Without this check a rejected
 		// registration looks like success, and the browser is left holding an
 		// endpoint the server never stored — push stays dead with nothing to
-		// signal it. Marking the rotation pending lets the next page load repair
-		// it via reconcileSubscription().
+		// signal it.
 		if (!registered.ok) {
-			await setRotationPending(true);
 			throw new Error(`push re-registration failed: ${registered.status}`);
 		}
-		await setRotationPending(false);
 	};
 
-	// A failed re-subscribe must not reject the event handler; the pending flag
-	// above is what gets it retried, on the next page load.
+	// A failed re-subscribe must not reject the event handler. The worker cannot
+	// usefully retry either — it may not run again before the app is next opened
+	// — so recovery is left to initPushState(), which reconciles the browser's
+	// subscription against the server on every page load.
 	subscriptionEvent.waitUntil(
-		resubscribe().catch(async (error) => {
-			console.warn("push re-subscribe failed:", error);
-			await setRotationPending(true);
+		resubscribe().catch((error) => {
+			console.warn("push re-subscribe failed, will reconcile on next load:", error);
 		}),
 	);
 });

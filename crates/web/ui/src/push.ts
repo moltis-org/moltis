@@ -242,16 +242,6 @@ async function reconcileSubscription(subscription: PushSubscription): Promise<vo
 	}
 }
 
-/** Clear the worker's "rotation could not be registered" flag once repaired. */
-async function clearRotationPending(): Promise<void> {
-	try {
-		const cache = await caches.open("moltis-state");
-		await cache.delete("/__moltis__/rotation-pending");
-	} catch {
-		// Nothing to clear, or Cache API unavailable.
-	}
-}
-
 /**
  * Initialize push notification state.
  *
@@ -265,7 +255,6 @@ export async function initPushState(): Promise<void> {
 	if (!subscription) return;
 	try {
 		await reconcileSubscription(subscription);
-		await clearRotationPending();
 	} catch (e) {
 		console.warn("Failed to reconcile push subscription:", e);
 	}
