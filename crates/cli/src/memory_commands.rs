@@ -132,7 +132,8 @@ async fn open_zvec_store(
     data_dir: &std::path::Path,
 ) -> anyhow::Result<ActiveStore> {
     let db_name = mem_cfg.db_path.as_deref().unwrap_or("memory.zvec");
-    let collection_stem = data_dir.join(db_name);
+    let collection_stem = moltis_memory_zvec::path::resolve_data_subpath(data_dir, db_name)
+        .map_err(|e| anyhow::anyhow!("invalid memory.db_path: {e}"))?;
     let default_dim = mem_cfg.embedding_dimension.unwrap_or(768);
     let dim = resolve_zvec_dimension(&collection_stem, mem_cfg.embedding_dimension, default_dim);
 
@@ -397,7 +398,8 @@ async fn handle_reindex(
         Some(ref p) => std::path::PathBuf::from(p),
         None => {
             let db_name = config.memory.db_path.as_deref().unwrap_or("memory.zvec");
-            data_dir.join(db_name)
+            moltis_memory_zvec::path::resolve_data_subpath(&data_dir, db_name)
+                .map_err(|e| anyhow::anyhow!("invalid memory.db_path: {e}"))?
         },
     };
     let default_dim = config.memory.embedding_dimension.unwrap_or(768);

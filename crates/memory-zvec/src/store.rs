@@ -76,12 +76,14 @@ pub struct ZvecMemoryStore {
     shutdown: Option<tokio::sync::watch::Sender<()>>,
 }
 
+// zvec's periodic-optimize task (spawned by the gateway) persists both
+// documents and the FTS index to disk every hour. A best-effort flush on
+// Drop would block the Tokio runtime thread with a synchronous C-library
+// call — exactly what the rest of this crate avoids by routing through
+// spawn_blocking. Instead, callers that need durability guarantees should
+// call `flush_collection()` explicitly.
 impl Drop for ZvecMemoryStore {
-    fn drop(&mut self) {
-        if let Err(e) = self.collection.flush() {
-            tracing::error!("failed to flush zvec collection on drop: {e}");
-        }
-    }
+    fn drop(&mut self) {}
 }
 
 impl ZvecMemoryStore {
@@ -817,17 +819,39 @@ mod tests {
         assert_eq!(disk_usage_for_stem(&stem), 0);
     }
 
-    // ── Drop test ──
+    // ── Explicit flush ──
 
     #[tokio::test]
-    async fn test_drop_flushes_collection() {
+    async fn test_explicit_flush_persists_collection() {
         ensure_init();
         let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("drop-db");
+        let db_path = dir.path().join("flush-db");
+        {
+            let collection = crate::open_or_create_collection(&db_path, Some(768)).unwrap();
+            let cache = RedbCache::new(&cache_path()).unwrap();
+            let store = ZvecMemoryStore::new(collection, cache);
+            store
+                .upsert_chunks(&[ChunkRow {
+                    id: "flush-1".into(),
+                    path: "flush.md".into(),
+                    source: "test".into(),
+                    start_line: 1,
+                    end_line: 2,
+                    hash: "fh".into(),
+                    model: "m".into(),
+                    text: "explicit flush test".into(),
+                    embedding: Some(vec![0u8; 768 * 4]),
+                    updated_at: "2025-01-01T00:00:00Z".into(),
+                }])
+                .await
+                .unwrap();
+            let coll = store.collection_arc();
+            crate::flush_collection(&coll).unwrap();
+        }
+        // Reopen: the chunk must survive because it was explicitly flushed.
         let collection = crate::open_or_create_collection(&db_path, Some(768)).unwrap();
-        let cache = RedbCache::new(&cache_path()).unwrap();
-        let store = ZvecMemoryStore::new(collection, cache);
-        drop(store);
+        let got = crate::files::get_chunk_by_id(&collection, "flush-1").unwrap();
+        assert!(got.is_some(), "chunk must survive explicit flush + reopen");
     }
 
     // ── Hybrid search with both vector and keyword ──

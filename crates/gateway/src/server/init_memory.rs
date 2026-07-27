@@ -316,11 +316,16 @@ async fn try_init_zvec(
     embedding_dimension: u32,
 ) -> anyhow::Result<Box<dyn moltis_memory::store::MemoryStore>> {
     let db_path = cfg.db_path.as_deref().unwrap_or("memory.zvec");
-    let collection_path = data_dir.join(db_path);
+    // Prevent path-traversal via config: Path::join silently discards the
+    // base when given an absolute component (e.g. "/etc/shadow").
+    let collection_path = moltis_memory_zvec::path::resolve_data_subpath(data_dir, db_path)
+        .map_err(|e| anyhow::anyhow!("invalid memory.zvec db_path: {e}"))?;
     let dim = embedding_dimension;
     let collection = moltis_memory_zvec::initialize(&collection_path, Some(dim))?;
 
-    let cache_path = data_dir.join(format!("{}.cache", db_path));
+    let cache_path =
+        moltis_memory_zvec::path::resolve_data_subpath(data_dir, &format!("{db_path}.cache"))
+            .map_err(|e| anyhow::anyhow!("invalid memory.zvec cache path: {e}"))?;
     let cache_config = moltis_memory_zvec::ZvecCacheConfig {
         dimension: dim,
         cache_max_entries: 200_000,
@@ -369,6 +374,19 @@ async fn try_init_zvec(
                 }
                 changed = shutdown_rx.changed() => {
                     if changed.is_err() {
+                        // Final flush + optimize before exit so the
+                        // on-disk state is complete (the Drop impl no
+                        // longer calls flush to avoid blocking the
+                        // Tokio runtime thread).
+                        let collection_for_shutdown = Arc::clone(&zvec_collection);
+                        let _ = tokio::task::spawn_blocking(move || {
+                            if let Err(e) = moltis_memory_zvec::flush_collection(&collection_for_shutdown) {
+                                tracing::warn!("zvec: shutdown flush failed: {e}");
+                            }
+                            if let Err(e) = collection_for_shutdown.optimize() {
+                                tracing::warn!("zvec: shutdown optimize failed: {e}");
+                            }
+                        }).await;
                         tracing::debug!("zvec: periodic optimize task stopped (store dropped)");
                         break;
                     }

@@ -3,6 +3,7 @@ pub mod chunks;
 pub mod collection;
 pub mod files;
 pub(crate) mod filter;
+pub mod path;
 pub mod store;
 
 pub use {
