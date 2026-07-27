@@ -16,6 +16,51 @@ use crate::{
     types::ReplyMedium,
 };
 
+/// Send the activity logbook as a follow-up message and link it to the trace.
+///
+/// Reached from every branch where the answer itself went out some other way —
+/// as voice audio, or already streamed edit-in-place — which leaves this as the
+/// only text message of the turn and therefore a likely reaction target. Goes
+/// through the id-reporting send for the same reason
+/// [`deliver_text_reply`] does: the non-reporting one silently loses
+/// attribution.
+///
+/// A no-op when there is no logbook, so callers need no emptiness check.
+async fn deliver_logbook_follow_up(
+    outbound: &Arc<dyn moltis_channels::plugin::ChannelOutbound>,
+    feedback: Option<&moltis_channels::FeedbackService>,
+    target: &moltis_channels::ChannelReplyTarget,
+    to: &str,
+    logbook_html: &str,
+    session_key: &str,
+) {
+    if logbook_html.is_empty() {
+        return;
+    }
+    match outbound
+        .send_html_reporting_ids(&target.account_id, to, logbook_html, None)
+        .await
+    {
+        Ok(message_ids) => {
+            crate::channel_feedback::record_reply_trace(
+                feedback,
+                target,
+                &message_ids,
+                session_key,
+            )
+            .await;
+        },
+        Err(e) => {
+            warn!(
+                account_id = target.account_id,
+                chat_id = target.chat_id,
+                thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                "failed to send logbook follow-up: {e}"
+            );
+        },
+    }
+}
+
 /// Send the reply text (optionally carrying an activity logbook) and link the
 /// messages it produced to the trace that wrote them.
 ///
@@ -122,19 +167,17 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                                     "failed to send channel voice reply: {e}"
                                 );
                             }
-                            // Send logbook as a follow-up if present.
-                            if !logbook_html.is_empty()
-                                && let Err(e) = outbound
-                                    .send_html(&target.account_id, &to, &logbook_html, None)
-                                    .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send logbook follow-up: {e}"
-                                );
-                            }
+                            // The answer went out some other way, so the logbook is the
+                            // only text message of this turn.
+                            deliver_logbook_follow_up(
+                                &outbound,
+                                feedback.as_deref(),
+                                &target,
+                                &to,
+                                &logbook_html,
+                                &session_key,
+                            )
+                            .await;
                         } else {
                             // Check if transcript fits as Telegram caption (when feature enabled).
                             // When telegram feature is disabled, this evaluates to false and we
@@ -159,19 +202,17 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                                         "failed to send channel voice reply: {e}"
                                     );
                                 }
-                                // Send logbook as a follow-up if present.
-                                if !logbook_html.is_empty()
-                                    && let Err(e) = outbound
-                                        .send_html(&target.account_id, &to, &logbook_html, None)
-                                        .await
-                                {
-                                    warn!(
-                                        account_id = target.account_id,
-                                        chat_id = target.chat_id,
-                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                        "failed to send logbook follow-up: {e}"
-                                    );
-                                }
+                                // The answer went out some other way, so the logbook is the
+                                // only text message of this turn.
+                                deliver_logbook_follow_up(
+                                    &outbound,
+                                    feedback.as_deref(),
+                                    &target,
+                                    &to,
+                                    &logbook_html,
+                                    &session_key,
+                                )
+                                .await;
                             } else {
                                 // Transcript too long for a caption — send voice
                                 // without caption, then the full text as a follow-up.
@@ -205,20 +246,17 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                         }
                     },
                     None if text_already_streamed => {
-                        // TTS disabled/failed but text was already streamed —
-                        // only send logbook follow-up if present.
-                        if !logbook_html.is_empty()
-                            && let Err(e) = outbound
-                                .send_html(&target.account_id, &to, &logbook_html, None)
-                                .await
-                        {
-                            warn!(
-                                account_id = target.account_id,
-                                chat_id = target.chat_id,
-                                thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                "failed to send logbook follow-up: {e}"
-                            );
-                        }
+                        // The answer went out some other way, so the logbook is the
+                        // only text message of this turn.
+                        deliver_logbook_follow_up(
+                            &outbound,
+                            feedback.as_deref(),
+                            &target,
+                            &to,
+                            &logbook_html,
+                            &session_key,
+                        )
+                        .await;
                     },
                     None => {
                         deliver_text_reply(
@@ -249,20 +287,17 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                         }
                     },
                     None if text_already_streamed => {
-                        // TTS disabled/failed but text was already streamed —
-                        // only send logbook follow-up if present.
-                        if !logbook_html.is_empty()
-                            && let Err(e) = outbound
-                                .send_html(&target.account_id, &to, &logbook_html, None)
-                                .await
-                        {
-                            warn!(
-                                account_id = target.account_id,
-                                chat_id = target.chat_id,
-                                thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                "failed to send logbook follow-up: {e}"
-                            );
-                        }
+                        // The answer went out some other way, so the logbook is the
+                        // only text message of this turn.
+                        deliver_logbook_follow_up(
+                            &outbound,
+                            feedback.as_deref(),
+                            &target,
+                            &to,
+                            &logbook_html,
+                            &session_key,
+                        )
+                        .await;
                     },
                     None => {
                         deliver_text_reply(
@@ -375,6 +410,34 @@ mod tests {
                 .push("send_text_with_suffix_reporting_ids");
             Ok(vec!["logbook-1".into()])
         }
+
+        async fn send_html(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _html: &str,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("send_html");
+            Ok(())
+        }
+
+        async fn send_html_reporting_ids(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _html: &str,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<Vec<String>> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("send_html_reporting_ids");
+            Ok(vec!["html-1".into()])
+        }
     }
 
     fn reply_target() -> ChannelReplyTarget {
@@ -391,6 +454,61 @@ mod tests {
     /// A reply carrying an activity logbook is still a reply someone can react
     /// to, so it must go out through the id-reporting suffix send rather than
     /// the plain one, which reports nothing and loses attribution.
+    /// The logbook follow-up is the only text message on the branches that
+    /// reach it, so it must go out through the id-reporting send. `send_html`
+    /// reports nothing and would leave the reaction unresolvable.
+    #[tokio::test]
+    async fn a_logbook_follow_up_uses_the_id_reporting_html_send() {
+        let recorder = Arc::new(ReportingOutbound::default());
+        let outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound> = recorder.clone();
+
+        deliver_logbook_follow_up(
+            &outbound,
+            None,
+            &reply_target(),
+            "chan",
+            "<blockquote>log</blockquote>",
+            "session",
+        )
+        .await;
+
+        let calls = recorder.calls.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(*calls, vec!["send_html_reporting_ids"]);
+    }
+
+    #[tokio::test]
+    async fn an_absent_logbook_sends_nothing() {
+        let recorder = Arc::new(ReportingOutbound::default());
+        let outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound> = recorder.clone();
+
+        deliver_logbook_follow_up(&outbound, None, &reply_target(), "chan", "", "session").await;
+
+        let calls = recorder.calls.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(calls.is_empty(), "expected no send, got {calls:?}");
+    }
+
+    /// Guards the invariant the whole module exists to hold: no delivery path
+    /// may reach for a send that drops message ids. A new branch that calls
+    /// `send_text`, `send_text_with_suffix` or `send_html` directly loses
+    /// feedback attribution silently, which is exactly the class of bug this
+    /// file kept reintroducing.
+    #[test]
+    fn no_delivery_branch_uses_a_non_reporting_send() {
+        let source = include_str!("channel_reply_delivery.rs");
+        let body = source
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        for forbidden in [".send_text(", ".send_text_with_suffix(", ".send_html("] {
+            assert!(
+                !body.contains(forbidden),
+                "delivery code calls {forbidden} — use the *_reporting_ids variant \
+                 so the reply keeps its trace link"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn a_logbook_reply_uses_the_id_reporting_suffix_send() {
         let recorder = Arc::new(ReportingOutbound::default());
