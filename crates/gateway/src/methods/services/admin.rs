@@ -832,12 +832,28 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
     reg.register(
         "memory.config.get",
-        Box::new(|_ctx| {
+        Box::new(|ctx| {
             Box::pin(async move {
-                // Read memory config from the config file
                 let config = moltis_config::discover_and_load();
                 let memory = &config.memory;
                 let chat = &config.chat;
+
+                // Report the active backend (runtime), not the configured one
+                // (a zvec→builtin fallback keeps the config as zvec but the
+                // manager runs the builtin store).
+                let active_backend = ctx
+                    .state
+                    .memory_manager
+                    .as_ref()
+                    .map(|mm| mm.backend_name())
+                    .unwrap_or_else(|| match memory.backend {
+                        moltis_config::MemoryBackend::Builtin => "builtin",
+                        moltis_config::MemoryBackend::Qmd => "qmd",
+                        #[cfg(feature = "zvec")]
+                        moltis_config::MemoryBackend::Zvec => "zvec",
+                        #[cfg(not(feature = "zvec"))]
+                        moltis_config::MemoryBackend::Zvec => "builtin",
+                    });
                 Ok(serde_json::json!({
                     "style": match memory.style {
                         moltis_config::MemoryStyle::Hybrid => "hybrid",
@@ -856,20 +872,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         moltis_config::UserProfileWriteMode::ExplicitOnly => "explicit-only",
                         moltis_config::UserProfileWriteMode::Off => "off",
                     },
-                    "backend": match memory.backend {
-                        moltis_config::MemoryBackend::Builtin => "builtin",
-                        moltis_config::MemoryBackend::Qmd => "qmd",
-                        moltis_config::MemoryBackend::Zvec => {
-                            #[cfg(feature = "zvec")]
-                            {
-                                "zvec"
-                            }
-                            #[cfg(not(feature = "zvec"))]
-                            {
-                                "builtin"
-                            }
-                        },
-                    },
+                    "backend": active_backend,
                     "provider": match memory.provider {
                         Some(moltis_config::MemoryProvider::Local) => "local",
                         Some(moltis_config::MemoryProvider::Ollama) => "ollama",
