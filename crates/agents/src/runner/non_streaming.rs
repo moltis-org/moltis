@@ -37,7 +37,7 @@ use super::{
         resolve_agent_max_iterations,
     },
     sanitize_tool_name,
-    tool_result::sanitize_tool_result,
+    tool_result::{sanitize_tool_result, tool_result_failure},
 };
 
 use crate::tool_loop_detector::ToolLoopDetector;
@@ -784,12 +784,14 @@ pub async fn run_agent_loop_with_context_and_limits(
                     if let Some(tool) = tool {
                         match tool.execute(args).await {
                             Ok(val) => {
+                                let error = tool_result_failure(&val);
+                                let success = error.is_none();
                                 // Dispatch AfterToolCall hook.
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
                                         tool_name: tc_name.clone(),
-                                        success: true,
+                                        success,
                                         result: Some(val.clone()),
                                         channel: channel_for_hooks.clone(),
                                     };
@@ -799,9 +801,9 @@ pub async fn run_agent_loop_with_context_and_limits(
                                 }
 
                                 (
-                                    true,
+                                    success,
                                     serde_json::json!({ "result": val }),
-                                    None,
+                                    error,
                                     false,
                                     tool_step,
                                 )

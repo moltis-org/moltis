@@ -27,7 +27,7 @@ use crate::{
 };
 
 /// Configuration for an OTLP exporter.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OtlpConfig {
     /// Display name for logs and status reporting.
     pub name: String,
@@ -46,6 +46,21 @@ pub struct OtlpConfig {
     /// What this backend is allowed to receive. Defaults to the conservative
     /// profile so a misconfigured backend cannot silently receive prompts.
     pub profile: ExportProfile,
+}
+
+impl std::fmt::Debug for OtlpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OtlpConfig")
+            .field("name", &self.name)
+            .field("endpoint", &self.endpoint)
+            .field("header_names", &self.headers.keys().collect::<Vec<_>>())
+            .field("timeout", &self.timeout)
+            .field("service_name", &self.service_name)
+            .field("service_version", &self.service_version)
+            .field("environment", &self.environment)
+            .field("profile", &self.profile)
+            .finish()
+    }
 }
 
 impl Default for OtlpConfig {
@@ -123,14 +138,15 @@ impl OtlpTransport {
     ///
     /// 4xx other than 408/429 are fatal: retrying a rejected payload or bad
     /// credentials cannot succeed and only burns rate-limit budget.
-    fn classify(status: StatusCode, body: String) -> TransportError {
+    fn classify(status: StatusCode) -> TransportError {
+        let message = format!("collector rejected OTLP batch with HTTP {status}");
         if status == StatusCode::TOO_MANY_REQUESTS
             || status == StatusCode::REQUEST_TIMEOUT
             || status.is_server_error()
         {
-            TransportError::Retryable(format!("HTTP {status}: {body}"))
+            TransportError::Retryable(message)
         } else {
-            TransportError::Fatal(format!("HTTP {status}: {body}"))
+            TransportError::Fatal(message)
         }
     }
 }
@@ -168,10 +184,7 @@ impl Transport for OtlpTransport {
             .map_err(|e| {
                 // Connection-level failures are always worth retrying: the
                 // collector may simply be restarting.
-                TransportError::Retryable(format!(
-                    "request to {} failed: {e}",
-                    self.config.endpoint
-                ))
+                TransportError::Retryable(format!("collector request failed: {e}"))
             })?;
 
         let status = response.status();
@@ -184,10 +197,7 @@ impl Transport for OtlpTransport {
             return Ok(());
         }
 
-        let body = response.text().await.unwrap_or_default();
-        // Truncate: some collectors echo the whole rejected payload back.
-        let body = body.chars().take(512).collect::<String>();
-        Err(Self::classify(status, body))
+        Err(Self::classify(status))
     }
 
     fn accepts(&self, event: &Event) -> bool {
@@ -327,7 +337,10 @@ mod tests {
     async fn bad_request_is_fatal() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(400))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_string("echoed prompt and Authorization: Basic super-secret"),
+            )
             .mount(&server)
             .await;
 
@@ -337,7 +350,12 @@ mod tests {
             .await
             .expect_err("400 should fail");
 
-        assert!(matches!(error, TransportError::Fatal(_)), "{error:?}");
+        let TransportError::Fatal(message) = error else {
+            panic!("expected fatal error");
+        };
+        assert!(message.contains("HTTP 400"));
+        assert!(!message.contains("echoed prompt"));
+        assert!(!message.contains("super-secret"));
     }
 
     #[tokio::test]
@@ -387,5 +405,18 @@ mod tests {
         // Sensitive headers are redacted by reqwest's own Debug output.
         assert!(value.is_sensitive());
         assert!(!format!("{:?}", transport.headers).contains("Basic secret"));
+    }
+
+    #[test]
+    fn config_debug_omits_header_values() {
+        let mut config = config("https://collector.example/v1/traces".into());
+        config
+            .headers
+            .insert("Authorization".into(), "Bearer super-secret".into());
+
+        let rendered = format!("{config:?}");
+
+        assert!(rendered.contains("Authorization"));
+        assert!(!rendered.contains("super-secret"));
     }
 }

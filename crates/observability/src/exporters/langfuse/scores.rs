@@ -116,12 +116,7 @@ impl LangfuseClient {
             if status.is_success() {
                 continue;
             }
-            let response_body = response.text().await.unwrap_or_default();
-            let message = format!(
-                "Langfuse rejected score {}: HTTP {status}: {}",
-                score.id,
-                response_body.chars().take(512).collect::<String>()
-            );
+            let message = format!("Langfuse rejected score {} with HTTP {status}", score.id);
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS
                 || status == reqwest::StatusCode::REQUEST_TIMEOUT
                 || status.is_server_error()
@@ -150,10 +145,8 @@ impl LangfuseClient {
             return Ok(());
         }
 
-        let body = response.text().await.unwrap_or_default();
         Err(anyhow::anyhow!(
-            "Langfuse rejected the score deletion: HTTP {status}: {}",
-            body.chars().take(512).collect::<String>()
+            "Langfuse rejected the score deletion with HTTP {status}"
         ))
     }
 
@@ -170,11 +163,9 @@ impl LangfuseClient {
         if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {
             return Ok(());
         }
-        let body = response.text().await.unwrap_or_default();
         let message = format!(
-            "Langfuse rejected score deletion {}: HTTP {status}: {}",
-            deletion.score_id,
-            body.chars().take(512).collect::<String>()
+            "Langfuse rejected score deletion {} with HTTP {status}",
+            deletion.score_id
         );
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS
             || status == reqwest::StatusCode::REQUEST_TIMEOUT

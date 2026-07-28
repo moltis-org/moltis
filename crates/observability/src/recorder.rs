@@ -105,6 +105,8 @@ pub async fn wait_for_active_turns(timeout: std::time::Duration) -> bool {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let changed = ACTIVE_TURNS_CHANGED.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
         if ACTIVE_TURNS.load(Ordering::Acquire) == 0 {
             return true;
         }
@@ -123,13 +125,18 @@ impl TurnRecorder {
         scope: TraceScope,
         settings: RecorderSettings,
     ) -> Option<Self> {
-        Self::begin_inner(
-            sink::global_sink()?,
+        if !settings.sampled() {
+            return None;
+        }
+        let (sink, active_turn) =
+            sink::with_global_sink(|sink| (Arc::clone(sink), ActiveTurnGuard::new()))?;
+        Some(Self::begin_inner(
+            sink,
             name,
             scope,
             settings,
-            Some(ActiveTurnGuard::new()),
-        )
+            Some(active_turn),
+        ))
     }
 
     /// Begin recording a turn against an explicit sink.
@@ -145,7 +152,9 @@ impl TurnRecorder {
         scope: TraceScope,
         settings: RecorderSettings,
     ) -> Option<Self> {
-        Self::begin_inner(sink, name, scope, settings, None)
+        settings
+            .sampled()
+            .then(|| Self::begin_inner(sink, name, scope, settings, None))
     }
 
     fn begin_inner(
@@ -154,11 +163,7 @@ impl TurnRecorder {
         scope: TraceScope,
         settings: RecorderSettings,
         active_turn: Option<ActiveTurnGuard>,
-    ) -> Option<Self> {
-        if !settings.sampled() {
-            return None;
-        }
-
+    ) -> Self {
         let mut trace = TraceRecord::new(name);
         trace.scope = scope.clone();
         let trace_id = trace.id.clone();
@@ -167,7 +172,7 @@ impl TurnRecorder {
         // orphan steps onto it without extra bookkeeping.
         let root_id = ObservationId(trace_id.0.clone());
 
-        let recorder = Self {
+        Self {
             sink,
             settings,
             trace_id: trace_id.clone(),
@@ -175,8 +180,7 @@ impl TurnRecorder {
             root_id,
             trace: Arc::new(Mutex::new(trace)),
             _active_turn: active_turn,
-        };
-        Some(recorder)
+        }
     }
 
     /// The trace being recorded, for correlating scores later.

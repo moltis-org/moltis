@@ -27,7 +27,7 @@ const SECRET_ANSWER: &str = "migration applied to prod-db-01";
 
 fn scope() -> TraceScope {
     TraceScope {
-        session_id: Some("agent:main:main".into()),
+        session_id: Some("agent:main:channel:telegram:account:private-bot:peer:user:99".into()),
         user_id: Some("telegram:99".into()),
         tags: vec!["channel:telegram".into()],
         environment: Some("production".into()),
@@ -204,6 +204,14 @@ async fn generic_otlp_profile_never_puts_conversation_on_the_wire() {
     );
     // Per-user cardinality is a billing and compliance problem in an APM.
     assert!(!raw.contains("telegram:99"), "user id reached an APM");
+    assert!(
+        !raw.contains("private-bot"),
+        "channel account id reached an APM"
+    );
+    assert!(
+        !raw.contains("gen_ai.conversation.id"),
+        "channel session key reached an APM"
+    );
 }
 
 #[tokio::test]
@@ -220,10 +228,7 @@ async fn generic_otlp_profile_still_delivers_operational_signal() {
         "token counts missing"
     );
     assert!(raw.contains("moltis.input.bytes"), "payload sizes missing");
-    assert!(
-        raw.contains("gen_ai.conversation.id"),
-        "session grouping missing"
-    );
+    assert!(!raw.contains("gen_ai.conversation.id"));
 }
 
 #[tokio::test]

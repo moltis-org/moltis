@@ -147,6 +147,19 @@ pub fn global_sink() -> Option<Arc<dyn ObservationSink>> {
     }
 }
 
+/// Run a short operation while holding the global sink registry read lock.
+///
+/// Used when cloning the sink must be atomic with related bookkeeping, such as
+/// registering an active turn before shutdown can clear the registry.
+pub(crate) fn with_global_sink<T>(
+    operation: impl FnOnce(&Arc<dyn ObservationSink>) -> T,
+) -> Option<T> {
+    match GLOBAL_SINK.read() {
+        Ok(guard) => guard.as_ref().map(operation),
+        Err(poisoned) => poisoned.into_inner().as_ref().map(operation),
+    }
+}
+
 /// Whether instrumentation is active.
 ///
 /// Call this before doing any work to build an event: when no sink is

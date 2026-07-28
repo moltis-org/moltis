@@ -140,9 +140,10 @@ impl InstrumentationState {
     pub async fn shutdown(&self, timeout: Duration) {
         moltis_observability::clear_global_sink();
         let started = tokio::time::Instant::now();
-        if !moltis_observability::wait_for_active_turns(timeout).await {
+        let flush_reserve = timeout.min(Duration::from_millis(100));
+        let wait_budget = timeout.saturating_sub(flush_reserve);
+        if !moltis_observability::wait_for_active_turns(wait_budget).await {
             warn!("instrumentation shutdown timed out waiting for active turns");
-            return;
         }
         self.flush(timeout.saturating_sub(started.elapsed())).await;
     }
@@ -173,8 +174,14 @@ impl InstrumentationSnapshot {
 #[allow(clippy::expect_used)]
 mod tests {
     use {
-        async_trait::async_trait, moltis_config::LangfuseSettings, secrecy::Secret,
-        std::sync::Mutex, tokio::sync::oneshot,
+        async_trait::async_trait,
+        moltis_config::LangfuseSettings,
+        secrecy::Secret,
+        std::sync::{
+            Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+        tokio::sync::oneshot,
     };
 
     use super::*;
@@ -197,6 +204,11 @@ mod tests {
         flushed: Mutex<Option<oneshot::Sender<()>>>,
     }
 
+    struct TimeoutAwareFlushSink {
+        delivered: Mutex<Option<oneshot::Sender<usize>>>,
+        queued: AtomicUsize,
+    }
+
     #[async_trait]
     impl ObservationSink for FlushTrackingSink {
         fn name(&self) -> &str {
@@ -213,6 +225,34 @@ mod tests {
                 .take()
             {
                 let _ = flushed.send(());
+            }
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl ObservationSink for TimeoutAwareFlushSink {
+        fn name(&self) -> &str {
+            "timeout-aware"
+        }
+
+        fn record(&self, _event: moltis_observability::Event) {
+            self.queued.fetch_add(1, Ordering::Relaxed);
+        }
+
+        async fn flush(&self, timeout: Duration) -> anyhow::Result<()> {
+            anyhow::ensure!(
+                timeout >= Duration::from_millis(25),
+                "insufficient flush budget"
+            );
+            let queued = self.queued.swap(0, Ordering::Relaxed);
+            if let Some(delivered) = self
+                .delivered
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                let _ = delivered.send(queued);
             }
             Ok(())
         }
@@ -390,5 +430,45 @@ mod tests {
         flushed_rx
             .await
             .expect("sink should flush after the turn closes");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(instrumentation_global_sink)]
+    async fn shutdown_flushes_queued_data_when_active_turns_time_out() {
+        let (delivered_tx, delivered_rx) = oneshot::channel();
+        let sink = Arc::new(TimeoutAwareFlushSink {
+            delivered: Mutex::new(Some(delivered_tx)),
+            queued: AtomicUsize::new(0),
+        });
+        let installed_sink: Arc<dyn ObservationSink> = sink;
+        let state = InstrumentationState::default();
+        moltis_observability::set_global_sink(Arc::clone(&installed_sink));
+        state.replace(InstrumentationSnapshot {
+            sink: Some(installed_sink),
+            backends: vec!["tracking".into()],
+            ..Default::default()
+        });
+        let completed = moltis_observability::TurnRecorder::begin(
+            "completed",
+            moltis_observability::TraceScope::default(),
+            moltis_observability::RecorderSettings::default(),
+        )
+        .expect("global sink installed");
+        completed.finish();
+        let recorder = moltis_observability::TurnRecorder::begin(
+            "active",
+            moltis_observability::TraceScope::default(),
+            moltis_observability::RecorderSettings::default(),
+        )
+        .expect("global sink installed");
+
+        state.shutdown(Duration::from_millis(100)).await;
+
+        let delivered = tokio::time::timeout(Duration::from_secs(1), delivered_rx)
+            .await
+            .expect("shutdown should retain enough time to flush")
+            .expect("queued data should flush despite the active turn");
+        assert!(delivered > 0, "the completed turn should reach the sink");
+        drop(recorder);
     }
 }

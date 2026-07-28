@@ -1034,6 +1034,10 @@ fn validate_instrumentation(
             config.datadog.timeout_secs == 0,
             "instrumentation.datadog.timeout_secs",
         ),
+        (
+            config.feedback.link_retention_days == 0,
+            "instrumentation.feedback.link_retention_days",
+        ),
     ];
     diagnostics.extend(
         zero_values

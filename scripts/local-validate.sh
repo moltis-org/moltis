@@ -278,6 +278,10 @@ build_targeted_rust_test_cmd() {
       local test_name
       test_name="$(basename "$file" .rs)"
       commands+=("$base_cmd --test $test_name")
+    elif [[ "$file" == */tests/*.rs ]]; then
+      # Nested source test modules do not map to Cargo --test targets, and a
+      # basename such as `mod` is not a reliable nextest filter.
+      commands+=("$base_cmd")
     elif grep -Eq '#\[(tokio::)?test\]' "$file" 2>/dev/null; then
       local filter_name
       filter_name="$(basename "$file" .rs)"

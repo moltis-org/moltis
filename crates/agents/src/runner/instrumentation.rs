@@ -12,8 +12,11 @@ use {
 };
 
 use crate::{
-    model::{AgentToolControls, ChatMessage, LlmProvider, ProviderIdentity, Usage, UserContent},
-    runner::{AgentRunError, AgentRunResult, tool_result::tool_result_failure},
+    model::{
+        AgentToolControls, ChatMessage, ContentPart, LlmProvider, ProviderIdentity, Usage,
+        UserContent,
+    },
+    runner::{AgentRunError, AgentRunResult, tool_result::persisted_tool_result_failure},
 };
 
 /// Derive the trace scope from the session and channel context.
@@ -199,10 +202,41 @@ pub fn begin_generation_step(
         step.set_metadata("iteration", serde_json::json!(iteration));
         step.set_metadata("tool_count", serde_json::json!(tool_count));
         step.set_input(serde_json::Value::Array(
-            messages.iter().map(ChatMessage::to_openai_value).collect(),
+            messages.iter().map(message_to_telemetry_value).collect(),
         ));
         step
     })
+}
+
+/// Serialize a provider message without copying inline image payloads into telemetry.
+fn message_to_telemetry_value(message: &ChatMessage) -> serde_json::Value {
+    let ChatMessage::User {
+        content: UserContent::Multimodal(parts),
+        name,
+    } = message
+    else {
+        return message.to_openai_value();
+    };
+
+    let content = parts
+        .iter()
+        .map(|part| match part {
+            ContentPart::Text(text) => serde_json::json!({ "type": "text", "text": text }),
+            ContentPart::Image { media_type, .. } => serde_json::json!({
+                "type": "image",
+                "media_type": media_type,
+                "data": "[omitted]",
+            }),
+        })
+        .collect::<Vec<_>>();
+    let mut value = serde_json::json!({ "role": "user", "content": content });
+    if let Some(sanitized) = name
+        .as_ref()
+        .and_then(|name| ChatMessage::sanitize_message_name(name))
+    {
+        value["name"] = serde_json::Value::String(sanitized);
+    }
+    value
 }
 
 /// Extract a provider's terminal reason from a raw streaming event.
@@ -262,7 +296,7 @@ pub fn finish_tool_step(
     step.set_output(serde_json::Value::String(persisted_output.to_string()));
     let failure = error
         .map(str::to_string)
-        .or_else(|| tool_result_failure(persisted_result));
+        .or_else(|| persisted_tool_result_failure(persisted_result));
     if !success || failure.is_some() {
         step.fail(failure.unwrap_or_else(|| "tool execution failed".to_string()));
     }
@@ -449,6 +483,29 @@ mod tests {
         let json = user_content_to_json(&UserContent::Multimodal(Vec::new()));
         assert_eq!(json["type"], "multimodal");
         assert_eq!(json["parts"], 0);
+    }
+
+    #[test]
+    fn generation_messages_omit_inline_image_data() {
+        let sentinel = "sensitive-base64-payload";
+        let message = ChatMessage::user_multimodal_named(
+            vec![
+                ContentPart::Text("describe this".into()),
+                ContentPart::Image {
+                    media_type: "image/png".into(),
+                    data: sentinel.into(),
+                },
+            ],
+            "Channel User",
+        );
+
+        let value = message_to_telemetry_value(&message);
+        let encoded = value.to_string();
+        assert!(!encoded.contains(sentinel));
+        assert!(!encoded.contains("data:image/png;base64"));
+        assert_eq!(value["content"][1]["media_type"], "image/png");
+        assert_eq!(value["content"][1]["data"], "[omitted]");
+        assert_eq!(value["name"], "Channel_User");
     }
 
     #[test]

@@ -201,7 +201,11 @@ const sections: SectionItem[] = [
 	{ id: "terminal", label: "Terminal", page: true },
 	{ id: "monitoring", label: "Monitoring", page: true },
 	{ id: "logs", label: "Logs", page: true },
-	{ id: "instrumentation", label: "Instrumentation" },
+	{
+		id: "instrumentation",
+		label: "Instrumentation",
+		icon: <span className="icon icon-instrumentation" />,
+	},
 	{ id: "graphql", label: "GraphQL" },
 	{ id: "config", label: "Configuration" },
 ];

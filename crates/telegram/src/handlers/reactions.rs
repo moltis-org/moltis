@@ -8,11 +8,12 @@ use std::sync::Arc;
 
 use {
     moltis_channels::{ChannelEvent, ChannelType},
+    moltis_common::types::ChatType,
     teloxide::types::{MessageReactionUpdated, ReactionType},
     tracing::debug,
 };
 
-use crate::state::AccountStateMap;
+use crate::{access, state::AccountStateMap};
 
 /// Emoji for a reaction, or `None` for kinds a vocabulary cannot match.
 fn reaction_token(reaction: &ReactionType) -> Option<String> {
@@ -42,6 +43,15 @@ fn diff(before: &[ReactionType], after: &[ReactionType]) -> (Vec<String>, Vec<St
     (added, removed)
 }
 
+fn ordered_changes(before: &[ReactionType], after: &[ReactionType]) -> Vec<(String, bool)> {
+    let (added, removed) = diff(before, after);
+    removed
+        .into_iter()
+        .map(|emoji| (emoji, false))
+        .chain(added.into_iter().map(|emoji| (emoji, true)))
+        .collect()
+}
+
 /// Handle a `message_reaction` update.
 pub async fn handle_message_reaction(
     update: MessageReactionUpdated,
@@ -54,10 +64,10 @@ pub async fn handle_message_reaction(
         return;
     };
 
-    let event_sink = {
+    let (config, event_sink) = {
         let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         match accts.get(account_id) {
-            Some(state) => state.event_sink.clone(),
+            Some(state) => (state.config.clone(), state.event_sink.clone()),
             None => return,
         }
     };
@@ -65,15 +75,37 @@ pub async fn handle_message_reaction(
         return;
     };
 
-    let (added, removed) = diff(&update.old_reaction, &update.new_reaction);
-    if added.is_empty() && removed.is_empty() {
+    let (chat_type, group_id) = match update.chat.kind {
+        teloxide::types::ChatKind::Private(_) => (ChatType::Dm, None),
+        teloxide::types::ChatKind::Public(ref public) => {
+            let group_id = Some(update.chat.id.0.to_string());
+            match public.kind {
+                teloxide::types::PublicChatKind::Channel(_) => (ChatType::Channel, group_id),
+                _ => (ChatType::Group, group_id),
+            }
+        },
+    };
+    let peer_id = user.id.0.to_string();
+    let access_granted = access::check_access(
+        &config,
+        &chat_type,
+        &peer_id,
+        user.username.as_deref(),
+        group_id.as_deref(),
+        // Reactions do not need a fresh mention, but all other DM/group policy
+        // and allowlist checks still apply.
+        true,
+    )
+    .is_ok();
+
+    let changes = ordered_changes(&update.old_reaction, &update.new_reaction);
+    if changes.is_empty() {
         return;
     }
 
     debug!(
         account_id,
-        added = added.len(),
-        removed = removed.len(),
+        changes = changes.len(),
         "telegram reaction update"
     );
 
@@ -82,7 +114,7 @@ pub async fn handle_message_reaction(
         let account_id = account_id.to_string();
         let chat_id = update.chat.id.0.to_string();
         let message_id = update.message_id.0.to_string();
-        let user_id = user.id.0.to_string();
+        let user_id = peer_id.clone();
         async move {
             sink.emit(ChannelEvent::ReactionChange {
                 channel_type: ChannelType::Telegram,
@@ -97,11 +129,14 @@ pub async fn handle_message_reaction(
         }
     };
 
-    for emoji in added {
-        emit(emoji, true).await;
-    }
-    for emoji in removed {
-        emit(emoji, false).await;
+    for (emoji, added) in changes {
+        // A removal can only retract this user's own score, so preserve source
+        // truth even if an allowlist changed after the score was recorded.
+        if added && !access_granted {
+            debug!(account_id, user_id = %peer_id, "telegram reaction denied by access control");
+            continue;
+        }
+        emit(emoji, added).await;
     }
 }
 
@@ -139,6 +174,17 @@ mod tests {
 
         assert_eq!(added, vec!["\u{1f44e}".to_string()]);
         assert_eq!(removed, vec!["\u{1f44d}".to_string()]);
+    }
+
+    #[test]
+    fn switching_reactions_retracts_before_setting_the_replacement() {
+        assert_eq!(
+            ordered_changes(&[emoji("\u{1f44d}")], &[emoji("\u{1f44e}")]),
+            vec![
+                ("\u{1f44d}".to_string(), false),
+                ("\u{1f44e}".to_string(), true)
+            ]
+        );
     }
 
     #[test]

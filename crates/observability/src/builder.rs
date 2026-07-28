@@ -74,6 +74,18 @@ fn batch_config(config: &InstrumentationConfig) -> BatchConfig {
     }
 }
 
+fn validate_batch_config(config: &InstrumentationConfig) -> Result<(), String> {
+    let invalid = [
+        (config.queue_capacity == 0, "queue_capacity"),
+        (config.flush_interval_ms == 0, "flush_interval_ms"),
+        (config.max_batch_bytes == 0, "max_batch_bytes"),
+    ];
+    if let Some((_, field)) = invalid.into_iter().find(|(invalid, _)| *invalid) {
+        return Err(format!("{field} must be at least 1"));
+    }
+    Ok(())
+}
+
 /// Validate a backend endpoint.
 ///
 /// Plaintext HTTP is refused for non-loopback hosts: these payloads carry
@@ -82,8 +94,11 @@ fn batch_config(config: &InstrumentationConfig) -> BatchConfig {
 /// typing a URL. Loopback is allowed for a local Agent or collector.
 fn validate_endpoint(raw: &str) -> Result<(), String> {
     let Ok(url) = reqwest::Url::parse(raw) else {
-        return Err(format!("`{raw}` is not a valid URL"));
+        return Err("endpoint is not a valid URL".to_string());
     };
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("endpoint must not contain credentials; use headers instead".to_string());
+    }
     match url.scheme() {
         "https" => Ok(()),
         "http" => {
@@ -125,6 +140,9 @@ fn build_langfuse(
     if secret.expose_secret().trim().is_empty() {
         return Err("secret_key is empty".to_string());
     }
+    if settings.timeout_secs == 0 {
+        return Err("timeout_secs must be at least 1".to_string());
+    }
     validate_endpoint(&settings.host)?;
 
     let langfuse_config = LangfuseConfig {
@@ -151,6 +169,9 @@ fn build_otlp(
 ) -> Result<Arc<dyn ObservationSink>, String> {
     if settings.endpoint.trim().is_empty() {
         return Err("endpoint is not set".to_string());
+    }
+    if settings.timeout_secs == 0 {
+        return Err("timeout_secs must be at least 1".to_string());
     }
     validate_endpoint(&settings.endpoint)?;
 
@@ -181,6 +202,12 @@ fn build_datadog(
 ) -> Result<Arc<dyn ObservationSink>, String> {
     if settings.endpoint.trim().is_empty() {
         return Err("endpoint is not set".to_string());
+    }
+    if settings.timeout_secs == 0 {
+        return Err("timeout_secs must be at least 1".to_string());
+    }
+    if settings.service.trim().is_empty() {
+        return Err("service is not set".to_string());
     }
     validate_endpoint(&settings.endpoint)?;
 
@@ -219,6 +246,25 @@ pub fn build(config: &InstrumentationConfig, release: &str) -> BuildOutcome {
     let mut skipped = Vec::new();
 
     if !config.enabled {
+        return BuildOutcome {
+            built: None,
+            skipped,
+        };
+    }
+
+    if let Err(reason) = validate_batch_config(config) {
+        let skipped = [
+            ("langfuse", config.langfuse.enabled),
+            ("otlp", config.otlp.enabled),
+            ("datadog", config.datadog.enabled),
+        ]
+        .into_iter()
+        .filter(|(_, enabled)| *enabled)
+        .map(|(name, _)| SkippedBackend {
+            name: name.to_string(),
+            reason: reason.clone(),
+        })
+        .collect();
         return BuildOutcome {
             built: None,
             skipped,
@@ -514,6 +560,51 @@ mod tests {
         };
         let outcome = build(&config, "test");
         assert!(outcome.skipped[0].reason.contains("not a valid URL"));
+    }
+
+    #[tokio::test]
+    async fn endpoint_credentials_are_rejected_without_echoing_them() {
+        let config = InstrumentationConfig {
+            otlp: OtlpSettings {
+                enabled: true,
+                endpoint: "https://operator:super-secret@collector.example/v1/traces".into(),
+                ..Default::default()
+            },
+            ..enabled_config()
+        };
+
+        let outcome = build(&config, "test");
+
+        assert!(outcome.built.is_none());
+        assert!(
+            outcome.skipped[0]
+                .reason
+                .contains("must not contain credentials")
+        );
+        assert!(!outcome.skipped[0].reason.contains("super-secret"));
+    }
+
+    #[tokio::test]
+    async fn zero_batch_settings_skip_backends_without_panicking() {
+        for (queue_capacity, flush_interval_ms, max_batch_bytes, field) in [
+            (0, 1, 1, "queue_capacity"),
+            (1, 0, 1, "flush_interval_ms"),
+            (1, 1, 0, "max_batch_bytes"),
+        ] {
+            let config = InstrumentationConfig {
+                queue_capacity,
+                flush_interval_ms,
+                max_batch_bytes,
+                langfuse: valid_langfuse(),
+                ..enabled_config()
+            };
+
+            let outcome = build(&config, "test");
+
+            assert!(outcome.built.is_none());
+            assert_eq!(outcome.skipped.len(), 1);
+            assert!(outcome.skipped[0].reason.contains(field));
+        }
     }
 
     #[tokio::test]

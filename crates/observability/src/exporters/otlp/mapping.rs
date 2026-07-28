@@ -712,13 +712,14 @@ mod tests {
     }
 
     #[test]
-    fn generic_otel_omits_user_id_but_keeps_session() {
+    fn generic_otel_omits_user_and_session_ids() {
         let span = observation_to_span(&generation(), &otel_ctx());
 
         // Per-user cardinality is a billing and compliance problem in an APM.
         assert!(attr_value(&span, attr::USER_ID).is_none());
-        // Session grouping stays: it is bounded and operationally useful.
-        assert!(attr_value(&span, attr::GEN_AI_CONVERSATION_ID).is_some());
+        // Channel session keys contain account and peer identifiers and are
+        // therefore no safer than the explicit user id.
+        assert!(attr_value(&span, attr::GEN_AI_CONVERSATION_ID).is_none());
     }
 
     #[test]

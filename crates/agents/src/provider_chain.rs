@@ -228,9 +228,10 @@ impl ProviderChain {
     ) -> Pin<Box<dyn Stream<Item = TrackedStreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
             let mut errors = Vec::new();
+            let force_primary = self.chain.iter().all(|entry| entry.state.is_tripped());
 
-            for entry in &self.chain {
-                if entry.state.is_tripped() {
+            for (index, entry) in self.chain.iter().enumerate() {
+                if entry.state.is_tripped() && !(force_primary && index == 0) {
                     continue;
                 }
 
@@ -292,8 +293,17 @@ impl ProviderChain {
                     continue;
                 }
 
-                entry.state.record_success();
-                return;
+                let error = "provider stream ended without a terminal event".to_string();
+                entry.state.record_failure();
+                yield TrackedStreamEvent::Attempt(ProviderAttemptEvent::Failed {
+                    identity: identity.clone(),
+                    error: error.clone(),
+                });
+                if emitted_output {
+                    yield TrackedStreamEvent::Event(StreamEvent::Error(error));
+                    return;
+                }
+                errors.push(format!("{}: {error}", entry.provider.id()));
             }
 
             yield TrackedStreamEvent::Event(StreamEvent::Error(format!(
@@ -350,11 +360,12 @@ impl LlmProvider for ProviderChain {
         on_attempt: &mut (dyn FnMut(ProviderAttemptEvent) + Send),
     ) -> anyhow::Result<CompletionResponse> {
         let mut errors = Vec::new();
+        let force_primary = self.chain.iter().all(|entry| entry.state.is_tripped());
         #[cfg(feature = "metrics")]
         let start = Instant::now();
 
-        for entry in &self.chain {
-            if entry.state.is_tripped() {
+        for (index, entry) in self.chain.iter().enumerate() {
+            if entry.state.is_tripped() && !(force_primary && index == 0) {
                 continue;
             }
 
@@ -587,6 +598,34 @@ mod tests {
             Box::pin(tokio_stream::once(StreamEvent::Error(
                 self.error_msg.into(),
             )))
+        }
+    }
+
+    struct EmptyStreamProvider;
+
+    #[async_trait]
+    impl LlmProvider for EmptyStreamProvider {
+        fn name(&self) -> &str {
+            "empty"
+        }
+
+        fn id(&self) -> &str {
+            "empty"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> anyhow::Result<CompletionResponse> {
+            anyhow::bail!("not used")
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
         }
     }
 
@@ -826,6 +865,67 @@ mod tests {
                 .load(Ordering::SeqCst),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn empty_stream_fails_over_instead_of_reporting_success() {
+        let chain = ProviderChain::new(vec![
+            Arc::new(EmptyStreamProvider),
+            Arc::new(SuccessProvider { id: "fallback" }),
+        ]);
+
+        let events = chain
+            .stream_with_tools_and_options_tracked(vec![], vec![], AgentToolControls::default())
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TrackedStreamEvent::Attempt(ProviderAttemptEvent::Failed { identity, error })
+                if identity == &ProviderIdentity::new("empty", "empty")
+                    && error.contains("without a terminal event")
+        )));
+        assert!(matches!(
+            events.last(),
+            Some(TrackedStreamEvent::Event(StreamEvent::Done(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn all_tripped_streaming_chain_still_probes_primary() {
+        let chain = ProviderChain::single(Arc::new(SuccessProvider { id: "primary" }));
+        for _ in 0..3 {
+            chain.chain[0].state.record_failure();
+        }
+        assert!(chain.chain[0].state.is_tripped());
+
+        let events = chain
+            .stream_with_tools_and_options_tracked(vec![], vec![], AgentToolControls::default())
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(matches!(
+            events.first(),
+            Some(TrackedStreamEvent::Attempt(ProviderAttemptEvent::Started(identity)))
+                if identity == &ProviderIdentity::new("success", "primary")
+        ));
+        assert!(matches!(
+            events.last(),
+            Some(TrackedStreamEvent::Event(StreamEvent::Done(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn all_tripped_non_streaming_chain_still_probes_primary() {
+        let chain = ProviderChain::single(Arc::new(SuccessProvider { id: "primary" }));
+        for _ in 0..3 {
+            chain.chain[0].state.record_failure();
+        }
+        assert!(chain.chain[0].state.is_tripped());
+
+        let response = chain.complete(&[], &[]).await.unwrap();
+
+        assert_eq!(response.text.as_deref(), Some("ok"));
     }
 
     #[test]

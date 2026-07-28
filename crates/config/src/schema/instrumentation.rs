@@ -247,7 +247,7 @@ impl Default for LangfuseSettings {
 /// `metadata_only`: these are operational tools, and prompt bodies there mean
 /// unbounded span size, cardinality pressure, per-byte ingest billing, and
 /// conversation content sitting in a system nobody scoped for it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OtlpSettings {
     /// Whether to export over OTLP.
@@ -269,6 +269,19 @@ pub struct OtlpSettings {
     /// Nonzero per-request timeout in seconds.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
+}
+
+impl std::fmt::Debug for OtlpSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OtlpSettings")
+            .field("enabled", &self.enabled)
+            .field("endpoint", &self.endpoint)
+            .field("header_names", &self.headers.keys().collect::<Vec<_>>())
+            .field("content", &self.content)
+            .field("emit_user_id", &self.emit_user_id)
+            .field("timeout_secs", &self.timeout_secs)
+            .finish()
+    }
 }
 
 impl Default for OtlpSettings {
@@ -426,6 +439,21 @@ mod tests {
             !rendered.contains("sk-lf-supersecret"),
             "secret leaked into Debug: {rendered}"
         );
+    }
+
+    #[test]
+    fn debug_output_does_not_leak_otlp_header_values() {
+        let settings = OtlpSettings {
+            headers: std::collections::BTreeMap::from([(
+                "Authorization".into(),
+                "Bearer super-secret".into(),
+            )]),
+            ..Default::default()
+        };
+        let rendered = format!("{settings:?}");
+
+        assert!(rendered.contains("Authorization"));
+        assert!(!rendered.contains("super-secret"));
     }
 
     #[test]

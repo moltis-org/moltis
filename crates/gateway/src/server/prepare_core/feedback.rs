@@ -26,11 +26,15 @@ pub(super) fn install_feedback(state: &Arc<GatewayState>, db_pool: &SqlitePool) 
     // Links accumulate one row per delivered reply; drop the ones too old
     // to attribute a reaction to.
     let feedback = Arc::clone(&state.feedback);
-    let retention_days = state.config.instrumentation.feedback.link_retention_days;
     tokio::spawn(async move {
-        let removed = feedback.prune(retention_days).await;
-        if removed > 0 {
-            tracing::debug!(removed, "pruned expired trace links");
+        let prune_interval = std::time::Duration::try_from(time::Duration::days(1))
+            .unwrap_or(std::time::Duration::MAX);
+        loop {
+            let removed = feedback.prune().await;
+            if removed > 0 {
+                tracing::debug!(removed, "pruned expired trace links");
+            }
+            tokio::time::sleep(prune_interval).await;
         }
     });
 }

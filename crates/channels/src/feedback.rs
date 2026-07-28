@@ -39,6 +39,7 @@ struct Active {
     vocabulary: FeedbackVocabulary,
     enabled: bool,
     environment: Option<String>,
+    retention_days: u32,
 }
 
 /// Records reply/trace links and converts reactions into scores.
@@ -68,6 +69,7 @@ impl FeedbackService {
             vocabulary: FeedbackVocabulary::from_config(&settings.positive, &settings.negative),
             enabled: settings.enabled,
             environment,
+            retention_days: settings.link_retention_days,
         });
         match self.active.write() {
             Ok(mut guard) => *guard = next,
@@ -146,25 +148,55 @@ impl FeedbackService {
     ) -> FeedbackOutcome {
         // Classify before the database lookup: most reactions in a busy chat
         // are not feedback, and they should not cost a query each.
-        let Some((links, signal, environment)) = self.read(|active| {
-            (
-                Arc::clone(&active.links),
-                active
-                    .enabled
-                    .then(|| active.vocabulary.classify(emoji))
-                    .flatten(),
-                active.environment.clone(),
-            )
-        }) else {
+        let Some((enabled, signal)) =
+            self.read(|active| (active.enabled, active.vocabulary.classify(emoji)))
+        else {
             return FeedbackOutcome::Disabled;
         };
-        if !self.enabled() {
+        if !enabled {
             return FeedbackOutcome::Disabled;
         }
         let Some(signal) = signal else {
             return FeedbackOutcome::NotFeedback;
         };
-        if langfuse.is_none() {
+
+        self.submit_signal(
+            channel,
+            account_id,
+            chat_id,
+            message_id,
+            added.then_some(signal),
+            user_id,
+            Some(format!("{channel} reaction {emoji}")),
+            langfuse,
+        )
+        .await
+    }
+
+    /// Submit already-classified feedback from a typed UI boundary.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn submit_signal(
+        &self,
+        channel: &str,
+        account_id: &str,
+        chat_id: &str,
+        message_id: &str,
+        signal: Option<FeedbackSignal>,
+        user_id: &str,
+        comment: Option<String>,
+        langfuse: Option<&Arc<LangfuseClient>>,
+    ) -> FeedbackOutcome {
+        let Some((links, enabled, environment, retention_days)) = self.read(|active| {
+            (
+                Arc::clone(&active.links),
+                active.enabled,
+                active.environment.clone(),
+                active.retention_days,
+            )
+        }) else {
+            return FeedbackOutcome::Disabled;
+        };
+        if !enabled || langfuse.is_none() {
             return FeedbackOutcome::Disabled;
         }
 
@@ -182,19 +214,16 @@ impl FeedbackService {
                 return FeedbackOutcome::UnknownMessage;
             },
         };
+        if link.created_at < retention_cutoff(retention_days) {
+            return FeedbackOutcome::UnknownMessage;
+        }
 
         let trace_id = TraceId(link.trace_id);
         // Namespaced so the same numeric user id on two channels is two people.
         let scoped_user = format!("{channel}:{user_id}");
 
-        if added {
-            let score = feedback_score(
-                &trace_id,
-                signal,
-                Some(&scoped_user),
-                Some(format!("{channel} reaction {emoji}")),
-                environment,
-            );
+        if let Some(signal) = signal {
+            let score = feedback_score(&trace_id, signal, Some(&scoped_user), comment, environment);
             moltis_observability::record(moltis_observability::Event::Score(Box::new(score)));
             debug!(channel, ?signal, "recorded reaction feedback");
             return FeedbackOutcome::Recorded(signal);
@@ -207,12 +236,14 @@ impl FeedbackService {
         FeedbackOutcome::Retracted
     }
 
-    /// Drop links older than `retention_days`.
-    pub async fn prune(&self, retention_days: u32) -> u64 {
-        let cutoff = now_unix() - i64::from(retention_days) * 86_400;
-        let Some(links) = self.read(|active| Arc::clone(&active.links)) else {
+    /// Drop links older than the active retention window.
+    pub async fn prune(&self) -> u64 {
+        let Some((links, retention_days)) =
+            self.read(|active| (Arc::clone(&active.links), active.retention_days))
+        else {
             return 0;
         };
+        let cutoff = retention_cutoff(retention_days);
         match links.prune(cutoff).await {
             Ok(removed) => removed,
             Err(error) => {
@@ -225,6 +256,13 @@ impl FeedbackService {
 
 fn now_unix() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
+}
+
+fn retention_cutoff(retention_days: u32) -> i64 {
+    time::OffsetDateTime::now_utc()
+        .checked_sub(time::Duration::days(i64::from(retention_days)))
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+        .unix_timestamp()
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -495,6 +533,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn typed_feedback_does_not_depend_on_the_emoji_vocabulary() {
+        let _guard = sink_guard().await;
+        let sink = Arc::new(CollectingSink::default());
+        moltis_observability::set_global_sink(Arc::clone(&sink) as Arc<_>);
+        let links = Arc::new(MemoryLinks::default());
+        let service = FeedbackService::default();
+        service.apply(
+            Arc::clone(&links) as Arc<dyn TraceLinkStore>,
+            &FeedbackSettings {
+                positive: vec!["party".into()],
+                negative: vec!["boo".into()],
+                ..FeedbackSettings::default()
+            },
+            Some("production".into()),
+        );
+        link_reply(&links, "42", "trace-1").await;
+        let langfuse = langfuse_client();
+
+        let outcome = service
+            .submit_signal(
+                "telegram",
+                "bot-1",
+                "chat-1",
+                "42",
+                Some(FeedbackSignal::Positive),
+                "99",
+                Some("typed feedback".into()),
+                Some(&langfuse),
+            )
+            .await;
+
+        assert_eq!(outcome, FeedbackOutcome::Recorded(FeedbackSignal::Positive));
+        assert!(matches!(
+            sink.events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_slice(),
+            [moltis_observability::Event::Score(_)]
+        ));
+        moltis_observability::clear_global_sink();
+    }
+
+    #[tokio::test]
+    async fn expired_links_are_rejected_even_before_pruning() {
+        let (service, links) = service(true);
+        links
+            .link(TraceLink {
+                channel_type: "telegram".into(),
+                account_id: "bot-1".into(),
+                chat_id: "chat-1".into(),
+                message_id: "old".into(),
+                trace_id: "trace-old".into(),
+                session_key: None,
+                created_at: retention_cutoff(30) - 1,
+            })
+            .await
+            .unwrap();
+        let langfuse = langfuse_client();
+
+        let outcome = service
+            .on_reaction(
+                "telegram",
+                "bot-1",
+                "chat-1",
+                "old",
+                "\u{1f44d}",
+                "99",
+                true,
+                Some(&langfuse),
+            )
+            .await;
+
+        assert_eq!(outcome, FeedbackOutcome::UnknownMessage);
+    }
+
+    #[tokio::test]
     async fn score_feedback_is_disabled_without_langfuse() {
         let (service, links) = service(true);
         link_reply(&links, "42", "trace-1").await;
@@ -591,7 +705,7 @@ mod tests {
                 None,
             )
             .await;
-        assert_eq!(service.prune(30).await, 0);
+        assert_eq!(service.prune().await, 0);
     }
 
     #[tokio::test]
@@ -636,18 +750,52 @@ mod tests {
                 message_id: "old".into(),
                 trace_id: "trace-old".into(),
                 session_key: None,
-                created_at: now_unix() - 60 * 86_400,
+                created_at: now_unix() - time::Duration::days(60).whole_seconds(),
             })
             .await
             .unwrap();
         link_reply(&links, "new", "trace-new").await;
 
-        let removed = service.prune(30).await;
+        let removed = service.prune().await;
 
         assert_eq!(removed, 1);
         assert!(
             links
                 .lookup("telegram", "bot-1", "chat-1", "new")
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn pruning_uses_reconfigured_retention_window() {
+        let (service, links) = service(true);
+        links
+            .link(TraceLink {
+                channel_type: "telegram".into(),
+                account_id: "bot-1".into(),
+                chat_id: "chat-1".into(),
+                message_id: "middle-aged".into(),
+                trace_id: "trace-middle-aged".into(),
+                session_key: None,
+                created_at: now_unix() - time::Duration::days(60).whole_seconds(),
+            })
+            .await
+            .unwrap();
+        service.apply(
+            Arc::clone(&links) as Arc<dyn TraceLinkStore>,
+            &FeedbackSettings {
+                link_retention_days: 90,
+                ..FeedbackSettings::default()
+            },
+            None,
+        );
+
+        assert_eq!(service.prune().await, 0);
+        assert!(
+            links
+                .lookup("telegram", "bot-1", "chat-1", "middle-aged")
                 .await
                 .unwrap()
                 .is_some()

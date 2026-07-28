@@ -58,6 +58,9 @@ timeout_secs = 0
 
 [instrumentation.datadog]
 timeout_secs = 0
+
+[instrumentation.feedback]
+link_retention_days = 0
 "#,
         Severity::Error,
     );
@@ -67,6 +70,7 @@ timeout_secs = 0
         BTreeSet::from([
             "instrumentation.datadog.timeout_secs".to_string(),
             "instrumentation.flush_interval_ms".to_string(),
+            "instrumentation.feedback.link_retention_days".to_string(),
             "instrumentation.langfuse.timeout_secs".to_string(),
             "instrumentation.max_batch_bytes".to_string(),
             "instrumentation.otlp.timeout_secs".to_string(),

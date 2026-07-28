@@ -10,6 +10,7 @@
 
 use {
     moltis_channels::FeedbackOutcome,
+    moltis_observability::FeedbackSignal,
     moltis_protocol::{ErrorShape, error_codes},
 };
 
@@ -66,11 +67,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 // `signal` rather than a raw score so the wire format cannot
                 // smuggle an arbitrary value into the metric.
                 let signal = ctx.params.get("signal").and_then(|v| v.as_str());
-                let (emoji, added) = match signal {
-                    Some("positive") => ("\u{1f44d}", true),
-                    Some("negative") => ("\u{1f44e}", true),
+                let signal = match signal {
+                    Some("positive") => Some(FeedbackSignal::Positive),
+                    Some("negative") => Some(FeedbackSignal::Negative),
                     // Clicking an active thumb clears it.
-                    Some("clear") => ("\u{1f44d}", false),
+                    Some("clear") => None,
                     other => {
                         return Err(ErrorShape::new(
                             error_codes::INVALID_REQUEST,
@@ -103,14 +104,14 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 let outcome = ctx
                     .state
                     .feedback
-                    .on_reaction(
+                    .submit_signal(
                         moltis_channels::trace_link::WEB_CHANNEL,
                         moltis_channels::trace_link::WEB_CHANNEL,
                         session_key,
                         message_id,
-                        emoji,
+                        signal,
                         user_id,
-                        added,
+                        Some("web feedback".to_string()),
                         ctx.state.instrumentation.langfuse().as_ref(),
                     )
                     .await;

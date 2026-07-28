@@ -652,9 +652,8 @@ pub(crate) async fn handle_reaction_event(
 
 /// Core reaction handling shared by Socket Mode and the Events API.
 ///
-/// Always emits a [`ChannelEvent::ReactionChange`] for observers; additionally
-/// routes the reaction into the agent as a synthetic message when
-/// `reaction_triggers` is enabled and the reaction is eligible.
+/// Emits authorized additions and user-scoped removals to observers;
+/// additionally routes eligible additions into the agent as synthetic messages.
 pub(crate) async fn dispatch_reaction(
     account_id: &str,
     user_id: &str,
@@ -676,25 +675,6 @@ pub(crate) async fn dispatch_reaction(
         }
     };
 
-    let Some(sink) = event_sink else {
-        return;
-    };
-
-    // Always surface the raw reaction change to observers (web UI, hooks).
-    sink.emit(ChannelEvent::ReactionChange {
-        channel_type: ChannelType::Slack,
-        account_id: account_id.to_string(),
-        chat_id: channel_id.clone(),
-        message_id: message_ts.clone(),
-        user_id: user_id.to_string(),
-        emoji: emoji.to_string(),
-        added,
-    })
-    .await;
-
-    // Optionally route the reaction into the agent as a message. The bot's own
-    // acknowledgment reactions (👀/✅/❌) are always ignored to avoid loops.
-    //
     // Fail closed: if the bot user id is unknown we cannot distinguish the bot's
     // own reactions, so treat the reactor as "self" and skip. Triggering here
     // would let the bot's own ACK reactions fire agent turns and loop.
@@ -708,16 +688,6 @@ pub(crate) async fn dispatch_reaction(
             true
         },
     };
-    if !reaction_should_trigger(
-        config.reaction_triggers,
-        added,
-        is_self,
-        emoji,
-        &config.reaction_trigger_emojis,
-    ) {
-        return;
-    }
-
     let is_dm = channel_id.starts_with('D');
     let access_granted = check_access(
         is_dm,
@@ -728,11 +698,37 @@ pub(crate) async fn dispatch_reaction(
         &config.allowlist,
         &config.channel_allowlist,
     );
-    if !access_granted {
+    if is_self || (added && !access_granted) {
         debug!(
             account_id,
-            user_id, "slack reaction trigger denied by access control"
+            user_id, "slack reaction denied by access control"
         );
+        return;
+    }
+
+    let Some(sink) = event_sink else {
+        return;
+    };
+
+    sink.emit(ChannelEvent::ReactionChange {
+        channel_type: ChannelType::Slack,
+        account_id: account_id.to_string(),
+        chat_id: channel_id.clone(),
+        message_id: message_ts.clone(),
+        user_id: user_id.to_string(),
+        emoji: emoji.to_string(),
+        added,
+    })
+    .await;
+
+    // Optionally route the reaction into the agent as a message.
+    if !reaction_should_trigger(
+        config.reaction_triggers,
+        added,
+        is_self,
+        emoji,
+        &config.reaction_trigger_emojis,
+    ) {
         return;
     }
 

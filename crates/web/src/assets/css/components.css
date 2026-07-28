@@ -1243,6 +1243,10 @@
   -webkit-mask-image: url("../icons/masks/mask-b9bf0315417c03e4.svg");
   mask-image: url("../icons/masks/mask-b9bf0315417c03e4.svg");
 }
+.settings-nav-item[data-section="instrumentation"]::before {
+  -webkit-mask-image: url("../icons/masks/instrumentation.svg");
+  mask-image: url("../icons/masks/instrumentation.svg");
+}
 .settings-nav-item[data-section="logs"]::before {
   -webkit-mask-image: url("../icons/masks/mask-5883df2e24ebc841.svg");
   mask-image: url("../icons/masks/mask-5883df2e24ebc841.svg");

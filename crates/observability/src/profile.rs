@@ -101,7 +101,7 @@ impl ExportProfile {
             content: ContentCapture::MetadataOnly,
             vocabulary: Vocabulary::GenAi,
             emit_user_id: false,
-            emit_session_id: true,
+            emit_session_id: false,
             emit_tags: true,
             emit_usage: true,
             max_attribute_bytes: 4_096,
@@ -117,7 +117,7 @@ impl ExportProfile {
             content: ContentCapture::MetadataOnly,
             vocabulary: Vocabulary::GenAi,
             emit_user_id: false,
-            emit_session_id: true,
+            emit_session_id: false,
             emit_tags: false,
             emit_usage: true,
             max_attribute_bytes: 4_096,
@@ -174,6 +174,10 @@ mod tests {
             !profile.emit_user_id,
             "user id is high-cardinality in an APM"
         );
+        assert!(
+            !profile.emit_session_id,
+            "channel session keys contain account and peer identifiers"
+        );
         // Structural metadata is still useful for latency and error analysis.
         assert!(profile.emits_content_metadata());
     }
@@ -183,7 +187,7 @@ mod tests {
         let profile = ExportProfile::datadog();
         assert!(!profile.emits_bodies());
         assert!(!profile.emit_tags, "Datadog bills on tag cardinality");
-        assert!(profile.emit_session_id);
+        assert!(!profile.emit_session_id);
     }
 
     #[test]
