@@ -815,8 +815,7 @@ port = {port}                           # Port number (auto-generated for this i
 # api_base_url = "https://slack.com/api"
 # dm_policy = "allowlist"
 # allowlist = []
-# operators = []             # Senders allowed to run /sh and host-reaching tools.
-#                            # Empty = fall back to `allowlist`; empty both = nobody.
+# operators = []             # Exact sender IDs allowed to run privileged commands; empty means nobody.
 # thread_replies = true
 # ack_reactions = true       # 👀 on receipt, ✅/❌ on completion (DMs + @mentions)
 # reaction_triggers = false  # route user reactions into the agent (react ✅ to approve)
@@ -829,7 +828,7 @@ port = {port}                           # Port number (auto-generated for this i
 # app_password = "..."
 # dm_policy = "allowlist"
 # allowlist = []
-# operators = []
+# operators = []             # Exact sender IDs; no allowlist fallback.
 # otp_self_approval = true
 # otp_cooldown_secs = 300
 

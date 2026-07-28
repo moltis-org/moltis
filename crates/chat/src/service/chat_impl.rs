@@ -1,5 +1,7 @@
 //! `ChatService` trait implementation for `LiveChatService`.
 
+mod channel_security;
+mod public_context;
 mod queue_drain;
 mod send;
 mod tool_policy;
@@ -61,7 +63,7 @@ impl ChatService for LiveChatService {
         self.send_impl(params).await
     }
 
-    async fn send_sync(&self, params: Value) -> ServiceResult {
+    async fn send_sync(&self, mut params: Value) -> ServiceResult {
         let text = params
             .get("text")
             .and_then(|v| v.as_str())
@@ -74,7 +76,16 @@ impl ChatService for LiveChatService {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
+        // Resolve the session before request-scoped security so API callers
+        // cannot bypass a channel binding with an explicit session key.
+        let session_key = self.resolve_session_key_from_params(&params).await;
+        self.apply_channel_bound_public_context(&mut params, &session_key)
+            .await?;
         let request_tool_policy = tool_policy::parse_request_tool_policy(&params)?;
+        let private_context = tool_policy::allows_private_context(&params);
+        if !private_context {
+            public_context::mark_public_channel(&mut params);
+        }
         let ephemeral = params
             .get("_ephemeral")
             .and_then(|v| v.as_bool())
@@ -84,12 +95,6 @@ impl ChatService for LiveChatService {
         let tool_controls =
             moltis_config::schema::AgentToolControls::from_tool_context(Some(&params));
         let stream_only = !self.has_tools_sync();
-
-        // Resolve session key from explicit override.
-        let session_key = match params.get("_session_key").and_then(|v| v.as_str()) {
-            Some(sk) => sk.to_string(),
-            None => "main".to_string(),
-        };
 
         // Resolve provider.
         let provider: Arc<dyn moltis_agents::model::LlmProvider> = {
@@ -109,6 +114,7 @@ impl ChatService for LiveChatService {
         let user_audio = user_audio_path_from_params(&params, &session_key);
         let user_documents =
             user_documents_from_params(&params, &session_key, self.session_store.as_ref());
+        let run_id = uuid::Uuid::new_v4().to_string();
         // Persist the user message.
         let user_msg = PersistedMessage::User {
             content: MessageContent::Text(text.clone()),
@@ -117,9 +123,9 @@ impl ChatService for LiveChatService {
             documents: user_documents
                 .as_deref()
                 .and_then(user_documents_for_persistence),
-            channel: None,
+            channel: params.get("channel").cloned(),
             seq: None,
-            run_id: None,
+            run_id: Some(run_id.clone()),
         };
         if !ephemeral {
             if let Err(e) = self
@@ -178,8 +184,11 @@ impl ChatService for LiveChatService {
         if !ephemeral && !history.is_empty() {
             history.pop();
         }
+        let persisted_history_len = history.len();
+        if !private_context {
+            history = public_context::filter_public_history(history);
+        }
 
-        let run_id = uuid::Uuid::new_v4().to_string();
         let state = Arc::clone(&self.state);
         let tool_registry = tool_policy::resolve_request_tool_registry(
             &self.tool_registry,
@@ -190,7 +199,7 @@ impl ChatService for LiveChatService {
         let provider_name = provider.name().to_string();
         let model_id = provider.id().to_string();
         let model_store = Arc::clone(&self.model_store);
-        let user_message_index = history.len();
+        let user_message_index = persisted_history_len;
 
         info!(
             run_id = %run_id,
@@ -243,6 +252,7 @@ impl ChatService for LiveChatService {
                 None, // send_sync: no client seq
                 None, // send_sync: no partial assistant tracking
                 &terminal_runs,
+                private_context,
             )
             .await
         } else {
@@ -277,6 +287,7 @@ impl ChatService for LiveChatService {
                 &terminal_runs,
                 None, // send_sync: no sender name
                 Some(tool_controls),
+                private_context,
             )
             .await
         };

@@ -128,10 +128,8 @@ pub struct MatrixAccountConfig {
     /// User allowlist (Matrix user IDs).
     pub user_allowlist: Vec<String>,
 
-    /// Senders allowed to run privileged actions: `/sh`, shell command mode,
-    /// and host-reaching tools. Empty means "not configured" — the DM
-    /// allowlist is used instead, and if that is empty too, nobody is an
-    /// operator.
+    /// Exact sender IDs allowed to run privileged channel commands.
+    /// Empty grants nobody privileged access.
     #[serde(default)]
     pub operators: Vec<String>,
 

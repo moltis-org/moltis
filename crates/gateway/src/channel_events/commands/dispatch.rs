@@ -4,12 +4,16 @@ use moltis_channels::{ChannelReplyTarget, Error as ChannelError, Result as Chann
 
 use crate::state::GatewayState;
 
-use super::{super::resolve_channel_session, control_handlers, quick_actions, session_handlers};
+use super::{
+    super::{is_sender_authorized, resolve_channel_session},
+    control_handlers, quick_actions, session_handlers,
+};
 
 pub(in crate::channel_events) async fn dispatch_interaction(
     state: &Arc<tokio::sync::OnceCell<Arc<GatewayState>>>,
     callback_data: &str,
     reply_to: ChannelReplyTarget,
+    sender_id: Option<&str>,
 ) -> ChannelResult<String> {
     // Map callback_data prefixes to slash-command text, following the same
     // convention used by Telegram's handle_callback_query.
@@ -31,7 +35,25 @@ pub(in crate::channel_events) async fn dispatch_interaction(
         )));
     };
 
-    dispatch_command(state, &cmd_text, reply_to, None).await
+    let result = dispatch_command(state, &cmd_text, reply_to.clone(), sender_id).await;
+    let response = match &result {
+        Ok(message) => message.clone(),
+        Err(error) => format!("Command failed: {error}"),
+    };
+    if let Some(gateway) = state.get()
+        && let Some(outbound) = gateway.services.channel_outbound_arc()
+        && let Err(error) = outbound
+            .send_text(
+                &reply_to.account_id,
+                &reply_to.outbound_to(),
+                &response,
+                reply_to.message_id.as_deref(),
+            )
+            .await
+    {
+        tracing::warn!(%error, "failed to send interaction response");
+    }
+    result
 }
 
 pub(in crate::channel_events) async fn dispatch_command(
@@ -58,7 +80,23 @@ pub(in crate::channel_events) async fn dispatch_command(
     let cmd = command.split_whitespace().next().unwrap_or("");
     let args = command[cmd.len()..].trim();
 
+    let privilege = moltis_channels::commands::all_commands()
+        .iter()
+        .find(|definition| definition.name == cmd)
+        .map(|definition| definition.privilege())
+        .ok_or_else(|| ChannelError::invalid_input(format!("unknown command: /{cmd}")))?;
+    if matches!(
+        privilege,
+        moltis_channels::commands::CommandPrivilege::Operator
+    ) && !is_sender_authorized(state, &reply_to.account_id, sender_id).await
+    {
+        return Err(ChannelError::invalid_input(
+            "This command is restricted to this bot's operators.",
+        ));
+    }
+
     match cmd {
+        "help" => Ok(moltis_channels::commands::help_text()),
         // Session management commands
         "new" => {
             session_handlers::handle_new(
@@ -122,11 +160,13 @@ pub(in crate::channel_events) async fn dispatch_command(
         "rollback" => quick_actions::handle_rollback(state, &session_key, args).await,
 
         // Quick actions
-        "btw" => quick_actions::handle_btw(state, &session_key, args).await,
+        "btw" => quick_actions::handle_btw(state, &session_key, &reply_to, args).await,
         "fast" => quick_actions::handle_fast(state, session_metadata, &session_key, args).await,
         "insights" => quick_actions::handle_insights(state, args).await,
         "steer" => quick_actions::handle_steer(state, &session_key, args).await,
-        "queue" => quick_actions::handle_queue(state, &session_key, args).await,
+        "queue" => {
+            quick_actions::handle_queue(state, &session_key, &reply_to, sender_id, args).await
+        },
         _ => Err(ChannelError::invalid_input(format!(
             "unknown command: /{cmd}"
         ))),
@@ -135,20 +175,17 @@ pub(in crate::channel_events) async fn dispatch_command(
 
 #[cfg(test)]
 mod tests {
-    /// Verify that every command in the centralized registry (except `"help"`,
-    /// which channels handle locally) has a matching arm in `dispatch_command`.
+    /// Verify that every command in the centralized registry has a matching arm
+    /// in `dispatch_command`.
     ///
     /// This is a compile/test-time safety net: if a new command is added to the
     /// registry but not wired into gateway dispatch, this test will fail.
     #[test]
     fn all_registered_commands_have_dispatch_arms() {
-        // The set of commands that channels handle locally and never reach
-        // gateway dispatch.
-        let locally_handled = ["help"];
-
         // The set of commands that dispatch_command handles.  Keep this list
         // in sync with the match arms above.
         let dispatched = [
+            "help",
             "new",
             "fork",
             "clear",
@@ -177,9 +214,6 @@ mod tests {
         ];
 
         for cmd in moltis_channels::commands::all_commands() {
-            if locally_handled.contains(&cmd.name) {
-                continue;
-            }
             assert!(
                 dispatched.contains(&cmd.name),
                 "command `/{name}` is registered in moltis_channels::commands but has no \

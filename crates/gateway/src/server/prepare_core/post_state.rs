@@ -438,6 +438,7 @@ pub(super) async fn complete_startup(
                     let mut params = serde_json::json!({
                         "text": req.message,
                         "_session_key": req.session_key,
+                        "_private_context": false,
                     });
                     if let Some(ref model) = req.model {
                         params["model"] = serde_json::Value::String(model.clone());
@@ -448,6 +449,10 @@ pub(super) async fn complete_startup(
                     if let Some(ref tool_policy) = req.tool_policy {
                         params["_tool_policy"] = serde_json::to_value(tool_policy)
                             .map_err(|error| anyhow::anyhow!(error))?;
+                    } else {
+                        params["_tool_policy"] = serde_json::json!({
+                            "allow": moltis_channels::operators::DEFAULT_UNTRUSTED_ALLOWED_TOOLS,
+                        });
                     }
                     let result = chat
                         .send_sync(params)

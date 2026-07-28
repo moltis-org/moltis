@@ -6,6 +6,7 @@ use std::{
 };
 
 mod permissions;
+mod security;
 
 use {
     async_trait::async_trait,
@@ -424,9 +425,17 @@ impl ExternalAgentChatService {
         if !self.external_agents.config.enabled {
             return None;
         }
+        if security::is_explicit_shell_request(params) {
+            return None;
+        }
         let session_key = resolve_session_key(params, &self.state).await;
         let entry = self.session_metadata.get(&session_key).await?;
         let kind = entry.external_agent_kind?;
+        if !security::allows_external_agent_request(params, entry.channel_binding.is_some()) {
+            return Some(Err(
+                "external agents are unavailable for public or tool-restricted turns".into(),
+            ));
+        }
         Some(self.send_external(params.clone(), session_key, kind).await)
     }
 

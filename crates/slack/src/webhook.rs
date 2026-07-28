@@ -249,9 +249,17 @@ pub async fn handle_verified_interaction_webhook(
         .and_then(|c| c.get("id"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let sender_id = payload
+        .get("user")
+        .and_then(|user| user.get("id"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
 
-    if action_id.is_empty() || channel_id.is_empty() {
-        debug!(account_id, "interaction missing action_id or channel");
+    if action_id.is_empty() || channel_id.is_empty() || sender_id.is_empty() {
+        debug!(
+            account_id,
+            "interaction missing action_id, channel, or user"
+        );
         return Ok(());
     }
 
@@ -269,7 +277,10 @@ pub async fn handle_verified_interaction_webhook(
             message_id: None,
             thread_id: None,
         };
-        match sink.dispatch_interaction(action_id, reply_to).await {
+        match sink
+            .dispatch_interaction(action_id, reply_to, Some(sender_id))
+            .await
+        {
             Ok(_) => {},
             Err(e) => {
                 debug!(account_id, action_id, "interaction dispatch failed: {e}");
@@ -475,9 +486,17 @@ pub async fn handle_interaction_webhook(
         .and_then(|c| c.get("id"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let sender_id = payload
+        .get("user")
+        .and_then(|user| user.get("id"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
 
-    if action_id.is_empty() || channel_id.is_empty() {
-        debug!(account_id, "interaction missing action_id or channel");
+    if action_id.is_empty() || channel_id.is_empty() || sender_id.is_empty() {
+        debug!(
+            account_id,
+            "interaction missing action_id, channel, or user"
+        );
         return Ok(());
     }
 
@@ -495,7 +514,10 @@ pub async fn handle_interaction_webhook(
             message_id: None,
             thread_id: None,
         };
-        match sink.dispatch_interaction(action_id, reply_to).await {
+        match sink
+            .dispatch_interaction(action_id, reply_to, Some(sender_id))
+            .await
+        {
             Ok(_) => {},
             Err(e) => {
                 debug!(account_id, action_id, "interaction dispatch failed: {e}");

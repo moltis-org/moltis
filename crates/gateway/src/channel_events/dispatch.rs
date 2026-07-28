@@ -176,13 +176,17 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             // Defer reply-target registration until chat.send() actually
             // starts executing this message (after semaphore acquire).
             "_channel_reply_target": &reply_to,
+            "_native_channel_request": true,
         });
 
-        // Guests get the agent without its host-reaching tools. Blocking `/sh`
-        // alone would not be enough: a guest could otherwise just ask the
-        // agent in prose to run a command or read the owner's memory.
-        if !sender_role.is_operator() {
-            params["_tool_policy"] = guest_tool_policy();
+        // Normal shared-room turns are untrusted even when the current sender
+        // is an operator: their history also contains guest-authored prompts.
+        // Explicit `/sh` is deterministic and separately authorized above.
+        let explicit_shell =
+            moltis_agents::runner::explicit_shell_command(&effective_text).is_some();
+        if !explicit_shell && (!sender_role.is_operator() || is_shared_channel_target(&reply_to)) {
+            params["_tool_policy"] = untrusted_tool_policy();
+            params["_private_context"] = serde_json::json!(false);
         }
 
         // Attach thread context if available.

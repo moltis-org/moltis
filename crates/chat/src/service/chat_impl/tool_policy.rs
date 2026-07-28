@@ -52,33 +52,61 @@ pub(crate) async fn resolve_request_tool_registry(
     ))
 }
 
+/// Whether this request may receive owner-private prompt and memory context.
+pub(crate) fn allows_private_context(params: &Value) -> bool {
+    match params.get("_private_context") {
+        None => true,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => false,
+    }
+}
+
+fn request_security_context(params: &Value) -> (Option<Value>, bool, Option<Value>, Option<Value>) {
+    let reply_scope = params.get("_channel_reply_target").map(|target| {
+        serde_json::json!({
+            "channel_type": target.get("channel_type"),
+            "account_id": target.get("account_id"),
+            "chat_id": target.get("chat_id"),
+            "thread_id": target.get("thread_id"),
+            "message_id": target.get("message_id"),
+        })
+    });
+    (
+        params.get("_tool_policy").cloned(),
+        allows_private_context(params),
+        params
+            .get("channel")
+            .and_then(|channel| channel.get("sender_id"))
+            .cloned(),
+        reply_scope,
+    )
+}
+
 /// Split queued messages into the leading group that shares one authorization
 /// context, plus the remainder.
 ///
 /// `MessageQueueMode::Collect` joins the text of every message in a group into
 /// a single turn and runs it under one set of params. Messages from senders of
-/// different privilege must therefore never share a group: a shared channel
-/// session queues guest and operator messages side by side, and merging them
-/// would run the guest's text under the last sender's params — an operator's
-/// params carry no `_tool_policy`, so the guest's instructions would reach
-/// `exec`, the owner's memory, and every other tool the guest is denied.
+/// different principals or privilege must therefore never share a group: a
+/// shared channel session queues multiple senders side by side, and merging
+/// them would attribute all text to the final sender and its policy.
 ///
 /// The caller replays the returned group and puts the remainder back on the
 /// queue, where the next drain replays it under its own policy. Splitting
 /// rather than merging policies keeps the rule simple: a turn never runs with
 /// more privilege than the sender of any line in it.
-pub(crate) fn split_by_request_tool_policy(
+pub(crate) fn split_by_request_security_context(
     mut queued: Vec<QueuedMessage>,
 ) -> (Vec<QueuedMessage>, Vec<QueuedMessage>) {
-    let Some(head_policy) = queued
+    let Some(head_context) = queued
         .first()
-        .map(|m| m.params.get("_tool_policy").cloned())
+        .map(|message| request_security_context(&message.params))
     else {
         return (queued, Vec::new());
     };
     let split = queued
         .iter()
-        .position(|m| m.params.get("_tool_policy").cloned() != head_policy)
+        .position(|message| request_security_context(&message.params) != head_context)
         .unwrap_or(queued.len());
     let rest = queued.split_off(split);
     (queued, rest)
@@ -147,6 +175,20 @@ mod tests {
         assert!(parse_request_tool_policy(&params).is_err());
     }
 
+    #[test]
+    fn private_context_defaults_on_and_can_be_disabled() {
+        assert!(allows_private_context(&serde_json::json!({})));
+        assert!(!allows_private_context(
+            &serde_json::json!({"_private_context": false})
+        ));
+        assert!(!allows_private_context(
+            &serde_json::json!({"_private_context": "false"})
+        ));
+        assert!(!allows_private_context(
+            &serde_json::json!({"_private_context": null})
+        ));
+    }
+
     #[tokio::test]
     async fn no_policy_returns_the_shared_registry() {
         let base = registry_with(&["exec", "web_search"]);
@@ -212,7 +254,7 @@ mod tests {
 
     #[test]
     fn same_policy_messages_stay_in_one_group() {
-        let (group, rest) = split_by_request_tool_policy(vec![
+        let (group, rest) = split_by_request_security_context(vec![
             queued("a", Some(guest_policy())),
             queued("b", Some(guest_policy())),
         ]);
@@ -223,7 +265,7 @@ mod tests {
     #[test]
     fn unrestricted_messages_stay_in_one_group() {
         let (group, rest) =
-            split_by_request_tool_policy(vec![queued("a", None), queued("b", None)]);
+            split_by_request_security_context(vec![queued("a", None), queued("b", None)]);
         assert_eq!(texts(&group), ["a", "b"]);
         assert!(rest.is_empty());
     }
@@ -234,7 +276,7 @@ mod tests {
     /// `_tool_policy` at all.
     #[test]
     fn guest_text_is_never_merged_into_an_operator_turn() {
-        let (group, rest) = split_by_request_tool_policy(vec![
+        let (group, rest) = split_by_request_security_context(vec![
             queued("rm -rf /", Some(guest_policy())),
             queued("hi", None),
         ]);
@@ -249,7 +291,7 @@ mod tests {
 
     #[test]
     fn operator_group_splits_before_a_guest_message() {
-        let (group, rest) = split_by_request_tool_policy(vec![
+        let (group, rest) = split_by_request_security_context(vec![
             queued("a", None),
             queued("b", None),
             queued("c", Some(guest_policy())),
@@ -261,7 +303,7 @@ mod tests {
     #[test]
     fn differing_policies_split_apart() {
         let other = serde_json::json!({ "deny": ["exec"] });
-        let (group, rest) = split_by_request_tool_policy(vec![
+        let (group, rest) = split_by_request_security_context(vec![
             queued("a", Some(guest_policy())),
             queued("b", Some(other)),
         ]);
@@ -270,8 +312,53 @@ mod tests {
     }
 
     #[test]
+    fn same_policy_from_different_senders_splits_apart() {
+        let mut alice = queued("a", Some(guest_policy()));
+        alice.params["channel"] = serde_json::json!({"sender_id": "alice"});
+        let mut bob = queued("b", Some(guest_policy()));
+        bob.params["channel"] = serde_json::json!({"sender_id": "bob"});
+
+        let (group, rest) = split_by_request_security_context(vec![alice, bob]);
+        assert_eq!(texts(&group), ["a"]);
+        assert_eq!(texts(&rest), ["b"]);
+    }
+
+    #[test]
+    fn private_and_public_contexts_split_apart() {
+        let private = queued("a", Some(guest_policy()));
+        let mut public = queued("b", Some(guest_policy()));
+        public.params["_private_context"] = serde_json::json!(false);
+
+        let (group, rest) = split_by_request_security_context(vec![private, public]);
+        assert_eq!(texts(&group), ["a"]);
+        assert_eq!(texts(&rest), ["b"]);
+    }
+
+    #[test]
+    fn different_thread_roots_split_apart() {
+        let mut first = queued("a", Some(guest_policy()));
+        first.params["_channel_reply_target"] = serde_json::json!({
+            "channel_type": "slack",
+            "account_id": "bot",
+            "chat_id": "C123",
+            "message_id": "thread-a",
+        });
+        let mut second = queued("b", Some(guest_policy()));
+        second.params["_channel_reply_target"] = serde_json::json!({
+            "channel_type": "slack",
+            "account_id": "bot",
+            "chat_id": "C123",
+            "message_id": "thread-b",
+        });
+
+        let (group, rest) = split_by_request_security_context(vec![first, second]);
+        assert_eq!(texts(&group), ["a"]);
+        assert_eq!(texts(&rest), ["b"]);
+    }
+
+    #[test]
     fn empty_queue_splits_into_nothing() {
-        let (group, rest) = split_by_request_tool_policy(Vec::new());
+        let (group, rest) = split_by_request_security_context(Vec::new());
         assert!(group.is_empty());
         assert!(rest.is_empty());
     }

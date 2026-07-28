@@ -4,6 +4,8 @@
 //! ChannelPlugin trait with sub-traits for config, auth, inbound/outbound
 //! messaging, status, and gateway lifecycle.
 
+mod chat_classification;
+
 pub mod channel_webhook_middleware;
 pub mod commands;
 pub mod config_view;

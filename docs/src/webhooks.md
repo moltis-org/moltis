@@ -278,7 +278,9 @@ Webhooks can override specific agent settings without changing the base preset:
 - **Model** — use a different LLM for webhook processing.
 - **System prompt suffix** — append extra instructions (e.g., "Focus on security
   issues" for a code review webhook).
-- **Tool policy** — restrict which tools the agent can use.
+- **Tool policy** — restrict which tools the agent can use. Without an explicit
+  policy, webhook turns can only use `calc`, `web_search`, and `web_fetch`;
+  webhook payloads are untrusted input and do not inherit the full tool set.
 
 ### Delivery Message Format
 

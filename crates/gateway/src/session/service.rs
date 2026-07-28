@@ -1,16 +1,7 @@
 use super::*;
 
 fn default_channel_session_key(target: &moltis_channels::ChannelReplyTarget) -> String {
-    match &target.thread_id {
-        Some(thread_id) => format!(
-            "{}:{}:{}:{}",
-            target.channel_type, target.account_id, target.chat_id, thread_id
-        ),
-        None => format!(
-            "{}:{}:{}",
-            target.channel_type, target.account_id, target.chat_id
-        ),
-    }
+    target.default_session_key()
 }
 
 async fn is_current_channel_session(

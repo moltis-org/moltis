@@ -37,6 +37,25 @@ pub struct CommandDef {
     pub arg: Option<CommandArg>,
 }
 
+/// Authorization required before a channel command reaches its handler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandPrivilege {
+    Public,
+    Operator,
+}
+
+impl CommandDef {
+    /// Commands default to operator-only. Adding a new command therefore fails
+    /// closed until it is deliberately reviewed and listed as public here.
+    #[must_use]
+    pub fn privilege(self) -> CommandPrivilege {
+        match self.name {
+            "help" => CommandPrivilege::Public,
+            _ => CommandPrivilege::Operator,
+        }
+    }
+}
+
 /// The single source of truth for all channel commands.
 ///
 /// Order determines display order in help text and platform menus.
@@ -290,7 +309,10 @@ pub fn help_text() -> String {
     let mut lines = Vec::with_capacity(all_commands().len() + 1);
     lines.push("Available commands:".to_string());
     for cmd in all_commands() {
-        lines.push(format!("/{} — {}", cmd.name, cmd.description));
+        let operator = matches!(cmd.privilege(), CommandPrivilege::Operator)
+            .then_some(" (operator only)")
+            .unwrap_or_default();
+        lines.push(format!("/{} — {}{operator}", cmd.name, cmd.description));
     }
     lines.join("\n")
 }
@@ -311,6 +333,23 @@ mod tests {
         deduped.sort();
         deduped.dedup();
         assert_eq!(names.len(), deduped.len(), "duplicate command names found");
+    }
+
+    #[test]
+    fn channel_commands_fail_closed_to_operator_only() {
+        for command in all_commands() {
+            let expected = if command.name == "help" {
+                CommandPrivilege::Public
+            } else {
+                CommandPrivilege::Operator
+            };
+            assert_eq!(
+                command.privilege(),
+                expected,
+                "unexpected privilege for /{}",
+                command.name
+            );
+        }
     }
 
     #[test]

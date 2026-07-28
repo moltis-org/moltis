@@ -160,22 +160,59 @@ fn explicit_shell_command_ignores_ordinary_chat() {
     assert!(explicit_shell_command("what does /sh do?").is_none());
 }
 
+#[test]
+fn unknown_and_group_chat_types_are_shared() {
+    let discord = ChannelReplyTarget {
+        channel_type: ChannelType::Discord,
+        account_id: "bot".into(),
+        chat_id: "123".into(),
+        message_id: None,
+        thread_id: None,
+        ack_message_id: None,
+    };
+    let telegram_group = ChannelReplyTarget {
+        channel_type: ChannelType::Telegram,
+        chat_id: "-123".into(),
+        ..discord.clone()
+    };
+    assert!(is_shared_channel_target(&discord));
+    assert!(is_shared_channel_target(&telegram_group));
+}
+
+#[test]
+fn proven_direct_chat_is_not_shared() {
+    let target = ChannelReplyTarget {
+        channel_type: ChannelType::Telegram,
+        account_id: "bot".into(),
+        chat_id: "123".into(),
+        message_id: None,
+        thread_id: None,
+        ack_message_id: None,
+    };
+    assert!(!is_shared_channel_target(&target));
+}
+
 /// Guests must lose the tools that reach the host or the owner's private
 /// state, while keeping the informational ones.
 #[test]
-fn guest_tool_policy_denies_privileged_tools() {
+fn guest_tool_policy_allows_only_reviewed_informational_tools() {
     let policy = moltis_tools::policy::ToolPolicy {
-        allow: Vec::new(),
-        deny: moltis_channels::operators::DEFAULT_GUEST_DENIED_TOOLS
+        allow: moltis_channels::operators::DEFAULT_UNTRUSTED_ALLOWED_TOOLS
             .iter()
             .map(|s| (*s).to_string())
             .collect(),
+        deny: Vec::new(),
     };
 
     for denied in [
         "exec",
         "process",
-        "write_file",
+        "Read",
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "Glob",
+        "Grep",
         "browser",
         "memory_save",
         "memory_search",
@@ -195,6 +232,8 @@ fn guest_tool_policy_denies_privileged_tools() {
         // Both the MCP management tools and the mcp__server__tool namespace.
         "mcp_add",
         "mcp__github__create_pull_request",
+        "send_image",
+        "send_document",
     ] {
         assert!(
             !policy.is_allowed(denied),
@@ -202,16 +241,7 @@ fn guest_tool_policy_denies_privileged_tools() {
         );
     }
 
-    for allowed in [
-        "web_search",
-        "web_fetch",
-        "calc",
-        "generate_image",
-        "send_image",
-        "send_document",
-        "show_map",
-        "task_list",
-    ] {
+    for allowed in ["web_search", "web_fetch", "calc"] {
         assert!(
             policy.is_allowed(allowed),
             "{allowed} should stay available to guests"

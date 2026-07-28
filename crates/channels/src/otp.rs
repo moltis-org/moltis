@@ -395,6 +395,7 @@ mod tests {
         async fn update_location(
             &self,
             _reply_to: &ChannelReplyTarget,
+            _sender_id: Option<&str>,
             _lat: f64,
             _lon: f64,
         ) -> bool {

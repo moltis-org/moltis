@@ -16,7 +16,7 @@ use moltis_config::MessageQueueMode;
 
 use crate::service::types::QueuedMessage;
 
-use super::tool_policy::split_by_request_tool_policy;
+use super::tool_policy::split_by_request_security_context;
 
 /// Anything that can start the replayed turn — in practice the live chat
 /// service resolved from gateway state.
@@ -38,7 +38,7 @@ impl ReplaySink for Arc<dyn moltis_service_traits::ChatService> {
 /// `Followup` replays one message per turn, each under its own params.
 /// `Collect` merges a group of messages into a single turn, which is only safe
 /// for messages that share an authorization context — see
-/// [`split_by_request_tool_policy`]. Anything not replayed now goes back on the
+/// [`split_by_request_security_context`]. Anything not replayed now goes back on the
 /// queue for the next drain.
 pub(crate) async fn drain_queued_messages(
     queue: &Arc<RwLock<HashMap<String, Vec<QueuedMessage>>>>,
@@ -58,35 +58,59 @@ pub(crate) async fn drain_queued_messages(
             (group, rest)
         },
         // Merge only messages that share an authorization context.
-        MessageQueueMode::Collect => split_by_request_tool_policy(queued),
+        MessageQueueMode::Collect => split_by_request_security_context(queued),
     };
 
-    // Put the remainder back first, so the replayed run's own drain picks it up
-    // when it finishes — and so nothing is dropped if this group has no text.
-    if !rest.is_empty() {
-        requeue(queue, session_key, rest).await;
-    }
-
-    let combined: Vec<&str> = group
-        .iter()
-        .filter_map(|m| m.params.get("text").and_then(|v| v.as_str()))
-        .collect();
-    if combined.is_empty() {
-        return;
-    }
-
-    // The group's last message supplies the params. Every message in it carries
-    // the same `_tool_policy`, so this cannot widen the turn's privileges.
-    let Some(last) = group.last() else {
+    let Some(first) = group.first() else {
         return;
     };
-    let mut replay = last.params.clone();
+    let collect_as_text = matches!(mode, MessageQueueMode::Collect)
+        && group.iter().all(|message| {
+            message
+                .params
+                .get("text")
+                .and_then(|value| value.as_str())
+                .is_some()
+                && message.params.get("content").is_none()
+                && message.params.get("_audio_filename").is_none()
+                && message.params.get("_document_files").is_none()
+        });
+
+    let mut replay = if collect_as_text {
+        group
+            .last()
+            .map(|message| message.params.clone())
+            .unwrap_or_else(|| first.params.clone())
+    } else {
+        first.params.clone()
+    };
+
+    let mut remaining = if collect_as_text {
+        rest
+    } else {
+        group.iter().skip(1).cloned().chain(rest).collect()
+    };
+    if !remaining.is_empty() {
+        requeue(queue, session_key, std::mem::take(&mut remaining)).await;
+    }
+
     replay["_queued_replay"] = json!(true);
     match mode {
         MessageQueueMode::Followup => {
             info!(session = %session_key, "replaying queued message (followup)");
         },
         MessageQueueMode::Collect => {
+            if !collect_as_text {
+                info!(session = %session_key, "replaying queued non-text message individually");
+                if let Err(e) = sink.replay(replay).await {
+                    warn!(session = %session_key, error = %e, "failed to replay queued message");
+                }
+                return;
+            }
+            let combined: Vec<&str> = group
+                .iter()
+                .filter_map(|message| message.params.get("text").and_then(|value| value.as_str()))
+                .collect();
             info!(
                 session = %session_key,
                 count = combined.len(),
@@ -228,16 +252,38 @@ mod tests {
     /// Previously the batch was removed from the map and then dropped when no
     /// message had text.
     #[tokio::test]
-    async fn text_less_messages_are_not_dropped() {
+    async fn multimodal_messages_replay_individually() {
         let queue = queue_with(vec![
-            QueuedMessage { params: json!({}) },
+            QueuedMessage {
+                params: json!({"content": [{"type": "text", "text": "image"}]}),
+            },
             queued("b", Some(guest_policy())),
         ]);
         let sink = RecordingSink::default();
 
         drain_queued_messages(&queue, "s", MessageQueueMode::Collect, &sink).await;
 
-        assert!(sink.0.lock().await.is_empty());
+        let sent = sink.0.lock().await;
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].get("content").is_some());
+        drop(sent);
+        assert_eq!(remaining(&queue).await, ["b"]);
+    }
+
+    #[tokio::test]
+    async fn text_with_document_metadata_replays_individually() {
+        let mut document = queued("summarize", Some(guest_policy()));
+        document.params["_document_files"] = json!([{"name": "report.pdf"}]);
+        let queue = queue_with(vec![document, queued("b", Some(guest_policy()))]);
+        let sink = RecordingSink::default();
+
+        drain_queued_messages(&queue, "s", MessageQueueMode::Collect, &sink).await;
+
+        let sent = sink.0.lock().await;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["text"], "summarize");
+        assert!(sent[0].get("_document_files").is_some());
+        drop(sent);
         assert_eq!(remaining(&queue).await, ["b"]);
     }
 }

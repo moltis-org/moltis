@@ -1,5 +1,13 @@
 use super::*;
 
+fn strip_internal_channel_fields(params: &mut serde_json::Value) {
+    if let Some(params) = params.as_object_mut() {
+        params.remove("channel");
+        params.remove("_channel_reply_target");
+        params.remove("_native_channel_request");
+    }
+}
+
 pub(super) fn register(reg: &mut MethodRegistry) {
     // Config
     reg.register(
@@ -541,6 +549,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         Box::new(|ctx| {
             Box::pin(async move {
                 let mut params = ctx.params.clone();
+                strip_internal_channel_fields(&mut params);
                 params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                 // Forward client Accept-Language, public remote IP, and timezone.
                 {
@@ -570,6 +579,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         Box::new(|ctx| {
             Box::pin(async move {
                 let mut params = ctx.params.clone();
+                strip_internal_channel_fields(&mut params);
                 params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                 {
                     let registry = ctx.state.client_registry.read().await;
@@ -1306,5 +1316,28 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 })
             }),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_internal_channel_fields;
+
+    #[test]
+    fn rpc_chat_params_cannot_inject_internal_channel_routing() {
+        let mut params = serde_json::json!({
+            "text": "hello",
+            "channel": {"sender_id": "forged"},
+            "_channel_reply_target": {"chat_id": "forged"},
+            "_native_channel_request": true,
+            "_tool_policy": {"allow": ["calc"]},
+        });
+
+        strip_internal_channel_fields(&mut params);
+
+        assert!(params.get("channel").is_none());
+        assert!(params.get("_channel_reply_target").is_none());
+        assert!(params.get("_native_channel_request").is_none());
+        assert_eq!(params["_tool_policy"]["allow"][0], "calc");
     }
 }

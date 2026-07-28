@@ -61,27 +61,14 @@ impl ChannelType {
     /// Best-effort chat classification for hook and prompt context.
     #[must_use]
     pub fn classify_chat(&self, chat_id: &str) -> Option<String> {
-        match self {
-            Self::Telegram => {
-                if chat_id.starts_with("-100") {
-                    Some("channel_or_supergroup".to_string())
-                } else if chat_id.starts_with('-') {
-                    Some("group".to_string())
-                } else {
-                    Some("private".to_string())
-                }
-            },
-            Self::Signal => {
-                if chat_id.starts_with("group:") {
-                    Some("group".to_string())
-                } else {
-                    Some("direct".to_string())
-                }
-            },
-            Self::Nostr => Some("dm".to_string()),
-            Self::Telephony => Some("call".to_string()),
-            _ => None,
-        }
+        crate::chat_classification::classify_chat(*self, chat_id)
+    }
+
+    /// Whether a chat can contain messages from multiple principals.
+    /// Unknown platform chat kinds fail closed as shared.
+    #[must_use]
+    pub fn is_shared_chat(&self, chat_id: &str) -> bool {
+        crate::chat_classification::is_shared_chat(*self, chat_id)
     }
 
     /// Top-level config fields that must be treated as persisted secrets.
@@ -429,10 +416,9 @@ pub trait ChannelEventSink: Send + Sync {
     /// Dispatch a slash command (e.g. "new", "clear", "compact", "context")
     /// and return a text result to send back to the channel.
     ///
-    /// `sender_id` identifies the message sender. Privileged commands
-    /// (`/approve`, `/deny`) are restricted to senders on the channel
-    /// account's allowlist — authorization is enforced centrally by the
-    /// gateway, so channel implementations do not need to handle it.
+    /// `sender_id` identifies the message sender. Commands other than `/help`
+    /// are restricted to exact IDs in the channel account's `operators` list.
+    /// Authorization is enforced centrally by the gateway.
     async fn dispatch_command(
         &self,
         command: &str,
@@ -505,6 +491,7 @@ pub trait ChannelEventSink: Send + Sync {
     async fn update_location(
         &self,
         _reply_to: &ChannelReplyTarget,
+        _sender_id: Option<&str>,
         _latitude: f64,
         _longitude: f64,
     ) -> bool {
@@ -519,6 +506,7 @@ pub trait ChannelEventSink: Send + Sync {
     async fn resolve_pending_location(
         &self,
         _reply_to: &ChannelReplyTarget,
+        _sender_id: Option<&str>,
         _latitude: f64,
         _longitude: f64,
     ) -> bool {
@@ -532,6 +520,7 @@ pub trait ChannelEventSink: Send + Sync {
         &self,
         _callback_data: &str,
         _reply_to: ChannelReplyTarget,
+        _sender_id: Option<&str>,
     ) -> Result<String> {
         Err(Error::unavailable("interactions not supported"))
     }
@@ -658,6 +647,18 @@ pub struct ChannelReplyTarget {
 }
 
 impl ChannelReplyTarget {
+    /// Deterministic session key used when a channel has no explicit active
+    /// session override.
+    pub fn default_session_key(&self) -> String {
+        match &self.thread_id {
+            Some(thread_id) => format!(
+                "{}:{}:{}:{}",
+                self.channel_type, self.account_id, self.chat_id, thread_id
+            ),
+            None => format!("{}:{}:{}", self.channel_type, self.account_id, self.chat_id),
+        }
+    }
+
     /// Returns the address string for outbound sends.
     ///
     /// For Telegram forum topics this encodes both chat and thread as
@@ -1132,7 +1133,11 @@ mod tests {
             message_id: None,
             thread_id: None,
         };
-        assert!(!sink.update_location(&target, 48.8566, 2.3522).await);
+        assert!(
+            !sink
+                .update_location(&target, Some("sender"), 48.8566, 2.3522)
+                .await
+        );
     }
 
     #[test]

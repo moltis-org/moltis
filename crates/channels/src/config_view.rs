@@ -22,8 +22,7 @@ pub trait ChannelConfigView: Send + Sync + std::fmt::Debug {
     /// the bot. In a guild or group chat every member can pass the access
     /// gate, so privilege needs its own list.
     ///
-    /// An empty list means "not configured" — [`crate::operators::resolve_sender_role`]
-    /// then falls back to the DM allowlist and, failing that, denies everyone.
+    /// An empty list grants nobody privileged access.
     fn operators(&self) -> &[String] {
         &[]
     }

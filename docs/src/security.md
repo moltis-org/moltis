@@ -129,29 +129,26 @@ host. Shell access is gated separately by each account's `operators` list:
 
 | | Guest (default) | Operator |
 |---|---|---|
-| Chat with the agent | ✅ | ✅ |
-| `/sh`, shell command mode | ❌ | ✅ |
-| `/approve`, `/deny`, `/update` | ❌ | ✅ |
-| `exec`, `process`, `write_file`, `browser`, agent bridges | ❌ | ✅ |
-| `memory_*`, `sessions_*`, `codebase_*`, `caldav` (private state) | ❌ | ✅ |
-| `update_channel_settings` (edits the operator list itself) | ❌ | ✅ |
-| `cron`, `webhook`, `spawn_*`, `send_message`, `home_assistant`, `mcp_*` | ❌ | ✅ |
-| `web_search`, `web_fetch`, `calc`, image and reply tools | ✅ | ✅ |
+| Chat with the agent | yes | yes |
+| Channel slash commands | no | yes |
+| `/sh`, shell command mode | no | yes |
+| Private direct-message agent tools | no | yes |
+| Shared-room agent tools beyond `calc`, `web_search`, `web_fetch` | no | no |
+| Owner memory, profile, project context in shared/untrusted turns | no | no |
 
-Denial is enforced in three places, so a guest cannot reach the shell by any
-route: the `/sh` command handler, the shell command-mode rewrite (which is
-re-checked per message, not per session), and the agent's tool registry for
-that turn.
+Denial is enforced before command dispatch, before shell command-mode rewrite,
+and through a positive per-request tool allowlist. Untrusted turns also omit
+private prompt and memory context.
 
-With no `operators` list the account falls back to its DM `allowlist`; with
-neither, **no one** has shell access. Configure it under
+With no `operators` list, **no one** has privileged channel access. Configure it under
 **Settings → Channels → Edit → Operators**, or see
 [Channels → Operators](./channels.md#operators-privileged-senders).
 
 ```admonish danger title="Public channels"
-On a public Discord guild or any shared group chat, every member clears the
-access gate. Always set `operators` explicitly there — do not rely on the
-allowlist fallback, which is meant for single-owner private instances.
+On a public Discord guild or any shared group chat, every member may clear the
+access gate. Normal agent turns therefore stay restricted even when an operator
+sends the current message; use explicit operator commands for privileged work.
+Adapters that cannot prove a chat is direct also treat it as shared.
 ```
 
 ### Channel Isolation

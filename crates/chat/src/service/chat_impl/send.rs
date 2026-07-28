@@ -97,21 +97,39 @@ impl LiveChatService {
         };
         let desired_reply_medium = infer_reply_medium(&params, &text);
 
-        // Request-scoped tool restriction. Channels set this for non-operator
-        // senders; resolve it up front so every run started below — the
-        // explicit-shell fast path as well as the agent loop — uses the
-        // restricted registry rather than the shared one.
+        let conn_id = params
+            .get("_conn_id")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        // Resolve session key from explicit overrides, public request params, or connection context.
+        let session_key = self.resolve_session_key_from_params(&params).await;
+        let explicit_shell_command = match &message_content {
+            MessageContent::Text(raw) => parse_explicit_shell_command(raw).map(str::to_string),
+            MessageContent::Multimodal(_) => None,
+        };
+        let channel_bound_web = self
+            .apply_channel_bound_public_context(&mut params, &session_key)
+            .await?;
+        if channel_bound_web && explicit_shell_command.is_some() {
+            return Err(
+                "shell commands cannot run in a channel-bound web session; switch sessions first"
+                    .into(),
+            );
+        }
+
+        // Request-scoped restrictions must be resolved after channel binding
+        // so web and native channel turns share the same execution boundary.
         let request_tool_policy = tool_policy::parse_request_tool_policy(&params)?;
+        let private_context = tool_policy::allows_private_context(&params);
+        if !private_context {
+            public_context::mark_public_channel(&mut params);
+        }
         let request_tool_registry = tool_policy::resolve_request_tool_registry(
             &self.tool_registry,
             request_tool_policy.as_ref(),
         )
         .await;
 
-        let conn_id = params
-            .get("_conn_id")
-            .and_then(|v| v.as_str())
-            .map(String::from);
         let explicit_model = params.get("model").and_then(|v| v.as_str());
         let tool_controls =
             moltis_config::schema::AgentToolControls::from_tool_context(Some(&params));
@@ -129,8 +147,6 @@ impl LiveChatService {
             "send() mode decision"
         );
 
-        // Resolve session key from explicit overrides, public request params, or connection context.
-        let session_key = self.resolve_session_key_from_params(&params).await;
         let queued_replay = params
             .get("_queued_replay")
             .and_then(|v| v.as_bool())
@@ -210,6 +226,24 @@ impl LiveChatService {
                 p
             },
             Err(_) => {
+                // Privileged shell requests must be authorized immediately
+                // before execution. Do not retain them for delayed replay after
+                // an operator may have been revoked.
+                if explicit_shell_command.is_some() {
+                    return Err(
+                        "shell commands cannot be queued; retry when the active run finishes"
+                            .into(),
+                    );
+                }
+                if params.get("channel").is_some() && private_context {
+                    // Authorization can change before replay. Delayed channel
+                    // turns always execute under the public context ceiling.
+                    params["_tool_policy"] = serde_json::json!({
+                        "allow": moltis_channels::operators::DEFAULT_UNTRUSTED_ALLOWED_TOOLS,
+                    });
+                    params["_private_context"] = serde_json::json!(false);
+                    public_context::mark_public_channel(&mut params);
+                }
                 let queue_mode = message_queue_mode;
                 let position = {
                     let mut q = self.message_queue.write().await;
@@ -245,11 +279,6 @@ impl LiveChatService {
                     "mode": format!("{queue_mode:?}").to_lowercase(),
                 }));
             },
-        };
-
-        let explicit_shell_command = match &message_content {
-            MessageContent::Text(raw) => parse_explicit_shell_command(raw).map(str::to_string),
-            MessageContent::Multimodal(_) => None,
         };
 
         if let Some(shell_command) = explicit_shell_command {
@@ -571,9 +600,12 @@ impl LiveChatService {
         }
 
         // Resolve project context plus optional command-generated context.
-        let project_context = self
-            .resolve_turn_context(&session_key, conn_id.as_deref())
-            .await;
+        let project_context = if private_context {
+            self.resolve_turn_context(&session_key, conn_id.as_deref())
+                .await
+        } else {
+            None
+        };
 
         // Generate run_id early so we can link the user message to its agent run.
         let run_id = uuid::Uuid::new_v4().to_string();
@@ -585,6 +617,10 @@ impl LiveChatService {
             .read(&session_key)
             .await
             .unwrap_or_default();
+        let persisted_history_len = history.len();
+        if !private_context {
+            history = public_context::filter_public_history(history);
+        }
         info!(
             session = %session_key,
             history_len = history.len(),
@@ -595,50 +631,8 @@ impl LiveChatService {
         // Update metadata.
         let _ = self.session_metadata.upsert(&session_key, None).await;
         self.session_metadata
-            .touch(&session_key, history.len() as u32)
+            .touch(&session_key, persisted_history_len as u32)
             .await;
-
-        // If this is a web UI message on a channel-bound session, attach the
-        // channel reply target so the run-start path can route the final
-        // response back to the channel.
-        let is_web_message = conn_id.is_some()
-            && params.get("_session_key").is_none()
-            && params.get("channel").is_none();
-
-        if is_web_message
-            && let Some(entry) = self.session_metadata.get(&session_key).await
-            && let Some(ref binding_json) = entry.channel_binding
-            && let Ok(target) =
-                serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding_json)
-        {
-            // Only echo to channel if this is the active session for this chat.
-            let is_active = self
-                .session_metadata
-                .get_active_session(
-                    target.channel_type.as_str(),
-                    &target.account_id,
-                    &target.chat_id,
-                    target.thread_id.as_deref(),
-                )
-                .await
-                .map(|k| k == session_key)
-                .unwrap_or(true);
-
-            if is_active {
-                match serde_json::to_value(&target) {
-                    Ok(target_val) => {
-                        params["_channel_reply_target"] = target_val;
-                    },
-                    Err(e) => {
-                        warn!(
-                            session = %session_key,
-                            error = %e,
-                            "failed to serialize channel reply target"
-                        );
-                    },
-                }
-            }
-        }
 
         let deferred_channel_target =
             params
@@ -913,7 +907,7 @@ impl LiveChatService {
 
         // Capture user message index (0-based) so we can include assistant
         // message index in the "final" broadcast for client-side deduplication.
-        let user_message_index = history.len(); // user msg is at this index in the JSONL
+        let user_message_index = persisted_history_len; // user msg is at this index in the JSONL
 
         let provider_name = provider.name().to_string();
         let model_id = provider.id().to_string();
@@ -952,7 +946,7 @@ impl LiveChatService {
         let compact_threshold =
             compute_auto_compact_threshold(context_window, compaction_cfg.threshold_percent);
 
-        if estimated_next_input >= compact_threshold {
+        if private_context && estimated_next_input >= compact_threshold {
             let pre_compact_msg_count = history.len();
             let pre_compact_total = token_usage
                 .current_request_input_tokens
@@ -1156,6 +1150,7 @@ impl LiveChatService {
                         client_seq,
                         Some(Arc::clone(&active_partial_assistant)),
                         &terminal_runs,
+                        private_context,
                     )
                     .await
                 } else {
@@ -1190,6 +1185,7 @@ impl LiveChatService {
                         &terminal_runs,
                         sender_name,
                         Some(tool_controls),
+                        private_context,
                     )
                     .await
                 }
@@ -1264,7 +1260,8 @@ impl LiveChatService {
                     let max_tool_result_bytes = extraction_max_tool_result_bytes;
                     // A "turn" = user + assistant = 2 messages.
                     let turn_number = count / 2;
-                    if interval > 0
+                    if private_context
+                        && interval > 0
                         && turn_number > 0
                         && turn_number % interval == 0
                         && !stream_only
@@ -1331,7 +1328,8 @@ impl LiveChatService {
             // generation. We check >= 2 (not == 2) because agentic turns
             // with tool calls produce more than 2 stored messages.
             // `generate_title_if_needed` guards against duplicate titles.
-            if auto_title_enabled
+            if private_context
+                && auto_title_enabled
                 && let Ok(count) = session_store.count(&session_key_clone).await
                 && count >= 2
                 && !queued_replay

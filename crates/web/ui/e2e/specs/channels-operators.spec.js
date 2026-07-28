@@ -87,7 +87,7 @@ test.describe("Channel operators", () => {
 		// text equal to the value alone.
 		const operators = operatorsField(modal);
 		await expect(operators.getByText("owner-id")).toBeVisible();
-		await expect(modal.getByTestId("operators-hint")).toContainText("Only these senders can use /sh");
+		await expect(modal.getByTestId("operators-hint")).toContainText("Only these exact sender IDs");
 
 		// Add a second operator via the tag input.
 		const operatorsInput = operators.locator("input");
@@ -105,14 +105,16 @@ test.describe("Channel operators", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("hint explains the allowlist fallback when no operators are set", async ({ page }) => {
+	test("hint explains that an empty operator list fails closed", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/channels");
 		await waitForWsConnected(page);
 
 		const modal = await openEditModal(page, discordChannel({ allowlist: ["owner-id"], operators: [] }));
 
-		await expect(modal.getByTestId("operators-hint")).toContainText("the DM allowlist above is used instead");
+		await expect(modal.getByTestId("operators-hint")).toContainText(
+			"privileged commands and private host access are disabled for every sender",
+		);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -124,9 +126,7 @@ test.describe("Channel operators", () => {
 
 		const modal = await openEditModal(page, discordChannel({ allowlist: [], operators: [] }));
 
-		await expect(modal.getByTestId("operators-hint")).toContainText(
-			"shell access and host tools are disabled for every sender",
-		);
+		await expect(modal.getByTestId("operators-hint")).toContainText("disabled for every sender");
 
 		expect(pageErrors).toEqual([]);
 	});

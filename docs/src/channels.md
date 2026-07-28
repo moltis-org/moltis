@@ -236,23 +236,24 @@ allowlist = ["owner-id"]        # who may DM the bot
 operators = ["owner-id"]        # who may run /sh and host-reaching tools
 ```
 
-Operators may use `/sh`, shell command mode, `/approve`, `/deny`, and `/update`.
-Everyone else can chat normally but is refused shell access and runs the agent
-**without** the privileged tools:
+Operators may use channel slash commands, including `/sh`, `/approve`,
+`/deny`, and `/update`. Everyone else can chat normally but cannot run channel
+commands.
 
-- **Host reach** — `exec`, `process`, `write_file`, `browser`,
-  `sandbox_packages`, `nodes_*`, and the external agent bridges (`codex`,
-  `opencode`, `anthropic`)
-- **Your private state** — `memory_*`, `sessions_*`, `codebase_*`, `caldav`,
-  `teams_*`, `get_user_location`, checkpoints and session branching
-- **Escalation** — `update_channel_settings`, which edits allowlists and this
-  operator list
-- **Persistence and side effects** — `cron`, `webhook`, `spawn_*`,
-  `send_message`, `voice_call`, `speak`, `notify`, `home_assistant`, skill
-  authoring, and every MCP tool (`mcp_*`)
+Untrusted turns use a positive tool allowlist containing only `calc`,
+`web_search`, and `web_fetch`. Filesystem tools, arbitrary-path media tools,
+memory, sessions, MCP integrations, settings, messaging, persistence, and any
+newly added tool are unavailable unless explicitly reviewed for this list.
 
-Guests keep `web_search`, `web_fetch`, `calc`, `generate_image`, `send_image`,
-`send_document`, and the other informational tools.
+Every normal turn in a shared room is untrusted, including turns sent by an
+operator, because the shared history contains messages from other people.
+Operators can still use explicitly authorized deterministic commands such as
+`/sh`. In an operator's conversation that the adapter can prove is direct,
+normal agent turns may use the full configured tool set. Unknown chat kinds
+fail closed as shared.
+
+Untrusted turns also omit owner-private prompt context: user profile, project
+context, long-term memory, skills, and automatic memory extraction.
 
 Edit the list in the web UI under **Settings → Channels → Edit → Operators**.
 
@@ -262,33 +263,30 @@ clears the access gate. Without an `operators` list, anything gated only on
 "can this person talk to the bot" is open to the whole room.
 ```
 
-Resolution is **fail-closed**, in this order:
+Resolution is **fail-closed**:
 
 | `operators` | `allowlist` | Who is an operator |
 |-------------|-------------|--------------------|
-| non-empty | anything | only senders matching `operators` |
-| empty | non-empty | senders matching `allowlist` (compatibility fallback) |
-| empty | empty | **nobody** — shell access is disabled entirely |
+| non-empty | anything | only exact sender IDs in `operators` |
+| empty | anything | **nobody** — privileged commands are disabled |
 
 A sender with no identifier (for example an unattributed button callback) is
 never an operator.
 
-`operators` uses the same matching rules as allowlists (case-insensitive, glob
-wildcards, user-part matching for suffixed IDs like WhatsApp JIDs) with one
-deliberate difference: **an empty `operators` list matches nobody**, whereas an
-empty `allowlist` means "open".
+`operators` contains exact, case-sensitive platform sender IDs. Globs,
+usernames, and partial IDs do not grant privilege. For WhatsApp use the full
+JID; for Matrix use the full Matrix user ID.
 
 ```admonish note title="Interaction with OTP self-approval"
-OTP self-approval appends the approved sender to `allowlist`. On an account with
-no explicit `operators`, the fallback therefore promotes OTP-approved senders to
-operators. Set `operators` explicitly on any bot where people other than you can
-get onto the allowlist.
+OTP self-approval appends the approved sender to `allowlist` only. It never
+promotes the sender to operator; privileged access must be configured
+separately.
 ```
 
-Guest tool restrictions stack with the per-channel tool policy
+Untrusted tool restrictions stack with the per-channel tool policy
 (`channels.<type>.<account>.tools.groups.<chat_type>`), so you can tighten them
 further — but note that policy denials always win, so it cannot be used to hand
-a guest back a denied tool. Grant privileges by adding the sender to
+a turn a tool outside the safe allowlist. Grant command privileges by adding the sender to
 `operators`.
 
 ### OTP Self-Approval

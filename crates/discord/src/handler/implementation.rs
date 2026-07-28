@@ -1019,7 +1019,7 @@ impl EventHandler for Handler {
 
         if let Some((latitude, longitude)) = extract_location_coordinates(&body) {
             let resolved = sink
-                .resolve_pending_location(&reply_to, latitude, longitude)
+                .resolve_pending_location(&reply_to, Some(&peer_id), latitude, longitude)
                 .await;
             if resolved {
                 info!(

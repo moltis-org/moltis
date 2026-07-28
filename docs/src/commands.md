@@ -45,9 +45,10 @@ Available in web UI, all channels, and via the `sessions.fork` RPC. See
 | `/update [version]` | Update moltis (operators only) |
 
 ```admonish warning title="Shell access is restricted on channels"
-`/sh`, shell command mode, `/approve`, `/deny`, and `/update` require the sender
-to be an **operator** of the channel account. Non-operators are refused and also
-run the agent without host-reaching tools. See
+Channel slash commands other than `/help` require the sender to be an
+**operator** of the channel account. Non-operators can still chat normally. Shared-room agent turns use a
+small safe tool allowlist for every sender, including operators; explicit `/sh`
+remains separately authorized. See
 [Channels → Operators](channels.md#operators-privileged-senders).
 ```
 

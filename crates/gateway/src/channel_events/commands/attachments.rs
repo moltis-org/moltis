@@ -10,8 +10,8 @@ use crate::{
 };
 
 use super::super::{
-    default_channel_session_key, guest_tool_policy, resolve_channel_agent_id,
-    resolve_channel_session, resolve_sender_role, start_channel_typing_loop,
+    default_channel_session_key, resolve_channel_agent_id, resolve_channel_session,
+    resolve_sender_role, start_channel_typing_loop, untrusted_tool_policy,
 };
 
 pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
@@ -140,6 +140,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
         // Defer reply-target registration until chat.send() actually
         // starts executing this message (after semaphore acquire).
         "_channel_reply_target": &reply_to,
+        "_native_channel_request": true,
     });
     if let Some(ref documents) = meta.documents {
         params["_document_files"] = serde_json::json!(documents);
@@ -150,8 +151,10 @@ pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
     if !resolve_sender_role(state, &reply_to.account_id, meta.sender_id.as_deref())
         .await
         .is_operator()
+        || super::super::is_shared_channel_target(&reply_to)
     {
-        params["_tool_policy"] = guest_tool_policy();
+        params["_tool_policy"] = untrusted_tool_policy();
+        params["_private_context"] = serde_json::json!(false);
     }
 
     // Forward the channel's default model if configured

@@ -732,7 +732,7 @@ export function EditChannelModal(): VNode | null {
 				<label className="text-xs text-[var(--muted)]">Operators</label>
 				<AllowlistInput
 					value={operatorItems.value}
-					preserveAt={isMatrix}
+					preserveAt={true}
 					placeholder="Type a user ID and press Enter"
 					onChange={(v) => {
 						operatorItems.value = v;
@@ -740,10 +740,8 @@ export function EditChannelModal(): VNode | null {
 				/>
 				<p className="text-xs text-[var(--muted)]" data-testid="operators-hint">
 					{operatorItems.value.length > 0
-						? "Only these senders can use /sh, shell command mode, and tools that reach this host. Everyone else can still chat."
-						: allowlistItems.value.length > 0
-							? "No operators set — the DM allowlist above is used instead. Set operators explicitly for shared or public channels."
-							: "No operators and no DM allowlist — shell access and host tools are disabled for every sender on this channel."}
+						? "Only these exact sender IDs can use privileged commands. Shared-room agent turns remain restricted for everyone."
+						: "No operators set — privileged commands and private host access are disabled for every sender on this channel."}
 				</p>
 				{isMatrix && (
 					<>

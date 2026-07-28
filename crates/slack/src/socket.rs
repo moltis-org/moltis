@@ -324,14 +324,15 @@ async fn interaction_events_callback(
     drop(guard);
 
     // Extract the action_id from block_actions interaction type.
-    let (action_id, channel_id) = match &event {
+    let (action_id, channel_id, sender_id) = match &event {
         SlackInteractionEvent::BlockActions(ba) => {
             let action = ba.actions.as_ref().and_then(|a| a.first());
             let channel = ba.channel.as_ref().map(|c| c.id.to_string());
-            match (action, channel) {
-                (Some(act), Some(ch)) => (act.action_id.to_string(), ch),
+            let user = ba.user.as_ref().map(|user| user.id.to_string());
+            match (action, channel, user) {
+                (Some(act), Some(ch), Some(user)) => (act.action_id.to_string(), ch, user),
                 _ => {
-                    debug!("block_actions missing action or channel");
+                    debug!("block_actions missing action, channel, or user");
                     return Ok(());
                 },
             }
@@ -360,7 +361,10 @@ async fn interaction_events_callback(
             message_id: None,
             thread_id: None,
         };
-        match sink.dispatch_interaction(&action_id, reply_to).await {
+        match sink
+            .dispatch_interaction(&action_id, reply_to, Some(&sender_id))
+            .await
+        {
             Ok(_response) => {
                 // Response already sent by the gateway.
             },

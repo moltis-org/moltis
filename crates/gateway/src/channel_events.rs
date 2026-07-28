@@ -27,16 +27,7 @@ pub use moltis_channels::operators::ChannelSenderRole;
 /// For Telegram forum topics the thread ID is appended so each topic gets its
 /// own session: `telegram:bot:chat:thread`.
 fn default_channel_session_key(target: &ChannelReplyTarget) -> String {
-    match &target.thread_id {
-        Some(tid) => format!(
-            "{}:{}:{}:{}",
-            target.channel_type, target.account_id, target.chat_id, tid
-        ),
-        None => format!(
-            "{}:{}:{}",
-            target.channel_type, target.account_id, target.chat_id
-        ),
-    }
+    target.default_session_key()
 }
 
 /// Resolve the active session key for a channel chat.
@@ -122,8 +113,7 @@ const SHELL_DENIED_MESSAGE: &str = "Shell access is restricted to this bot's ope
 /// host-reaching tools) require the sender to be an **operator**. Passing the
 /// channel access gate is not enough: in a guild or group chat every member
 /// clears that gate, so privilege is decided by the account's `operators` list
-/// (falling back to the DM allowlist for accounts configured before the list
-/// existed).
+/// from the account's explicit `operators` list.
 ///
 /// Fail-closed at every step — an unknown account, a missing registry, or an
 /// unidentified sender all resolve to [`ChannelSenderRole::Guest`].
@@ -138,22 +128,24 @@ async fn resolve_sender_role(
     let Some(config) = registry.account_config(account_id).await else {
         return ChannelSenderRole::Guest;
     };
-    moltis_channels::operators::resolve_sender_role(
-        sender_id,
-        config.operators(),
-        config.allowlist(),
-    )
+    moltis_channels::operators::resolve_sender_role(sender_id, config.operators())
 }
 
-/// Tool policy applied to channel turns from non-operator senders.
+/// Tool policy applied to untrusted channel turns.
 ///
 /// Passed to `chat.send` as `_tool_policy`, which filters the tool registry
 /// for that run. It stacks with the configured policy layers — denials there
 /// still apply — so this can only ever remove tools, never add them.
-fn guest_tool_policy() -> serde_json::Value {
+fn untrusted_tool_policy() -> serde_json::Value {
     serde_json::json!({
-        "deny": moltis_channels::operators::DEFAULT_GUEST_DENIED_TOOLS,
+        "allow": moltis_channels::operators::DEFAULT_UNTRUSTED_ALLOWED_TOOLS,
     })
+}
+
+/// Unknown chat kinds are treated as shared. Only channel types that can prove
+/// a one-to-one conversation may expose private prompt context.
+fn is_shared_channel_target(reply_to: &ChannelReplyTarget) -> bool {
+    reply_to.channel_type.is_shared_chat(&reply_to.chat_id)
 }
 
 /// Whether `sender_id` may run privileged channel commands.
@@ -545,26 +537,30 @@ impl ChannelEventSink for GatewayChannelEventSink {
         &self,
         callback_data: &str,
         reply_to: ChannelReplyTarget,
+        sender_id: Option<&str>,
     ) -> ChannelResult<String> {
-        commands::dispatch_interaction(&self.state, callback_data, reply_to).await
+        commands::dispatch_interaction(&self.state, callback_data, reply_to, sender_id).await
     }
 
     async fn update_location(
         &self,
         reply_to: &ChannelReplyTarget,
+        sender_id: Option<&str>,
         latitude: f64,
         longitude: f64,
     ) -> bool {
-        commands::update_location(&self.state, reply_to, latitude, longitude).await
+        commands::update_location(&self.state, reply_to, sender_id, latitude, longitude).await
     }
 
     async fn resolve_pending_location(
         &self,
         reply_to: &ChannelReplyTarget,
+        sender_id: Option<&str>,
         latitude: f64,
         longitude: f64,
     ) -> bool {
-        commands::resolve_pending_location(&self.state, reply_to, latitude, longitude).await
+        commands::resolve_pending_location(&self.state, reply_to, sender_id, latitude, longitude)
+            .await
     }
 
     async fn dispatch_to_chat_with_attachments(
