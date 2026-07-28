@@ -2,7 +2,7 @@
 
 Moltis can bind a chat session to an external CLI coding agent. When a session is bound, `chat.send` persists the user turn in Moltis, sends the prompt and recent session context to the external process, streams the CLI output back to the web UI, and persists the assistant response.
 
-ACP, the Agent Client Protocol, is a JSON-RPC protocol for connecting editor or coding agents to a host application. Moltis can run ACP-compatible command-line agents as external agents, route their permission prompts through Moltis approvals, and show them in the session header selector as `ACP: <agent>`. The canonical ACP agent catalog is https://agentclientprotocol.com/get-started/agents.
+ACP, the Agent Client Protocol, is a JSON-RPC protocol for connecting editor or coding agents to a host application. Moltis can run ACP-compatible command-line agents as external agents, route their permission prompts through Moltis approvals, and show them alongside provider-backed models in the chat composer selector as `ACP: <agent>`. The canonical ACP agent catalog is https://agentclientprotocol.com/get-started/agents.
 
 Supported agent kinds:
 
@@ -11,12 +11,12 @@ Supported agent kinds:
 | `claude-code` | `claude -p --output-format json` | Print mode with `session_id` capture; later turns add `--resume <id>`. |
 | `codex` | `codex app-server` | Persistent app-server process; Moltis reuses the Codex `threadId` across turns. |
 | `acp` | `acp` | Persistent ACP JSON-RPC stdio session configured by `[external_agents.agents.acp]`. |
-| `acp-copilot` | `copilot --acp` | Named ACP session shown as `ACP: Copilot` in the session header. |
+| `acp-copilot` | `copilot --acp` | Named ACP session shown as `ACP: Copilot` in the chat model selector. |
 | `acp-codex` | `codex-acp` | Codex via Zed's ACP adapter, shown as `ACP: Codex`. |
 | `acp-claude` | `claude-agent-acp` | Claude Agent SDK via https://github.com/agentclientprotocol/claude-agent-acp, shown as `ACP: Claude`. |
 | `acp-pi` | `pi-acp` | Pi via the `pi-acp` adapter, shown as `ACP: Pi`. |
-| `acp-opencode` | `opencode acp` | Named ACP session shown as `ACP: opencode` in the session header. |
-| `acp-gemini` | `gemini --experimental-acp` | Named ACP session shown as `ACP: Gemini` in the session header. |
+| `acp-opencode` | `opencode acp` | Named ACP session shown as `ACP: opencode` in the chat model selector. |
+| `acp-gemini` | `gemini --experimental-acp` | Named ACP session shown as `ACP: Gemini` in the chat model selector. |
 | `acp-augment` | `auggie --acp` | Augment/Auggie ACP mode. |
 | `acp-kiro` | `kiro-cli acp` | Kiro CLI ACP mode. |
 | `acp-openclaw` | `openclaw acp` | OpenClaw ACP bridge. |
@@ -45,7 +45,7 @@ External agent discovery is enabled by default. On startup, Moltis checks for th
 | `ACP: Stakpak` | `acp-stakpak` | `stakpak acp` |
 | `ACP: fast-agent` | `acp-fast-agent` | `fast-agent-acp` |
 
-Installed ACP agents appear automatically in each chat session's external-agent selector. Missing commands are hidden from the selector, so a fresh install with no ACP agents available continues to show only the normal Moltis agent.
+Installed ACP agents appear automatically alongside normal models in each chat session's composer selector. Missing commands are hidden, so a fresh install with no ACP agents available continues to show only provider-backed models.
 
 Default detection only checks whether the named command exists on Moltis' `$PATH`; it does not verify the binary publisher or installation source. Only install ACP agents from trusted sources, keep untrusted directories out of the service `$PATH`, and use explicit `binary = "/absolute/path/to/agent"` overrides when you want to pin the executable Moltis may launch after a user selects that agent for a session.
 
@@ -164,7 +164,7 @@ binary = "codex"
 
 ## Select an ACP agent for a session
 
-The session header in the web UI exposes an external-agent selector when agents are configured. ACP entries are labeled with the protocol and agent name, such as `ACP: Copilot`. Select `Moltis agent` to unbind and return the session to the normal provider-backed Moltis agent.
+The model selector below the chat text field includes installed ACP agents, labeled with the protocol and agent name, such as `ACP: Copilot`. Selecting an ACP entry binds that chat session to the external agent. Select any normal model in the same menu to unbind the ACP agent and return the session to the provider-backed Moltis agent.
 
 Binding is per session. You can bind one chat session to `ACP: Copilot`, another to `ACP: Claude`, and leave other sessions on the normal Moltis agent.
 
@@ -180,7 +180,7 @@ Moltis advertises ACP file-system and terminal capabilities to agents. File read
 
 - If an ACP agent does not appear in the selector, confirm `[external_agents] enabled = true`, restart Moltis, and verify the configured `binary` exists on `$PATH` or is an absolute path.
 - If an ACP entry appears as unavailable, run the configured command manually from the same shell or service environment that starts Moltis.
-- If the wrong ACP agent is bound, use the session header selector and choose the desired `ACP: <agent>` entry; choose `Moltis agent` to unbind.
+- If the wrong ACP agent is bound, use the selector below the chat text field and choose the desired `ACP: <agent>` entry; choose a normal model to unbind.
 - If the agent needs project-local context, set `working_dir` in that agent's config entry.
 
 Current limitations:
