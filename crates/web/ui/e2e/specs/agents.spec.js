@@ -509,6 +509,7 @@ test.describe("Agents settings page", () => {
 		await waitForWsConnected(page);
 		await createSession(page);
 		const sessionKey = await page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "");
+		await page.evaluate(() => window.__moltis_stores?.modelStore?.select("e2e/model"));
 
 		await expect(page.getByTestId("external-agent-picker")).toHaveCount(0);
 		const picker = page.locator("#modelComboBtn");
