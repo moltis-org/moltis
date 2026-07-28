@@ -831,7 +831,7 @@ pub async fn send_push_notification(
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
-#[path = "push_concurrency_tests.rs"]
+#[path = "concurrency_tests.rs"]
 mod concurrency_tests;
 
 #[cfg(test)]
