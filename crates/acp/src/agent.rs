@@ -14,14 +14,16 @@ use std::{
 use {
     agent_client_protocol::{self as acp, Client as _},
     async_trait::async_trait,
-    tokio::sync::mpsc,
 };
 
 use crate::{
-    backend::{AcpBackend, TurnUpdates},
+    backend::{AcpBackend, MAX_TURN_UPDATE_BYTES, TurnUpdates, validate_history},
     session::{ACP_SESSION_NAMESPACE, SessionKey, SessionRegistry},
     setup::SessionSetup,
 };
+
+const MAX_PROMPT_BLOCKS: usize = 256;
+const MAX_PROMPT_BYTES: usize = 1024 * 1024;
 
 /// Protocol handler bridging an ACP client to a Moltis backend.
 pub struct MoltisAgent {
@@ -82,7 +84,12 @@ impl MoltisAgent {
 /// Blocks outside the advertised capabilities are rejected instead of being
 /// silently replaced or dropped.
 pub fn prompt_text(blocks: &[acp::ContentBlock]) -> acp::Result<String> {
-    blocks
+    if blocks.len() > MAX_PROMPT_BLOCKS {
+        return Err(acp::Error::invalid_params().data(format!(
+            "prompt has more than {MAX_PROMPT_BLOCKS} content blocks"
+        )));
+    }
+    let text = blocks
         .iter()
         .map(|block| match block {
             acp::ContentBlock::Text(text) => Ok(text.text.clone()),
@@ -90,8 +97,14 @@ pub fn prompt_text(blocks: &[acp::ContentBlock]) -> acp::Result<String> {
             _ => Err(acp::Error::invalid_params()
                 .data("prompt contains content the agent did not advertise")),
         })
-        .collect::<acp::Result<Vec<_>>>()
-        .map(|parts| parts.join("\n"))
+        .collect::<acp::Result<Vec<_>>>()?
+        .join("\n");
+    if text.len() > MAX_PROMPT_BYTES {
+        return Err(
+            acp::Error::invalid_params().data(format!("prompt exceeds {MAX_PROMPT_BYTES} bytes"))
+        );
+    }
+    Ok(text)
 }
 
 #[async_trait(?Send)]
@@ -134,6 +147,9 @@ impl acp::Agent for MoltisAgent {
         &self,
         args: acp::NewSessionRequest,
     ) -> acp::Result<acp::NewSessionResponse> {
+        self.sessions.ensure_capacity()?;
+        let setup_key = SessionKey::namespaced(format!("setup-{}", self.sessions.next_local_id()));
+        let _setup_guard = self.sessions.begin_setup(&setup_key)?;
         let setup = SessionSetup::new(args.cwd, args.mcp_servers).await?;
         let key = self.backend.create_session(&setup).await.map_err(|error| {
             acp::Error::internal_error().data(format!("failed to create session: {error}"))
@@ -142,11 +158,15 @@ impl acp::Agent for MoltisAgent {
         // client an id that `load_session` must then refuse. That is our bug,
         // not the client's, so it is an internal error rather than bad input.
         if !key.is_namespaced() {
+            let _ = self.backend.discard_session(&key).await;
             return Err(acp::Error::internal_error().data(format!(
                 "backend created session {key} outside the `{ACP_SESSION_NAMESPACE}:` namespace"
             )));
         }
-        self.sessions.insert(key.clone());
+        if let Err(error) = self.sessions.insert(key.clone()) {
+            let _ = self.backend.discard_session(&key).await;
+            return Err(error);
+        }
         Ok(acp::NewSessionResponse::new(acp::SessionId::from(key)))
     }
 
@@ -171,6 +191,7 @@ impl acp::Agent for MoltisAgent {
                 "session id {key} is outside the `{ACP_SESSION_NAMESPACE}:` namespace"
             )));
         }
+        self.sessions.ensure_capacity_for(&key)?;
         let _setup_guard = self.sessions.begin_setup(&key)?;
         let setup = SessionSetup::new(args.cwd, args.mcp_servers).await?;
         let history = self
@@ -178,19 +199,35 @@ impl acp::Agent for MoltisAgent {
             .load_session(&key, &setup)
             .await
             .map_err(|error| {
-                acp::Error::invalid_params().data(format!("failed to load session {key}: {error}"))
+                let detail = format!("failed to load session {key}: {error}");
+                if error.is::<crate::backend::SessionNotFound>() {
+                    acp::Error::invalid_params().data(detail)
+                } else {
+                    acp::Error::internal_error().data(detail)
+                }
             })?;
 
         // The spec asks the agent to stream the whole conversation back before
         // resolving the request.
         let connection = self.connection()?;
+        if let Err(error) = validate_history(&history) {
+            let _ = self.backend.discard_session(&key).await;
+            return Err(acp::Error::internal_error()
+                .data(format!("cannot replay session history: {error}")));
+        }
         for update in history {
             if !Self::notify(&connection, &args.session_id, update).await {
+                // The closed connection immediately drives backend shutdown,
+                // which owns cleanup. Removing the runtime here would race that
+                // shutdown while its MCP process is still being stopped.
                 return Err(acp::Error::internal_error()
                     .data("ACP client disconnected during session replay"));
             }
         }
-        self.sessions.insert(key);
+        if let Err(error) = self.sessions.insert(key.clone()) {
+            let _ = self.backend.discard_session(&key).await;
+            return Err(error);
+        }
         Ok(acp::LoadSessionResponse::new())
     }
 
@@ -202,21 +239,38 @@ impl acp::Agent for MoltisAgent {
         let connection = self.connection()?;
         self.sessions.clear_cancelled(&key);
 
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let turn = self.backend.prompt(&key, text, TurnUpdates::new(tx));
+        // Memory is bounded by `TurnUpdates`' byte budget. An unbounded item
+        // queue avoids rejecting a valid burst made up of many tiny deltas.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let updates = TurnUpdates::new(tx);
+        let update_status = updates.clone();
+        let turn = self.backend.prompt(&key, text, updates);
         let mut turn = std::pin::pin!(turn);
 
         // Forward updates while the turn runs, on this same task. Doing it here
         // rather than in a spawned forwarder means a backend that leaks a
         // `TurnUpdates` clone cannot wedge the response: we stop draining the
         // moment the turn resolves.
+        let mut update_bytes = 0usize;
+        let mut forwarding = true;
+        let mut update_limit_exceeded = false;
         let outcome = loop {
             tokio::select! {
                 biased;
                 Some(update) = rx.recv() => {
-                    if !Self::notify(&connection, &args.session_id, update).await {
+                    if !forwarding {
+                        continue;
+                    }
+                    update_bytes = update_bytes.saturating_add(
+                        serde_json::to_vec(&update).map_or(MAX_TURN_UPDATE_BYTES + 1, |value| value.len())
+                    );
+                    if update_bytes > MAX_TURN_UPDATE_BYTES {
+                        update_limit_exceeded = true;
+                        forwarding = false;
                         let _ = self.backend.cancel(&key).await;
-                        break Ok(acp::StopReason::Cancelled);
+                    } else if !Self::notify(&connection, &args.session_id, update).await {
+                        forwarding = false;
+                        let _ = self.backend.cancel(&key).await;
                     }
                 },
                 result = &mut turn => break result,
@@ -224,10 +278,22 @@ impl acp::Agent for MoltisAgent {
         };
 
         // Flush anything already queued so no delta lands after the response.
-        while let Ok(update) = rx.try_recv() {
+        while forwarding && let Ok(update) = rx.try_recv() {
+            update_bytes = update_bytes.saturating_add(
+                serde_json::to_vec(&update).map_or(MAX_TURN_UPDATE_BYTES + 1, |value| value.len()),
+            );
+            if update_bytes > MAX_TURN_UPDATE_BYTES {
+                update_limit_exceeded = true;
+                break;
+            }
             if !Self::notify(&connection, &args.session_id, update).await {
                 break;
             }
+        }
+
+        if update_limit_exceeded || update_status.limit_exceeded() {
+            return Err(acp::Error::internal_error()
+                .data(format!("turn updates exceed {MAX_TURN_UPDATE_BYTES} bytes")));
         }
 
         let cancelled = self.sessions.take_cancelled(&key);
@@ -282,5 +348,11 @@ mod tests {
         }))
         .expect("valid ACP image block");
         assert!(prompt_text(&[image]).is_err());
+    }
+
+    #[test]
+    fn prompt_text_rejects_oversized_input() {
+        let oversized = "x".repeat(MAX_PROMPT_BYTES + 1);
+        assert!(prompt_text(&[acp::ContentBlock::from(oversized)]).is_err());
     }
 }

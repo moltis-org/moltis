@@ -347,7 +347,7 @@ pub(crate) async fn run_streaming(
                         run_id,
                         input_tokens = usage.input_tokens,
                         output_tokens = usage.output_tokens,
-                        response = %accumulated,
+                        response_bytes = accumulated.len(),
                         silent = is_silent,
                         "chat stream done"
                     );

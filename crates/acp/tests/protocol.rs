@@ -166,9 +166,15 @@ impl AcpBackend for ResumableBackend {
 
     async fn load_session(
         &self,
-        _key: &SessionKey,
+        key: &SessionKey,
         _setup: &SessionSetup,
     ) -> anyhow::Result<Vec<acp::SessionUpdate>> {
+        if key.as_str() == "acp:missing" {
+            return Err(moltis_acp::SessionNotFound.into());
+        }
+        if key.as_str() == "acp:broken" {
+            return Err(anyhow::anyhow!("history store unavailable"));
+        }
         Ok(vec![
             acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(acp::ContentBlock::from(
                 "earlier question".to_string(),
@@ -592,6 +598,34 @@ fn load_session_is_method_not_found_when_unsupported() {
         .expect("session/load timed out")
         .expect_err("echo backend cannot resume");
         assert_eq!(error.code, acp::Error::method_not_found().code);
+    });
+}
+
+#[test]
+fn load_session_classifies_missing_and_operational_failures() {
+    run_local(async {
+        let harness = connect(Arc::new(ResumableBackend), TestClient::default());
+        initialize(&harness).await;
+
+        let missing = harness
+            .client
+            .load_session(acp::LoadSessionRequest::new(
+                acp::SessionId::from("acp:missing".to_string()),
+                std::env::temp_dir(),
+            ))
+            .await
+            .expect_err("missing session should fail");
+        assert_eq!(missing.code, acp::Error::invalid_params().code);
+
+        let broken = harness
+            .client
+            .load_session(acp::LoadSessionRequest::new(
+                acp::SessionId::from("acp:broken".to_string()),
+                std::env::temp_dir(),
+            ))
+            .await
+            .expect_err("history read failure should fail");
+        assert_eq!(broken.code, acp::Error::internal_error().code);
     });
 }
 

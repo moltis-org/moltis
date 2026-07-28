@@ -1111,7 +1111,7 @@ pub(crate) async fn run_with_tools(
                 run_id,
                 iterations,
                 tool_calls = tool_calls_made,
-                response = %display_text,
+                response_bytes = display_text.len(),
                 silent = is_silent,
                 "agent run complete"
             );

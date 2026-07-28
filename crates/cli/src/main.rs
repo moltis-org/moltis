@@ -59,7 +59,8 @@ use {
     moltis_gateway::logs::{EnabledLogLevels, LogBroadcastLayer, LogBuffer},
     tracing::info,
     tracing_subscriber::{
-        EnvFilter,
+        EnvFilter, Layer as _,
+        filter::filter_fn,
         fmt::{self, writer::BoxMakeWriter},
         layer::SubscriberExt,
         util::SubscriberInitExt,
@@ -315,11 +316,33 @@ fn command_reserves_stdout(command: Option<&Commands>) -> bool {
     false
 }
 
+fn telemetry_target_allowed(target: &str, protocol_payloads_possible: bool) -> bool {
+    if target.starts_with("agent_client_protocol") {
+        return false;
+    }
+    if !protocol_payloads_possible {
+        return true;
+    }
+    ![
+        "moltis_agents",
+        "moltis_chat",
+        "moltis_mcp",
+        "moltis_providers",
+    ]
+    .iter()
+    .any(|prefix| target.starts_with(prefix))
+}
+
 /// Initialise tracing and optionally attach a [`LogBroadcastLayer`] that
 /// captures events into an in-memory ring buffer for the web UI.
 fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
-    let filter = EnvFilter::try_from_default_env()
+    let mut filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| default_telemetry_filter(&cli.log_level));
+    // The ACP SDK logs complete JSON-RPC payloads, including prompts and MCP
+    // environment values. Never enable that target, even under RUST_LOG=trace.
+    if let Ok(directive) = "agent_client_protocol=off".parse() {
+        filter = filter.add_directive(directive);
+    }
 
     if let Some(ref buffer) = log_buffer {
         let levels = EnabledLogLevels::from_max_level_hint(filter.max_level_hint());
@@ -328,11 +351,10 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
 
     let registry = tracing_subscriber::registry().with(filter);
 
-    // Optionally attach the in-memory capture layer.
-    let log_layer = log_buffer.map(LogBroadcastLayer::new);
-
     // Boxed so both destinations share one layer type.
     let stdout_reserved = command_reserves_stdout(cli.command.as_ref());
+    // Apply the payload filter independently to the in-memory layer. EnvFilter
+    // specificity must never be able to re-enable protocol payload targets.
     let writer = if stdout_reserved {
         BoxMakeWriter::new(std::io::stderr)
     } else {
@@ -346,9 +368,16 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
                     .json()
                     .with_target(true)
                     .with_thread_ids(false)
-                    .with_writer(writer),
+                    .with_writer(writer)
+                    .with_filter(filter_fn(move |metadata| {
+                        telemetry_target_allowed(metadata.target(), stdout_reserved)
+                    })),
             )
-            .with(log_layer)
+            .with(log_buffer.map(|buffer| {
+                LogBroadcastLayer::new(buffer).with_filter(filter_fn(move |metadata| {
+                    telemetry_target_allowed(metadata.target(), stdout_reserved)
+                }))
+            }))
             .init();
     } else {
         registry
@@ -358,9 +387,16 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
                     .with_thread_ids(false)
                     // ANSI escapes are terminal decoration, never wire content.
                     .with_ansi(!stdout_reserved)
-                    .with_writer(writer),
+                    .with_writer(writer)
+                    .with_filter(filter_fn(move |metadata| {
+                        telemetry_target_allowed(metadata.target(), stdout_reserved)
+                    })),
             )
-            .with(log_layer)
+            .with(log_buffer.map(|buffer| {
+                LogBroadcastLayer::new(buffer).with_filter(filter_fn(move |metadata| {
+                    telemetry_target_allowed(metadata.target(), stdout_reserved)
+                }))
+            }))
             .init();
     }
 }
@@ -669,7 +705,7 @@ async fn handle_skills(action: SkillAction) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::default_telemetry_filter;
+    use crate::{default_telemetry_filter, telemetry_target_allowed};
 
     fn manifest_includes_feature(manifest: &str, feature: &str, dependency: &str) -> bool {
         let Some(start) = manifest.find(&format!("{feature} = [")) else {
@@ -689,6 +725,18 @@ mod tests {
         assert!(filter.contains("matrix_sdk=warn"));
         assert!(filter.contains("matrix_sdk_base=warn"));
         assert!(filter.contains("matrix_sdk_crypto=error"));
+    }
+
+    #[test]
+    fn protocol_telemetry_filter_cannot_capture_payload_targets() {
+        assert!(!telemetry_target_allowed(
+            "agent_client_protocol::rpc",
+            false
+        ));
+        assert!(!telemetry_target_allowed("moltis_providers::openai", true));
+        assert!(!telemetry_target_allowed("moltis_mcp::transport", true));
+        assert!(telemetry_target_allowed("moltis_cli::acp_backend", true));
+        assert!(telemetry_target_allowed("moltis_providers::openai", false));
     }
 
     #[test]

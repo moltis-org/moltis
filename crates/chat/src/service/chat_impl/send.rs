@@ -363,9 +363,9 @@ impl LiveChatService {
 
             info!(
                 run_id = %run_id,
-                user_message = %text,
+                user_message_bytes = text.len(),
                 session = %session_key,
-                command = %shell_command,
+                command_bytes = shell_command.len(),
                 client_seq = ?client_seq,
                 mode = "explicit_shell",
                 "chat.send"
@@ -959,7 +959,7 @@ impl LiveChatService {
 
         info!(
             run_id = %run_id,
-            user_message = %text,
+            user_message_bytes = text.len(),
             model = provider.id(),
             stream_only,
             session = %session_key,

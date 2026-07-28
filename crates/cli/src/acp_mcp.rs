@@ -10,9 +10,15 @@ use {
 
 use moltis_acp::SessionSetup;
 
+const MAX_PROVIDER_TOOL_NAME_BYTES: usize = 64;
+
 pub struct SessionMcpRuntime {
     manager: Arc<McpManager>,
     tools: Arc<RwLock<ToolRegistry>>,
+}
+
+fn runtime_server_name(namespace: &str, index: usize) -> String {
+    format!("acp_{namespace}_{index}")
 }
 
 impl SessionMcpRuntime {
@@ -26,7 +32,9 @@ impl SessionMcpRuntime {
             current_dir: Some(setup.cwd().to_path_buf()),
             inherit_parent_env: false,
         };
-        for server in setup.mcp_servers() {
+        let mut namespace = uuid::Uuid::new_v4().simple().to_string();
+        namespace.truncate(12);
+        for (index, server) in setup.mcp_servers().iter().enumerate() {
             let acp::McpServer::Stdio(server) = server else {
                 manager.shutdown_all().await;
                 anyhow::bail!("only stdio MCP servers are supported");
@@ -48,8 +56,11 @@ impl SessionMcpRuntime {
                 transport: TransportType::Stdio,
                 ..McpServerConfig::default()
             };
+            // Client MCP identities must not collide with configured servers or
+            // satisfy an agent preset's allowlist by borrowing a trusted name.
+            let runtime_name = runtime_server_name(&namespace, index);
             if let Err(error) = manager
-                .start_server_with_options(&server.name, &config, &options)
+                .start_server_with_options(&runtime_name, &config, &options)
                 .await
             {
                 manager.shutdown_all().await;
@@ -59,6 +70,22 @@ impl SessionMcpRuntime {
 
         let tools = Arc::new(RwLock::new(ToolRegistry::new()));
         moltis_mcp_agent_bridge::sync_mcp_tools(&manager, &tools).await;
+        let oversized_tool = {
+            let registry = tools.read().await;
+            registry.list_schemas().into_iter().find_map(|schema| {
+                schema
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|name| name.len() > MAX_PROVIDER_TOOL_NAME_BYTES)
+                    .map(str::to_owned)
+            })
+        };
+        if let Some(name) = oversized_tool {
+            manager.shutdown_all().await;
+            anyhow::bail!(
+                "client MCP tool name exceeds {MAX_PROVIDER_TOOL_NAME_BYTES} bytes: {name}"
+            );
+        }
         Ok(Some(Self { manager, tools }))
     }
 
@@ -68,5 +95,20 @@ impl SessionMcpRuntime {
 
     pub async fn shutdown(self) {
         self.manager.shutdown_all().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_mcp_servers_receive_session_local_names() {
+        let first = runtime_server_name("0123456789ab", 0);
+        let second = runtime_server_name("abcdef012345", 0);
+        assert_eq!(first, "acp_0123456789ab_0");
+        assert_ne!(first, second);
+        assert_ne!(first, "github");
+        assert!(first.len() <= 18);
     }
 }

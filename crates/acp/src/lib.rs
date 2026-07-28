@@ -27,7 +27,7 @@ pub mod setup;
 
 pub use crate::{
     agent::MoltisAgent,
-    backend::{AcpBackend, BackendCapabilities, TurnUpdates},
+    backend::{AcpBackend, BackendCapabilities, SessionNotFound, TurnUpdates, validate_history},
     echo::EchoBackend,
     server::{run_stdio, serve},
     session::{ACP_SESSION_NAMESPACE, SessionKey, SessionRegistry},

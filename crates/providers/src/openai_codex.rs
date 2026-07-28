@@ -494,7 +494,10 @@ impl LlmProvider for OpenAiCodexProvider {
         }
         crate::openai::provider::core::apply_openai_responses_tool_choice(&mut body, options)?;
 
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai-codex request body");
+        trace!(
+            body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()),
+            "openai-codex request body prepared"
+        );
 
         let http_resp = self
             .post_responses_request_with_fallback(&token, &account_id, body)
@@ -703,7 +706,7 @@ impl LlmProvider for OpenAiCodexProvider {
                 tools_count = tools.len(),
                 "openai-codex stream_with_tools request"
             );
-            debug!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai-codex stream request body");
+            debug!(body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()), "openai-codex stream request body prepared");
 
             let resp = match self
                 .post_responses_request_with_fallback(&token, &account_id, body)

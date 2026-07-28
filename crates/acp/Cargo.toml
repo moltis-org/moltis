@@ -11,14 +11,15 @@ tracing = ["dep:tracing"]
 
 [dependencies]
 agent-client-protocol = { workspace = true }
-anyhow         = { workspace = true }
-async-trait    = { workspace = true }
-futures        = { workspace = true }
-moltis-metrics = { optional = true, workspace = true }
-serde_json     = { workspace = true }
-tokio          = { workspace = true }
-tokio-util     = { features = ["compat"], workspace = true }
-tracing        = { optional = true, workspace = true }
+anyhow                = { workspace = true }
+async-trait           = { workspace = true }
+bytes                 = { workspace = true }
+futures               = { workspace = true }
+moltis-metrics        = { optional = true, workspace = true }
+serde_json            = { workspace = true }
+tokio                 = { workspace = true }
+tokio-util            = { features = ["codec", "compat", "io"], workspace = true }
+tracing               = { optional = true, workspace = true }
 
 [dev-dependencies]
 # `tracing` is here as well as behind the optional feature above: the

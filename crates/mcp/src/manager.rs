@@ -185,7 +185,7 @@ impl McpManager {
         for (name, config) in enabled {
             match self.start_server(&name, &config).await {
                 Ok(()) => started.push(name),
-                Err(e) => warn!(server = %name, error = %e, "failed to start MCP server"),
+                Err(_) => warn!(server = %name, "failed to start MCP server"),
             }
         }
         started

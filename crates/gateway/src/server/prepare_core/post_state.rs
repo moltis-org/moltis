@@ -10,7 +10,9 @@ use {
 
 mod credential_env;
 
-use credential_env::{CredentialEnvVarProvider, ensure_sandbox_api_key};
+use credential_env::{
+    CredentialEnvVarProvider, ensure_sandbox_api_key, gateway_credentials_allowed,
+};
 
 use {
     moltis_providers::{PendingDiscoveries, ProviderRegistry},
@@ -661,10 +663,8 @@ pub(super) async fn complete_startup(
         // Only inject when the sandbox network policy allows host access
         // (Trusted or Bypass). With NetworkPolicy::Blocked the container
         // has --network=none and host.docker.internal won't resolve.
-        let sandbox_network_allows_host = !matches!(
-            sandbox_router.config().network,
-            moltis_tools::sandbox::NetworkPolicy::Blocked
-        );
+        let sandbox_network_allows_host =
+            gateway_credentials_allowed(profile, &sandbox_router.config().network);
         let sandbox_gateway_url = if sandbox_network_allows_host {
             let scheme = if tls_enabled_for_gateway {
                 "https"

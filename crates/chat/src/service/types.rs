@@ -263,6 +263,20 @@ pub struct LiveChatService {
 }
 
 impl LiveChatService {
+    /// Reads persisted history with strict pre-allocation bounds for non-UI
+    /// protocol surfaces such as ACP session replay.
+    pub async fn read_session_history_bounded(
+        &self,
+        session_key: &str,
+        max_messages: usize,
+        max_bytes: usize,
+    ) -> anyhow::Result<Vec<Value>> {
+        self.session_store
+            .read_bounded(session_key, max_messages, max_bytes)
+            .await
+            .map_err(Into::into)
+    }
+
     pub fn new(
         providers: Arc<RwLock<ProviderRegistry>>,
         model_store: Arc<RwLock<DisabledModelsStore>>,

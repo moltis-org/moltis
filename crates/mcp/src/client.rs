@@ -91,7 +91,7 @@ impl McpClient {
         };
 
         if let Err(e) = client.initialize().await {
-            warn!(server = %server_name, error = %e, "MCP initialize handshake failed");
+            warn!(server = %server_name, "MCP initialize handshake failed");
             return Err(e);
         }
 
@@ -128,7 +128,7 @@ impl McpClient {
         };
 
         if let Err(e) = client.initialize().await {
-            warn!(server = %server_name, error = %e, "remote MCP initialize handshake failed");
+            warn!(server = %server_name, "remote MCP initialize handshake failed");
             return Err(e);
         }
         Ok(client)
@@ -159,7 +159,7 @@ impl McpClient {
         };
 
         if let Err(e) = client.initialize().await {
-            warn!(server = %server_name, error = %e, "legacy SSE MCP initialize handshake failed");
+            warn!(server = %server_name, "legacy SSE MCP initialize handshake failed");
             return Err(e);
         }
 
@@ -197,7 +197,7 @@ impl McpClient {
         };
 
         if let Err(e) = client.initialize().await {
-            warn!(server = %server_name, error = %e, "legacy SSE (auth) MCP initialize handshake failed");
+            warn!(server = %server_name, "legacy SSE (auth) MCP initialize handshake failed");
             return Err(e);
         }
 
@@ -234,7 +234,7 @@ impl McpClient {
         };
 
         if let Err(e) = client.initialize().await {
-            warn!(server = %server_name, error = %e, "MCP SSE (auth) initialize handshake failed");
+            warn!(server = %server_name, "MCP SSE (auth) initialize handshake failed");
             return Err(e);
         }
 
@@ -279,8 +279,6 @@ impl McpClient {
 
         info!(
             server = %self.server_name,
-            protocol = %result.protocol_version,
-            server_name = %result.server_info.name,
             "MCP server initialized"
         );
 

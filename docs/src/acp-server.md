@@ -31,6 +31,9 @@ Startup uses a headless profile. Providers, tools, memory, sessions, and
 configured MCP servers are ready before the protocol starts, while channel
 accounts and server-only background workers are not started.
 
+Headless startup does not create or inject a gateway API key. There is no
+gateway listener for sandboxed tools to call in this mode.
+
 If sandbox networking is set to `trusted`, HTTP tools fail closed in ACP mode.
 The trusted-domain approval proxy is not started because ACP has no domain
 approval UI and the headless process does not bind listener ports.
@@ -54,9 +57,12 @@ Moltis configuration rather than the client.
 
 ACP sits beside the Web UI and GraphQL rather than alongside Telegram or Nostr.
 A channel exists to manage *external correspondents* — allowlists, sender
-identities, OTP flows, per-account settings. An ACP client is a local parent
-process that already spawned Moltis: there is no sender to gate and no account
-to configure, so none of the channel contract applies.
+identities, OTP flows, per-account settings. An ACP client is the trusted local
+parent process that spawned Moltis: there is no sender to gate and no account to
+configure, so none of the channel contract applies. Do not expose the stdio
+stream to an untrusted process. The controller can ask Moltis to use configured
+tools and can provide stdio MCP servers, which is equivalent to granting that
+controller the current user's privileges.
 
 ### stdout is the wire
 
@@ -102,10 +108,30 @@ that ACP session: their tools are added only to that session and they are shut
 down when the client disconnects or replaces the session setup. HTTP and SSE
 MCP transports are not advertised or accepted.
 
-For process isolation, each MCP command must be an absolute path. It runs in
-the session `cwd` with only the environment variables explicitly supplied in
-the ACP request; it does not inherit the Moltis process environment. Server
-names and environment variable names must be unique within the request.
+Each MCP command must be an absolute path. This makes executable selection
+deterministic; it is not a sandbox. The command runs in the session `cwd` with
+only the environment variables explicitly supplied in the ACP request and does
+not inherit the Moltis process environment. Server names and environment
+variable names must be unique within the request. Internally, client MCP tools
+receive a session-specific namespace so they cannot override configured tools
+or impersonate an MCP server allowed by an agent preset.
+
+## Resource limits
+
+The stdio surface rejects JSON-RPC frames over 4 MiB, prompts over 1 MiB or 256
+blocks, and MCP setup data over 1 MiB. One connection may retain up to 64
+sessions and run up to four session operations concurrently. History replay and
+turn updates each have an 8 MiB output budget; persisted history reads stop at
+that limit before parsing or allocating the remainder of the session file.
+These limits bound accidental or malicious memory use and prevent one
+controller from starting an unlimited number of simultaneous provider calls.
+
+Protocol payload bodies are never written to Moltis logs, including at trace
+level. MCP response bodies and child-process stderr are likewise omitted because
+they may contain prompts, tool results, or credentials. In ACP mode, payload-
+processing tracing targets are hard-filtered from both stderr and the in-memory
+gateway log buffer, so a more-specific `RUST_LOG` directive cannot re-enable
+them.
 
 ## Protocol support
 
@@ -137,6 +163,10 @@ map onto `session/update` like this:
 | reasoning | `agent_thought_chunk` (sent incrementally) |
 | tool call started | `tool_call` with status `in_progress` |
 | tool call finished | `tool_call_update` with status `completed` or `failed` |
+
+Tool updates include capped raw arguments and output or error content. When a
+turn finishes, Moltis reconciles streamed reply chunks with the authoritative
+final message and emits any missing suffix before returning `end_turn`.
 
 Web-UI affordances without an ACP equivalent — queueing, iteration counters,
 voice-pending markers — are dropped rather than shown, so the client's

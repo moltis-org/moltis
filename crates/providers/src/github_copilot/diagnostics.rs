@@ -166,7 +166,7 @@ pub(super) fn log_copilot_chat_error(
         enterprise,
         stream,
         status,
-        error_body = %body,
+        error_body_bytes = body.len(),
         "github-copilot chat request failed"
     );
 }

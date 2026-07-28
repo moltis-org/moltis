@@ -2,6 +2,11 @@ use std::{collections::HashSet, fmt, path::PathBuf};
 
 use agent_client_protocol as acp;
 
+const MAX_MCP_SERVERS: usize = 16;
+const MAX_MCP_ARGS: usize = 256;
+const MAX_MCP_ENV_VARS: usize = 256;
+const MAX_MCP_SETUP_BYTES: usize = 1024 * 1024;
+
 /// Validated setup supplied by an ACP client for a new or loaded session.
 #[derive(Clone)]
 pub struct SessionSetup {
@@ -21,7 +26,13 @@ impl SessionSetup {
             return Err(acp::Error::invalid_params().data("session cwd must be a directory"));
         }
 
+        if mcp_servers.len() > MAX_MCP_SERVERS {
+            return Err(acp::Error::invalid_params()
+                .data(format!("at most {MAX_MCP_SERVERS} MCP servers are allowed")));
+        }
+
         let mut names = HashSet::new();
+        let mut setup_bytes = 0usize;
         for server in &mcp_servers {
             let acp::McpServer::Stdio(server) = server else {
                 return Err(
@@ -42,6 +53,20 @@ impl SessionSetup {
                     "MCP server {name} command must be an absolute path"
                 )));
             }
+            if server.args.len() > MAX_MCP_ARGS {
+                return Err(acp::Error::invalid_params().data(format!(
+                    "MCP server {name} has more than {MAX_MCP_ARGS} arguments"
+                )));
+            }
+            if server.env.len() > MAX_MCP_ENV_VARS {
+                return Err(acp::Error::invalid_params().data(format!(
+                    "MCP server {name} has more than {MAX_MCP_ENV_VARS} environment variables"
+                )));
+            }
+            setup_bytes = setup_bytes
+                .saturating_add(name.len())
+                .saturating_add(server.command.as_os_str().len())
+                .saturating_add(server.args.iter().map(String::len).sum::<usize>());
             let mut environment = HashSet::new();
             for variable in &server.env {
                 if variable.name.is_empty()
@@ -52,6 +77,13 @@ impl SessionSetup {
                         "MCP server {name} has an invalid or duplicate environment variable"
                     )));
                 }
+                setup_bytes = setup_bytes
+                    .saturating_add(variable.name.len())
+                    .saturating_add(variable.value.len());
+            }
+            if setup_bytes > MAX_MCP_SETUP_BYTES {
+                return Err(acp::Error::invalid_params()
+                    .data(format!("MCP setup exceeds {MAX_MCP_SETUP_BYTES} bytes")));
             }
         }
 
@@ -149,5 +181,22 @@ mod tests {
         let debug = format!("{setup:?}");
         assert!(!debug.contains("secret"));
         assert!(!debug.contains("TOKEN"));
+    }
+
+    #[tokio::test]
+    async fn rejects_too_many_mcp_servers() {
+        let servers = (0..=MAX_MCP_SERVERS)
+            .map(|index| {
+                acp::McpServer::Stdio(acp::McpServerStdio::new(
+                    format!("server-{index}"),
+                    "/bin/test",
+                ))
+            })
+            .collect();
+        assert!(
+            SessionSetup::new(std::env::temp_dir(), servers)
+                .await
+                .is_err()
+        );
     }
 }

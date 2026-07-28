@@ -28,14 +28,17 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
 };
 
 use {
     agent_client_protocol as acp,
     async_trait::async_trait,
-    moltis_acp::{AcpBackend, BackendCapabilities, SessionKey, SessionSetup, TurnUpdates},
+    moltis_acp::{
+        AcpBackend, BackendCapabilities, SessionKey, SessionNotFound, SessionSetup, TurnUpdates,
+        backend::{MAX_HISTORY_BYTES, MAX_HISTORY_UPDATES},
+    },
     moltis_chat::LiveChatService,
     moltis_gateway::state::GatewayState,
     moltis_protocol::{ClientInfo, ConnectParams, PROTOCOL_VERSION},
@@ -64,6 +67,7 @@ pub struct MoltisBackend {
     chat: Arc<LiveChatService>,
     sessions: RwLock<HashMap<SessionKey, SessionRuntime>>,
     active_prompts: RwLock<HashMap<SessionKey, Arc<PromptSignal>>>,
+    lifecycle: Arc<BackendLifecycle>,
     /// Distinguishes the synthetic clients this backend registers, so two
     /// concurrent turns cannot collide on a connection id.
     next_conn: AtomicU64,
@@ -80,6 +84,51 @@ struct PromptSignal {
     notify: Notify,
 }
 
+#[derive(Default)]
+struct BackendLifecycle {
+    closing: AtomicBool,
+    active: AtomicUsize,
+    idle: Notify,
+}
+
+impl BackendLifecycle {
+    fn begin(self: &Arc<Self>) -> anyhow::Result<OperationGuard> {
+        if self.closing.load(Ordering::Acquire) {
+            anyhow::bail!("ACP backend is shutting down");
+        }
+        self.active.fetch_add(1, Ordering::AcqRel);
+        if self.closing.load(Ordering::Acquire) {
+            self.finish();
+            anyhow::bail!("ACP backend is shutting down");
+        }
+        Ok(OperationGuard(Arc::clone(self)))
+    }
+
+    fn finish(&self) {
+        if self.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.idle.notify_waiters();
+        }
+    }
+
+    async fn wait_idle(&self) {
+        loop {
+            let notified = self.idle.notified();
+            if self.active.load(Ordering::Acquire) == 0 {
+                break;
+            }
+            notified.await;
+        }
+    }
+}
+
+struct OperationGuard(Arc<BackendLifecycle>);
+
+impl Drop for OperationGuard {
+    fn drop(&mut self) {
+        self.0.finish();
+    }
+}
+
 impl MoltisBackend {
     #[must_use]
     pub fn new(core: moltis_gateway::server::PreparedGatewayCore) -> Self {
@@ -91,6 +140,7 @@ impl MoltisBackend {
             chat,
             sessions: RwLock::new(HashMap::new()),
             active_prompts: RwLock::new(HashMap::new()),
+            lifecycle: Arc::new(BackendLifecycle::default()),
             next_conn: AtomicU64::new(0),
         }
     }
@@ -133,13 +183,28 @@ impl MoltisBackend {
     }
 
     async fn install_session(&self, key: &SessionKey, setup: &SessionSetup) -> anyhow::Result<()> {
+        if self.lifecycle.closing.load(Ordering::Acquire) {
+            anyhow::bail!("ACP backend is shutting down");
+        }
         let cwd = Self::canonical_cwd(setup).await?;
         let mcp = SessionMcpRuntime::start(setup).await?;
+        if self.lifecycle.closing.load(Ordering::Acquire) {
+            if let Some(runtime) = mcp {
+                runtime.shutdown().await;
+            }
+            anyhow::bail!("ACP backend is shutting down");
+        }
         if let Err(error) = self.bind_project(key, &cwd).await {
             if let Some(runtime) = mcp {
                 runtime.shutdown().await;
             }
             return Err(error);
+        }
+        if self.lifecycle.closing.load(Ordering::Acquire) {
+            if let Some(runtime) = mcp {
+                runtime.shutdown().await;
+            }
+            anyhow::bail!("ACP backend is shutting down");
         }
         if let Some(runtime) = mcp.as_ref() {
             self.chat
@@ -165,28 +230,49 @@ impl MoltisBackend {
     ///
     /// The caller must pair this with [`Self::unregister`]; [`TurnClient`] does
     /// that on drop so an early return cannot leak a registration.
-    async fn register(&self) -> (String, mpsc::Receiver<String>) {
+    async fn register(&self, key: &SessionKey) -> (String, mpsc::Receiver<String>, Arc<AtomicU64>) {
         let seq = self.next_conn.fetch_add(1, Ordering::Relaxed);
         let conn_id = format!("acp-{seq}");
         let (tx, rx) = mpsc::channel::<String>(FRAME_BUFFER);
+        let delivery_failures = Arc::new(AtomicU64::new(0));
         let client = moltis_gateway::state::ConnectedClient {
             conn_id: conn_id.clone(),
             connect_params: acp_connect_params(),
             sender: tx,
+            delivery_failures: Arc::clone(&delivery_failures),
             connected_at: std::time::Instant::now(),
             last_activity_ms: AtomicU64::new(0),
             accept_language: None,
             remote_ip: None,
             timezone: None,
-            // Wildcard: the mapper filters by session, and subscribing narrowly
-            // here would silently drop any chat state added later.
-            subscriptions: None,
+            subscriptions: Some(std::collections::HashSet::from(["chat".to_string()])),
+            session_filter: Some(key.as_str().to_string()),
+            payload_state_filter: Some(std::collections::HashSet::from([
+                "delta".to_string(),
+                "error".to_string(),
+                "iteration".to_string(),
+                "thinking_text".to_string(),
+                "tool_call_end".to_string(),
+                "tool_call_start".to_string(),
+            ])),
             joined_channels: std::collections::HashSet::new(),
             negotiated_protocol: PROTOCOL_VERSION,
         };
         self.state.register_client(client).await;
-        (conn_id, rx)
+        (conn_id, rx, delivery_failures)
     }
+}
+
+fn send_mapped_update(
+    updates: &TurnUpdates,
+    mapper: &mut FrameMapper,
+    update: acp::SessionUpdate,
+) -> bool {
+    if !updates.send(update.clone()) {
+        return false;
+    }
+    mapper.record_sent(&update);
+    true
 }
 
 /// Connection metadata for the synthetic client backing one ACP turn.
@@ -256,6 +342,7 @@ impl TurnClient {
 #[async_trait]
 impl AcpBackend for MoltisBackend {
     async fn create_session(&self, setup: &SessionSetup) -> anyhow::Result<SessionKey> {
+        let _operation = self.lifecycle.begin()?;
         // Moltis materializes a session on first write, so there is nothing to
         // create here beyond choosing the key. The `acp:` namespace is what
         // keeps these from colliding with Web UI and channel sessions, and the
@@ -271,16 +358,28 @@ impl AcpBackend for MoltisBackend {
         key: &SessionKey,
         setup: &SessionSetup,
     ) -> anyhow::Result<Vec<acp::SessionUpdate>> {
+        let _operation = self.lifecycle.begin()?;
         if !self.chat.session_exists(key.as_str()).await {
-            anyhow::bail!("session does not exist");
+            return Err(SessionNotFound.into());
         }
-        self.install_session(key, setup).await?;
         let history = self
             .chat
-            .history(json!({ "_session_key": key.as_str() }))
+            .read_session_history_bounded(key.as_str(), MAX_HISTORY_UPDATES, MAX_HISTORY_BYTES)
             .await
             .map_err(|error| anyhow::anyhow!("failed to read session history: {error}"))?;
-        Ok(history_to_updates(&history))
+        let updates = history_to_updates(&history);
+        moltis_acp::validate_history(&updates)?;
+        self.install_session(key, setup).await?;
+        Ok(updates)
+    }
+
+    async fn discard_session(&self, key: &SessionKey) -> anyhow::Result<()> {
+        let runtime = self.sessions.write().await.remove(key);
+        self.chat.remove_session_tool_overlay(key.as_str()).await;
+        if let Some(SessionRuntime { mcp: Some(mcp), .. }) = runtime {
+            mcp.shutdown().await;
+        }
+        Ok(())
     }
 
     async fn prompt(
@@ -289,6 +388,7 @@ impl AcpBackend for MoltisBackend {
         prompt: String,
         updates: TurnUpdates,
     ) -> anyhow::Result<acp::StopReason> {
+        let _operation = self.lifecycle.begin()?;
         let signal = Arc::new(PromptSignal::default());
         let mut active_prompts = self.active_prompts.write().await;
         if active_prompts.contains_key(key) {
@@ -296,12 +396,16 @@ impl AcpBackend for MoltisBackend {
         }
         active_prompts.insert(key.clone(), Arc::clone(&signal));
         drop(active_prompts);
+        if self.lifecycle.closing.load(Ordering::Acquire) {
+            signal.cancelled.store(true, Ordering::Release);
+            signal.notify.notify_one();
+        }
 
         let result = async {
             if signal.cancelled.load(Ordering::Acquire) {
                 return Ok(acp::StopReason::Cancelled);
             }
-            let (conn_id, mut frames) = self.register().await;
+            let (conn_id, mut frames, delivery_failures) = self.register(key).await;
             let client = TurnClient {
                 state: Arc::clone(&self.state),
                 conn_id,
@@ -316,6 +420,7 @@ impl AcpBackend for MoltisBackend {
             let mut mapper = FrameMapper::new();
             let mut reported_error: Option<String> = None;
             let mut cancelled = false;
+            let mut delivery_failed = false;
 
             // Forward frames while the turn runs. `send_sync` resolving is what ends
             // the turn — the broadcast has no terminal frame to wait for, and
@@ -337,13 +442,13 @@ impl AcpBackend for MoltisBackend {
                         Some(frame) => match mapper.map(&frame, key.as_str()) {
                             FrameAction::Emit(batch) => {
                                 for update in batch {
-                                    if !updates.send(update) {
+                                    if !send_mapped_update(&updates, &mut mapper, update) {
                                         debug!("ACP client stopped reading updates mid-turn");
                                         let _ = self
                                             .chat
                                             .abort(json!({ "sessionKey": key.as_str() }))
                                             .await;
-                                        cancelled = true;
+                                        delivery_failed = true;
                                         break 'turn Ok(json!({}));
                                     }
                                 }
@@ -360,12 +465,13 @@ impl AcpBackend for MoltisBackend {
 
             // Frames already queued when the turn resolved are still this turn's
             // output; dropping them would truncate the visible reply.
-            while !cancelled && let Ok(frame) = frames.try_recv() {
+            'flush: while !cancelled && !delivery_failed && let Ok(frame) = frames.try_recv() {
                 match mapper.map(&frame, key.as_str()) {
                     FrameAction::Emit(batch) => {
                         for update in batch {
-                            if !updates.send(update) {
-                                break;
+                            if !send_mapped_update(&updates, &mut mapper, update) {
+                                delivery_failed = true;
+                                break 'flush;
                             }
                         }
                     },
@@ -376,8 +482,16 @@ impl AcpBackend for MoltisBackend {
 
             client.close().await;
 
+            if delivery_failures.load(Ordering::Relaxed) > 0 {
+                delivery_failed = true;
+            }
+
             if cancelled {
                 Ok(acp::StopReason::Cancelled)
+            } else if delivery_failed {
+                Err(anyhow::anyhow!(
+                    "ACP client could not accept all final turn updates"
+                ))
             } else {
                 match outcome {
                     Ok(result) if result.get("rejected").and_then(Value::as_bool) == Some(true) => {
@@ -387,7 +501,24 @@ impl AcpBackend for MoltisBackend {
                             .unwrap_or("prompt rejected");
                         Err(anyhow::anyhow!(reason.to_string()))
                     },
-                    Ok(_) => Ok(acp::StopReason::EndTurn),
+                    Ok(result) => {
+                        if let Some(final_text) = result.get("text").and_then(Value::as_str) {
+                            match mapper.finish_text(final_text) {
+                                Ok(Some(update)) => {
+                                    if !updates.send(update) {
+                                        anyhow::bail!(
+                                            "ACP client stopped reading final turn output"
+                                        );
+                                    }
+                                },
+                                Ok(_) => {},
+                                Err(error) => {
+                                    debug!(session = %key, %error, "could not reconcile ACP streamed reply");
+                                },
+                            }
+                        }
+                        Ok(acp::StopReason::EndTurn)
+                    },
                     Err(error) => {
                         // Prefer the broadcast's message: `send_sync` reports a generic
                         // failure while the frame carries the provider's own words.
@@ -429,9 +560,19 @@ impl AcpBackend for MoltisBackend {
 
     async fn shutdown(&self) -> anyhow::Result<()> {
         debug!("shutting down ACP backend");
+        self.lifecycle.closing.store(true, Ordering::Release);
         for signal in self.active_prompts.read().await.values() {
             signal.cancelled.store(true, Ordering::Release);
             signal.notify.notify_one();
+        }
+        if tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            self.lifecycle.wait_idle(),
+        )
+        .await
+        .is_err()
+        {
+            warn!("timed out waiting for ACP prompts to stop during shutdown");
         }
         let sessions = {
             let mut sessions = self.sessions.write().await;
@@ -461,10 +602,7 @@ impl AcpBackend for MoltisBackend {
 /// and assistant text carries over: system entries and tool bookkeeping have no
 /// ACP representation, and replaying them as messages would put words in the
 /// agent's mouth.
-fn history_to_updates(history: &Value) -> Vec<acp::SessionUpdate> {
-    let Some(messages) = history.as_array() else {
-        return Vec::new();
-    };
+fn history_to_updates(messages: &[Value]) -> Vec<acp::SessionUpdate> {
     messages
         .iter()
         .filter_map(|message| {
@@ -510,11 +648,11 @@ mod tests {
 
     #[test]
     fn history_replays_only_user_and_assistant_text() {
-        let history = json!([
-            { "role": "user", "content": "hello" },
-            { "role": "system", "content": "[error] boom" },
-            { "role": "assistant", "content": "hi there" },
-        ]);
+        let history = vec![
+            json!({ "role": "user", "content": "hello" }),
+            json!({ "role": "system", "content": "[error] boom" }),
+            json!({ "role": "assistant", "content": "hi there" }),
+        ];
         let updates = history_to_updates(&history);
         assert_eq!(updates.len(), 2, "the system entry must not be replayed");
         assert!(matches!(
@@ -529,13 +667,13 @@ mod tests {
 
     #[test]
     fn history_reads_block_structured_content() {
-        let history = json!([{
+        let history = vec![json!({
             "role": "assistant",
             "content": [
                 { "type": "text", "text": "part one " },
                 { "type": "text", "text": "part two" },
             ],
-        }]);
+        })];
         let updates = history_to_updates(&history);
         assert_eq!(updates.len(), 1);
         let acp::SessionUpdate::AgentMessageChunk(chunk) = &updates[0] else {
@@ -549,12 +687,11 @@ mod tests {
 
     #[test]
     fn empty_and_malformed_history_is_not_replayed() {
-        assert!(history_to_updates(&json!([])).is_empty());
-        assert!(history_to_updates(&json!({})).is_empty());
+        assert!(history_to_updates(&[]).is_empty());
         // An assistant turn persisted with no text would otherwise replay as an
         // empty message.
-        assert!(history_to_updates(&json!([{ "role": "assistant", "content": "  " }])).is_empty());
-        assert!(history_to_updates(&json!([{ "role": "assistant" }])).is_empty());
+        assert!(history_to_updates(&[json!({ "role": "assistant", "content": "  " })]).is_empty());
+        assert!(history_to_updates(&[json!({ "role": "assistant" })]).is_empty());
     }
 
     #[test]
@@ -570,5 +707,43 @@ mod tests {
         let first = SessionKey::namespaced(uuid::Uuid::new_v4().to_string());
         let second = SessionKey::namespaced(uuid::Uuid::new_v4().to_string());
         assert_ne!(first, second);
+    }
+
+    #[tokio::test]
+    async fn lifecycle_rejects_new_work_and_waits_for_active_work() {
+        let lifecycle = Arc::new(BackendLifecycle::default());
+        let operation = lifecycle.begin().expect("operation before shutdown");
+        lifecycle.closing.store(true, Ordering::Release);
+        assert!(lifecycle.begin().is_err());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), lifecycle.wait_idle())
+                .await
+                .is_err()
+        );
+        drop(operation);
+        tokio::time::timeout(std::time::Duration::from_secs(1), lifecycle.wait_idle())
+            .await
+            .expect("active operation should release lifecycle");
+    }
+
+    #[test]
+    fn closed_update_channels_are_not_counted_as_delivered() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let updates = TurnUpdates::new(tx);
+        let mut mapper = FrameMapper::new();
+        let first = acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+            acp::ContentBlock::from("first"),
+        ));
+        let second = acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+            acp::ContentBlock::from("second"),
+        ));
+        drop(rx);
+        assert!(!send_mapped_update(&updates, &mut mapper, first));
+        assert!(!send_mapped_update(&updates, &mut mapper, second));
+        assert!(
+            mapper
+                .finish_text("firstsecond")
+                .is_ok_and(|value| value.is_some())
+        );
     }
 }

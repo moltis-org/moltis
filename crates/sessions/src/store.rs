@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
 };
 
@@ -130,6 +130,65 @@ impl SessionStore {
                     Ok(val) => messages.push(val),
                     Err(e) => {
                         tracing::warn!("skipping malformed JSONL line: {e}");
+                    },
+                }
+            }
+            Ok(messages)
+        })
+        .await?
+    }
+
+    /// Read a session without allocating beyond the caller's input bounds.
+    /// Limits apply to JSONL file bytes and parsed messages, including entries
+    /// that a higher-level consumer may later filter out.
+    pub async fn read_bounded(
+        &self,
+        key: &str,
+        max_messages: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<serde_json::Value>> {
+        let path = self.path_for(key);
+
+        tokio::task::spawn_blocking(move || -> Result<Vec<serde_json::Value>> {
+            if !path.exists() {
+                return Ok(vec![]);
+            }
+            let file = File::open(&path)?;
+            let mut reader = BufReader::new(file);
+            let mut messages = Vec::new();
+            let mut line = String::new();
+            let mut bytes_read = 0usize;
+            loop {
+                line.clear();
+                let remaining = max_bytes.saturating_sub(bytes_read);
+                let read = reader
+                    .by_ref()
+                    .take(remaining.saturating_add(1) as u64)
+                    .read_line(&mut line)?;
+                if read == 0 {
+                    break;
+                }
+                bytes_read = bytes_read.saturating_add(read);
+                if bytes_read > max_bytes {
+                    return Err(Error::message(format!(
+                        "session history exceeds {max_bytes} bytes"
+                    )));
+                }
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match serde_json::from_str(trimmed) {
+                    Ok(value) => {
+                        if messages.len() >= max_messages {
+                            return Err(Error::message(format!(
+                                "session history exceeds {max_messages} messages"
+                            )));
+                        }
+                        messages.push(value);
+                    },
+                    Err(error) => {
+                        tracing::warn!(%error, "skipping malformed JSONL line");
                     },
                 }
             }
@@ -783,6 +842,25 @@ mod tests {
             },
             _ => panic!("expected Assistant message"),
         }
+    }
+
+    #[tokio::test]
+    async fn read_bounded_rejects_message_and_byte_overflow() {
+        let (store, _dir) = temp_store();
+        store
+            .append("main", &json!({"content": "one"}))
+            .await
+            .unwrap();
+        store
+            .append("main", &json!({"content": "two"}))
+            .await
+            .unwrap();
+
+        let message_error = store.read_bounded("main", 1, 1024).await.unwrap_err();
+        assert!(message_error.to_string().contains("exceeds 1 messages"));
+
+        let byte_error = store.read_bounded("main", 10, 8).await.unwrap_err();
+        assert!(byte_error.to_string().contains("exceeds 8 bytes"));
     }
 
     #[tokio::test]

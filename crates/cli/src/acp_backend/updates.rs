@@ -18,6 +18,8 @@
 
 use {agent_client_protocol as acp, serde_json::Value};
 
+const MAX_TOOL_VALUE_BYTES: usize = 64 * 1024;
+
 /// What a single broadcast frame means for the turn in progress.
 ///
 /// Not `Eq`: `SessionUpdate` carries content blocks that are only `PartialEq`.
@@ -38,6 +40,7 @@ pub enum FrameAction {
 #[derive(Debug, Default)]
 pub struct FrameMapper {
     reasoning_seen: String,
+    message_seen: String,
 }
 
 impl FrameMapper {
@@ -77,6 +80,10 @@ impl FrameMapper {
                 }
                 FrameAction::Emit(vec![agent_message(delta)])
             },
+            Some("iteration") => {
+                self.message_seen.clear();
+                FrameAction::Ignore
+            },
             Some("thinking_text") => self.reasoning_delta(text()),
             Some("tool_call_start") => FrameAction::Emit(vec![tool_call_start(payload)]),
             Some("tool_call_end") => FrameAction::Emit(vec![tool_call_end(payload)]),
@@ -103,6 +110,26 @@ impl FrameMapper {
             return FrameAction::Ignore;
         }
         FrameAction::Emit(vec![agent_thought(addition)])
+    }
+
+    /// Reconciles broadcast deltas with the completed turn's authoritative text.
+    pub fn finish_text(&self, final_text: &str) -> Result<Option<acp::SessionUpdate>, String> {
+        if final_text.trim() == self.message_seen.trim() {
+            return Ok(None);
+        }
+        let Some(missing) = final_text.strip_prefix(&self.message_seen) else {
+            return Err("streamed reply diverged from the completed turn".to_string());
+        };
+        Ok((!missing.is_empty()).then(|| agent_message(missing)))
+    }
+
+    /// Records only chunks accepted by the bounded protocol update channel.
+    pub fn record_sent(&mut self, update: &acp::SessionUpdate) {
+        if let acp::SessionUpdate::AgentMessageChunk(chunk) = update
+            && let acp::ContentBlock::Text(text) = &chunk.content
+        {
+            self.message_seen.push_str(&text.text);
+        }
     }
 }
 
@@ -167,13 +194,15 @@ fn error_message(payload: &Value) -> String {
 }
 
 fn tool_call_start(payload: &Value) -> acp::SessionUpdate {
-    acp::SessionUpdate::ToolCall(
-        acp::ToolCall::new(
-            acp::ToolCallId::from(tool_call_id(payload)),
-            tool_name(payload),
-        )
-        .status(acp::ToolCallStatus::InProgress),
+    let mut call = acp::ToolCall::new(
+        acp::ToolCallId::from(tool_call_id(payload)),
+        tool_name(payload),
     )
+    .status(acp::ToolCallStatus::InProgress);
+    if let Some(arguments) = payload.get("arguments") {
+        call = call.raw_input(capped_json(arguments));
+    }
+    acp::SessionUpdate::ToolCall(call)
 }
 
 fn tool_call_end(payload: &Value) -> acp::SessionUpdate {
@@ -186,10 +215,37 @@ fn tool_call_end(payload: &Value) -> acp::SessionUpdate {
     };
     let mut fields = acp::ToolCallUpdateFields::default();
     fields.status = Some(status);
+    let output = if failed {
+        payload.get("error")
+    } else {
+        payload.get("result")
+    };
+    if let Some(output) = output {
+        let output = capped_json(output);
+        fields.content = Some(vec![display_json(&output).into()]);
+        fields.raw_output = Some(output);
+    }
     acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
         acp::ToolCallId::from(tool_call_id(payload)),
         fields,
     ))
+}
+
+fn capped_json(value: &Value) -> Value {
+    let encoded_bytes = serde_json::to_vec(value).map_or(MAX_TOOL_VALUE_BYTES + 1, |v| v.len());
+    if encoded_bytes <= MAX_TOOL_VALUE_BYTES {
+        return value.clone();
+    }
+    Value::String(format!(
+        "[tool value omitted: {encoded_bytes} bytes exceeds {MAX_TOOL_VALUE_BYTES}-byte limit]"
+    ))
+}
+
+fn display_json(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| value.to_string())
 }
 
 /// First non-empty candidate, or `fallback` when every candidate is absent.
@@ -337,6 +393,7 @@ mod tests {
             "sessionKey": SESSION,
             "state": "tool_call_start",
             "toolName": "read_file",
+            "arguments": { "path": "README.md" },
         }));
         let FrameAction::Emit(updates) = mapper.map(&start, SESSION) else {
             panic!("tool call start must be forwarded");
@@ -345,6 +402,7 @@ mod tests {
             acp::SessionUpdate::ToolCall(call) => {
                 assert_eq!(call.title, "read_file");
                 assert_eq!(call.status, acp::ToolCallStatus::InProgress);
+                assert_eq!(call.raw_input, Some(json!({ "path": "README.md" })));
             },
             other => panic!("expected a tool call, got {other:?}"),
         }
@@ -353,6 +411,7 @@ mod tests {
             "sessionKey": SESSION,
             "state": "tool_call_end",
             "toolName": "read_file",
+            "result": { "text": "contents" },
         }));
         let FrameAction::Emit(updates) = mapper.map(&end, SESSION) else {
             panic!("tool call end must be forwarded");
@@ -360,6 +419,17 @@ mod tests {
         match &updates[0] {
             acp::SessionUpdate::ToolCallUpdate(update) => {
                 assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Completed));
+                assert_eq!(
+                    update.fields.raw_output,
+                    Some(json!({ "text": "contents" }))
+                );
+                assert!(
+                    update
+                        .fields
+                        .content
+                        .as_ref()
+                        .is_some_and(|value| !value.is_empty())
+                );
             },
             other => panic!("expected a tool call update, got {other:?}"),
         }
@@ -380,6 +450,17 @@ mod tests {
         match &updates[0] {
             acp::SessionUpdate::ToolCallUpdate(update) => {
                 assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
+                assert_eq!(
+                    update.fields.raw_output,
+                    Some(Value::String("non-zero exit".to_string()))
+                );
+                assert!(
+                    update
+                        .fields
+                        .content
+                        .as_ref()
+                        .is_some_and(|value| !value.is_empty())
+                );
             },
             other => panic!("expected a tool call update, got {other:?}"),
         }
@@ -479,5 +560,51 @@ mod tests {
                 "{state} should not reach an ACP client"
             );
         }
+    }
+
+    #[test]
+    fn completed_text_supplies_a_missing_stream_suffix() {
+        let mut mapper = FrameMapper::new();
+        let FrameAction::Emit(updates) = mapper.map(&chat_frame("delta", "partial"), SESSION)
+        else {
+            panic!("delta must emit");
+        };
+        mapper.record_sent(&updates[0]);
+        let update = mapper
+            .finish_text("partial response")
+            .expect("matching final text")
+            .expect("missing suffix");
+        assert_eq!(emitted_text(&FrameAction::Emit(vec![update])), " response");
+    }
+
+    #[test]
+    fn completed_text_rejects_divergent_streams() {
+        let mut mapper = FrameMapper::new();
+        let FrameAction::Emit(updates) = mapper.map(&chat_frame("delta", "first"), SESSION) else {
+            panic!("delta must emit");
+        };
+        mapper.record_sent(&updates[0]);
+        assert!(mapper.finish_text("different").is_err());
+    }
+
+    #[test]
+    fn new_iterations_reset_final_text_reconciliation() {
+        let mut mapper = FrameMapper::new();
+        let FrameAction::Emit(first) = mapper.map(&chat_frame("delta", "tool preface"), SESSION)
+        else {
+            panic!("delta must emit");
+        };
+        mapper.record_sent(&first[0]);
+        mapper.map(
+            &frame(json!({ "sessionKey": SESSION, "state": "iteration", "iteration": 2 })),
+            SESSION,
+        );
+        let FrameAction::Emit(final_iteration) =
+            mapper.map(&chat_frame("delta", "final answer"), SESSION)
+        else {
+            panic!("delta must emit");
+        };
+        mapper.record_sent(&final_iteration[0]);
+        assert_eq!(mapper.finish_text("final answer"), Ok(None));
     }
 }

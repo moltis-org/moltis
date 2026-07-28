@@ -16,6 +16,14 @@ use agent_client_protocol as acp;
 /// Prefix marking a Moltis session as owned by the ACP surface.
 pub const ACP_SESSION_NAMESPACE: &str = "acp";
 
+/// Maximum sessions one stdio connection may retain.
+pub const MAX_SESSIONS: usize = 64;
+
+/// Maximum turns or setup operations that may run concurrently per connection.
+pub const MAX_CONCURRENT_OPERATIONS: usize = 4;
+
+const MAX_SESSION_ID_SUFFIX_BYTES: usize = 128;
+
 /// A Moltis session key.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SessionKey(String);
@@ -41,9 +49,14 @@ impl SessionKey {
     /// Whether this key belongs to the ACP namespace.
     #[must_use]
     pub fn is_namespaced(&self) -> bool {
-        self.0
-            .split_once(':')
-            .is_some_and(|(prefix, rest)| prefix == ACP_SESSION_NAMESPACE && !rest.is_empty())
+        self.0.split_once(':').is_some_and(|(prefix, rest)| {
+            prefix == ACP_SESSION_NAMESPACE
+                && !rest.is_empty()
+                && rest.len() <= MAX_SESSION_ID_SUFFIX_BYTES
+                && rest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        })
     }
 }
 
@@ -100,8 +113,31 @@ impl SessionRegistry {
         state.next_id
     }
 
-    pub fn insert(&self, key: SessionKey) {
-        self.inner.borrow_mut().known.insert(key);
+    pub fn insert(&self, key: SessionKey) -> acp::Result<()> {
+        self.ensure_capacity_for(&key)?;
+        let mut state = self.inner.borrow_mut();
+        state.known.insert(key);
+        Ok(())
+    }
+
+    pub fn ensure_capacity(&self) -> acp::Result<()> {
+        if self.inner.borrow().known.len() < MAX_SESSIONS {
+            return Ok(());
+        }
+        Err(acp::Error::invalid_params().data(format!(
+            "connection cannot retain more than {MAX_SESSIONS} sessions"
+        )))
+    }
+
+    /// Rejects setup work that would exceed the connection's session budget.
+    pub fn ensure_capacity_for(&self, key: &SessionKey) -> acp::Result<()> {
+        let state = self.inner.borrow();
+        if state.known.contains(key) || state.known.len() < MAX_SESSIONS {
+            return Ok(());
+        }
+        Err(acp::Error::invalid_params().data(format!(
+            "connection cannot retain more than {MAX_SESSIONS} sessions"
+        )))
     }
 
     #[must_use]
@@ -121,7 +157,13 @@ impl SessionRegistry {
 
     /// Marks a prompt active, rejecting overlapping turns for one session.
     pub fn begin_prompt(&self, key: &SessionKey) -> acp::Result<PromptGuard> {
-        if !self.inner.borrow_mut().in_flight.insert(key.clone()) {
+        let mut state = self.inner.borrow_mut();
+        if state.in_flight.len() >= MAX_CONCURRENT_OPERATIONS {
+            return Err(acp::Error::invalid_params().data(format!(
+                "connection cannot run more than {MAX_CONCURRENT_OPERATIONS} operations concurrently"
+            )));
+        }
+        if !state.in_flight.insert(key.clone()) {
             return Err(acp::Error::invalid_params()
                 .data(format!("session {key} already has an active prompt")));
         }
@@ -133,7 +175,13 @@ impl SessionRegistry {
 
     /// Blocks session setup changes while another setup or prompt is active.
     pub fn begin_setup(&self, key: &SessionKey) -> acp::Result<PromptGuard> {
-        if !self.inner.borrow_mut().in_flight.insert(key.clone()) {
+        let mut state = self.inner.borrow_mut();
+        if state.in_flight.len() >= MAX_CONCURRENT_OPERATIONS {
+            return Err(acp::Error::invalid_params().data(format!(
+                "connection cannot run more than {MAX_CONCURRENT_OPERATIONS} operations concurrently"
+            )));
+        }
+        if !state.in_flight.insert(key.clone()) {
             return Err(acp::Error::invalid_params()
                 .data(format!("session {key} already has an active operation")));
         }
@@ -192,6 +240,8 @@ mod tests {
         assert!(!SessionKey::new("web:abc").is_namespaced());
         assert!(!SessionKey::new("abc").is_namespaced());
         assert!(!SessionKey::new("acp:").is_namespaced());
+        assert!(!SessionKey::new("acp:../escape").is_namespaced());
+        assert!(!SessionKey::new("acp:line\nbreak").is_namespaced());
     }
 
     #[test]
@@ -214,7 +264,7 @@ mod tests {
     fn known_session_id_resolves() {
         let registry = SessionRegistry::new();
         let key = SessionKey::namespaced("known");
-        registry.insert(key.clone());
+        registry.insert(key.clone()).expect("insert known session");
         let id = acp::SessionId::from(key.clone());
         assert_eq!(registry.resolve(&id).expect("known session"), key);
     }
@@ -223,7 +273,7 @@ mod tests {
     fn cancellation_flag_is_take_once() {
         let registry = SessionRegistry::new();
         let key = SessionKey::namespaced("cancel");
-        registry.insert(key.clone());
+        registry.insert(key.clone()).expect("insert cancel session");
         assert!(!registry.take_cancelled(&key));
         registry.mark_cancelled(&key);
         assert!(registry.take_cancelled(&key));
@@ -242,7 +292,7 @@ mod tests {
     fn setup_and_prompt_operations_are_mutually_exclusive() {
         let registry = SessionRegistry::new();
         let key = SessionKey::namespaced("busy");
-        registry.insert(key.clone());
+        registry.insert(key.clone()).expect("insert busy session");
 
         let setup = registry.begin_setup(&key).expect("first operation");
         assert!(registry.begin_prompt(&key).is_err());
@@ -252,5 +302,44 @@ mod tests {
         assert!(registry.begin_setup(&key).is_err());
         drop(prompt);
         assert!(registry.begin_setup(&key).is_ok());
+    }
+
+    #[test]
+    fn session_count_is_bounded() {
+        let registry = SessionRegistry::new();
+        for index in 0..MAX_SESSIONS {
+            registry
+                .insert(SessionKey::namespaced(format!("session-{index}")))
+                .expect("session within limit");
+        }
+        assert!(
+            registry
+                .ensure_capacity_for(&SessionKey::namespaced("one-too-many"))
+                .is_err()
+        );
+        assert!(registry.ensure_capacity().is_err());
+    }
+
+    #[test]
+    fn concurrent_operations_are_bounded() {
+        let registry = SessionRegistry::new();
+        let guards = (0..MAX_CONCURRENT_OPERATIONS)
+            .map(|index| {
+                registry
+                    .begin_setup(&SessionKey::namespaced(format!("setup-{index}")))
+                    .expect("operation within limit")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            registry
+                .begin_setup(&SessionKey::namespaced("one-too-many"))
+                .is_err()
+        );
+        drop(guards);
+        assert!(
+            registry
+                .begin_setup(&SessionKey::namespaced("after-release"))
+                .is_ok()
+        );
     }
 }

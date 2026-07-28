@@ -18,7 +18,7 @@ use std::{
 
 /// Reads `child`'s stdout to EOF after feeding it `input`, returning stdout and
 /// stderr. Kills the child if it outlives the deadline.
-fn run_acp(args: &[&str], input: &str) -> (String, String) {
+fn run_acp_with_rust_log(args: &[&str], input: &str, rust_log: &str) -> (String, String) {
     let temp = tempfile::tempdir().expect("temp dir");
     std::fs::write(
         temp.path().join("moltis.toml"),
@@ -33,7 +33,7 @@ fn run_acp(args: &[&str], input: &str) -> (String, String) {
         .args(args)
         .env("HOME", temp.path())
         .env("XDG_CONFIG_HOME", temp.path())
-        .env("RUST_LOG", "trace")
+        .env("RUST_LOG", rust_log)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -95,6 +95,10 @@ fn run_acp(args: &[&str], input: &str) -> (String, String) {
     )
 }
 
+fn run_acp(args: &[&str], input: &str) -> (String, String) {
+    run_acp_with_rust_log(args, input, "trace")
+}
+
 const INITIALIZE: &str = concat!(
     r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":1}}"#,
     "\n",
@@ -135,6 +139,21 @@ fn initialize_reports_moltis_as_the_agent() {
     let frame: serde_json::Value = serde_json::from_str(line).expect("valid JSON");
     assert_eq!(frame["result"]["agentInfo"]["name"], "moltis");
     assert_eq!(frame["result"]["protocolVersion"], 1);
+}
+
+#[test]
+fn protocol_payloads_are_not_logged_even_at_trace() {
+    const SECRET: &str = "ACP-LOG-SENTINEL-DO-NOT-PRINT";
+    let input = format!("not-json-{SECRET}\n{INITIALIZE}");
+    let (_stdout, stderr) = run_acp_with_rust_log(
+        &["acp", "--echo"],
+        &input,
+        "agent_client_protocol::rpc=trace",
+    );
+    assert!(
+        !stderr.contains(SECRET),
+        "malformed protocol payload leaked to stderr: {stderr}"
+    );
 }
 
 #[test]
