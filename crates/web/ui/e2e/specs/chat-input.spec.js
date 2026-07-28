@@ -460,7 +460,7 @@ test.describe("Chat input and slash commands", () => {
 		const box = await dropdown.boundingBox();
 		expect(box?.width || 0).toBeGreaterThan(360);
 
-		const item = page.locator("#modelDropdownList .model-dropdown-item").first();
+		const item = page.locator("#modelDropdownList .model-dropdown-item", { hasText: displayName });
 		await expect(item).toHaveAttribute("title", fullTitle);
 		await expect(item.locator(".model-item-label")).toHaveAttribute("title", fullTitle);
 		await item.click();
