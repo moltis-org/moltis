@@ -1,5 +1,7 @@
 // ── Shared types for onboarding sub-modules ──────────────────
 
+export type { ExternalAgentInfo } from "../types";
+
 export interface ProviderInfo {
 	name: string;
 	displayName: string;
@@ -12,14 +14,6 @@ export interface ProviderInfo {
 	models?: string[];
 	uiOrder?: number;
 	[key: string]: unknown;
-}
-
-export interface ExternalAgentInfo {
-	kind: string;
-	name: string;
-	installed: boolean;
-	isAcp: boolean;
-	version?: string | null;
 }
 
 export interface ModelSelectorRow {

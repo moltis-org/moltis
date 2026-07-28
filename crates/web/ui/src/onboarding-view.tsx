@@ -352,7 +352,7 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 									</span>
 								))}
 							</div>
-							<div>Available in each chat session's external-agent selector.</div>
+							<div>Available alongside models in each chat composer.</div>
 						</div>
 					) : (
 						<>No ACP agents detected on PATH</>
