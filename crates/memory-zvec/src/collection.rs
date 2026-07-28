@@ -95,11 +95,28 @@ pub fn initialize(db_path: &Path, dimension: Option<u32>) -> Result<Collection> 
             debug!(path = %path_str, error = %open_err, "open failed; creating new zvec collection");
             let dim = dimension.unwrap_or(DEFAULT_VECTOR_DIM);
             let schema = build_schema(dim)?;
-            Collection::create_and_open(&path_str, &schema, None).with_context(|| {
-                format!(
-                    "failed to create zvec collection at {path_str} (open also failed: {open_err})"
-                )
-            })
+            match Collection::create_and_open(&path_str, &schema, None) {
+                Ok(collection) => Ok(collection),
+                Err(create_err) => {
+                    let create_msg = create_err.to_string().to_lowercase();
+                    if create_msg.contains("exists") && is_empty_collection_dir(&path_str) {
+                        debug!(
+                            path = %path_str,
+                            "create_and_open failed with 'exists'; removing stale empty directory and retrying"
+                        );
+                        if let Err(e) = std::fs::remove_dir_all(&path_str) {
+                            debug!(path = %path_str, error = %e, "failed to remove stale empty directory");
+                        }
+                        return Collection::create_and_open(&path_str, &schema, None)
+                            .with_context(|| format!(
+                                "failed to create zvec collection at {path_str} after stale-directory cleanup (open also failed: {open_err}, create failed: {create_err})"
+                            ));
+                    }
+                    Err(anyhow::Error::new(create_err).context(format!(
+                        "failed to create zvec collection at {path_str} (open also failed: {open_err})"
+                    )))
+                },
+            }
         },
     }
 }
@@ -117,6 +134,22 @@ pub fn shutdown(collection: Collection) -> Result<()> {
 fn stale_lock_path(collection_path: &str) -> Option<std::path::PathBuf> {
     let lock = Path::new(collection_path).join("LOCK");
     lock.exists().then_some(lock)
+}
+
+/// Returns `true` when the path is an empty or near-empty directory (contains
+/// nothing, or only a `LOCK` file). This signals a collection that was killed
+/// mid-`create_and_open` and can be safely removed before retrying.
+fn is_empty_collection_dir(path: &str) -> bool {
+    let dir = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(_) => return true,
+    };
+    for entry in dir.flatten() {
+        if entry.file_name() != "LOCK" {
+            return false;
+        }
+    }
+    true
 }
 
 pub fn open_or_create_collection(db_path: &Path, dimension: Option<u32>) -> Result<Collection> {
@@ -147,12 +180,30 @@ pub fn open_or_create_collection(db_path: &Path, dimension: Option<u32>) -> Resu
             debug!(path = %path_str, error = %open_err, "open failed; creating new zvec collection");
             let dim = dimension.unwrap_or(DEFAULT_VECTOR_DIM);
             let schema = build_schema(dim)?;
-            let collection = Collection::create_and_open(&path_str, &schema, None)
-                .with_context(|| {
-                    format!(
-                        "failed to create zvec collection at {path_str} (open also failed: {open_err})"
-                    )
-                })?;
+            let collection = match Collection::create_and_open(&path_str, &schema, None) {
+                Ok(c) => c,
+                Err(create_err) => {
+                    let create_msg = create_err.to_string().to_lowercase();
+                    if create_msg.contains("exists") && is_empty_collection_dir(&path_str) {
+                        debug!(
+                            path = %path_str,
+                            "create_and_open failed with 'exists'; removing stale empty directory and retrying"
+                        );
+                        if let Err(e) = std::fs::remove_dir_all(&path_str) {
+                            debug!(path = %path_str, error = %e, "failed to remove stale empty directory");
+                        }
+                        Collection::create_and_open(&path_str, &schema, None).with_context(
+                            || format!(
+                                "failed to create zvec collection at {path_str} after stale-directory cleanup (open also failed: {open_err}, create failed: {create_err})"
+                            ),
+                        )?
+                    } else {
+                        return Err(anyhow::Error::new(create_err).context(format!(
+                            "failed to create zvec collection at {path_str} (open also failed: {open_err})"
+                        )));
+                    }
+                },
+            };
             if let Err(e) = write_dimension_meta(&collection, dim) {
                 warn!(error = %e, "failed to write dimension meta doc to new collection");
             }
@@ -444,6 +495,96 @@ mod tests {
             "existing data must survive stale-lock recovery"
         );
         assert_eq!(fetched.unwrap().text, "stale lock recovery data");
+        collection.flush().unwrap();
+        drop(collection);
+    }
+
+    /// When a previous `create_and_open` is killed mid-init, the collection
+    /// directory exists but contains no valid data.  `open` fails because the
+    /// directory is not a valid collection; `create_and_open` fails because the
+    /// directory already exists.  `open_or_create_collection` must detect this,
+    /// clean up the stale empty directory, and retry `create_and_open`.
+    #[test]
+    fn test_open_or_create_collection_recovers_from_stale_empty_dir() {
+        ensure_zvec_initialized().unwrap();
+        let (_dir, path) = temp_db_path();
+        let coll_dir = collection_path(&path, Some(768));
+
+        // Simulate a killed create_and_open: create an empty directory where
+        // the collection would live, with nothing inside.
+        std::fs::create_dir_all(&coll_dir).unwrap();
+        assert!(Path::new(&coll_dir).is_dir());
+
+        // open_or_create_collection must detect the stale empty dir, remove it,
+        // and create a fresh collection.
+        let collection = open_or_create_collection(&path, Some(768)).unwrap();
+
+        // Verify the collection is functional.
+        let chunk = chunks::ChunkDoc {
+            id: "stale-dir-1".into(),
+            path: "p".into(),
+            source: "s".into(),
+            start_line: 1,
+            end_line: 2,
+            hash: "h".into(),
+            model: "m".into(),
+            text: "recovered from stale empty directory".into(),
+            embedding: vec![0.0f32; 768],
+            updated_at: "2025-01-01T00:00:00Z".into(),
+            mtime: 0,
+            size: 0,
+        };
+        chunks::upsert_chunks(&collection, &[chunk]).unwrap();
+        collection.flush().unwrap();
+        let fetched = get_chunk_by_id(&collection, "stale-dir-1").unwrap();
+        assert!(
+            fetched.is_some(),
+            "fresh collection after stale-dir recovery must accept writes"
+        );
+        assert_eq!(
+            fetched.unwrap().text,
+            "recovered from stale empty directory"
+        );
+        collection.flush().unwrap();
+        drop(collection);
+    }
+
+    /// The stale-dir guard must NOT trigger for a non-empty directory — that
+    /// might be a valid zvec collection, and removing it would cause data loss.
+    #[test]
+    fn test_open_or_create_collection_does_not_remove_nonempty_dir() {
+        ensure_zvec_initialized().unwrap();
+        let (_dir, path) = temp_db_path();
+
+        // Create a valid collection with data.
+        {
+            let collection = open_or_create_collection(&path, Some(768)).unwrap();
+            let chunk = chunks::ChunkDoc {
+                id: "valid-1".into(),
+                path: "p".into(),
+                source: "s".into(),
+                start_line: 1,
+                end_line: 2,
+                hash: "h".into(),
+                model: "m".into(),
+                text: "valid data".into(),
+                embedding: vec![0.0f32; 768],
+                updated_at: "2025-01-01T00:00:00Z".into(),
+                mtime: 0,
+                size: 0,
+            };
+            chunks::upsert_chunks(&collection, &[chunk]).unwrap();
+            collection.flush().unwrap();
+        }
+
+        // Reopen — must not attempt to remove the non-empty directory.
+        let collection = open_or_create_collection(&path, Some(768)).unwrap();
+        let fetched = get_chunk_by_id(&collection, "valid-1").unwrap();
+        assert!(
+            fetched.is_some(),
+            "valid data must survive reopen (non-empty dir must not be removed)"
+        );
+        assert_eq!(fetched.unwrap().text, "valid data");
         collection.flush().unwrap();
         drop(collection);
     }
