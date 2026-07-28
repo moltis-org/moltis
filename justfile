@@ -350,6 +350,18 @@ changelog-release version:
 ship commit_message='' pr_title='' pr_body='':
     ./scripts/ship-pr.sh {{ quote(commit_message) }} {{ quote(pr_title) }} {{ quote(pr_body) }}
 
+# Run local validation with the full Rust and Playwright test suites.
+local-validate-full pr_number='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    if [[ -n {{ quote(pr_number) }} ]]; then
+        args+=({{ quote(pr_number) }})
+    fi
+    LOCAL_VALIDATE_TEST_CMD="just test" \
+    LOCAL_VALIDATE_E2E_CMD="cd crates/web/ui && npm run e2e:install && npm run e2e" \
+        ./scripts/local-validate.sh "${args[@]}"
+
 # Run all tests (nightly to share build cache with clippy/lint, OS-aware).
 # On macOS: single nextest run using default features (includes Metal, not CUDA).
 # On Linux: --all-features (includes CUDA).

@@ -11,6 +11,8 @@ export type {
 // ChannelType is both a type and a runtime const object, so use plain re-export.
 export { ChannelType } from "./channel";
 
+export type { ExternalAgentInfo } from "./external-agent";
+
 export type {
 	ActiveHoursConfig,
 	CronJob,

@@ -19,7 +19,7 @@ import {
 import { SessionHeader } from "../components/SessionHeader";
 import { formatTokens, sendRpc } from "../helpers";
 import { initMediaDrop, teardownMediaDrop } from "../media-drop";
-import { bindModelComboEvents, modelDisplayLabel, modelTitle } from "../models";
+import { bindModelComboEvents, fetchModels, modelDisplayLabel, modelTitle } from "../models";
 import { bindNodeComboEvents, fetchNodes, unbindNodeEvents } from "../nodes-selector";
 import { bindProjectComboEvents } from "../project-combo";
 import { fetchProjects } from "../projects";
@@ -731,8 +731,10 @@ function initializeChatControls(): void {
 	S.setModelComboLabel(S.$("modelComboLabel"));
 	S.setModelDropdown(S.$("modelDropdown"));
 	S.setModelSearchInput(S.$("modelSearchInput"));
+	S.modelSearchInput?.setAttribute("placeholder", "Search models or ACP agents...");
 	S.setModelDropdownList(S.$("modelDropdownList"));
 	bindModelComboEvents();
+	void fetchModels();
 	bindReasoningToggle();
 	S.setNodeCombo(S.$("nodeCombo"));
 	S.setNodeComboBtn(S.$("nodeComboBtn"));
