@@ -197,8 +197,10 @@ test.describe("reasoning effort toggle", () => {
 		const modelBtn = page.locator("#modelComboBtn");
 		await modelBtn.click();
 
-		const items = page.locator("#modelDropdownList .model-dropdown-item");
-		// Only the base model should appear, not the 3 reasoning variants
+		const items = page
+			.locator("#modelDropdownList .model-dropdown-item")
+			.filter({ has: page.locator(".model-item-provider") });
+		// Only the base model should appear among the model entries, not the 3 reasoning variants.
 		await expect(items).toHaveCount(1);
 		await expect(items.first()).toContainText("Claude Opus 4.5");
 
