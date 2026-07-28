@@ -41,6 +41,19 @@ export MOLTIS_CONFIG_DIR="${CONFIG_DIR}"
 export MOLTIS_DATA_DIR="${DATA_DIR}"
 export MOLTIS_SERVER__PORT="${PORT}"
 
+# Run exec on the host rather than in a container.
+#
+# The first sandboxed exec provisions a container with the full default package
+# set (~150 packages). On Linux that is absorbed by a pre-built image, but the
+# Apple Container backend has no pre-built image and installs them after the
+# container starts — minutes of apt work that no test's timeout survives. Any
+# spec whose agent calls exec then fails on macOS but passes in CI.
+#
+# Commands here come from the specs' own mock providers, so there is nothing to
+# isolate. Sandbox behaviour itself is covered by the sandboxes and
+# remote-sandbox specs, which do not rely on this gateway.
+export MOLTIS_TOOLS__EXEC__SANDBOX__MODE="off"
+
 
 binary_is_stale() {
 	local binary="$1"
