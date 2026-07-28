@@ -341,7 +341,10 @@ function buildAcpItem(agent: ExternalAgentInfo, currentKind: string): HTMLDivEle
 
 	const meta = document.createElement("span");
 	meta.className = "model-item-meta";
-	meta.textContent = "ACP agent";
+	const provider = document.createElement("span");
+	provider.className = "model-item-provider";
+	provider.textContent = "ACP agent";
+	meta.appendChild(provider);
 	el.appendChild(meta);
 	el.addEventListener("click", () => void bindAcpAgent(agent));
 	return el;

@@ -525,6 +525,9 @@ test.describe("Agents settings page", () => {
 		const dropdown = page.locator("#modelDropdownList");
 		await expect(dropdown.getByText("E2E Model", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Copilot", { exact: true })).toBeVisible();
+		await expect(
+			dropdown.locator(".model-dropdown-item", { hasText: "ACP: Copilot" }).locator(".model-item-provider"),
+		).toHaveText("ACP agent");
 		await expect(page.getByText("ACP: Codex", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Claude", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Pi", { exact: true })).toBeVisible();
