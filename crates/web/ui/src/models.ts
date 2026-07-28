@@ -12,6 +12,7 @@ import { showToast } from "./ui";
 let externalAgents: ExternalAgentInfo[] = [];
 let externalAgentsLoaded = false;
 let modelsLoaded = false;
+let fetchModelsGeneration = 0;
 const switchingBackendSessions = new Set<string>();
 const acpAutoBindAttempted = new Set<string>();
 const acpAutoBindInFlight = new Set<string>();
@@ -59,15 +60,14 @@ export function updateModelComboAvailability(): void {
 	maybeAutoBindAcp();
 }
 
-function refreshAcpAgents(): Promise<boolean> {
+function fetchAcpAgents(): Promise<ExternalAgentInfo[] | null> {
 	return sendRpc<ExternalAgentInfo[]>("external_agents.list", {})
 		.then((res) => {
-			if (!res?.ok) return false;
-			externalAgents = res.payload || [];
-			return true;
+			if (!res?.ok) return null;
+			return res.payload || [];
 		})
 		.catch(() => {
-			return false;
+			return null;
 		});
 }
 
@@ -195,9 +195,12 @@ function updateModelComboLabel(model: ModelInfo): void {
 }
 
 export function fetchModels(): Promise<void> {
-	return Promise.all([modelStore.fetch(), refreshAcpAgents()]).then(([didLoadModels, didLoadAgents]) => {
+	const generation = ++fetchModelsGeneration;
+	return Promise.all([modelStore.fetch(), fetchAcpAgents()]).then(([didLoadModels, agents]) => {
+		if (generation !== fetchModelsGeneration) return;
 		modelsLoaded = didLoadModels;
-		externalAgentsLoaded = didLoadAgents;
+		externalAgentsLoaded = agents !== null;
+		if (agents !== null) externalAgents = agents;
 		// Dual-write to state.js for backward compat
 		S.setModels(modelStore.models.value);
 		S.setSelectedModelId(modelStore.selectedModelId.value);
