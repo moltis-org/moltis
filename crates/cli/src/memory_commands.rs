@@ -395,7 +395,8 @@ async fn handle_reindex(
     // resolve the dimension up front by scanning for an existing suffixed
     // sibling, falling back to the configured dimension and then 768.
     let source_stem = match from {
-        Some(ref p) => std::path::PathBuf::from(p),
+        Some(ref p) => moltis_memory_zvec::path::resolve_data_subpath(&data_dir, p)
+            .map_err(|e| anyhow::anyhow!("invalid --from path: {e}"))?,
         None => {
             let db_name = config.memory.db_path.as_deref().unwrap_or("memory.zvec");
             moltis_memory_zvec::path::resolve_data_subpath(&data_dir, db_name)
@@ -511,7 +512,8 @@ async fn handle_reindex(
     }
 
     // Open the target as a store so writes populate its redb index too.
-    let target_path = Path::new(&to).to_path_buf();
+    let target_path = moltis_memory_zvec::path::resolve_data_subpath(&data_dir, &to)
+        .map_err(|e| anyhow::anyhow!("invalid --to path: {e}"))?;
     let target_cache_path = {
         let mut p = target_path.clone();
         p.as_mut_os_string().push(".cache");
