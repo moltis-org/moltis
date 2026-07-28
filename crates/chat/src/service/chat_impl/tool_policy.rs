@@ -233,6 +233,40 @@ mod tests {
         }
     }
 
+    /// The gateway skips the untrusted tool ceiling for a turn it recognizes as
+    /// an explicit `/sh`, on the promise that the chat layer will then run it
+    /// through the deterministic shell path instead of the agent loop. If the
+    /// two disagree, forms only the gateway recognizes — `/sh@bot ls`, `/SH ls`
+    /// — arrive here as ordinary prose *and* keep the unrestricted registry and
+    /// private context, which is the opposite of what the ceiling exists for.
+    ///
+    /// Keep one predicate. Do not reintroduce a local variant.
+    #[test]
+    fn send_path_detects_shell_commands_exactly_as_the_gateway_does() {
+        const SEND_ASYNC: &str = include_str!("send.rs");
+
+        assert!(
+            SEND_ASYNC.contains("moltis_agents::runner::explicit_shell_command"),
+            "send.rs must detect `/sh` with the same predicate the gateway \
+             authorizes on and the runner executes on"
+        );
+
+        // Forms the gateway treats as `/sh`. Each must be recognized here too,
+        // or it bypasses the ceiling without taking the shell path.
+        for input in ["/sh ls", "  /sh ls", "/SH ls", "/sh@mybot ls"] {
+            assert!(
+                moltis_agents::runner::explicit_shell_command(input).is_some(),
+                "{input} must be recognized as an explicit shell command"
+            );
+        }
+        for input in ["explain what /sh does", "/shell ls", "/sh", "/sh   "] {
+            assert!(
+                moltis_agents::runner::explicit_shell_command(input).is_none(),
+                "{input} must not be treated as an explicit shell command"
+            );
+        }
+    }
+
     fn queued(text: &str, policy: Option<Value>) -> QueuedMessage {
         let mut params = serde_json::json!({ "text": text });
         if let Some(policy) = policy {

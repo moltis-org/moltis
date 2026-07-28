@@ -112,8 +112,8 @@ const SHELL_DENIED_MESSAGE: &str = "Shell access is restricted to this bot's ope
 /// Privileged actions (`/sh`, shell command mode, `/approve`, `/update`, and
 /// host-reaching tools) require the sender to be an **operator**. Passing the
 /// channel access gate is not enough: in a guild or group chat every member
-/// clears that gate, so privilege is decided by the account's `operators` list
-/// from the account's explicit `operators` list.
+/// clears that gate, so privilege is decided by the account's explicit
+/// `operators` list.
 ///
 /// Fail-closed at every step — an unknown account, a missing registry, or an
 /// unidentified sender all resolve to [`ChannelSenderRole::Guest`].

@@ -966,21 +966,6 @@ pub(crate) fn sanitize_user_document_display_name(name: &str) -> Option<String> 
     }
 }
 
-pub(crate) fn parse_explicit_shell_command(text: &str) -> Option<&str> {
-    let trimmed = text.trim_start();
-    let rest = trimmed.strip_prefix("/sh")?;
-    let first = rest.chars().next()?;
-    if !first.is_whitespace() {
-        return None;
-    }
-    let command = &rest[first.len_utf8()..];
-    if command.trim().is_empty() {
-        None
-    } else {
-        Some(command)
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PromptMemoryStatus {

@@ -103,8 +103,12 @@ impl LiveChatService {
             .map(String::from);
         // Resolve session key from explicit overrides, public request params, or connection context.
         let session_key = self.resolve_session_key_from_params(&params).await;
+        // Must be the same predicate the gateway authorizes on and the runner
+        // executes on. A local variant would let a form one side treats as
+        // `/sh` (e.g. `/sh@bot ls`) skip the untrusted ceiling here while
+        // running as an ordinary agent turn with the full registry.
         let explicit_shell_command = match &message_content {
-            MessageContent::Text(raw) => parse_explicit_shell_command(raw).map(str::to_string),
+            MessageContent::Text(raw) => moltis_agents::runner::explicit_shell_command(raw),
             MessageContent::Multimodal(_) => None,
         };
         let channel_bound_web = self
