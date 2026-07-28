@@ -66,7 +66,7 @@ test.describe("Reaction feedback", () => {
 
 		// The action bar appends thumbs asynchronously; a failed or disabled
 		// status check must not surface as a page error.
-		await expect(page.locator("#chat-input")).toBeVisible();
+		await expect(page.locator("#chatInput")).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 });

@@ -670,6 +670,7 @@ test.describe("Settings navigation", () => {
 			"Terminal",
 			"Monitoring",
 			"Logs",
+			"Instrumentation",
 			...presentOptionalItems(["GraphQL"]),
 			"Configuration",
 		];

@@ -82,6 +82,7 @@ test.describe("Session management", () => {
 		await page.clock.install({ time: new Date(2026, 6, 23, 23, 58) });
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
+		await expect(page.locator('#sessionList .session-item[data-session-key="main"]')).toBeVisible();
 		await page.clock.pauseAt(new Date(2026, 6, 23, 23, 59, 59, 500));
 
 		const expected = await page.evaluate(() => {
