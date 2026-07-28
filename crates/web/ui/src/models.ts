@@ -12,7 +12,7 @@ import { showToast } from "./ui";
 let externalAgents: ExternalAgentInfo[] = [];
 let externalAgentsLoaded = false;
 let modelsLoaded = false;
-let switchingBackend = false;
+const switchingBackendSessions = new Set<string>();
 const acpAutoBindAttempted = new Set<string>();
 const acpAutoBindInFlight = new Set<string>();
 const acpAutoBindFailures = new Map<string, number>();
@@ -36,6 +36,8 @@ function activeExternalAgent(): ExternalAgentInfo | null {
 
 export function updateModelComboAvailability(): void {
 	if (!(S.modelComboBtn && S.modelComboLabel)) return;
+	const sessionKey = sessionStore.activeSessionKey.value;
+	const switchingBackend = switchingBackendSessions.has(sessionKey);
 	const externalKind = sessionStore.activeSession.value?.external_agent_kind || "";
 	const externalAgent = activeExternalAgent();
 	document
@@ -80,6 +82,10 @@ function setExternalAgentKind(sessionKey: string, kind: string | null): void {
 	if (!session) return;
 	session.external_agent_kind = kind;
 	session.dataVersion.value++;
+}
+
+function refreshSessionMetadata(): void {
+	void import("./sessions").then(({ fetchSessions }) => fetchSessions());
 }
 
 function clearAcpAutoBindRetry(sessionKey: string): void {
@@ -133,14 +139,14 @@ function maybeAutoBindAcp(): void {
 }
 
 async function bindAcpAgent(agent: ExternalAgentInfo, notifyFailure = true): Promise<boolean> {
-	if (switchingBackend) return false;
 	const sessionKey = sessionStore.activeSessionKey.value;
 	if (!sessionKey || sessionKey.startsWith("cron:")) return false;
+	if (switchingBackendSessions.has(sessionKey)) return false;
 	if (sessionStore.activeSession.value?.external_agent_kind === agent.kind) {
 		closeModelDropdown();
 		return true;
 	}
-	switchingBackend = true;
+	switchingBackendSessions.add(sessionKey);
 	updateModelComboAvailability();
 	try {
 		const res = await sendRpc("external_agents.bind", { sessionKey, kind: agent.kind });
@@ -149,14 +155,15 @@ async function bindAcpAgent(agent: ExternalAgentInfo, notifyFailure = true): Pro
 			return false;
 		}
 		setExternalAgentKind(sessionKey, agent.kind);
+		refreshSessionMetadata();
 		closeModelDropdown();
 		return true;
 	} catch {
 		if (notifyFailure) showToast("Failed to select ACP agent", "error");
 		return false;
 	} finally {
-		switchingBackend = false;
-		if (sessionStore.activeSessionKey.value === sessionKey) updateModelComboAvailability();
+		switchingBackendSessions.delete(sessionKey);
+		updateModelComboAvailability();
 	}
 }
 
@@ -226,10 +233,10 @@ export function selectModel(m: ModelInfo): void {
 		commitModelSelection(m);
 		return;
 	}
-	if (switchingBackend) return;
 	const sessionKey = sessionStore.activeSessionKey.value;
 	if (!sessionKey) return;
-	switchingBackend = true;
+	if (switchingBackendSessions.has(sessionKey)) return;
+	switchingBackendSessions.add(sessionKey);
 	updateModelComboAvailability();
 	void sendRpc("external_agents.unbind", { sessionKey })
 		.then((res) => {
@@ -238,6 +245,7 @@ export function selectModel(m: ModelInfo): void {
 				return;
 			}
 			setExternalAgentKind(sessionKey, null);
+			refreshSessionMetadata();
 			if (sessionStore.activeSessionKey.value === sessionKey) {
 				commitModelSelection(m, sessionKey);
 			} else {
@@ -248,8 +256,8 @@ export function selectModel(m: ModelInfo): void {
 			showToast("Failed to switch to the selected model", "error");
 		})
 		.finally(() => {
-			switchingBackend = false;
-			if (sessionStore.activeSessionKey.value === sessionKey) updateModelComboAvailability();
+			switchingBackendSessions.delete(sessionKey);
+			updateModelComboAvailability();
 		});
 }
 

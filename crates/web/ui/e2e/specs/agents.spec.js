@@ -46,7 +46,7 @@ async function deleteAgentByName(page, agentName) {
 	await expect(testCard).toHaveCount(0, { timeout: 10_000 });
 }
 
-async function mockExternalAgentsRpc(page, listPayload, modelsPayload, bindFailures = 0) {
+async function mockExternalAgentsRpc(page, listPayload, modelsPayload, bindFailures = 0, holdBackendSwitches = false) {
 	if (Array.isArray(modelsPayload)) {
 		await page.route(
 			"**/api/bootstrap?**",
@@ -60,11 +60,30 @@ async function mockExternalAgentsRpc(page, listPayload, modelsPayload, bindFailu
 			{ times: 1 },
 		);
 	}
+	await page.route(/\/api\/sessions(?:\?.*)?$/, async (route) => {
+		const response = await route.fetch();
+		const payload = await response.json();
+		const bindings = await page.evaluate(() => window.__externalAgentE2EBindings || {});
+		const sessions = Array.isArray(payload) ? payload : payload.sessions;
+		if (Array.isArray(sessions)) {
+			for (const session of sessions) {
+				if (Object.hasOwn(bindings, session.key)) session.external_agent_kind = bindings[session.key];
+			}
+		}
+		await route.fulfill({ response, json: payload });
+	});
 	await page.addInitScript(
-		({ externalAgentsListPayload, modelListPayload, bindFailureCount }) => {
+		({ externalAgentsListPayload, modelListPayload, bindFailureCount, holdSwitches }) => {
 			if (window.__externalAgentE2EPatched) return;
 			window.__externalAgentE2EPatched = true;
 			window.__externalAgentE2ERequests = [];
+			window.__externalAgentE2EBindings = {};
+			window.__externalAgentE2EPendingResponses = [];
+			window.__externalAgentE2EHoldSwitches = holdSwitches;
+			window.__releaseExternalAgentE2EResponses = () => {
+				const pending = window.__externalAgentE2EPendingResponses.splice(0);
+				for (const sendResponse of pending) sendResponse();
+			};
 			let failuresRemaining = bindFailureCount;
 			const agentsPayload = externalAgentsListPayload || [
 				{ kind: "codex", name: "Codex", installed: true, isAcp: false, version: null },
@@ -90,6 +109,14 @@ async function mockExternalAgentsRpc(page, listPayload, modelsPayload, bindFailu
 				});
 			}
 
+			function respondToBackendSwitch(sendResponse) {
+				if (window.__externalAgentE2EHoldSwitches) {
+					window.__externalAgentE2EPendingResponses.push(sendResponse);
+					return;
+				}
+				sendResponse();
+			}
+
 			WebSocket.prototype.send = function (payload) {
 				try {
 					var parsed = JSON.parse(payload);
@@ -109,13 +136,22 @@ async function mockExternalAgentsRpc(page, listPayload, modelsPayload, bindFailu
 							respondError(this, parsed.id, "simulated bind failure");
 							return;
 						}
-						respond(this, parsed.id, { ok: true });
+						respondToBackendSwitch(() => {
+							window.__externalAgentE2EBindings[parsed.params?.sessionKey] = parsed.params?.kind;
+							respond(this, parsed.id, { ok: true });
+						});
 						return;
 					}
 					if (parsed?.method === "external_agents.unbind") {
 						window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
-						respond(this, parsed.id, { ok: true });
+						respondToBackendSwitch(() => {
+							window.__externalAgentE2EBindings[parsed.params?.sessionKey] = null;
+							respond(this, parsed.id, { ok: true });
+						});
 						return;
+					}
+					if (parsed?.method === "sessions.patch") {
+						window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
 					}
 				} catch (_err) {
 					// Fall through to the original sender.
@@ -123,7 +159,12 @@ async function mockExternalAgentsRpc(page, listPayload, modelsPayload, bindFailu
 				return originalSend.call(this, payload);
 			};
 		},
-		{ externalAgentsListPayload: listPayload, modelListPayload: modelsPayload, bindFailureCount: bindFailures },
+		{
+			externalAgentsListPayload: listPayload,
+			modelListPayload: modelsPayload,
+			bindFailureCount: bindFailures,
+			holdSwitches: holdBackendSwitches,
+		},
 	);
 }
 
@@ -467,11 +508,18 @@ test.describe("Agents settings page", () => {
 		await expectPageContentMounted(page);
 		await waitForWsConnected(page);
 		await createSession(page);
+		const sessionKey = await page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "");
 
 		await expect(page.getByTestId("external-agent-picker")).toHaveCount(0);
 		const picker = page.locator("#modelComboBtn");
 		await expect(picker).toBeEnabled({ timeout: 10_000 });
 		await expect(page.locator("#reasoningCombo")).toBeVisible();
+		await page.locator("#reasoningComboBtn").click();
+		await page
+			.locator("#reasoningDropdownList .model-dropdown-item")
+			.filter({ hasText: /^High$/ })
+			.click();
+		await expect(page.locator("#reasoningComboLabel")).toHaveText("High");
 		await picker.click();
 		const dropdown = page.locator("#modelDropdownList");
 		await expect(dropdown.getByText("E2E Model", { exact: true })).toBeVisible();
@@ -493,10 +541,15 @@ test.describe("Agents settings page", () => {
 		await expect
 			.poll(
 				async () =>
-					page.evaluate(() =>
-						(window.__externalAgentE2ERequests || []).some(
-							(req) => req.method === "external_agents.bind" && req.params?.kind === "acp-copilot",
-						),
+					page.evaluate(
+						(key) =>
+							(window.__externalAgentE2ERequests || []).some(
+								(req) =>
+									req.method === "external_agents.bind" &&
+									req.params?.sessionKey === key &&
+									req.params?.kind === "acp-copilot",
+							),
+						sessionKey,
 					),
 				{ timeout: 10_000 },
 			)
@@ -510,14 +563,33 @@ test.describe("Agents settings page", () => {
 		await expect
 			.poll(
 				async () =>
-					page.evaluate(() =>
-						(window.__externalAgentE2ERequests || []).some((req) => req.method === "external_agents.unbind"),
+					page.evaluate(
+						(key) =>
+							(window.__externalAgentE2ERequests || []).some(
+								(req) => req.method === "external_agents.unbind" && req.params?.sessionKey === key,
+							),
+						sessionKey,
 					),
 				{ timeout: 10_000 },
 			)
 			.toBe(true);
 		await expect(page.locator("#modelComboLabel")).toHaveText("E2E Model");
 		await expect(page.locator("#reasoningCombo")).toBeVisible();
+		await expect(page.locator("#reasoningComboLabel")).toHaveText("High");
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(
+						(key) =>
+							(window.__externalAgentE2ERequests || []).some(
+								(req) =>
+									req.method === "sessions.patch" && req.params?.key === key && req.params?.model === "e2e/model",
+							),
+						sessionKey,
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -553,18 +625,67 @@ test.describe("Agents settings page", () => {
 			.toBe(true);
 		await expect(page.getByTestId("external-agent-picker")).toHaveCount(0);
 		await page.locator("#modelComboBtn").click();
-		await expect(page.getByText("ACP: Copilot (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("ACP: Codex (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("ACP: opencode (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("ACP: Gemini (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("ACP: Augment (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("ACP: Kiro (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("ACP: OpenClaw (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("ACP: OpenHands (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("ACP: Kimi (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("ACP: Stakpak (unavailable)", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("ACP: fast-agent (unavailable)", { exact: true })).toHaveCount(0);
+		const dropdown = page.locator("#modelDropdownList");
+		for (const name of [
+			"ACP: Copilot",
+			"ACP: Codex",
+			"ACP: opencode",
+			"ACP: Gemini",
+			"ACP: Augment",
+			"ACP: Kiro",
+			"ACP: OpenClaw",
+			"ACP: OpenHands",
+			"ACP: Kimi",
+			"ACP: Stakpak",
+			"ACP: fast-agent",
+		]) {
+			await expect(dropdown.getByText(name, { exact: true })).toHaveCount(0);
+		}
 
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("backend switch only disables the originating session selector", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockExternalAgentsRpc(
+			page,
+			[{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, isAcp: true, version: null }],
+			[{ id: "e2e/model", displayName: "E2E Model", provider: "e2e", supportsReasoning: true }],
+			0,
+			true,
+		);
+		await page.goto("/chats");
+		await expectPageContentMounted(page);
+		await waitForWsConnected(page);
+
+		const firstSessionKey = await page.evaluate(
+			() => window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "",
+		);
+		const picker = page.locator("#modelComboBtn");
+		await expect(picker).toBeEnabled({ timeout: 10_000 });
+		await picker.click();
+		await page.locator("#modelDropdownList").getByText("ACP: Copilot", { exact: true }).click();
+		await expect(picker).toBeDisabled();
+
+		await createSession(page);
+		const secondSessionKey = await page.evaluate(
+			() => window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "",
+		);
+		expect(secondSessionKey).not.toBe(firstSessionKey);
+		await expect(picker).toBeEnabled();
+
+		await page.evaluate(() => window.__releaseExternalAgentE2EResponses?.());
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(
+						(key) => window.__moltis_stores?.sessionStore?.getByKey?.(key)?.external_agent_kind || null,
+						firstSessionKey,
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe("acp-copilot");
+		await expect(picker).toBeEnabled();
 		expect(pageErrors).toEqual([]);
 	});
 
