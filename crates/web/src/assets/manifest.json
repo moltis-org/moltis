@@ -8,7 +8,6 @@
   "start_url": "/chats",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "background_color": "#0f1115",
   "theme_color": "#f97316",
   "orientation": "any",

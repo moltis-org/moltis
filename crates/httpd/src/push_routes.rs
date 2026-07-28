@@ -3,14 +3,20 @@
 use {
     crate::server::AppState,
     axum::{
-        Json, Router,
+        Extension, Json, Router,
         extract::{ConnectInfo, State},
         http::{HeaderMap, StatusCode},
         response::IntoResponse,
         routing::{get, post},
     },
     chrono::Utc,
-    moltis_gateway::push::PushSubscription,
+    moltis_gateway::{
+        auth::{AuthIdentity, AuthMethod},
+        push::{
+            PresenceUpdateResult, PushSendStats, PushSubscription, PushSubscriptionValidationError,
+        },
+    },
+    moltis_protocol::scopes,
     serde::{Deserialize, Serialize},
     std::net::SocketAddr,
 };
@@ -36,9 +42,17 @@ pub struct SubscribeRequest {
 #[derive(Deserialize)]
 pub struct PresenceRequest {
     pub endpoint: String,
+    #[serde(default = "legacy_presence_client_id")]
+    pub client_id: String,
+    #[serde(default)]
+    pub sequence: Option<u64>,
     #[serde(default)]
     pub session_key: Option<String>,
     pub visible: bool,
+}
+
+fn legacy_presence_client_id() -> String {
+    "legacy".to_string()
 }
 
 #[derive(Deserialize)]
@@ -74,10 +88,56 @@ struct PushStatusResponse {
     subscriptions: Vec<SubscriptionSummary>,
 }
 
+#[derive(Clone, Copy)]
+enum PushAccess {
+    Read,
+    Write,
+    Admin,
+}
+
+fn require_push_access(
+    identity: Option<&AuthIdentity>,
+    access: PushAccess,
+) -> Result<(), StatusCode> {
+    let Some(identity) = identity else {
+        // Auth-disabled/local setup requests have no inserted identity. Scoped
+        // API keys always have one from auth_gate.
+        return Ok(());
+    };
+    if identity.method != AuthMethod::ApiKey {
+        return Ok(());
+    }
+    if identity.scopes.is_empty()
+        || identity.scopes.iter().any(|scope| scope == scopes::ADMIN)
+        || match access {
+            PushAccess::Read => identity
+                .scopes
+                .iter()
+                .any(|scope| scope == scopes::READ || scope == scopes::WRITE),
+            PushAccess::Write => identity.scopes.iter().any(|scope| scope == scopes::WRITE),
+            PushAccess::Admin => false,
+        }
+    {
+        Ok(())
+    } else {
+        Err(StatusCode::FORBIDDEN)
+    }
+}
+
+fn subscription_error_status(error: &anyhow::Error) -> StatusCode {
+    match error.downcast_ref::<PushSubscriptionValidationError>() {
+        Some(PushSubscriptionValidationError::LimitReached) => StatusCode::TOO_MANY_REQUESTS,
+        Some(PushSubscriptionValidationError::Invalid(_)) => StatusCode::BAD_REQUEST,
+        None => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
 /// Get the VAPID public key for push subscription.
 async fn vapid_key_handler(
+    identity: Option<Extension<AuthIdentity>>,
     State(state): State<AppState>,
 ) -> Result<Json<VapidKeyResponse>, StatusCode> {
+    require_push_access(identity.as_deref(), PushAccess::Read)?;
     let Some(ref push_service) = state.push_service else {
         return Err(StatusCode::NOT_IMPLEMENTED);
     };
@@ -127,11 +187,13 @@ fn extract_client_ip(headers: &HeaderMap, conn_addr: SocketAddr) -> String {
 
 /// Subscribe to push notifications.
 async fn subscribe_handler(
+    identity: Option<Extension<AuthIdentity>>,
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<SubscribeRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
+    require_push_access(identity.as_deref(), PushAccess::Write)?;
     let Some(ref push_service) = state.push_service else {
         return Err(StatusCode::NOT_IMPLEMENTED);
     };
@@ -155,7 +217,7 @@ async fn subscribe_handler(
     push_service
         .add_subscription(subscription, req.replaces.as_deref())
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|error| subscription_error_status(&error))?;
 
     // Broadcast subscription change
     moltis_gateway::broadcast::broadcast(
@@ -171,9 +233,11 @@ async fn subscribe_handler(
 
 /// Unsubscribe from push notifications.
 async fn unsubscribe_handler(
+    identity: Option<Extension<AuthIdentity>>,
     State(state): State<AppState>,
     Json(req): Json<UnsubscribeRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
+    require_push_access(identity.as_deref(), PushAccess::Write)?;
     let Some(ref push_service) = state.push_service else {
         return Err(StatusCode::NOT_IMPLEMENTED);
     };
@@ -200,6 +264,11 @@ async fn unsubscribe_handler(
 struct TestNotificationResponse {
     /// Number of devices the push was accepted for.
     sent: usize,
+    targeted: usize,
+    failed: usize,
+    timed_out: usize,
+    expired: usize,
+    suppressed: usize,
 }
 
 /// Send a test notification to every subscribed device.
@@ -208,8 +277,10 @@ struct TestNotificationResponse {
 /// the network all fail silently — so this gives users a way to prove the path
 /// works end to end.
 async fn test_handler(
+    identity: Option<Extension<AuthIdentity>>,
     State(state): State<AppState>,
 ) -> Result<Json<TestNotificationResponse>, StatusCode> {
+    require_push_access(identity.as_deref(), PushAccess::Write)?;
     let Some(ref push_service) = state.push_service else {
         return Err(StatusCode::NOT_IMPLEMENTED);
     };
@@ -223,12 +294,25 @@ async fn test_handler(
         None,
     );
 
-    let sent = push_service
-        .send_to_all(&payload)
+    let stats = push_service
+        .send_to_all_with_stats(&payload)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(TestNotificationResponse { sent }))
+    Ok(Json(TestNotificationResponse::from(stats)))
+}
+
+impl From<PushSendStats> for TestNotificationResponse {
+    fn from(stats: PushSendStats) -> Self {
+        Self {
+            sent: stats.sent,
+            targeted: stats.targeted,
+            failed: stats.failed,
+            timed_out: stats.timed_out,
+            expired: stats.expired,
+            suppressed: stats.suppressed,
+        }
+    }
 }
 
 /// Report which session this device is currently viewing.
@@ -236,23 +320,33 @@ async fn test_handler(
 /// Used to suppress push notifications on the device the user is already
 /// reading the conversation on.
 async fn presence_handler(
+    identity: Option<Extension<AuthIdentity>>,
     State(state): State<AppState>,
     Json(req): Json<PresenceRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
+    require_push_access(identity.as_deref(), PushAccess::Write)?;
     let Some(ref push_service) = state.push_service else {
         return Err(StatusCode::NOT_IMPLEMENTED);
     };
 
-    let recorded = push_service
-        .record_presence(&req.endpoint, req.session_key, req.visible)
+    let result = push_service
+        .record_presence(
+            &req.endpoint,
+            &req.client_id,
+            req.sequence,
+            req.session_key,
+            req.visible,
+        )
         .await;
 
     // An unknown endpoint means the client's subscription is stale; telling it
     // so lets the page re-register instead of silently losing suppression.
-    if recorded {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(StatusCode::NOT_FOUND)
+    match result {
+        PresenceUpdateResult::Recorded => Ok(StatusCode::NO_CONTENT),
+        PresenceUpdateResult::UnknownEndpoint => Err(StatusCode::NOT_FOUND),
+        PresenceUpdateResult::Stale => Err(StatusCode::CONFLICT),
+        PresenceUpdateResult::Invalid => Err(StatusCode::BAD_REQUEST),
+        PresenceUpdateResult::TooManyClients => Err(StatusCode::TOO_MANY_REQUESTS),
     }
 }
 
@@ -311,7 +405,11 @@ fn parse_device_name(user_agent: Option<&str>) -> String {
 }
 
 /// Get push notification status.
-async fn status_handler(State(state): State<AppState>) -> Json<PushStatusResponse> {
+async fn status_handler(
+    identity: Option<Extension<AuthIdentity>>,
+    State(state): State<AppState>,
+) -> Result<Json<PushStatusResponse>, StatusCode> {
+    require_push_access(identity.as_deref(), PushAccess::Admin)?;
     let (enabled, subscription_count, subscriptions) =
         if let Some(ref push_service) = state.push_service {
             let subs = push_service.list_subscriptions().await;
@@ -330,11 +428,11 @@ async fn status_handler(State(state): State<AppState>) -> Json<PushStatusRespons
             (false, 0, Vec::new())
         };
 
-    Json(PushStatusResponse {
+    Ok(Json(PushStatusResponse {
         enabled,
         subscription_count,
         subscriptions,
-    })
+    }))
 }
 
 /// Create the push notification router.
@@ -353,6 +451,7 @@ pub fn push_router() -> Router<AppState> {
 mod tests {
     use {
         axum::body::to_bytes,
+        base64::Engine,
         moltis_gateway::{
             auth, methods::MethodRegistry, push::PushService, services::GatewayServices,
             state::GatewayState,
@@ -448,6 +547,53 @@ mod tests {
 
     // ── Handlers ────────────────────────────────────────────────────────────
 
+    fn identity(method: AuthMethod, scopes: &[&str]) -> AuthIdentity {
+        AuthIdentity {
+            method,
+            scopes: scopes.iter().map(|scope| (*scope).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn push_scope_policy_restricts_api_keys_only() {
+        for method in [
+            AuthMethod::Password,
+            AuthMethod::Passkey,
+            AuthMethod::Loopback,
+        ] {
+            let identity = identity(method, &[]);
+            assert!(require_push_access(Some(&identity), PushAccess::Read).is_ok());
+            assert!(require_push_access(Some(&identity), PushAccess::Write).is_ok());
+            assert!(require_push_access(Some(&identity), PushAccess::Admin).is_ok());
+        }
+
+        let read = identity(AuthMethod::ApiKey, &[scopes::READ]);
+        assert!(require_push_access(Some(&read), PushAccess::Read).is_ok());
+        assert_eq!(
+            require_push_access(Some(&read), PushAccess::Write),
+            Err(StatusCode::FORBIDDEN)
+        );
+
+        let write = identity(AuthMethod::ApiKey, &[scopes::WRITE]);
+        assert!(require_push_access(Some(&write), PushAccess::Write).is_ok());
+        assert!(require_push_access(Some(&write), PushAccess::Read).is_ok());
+
+        let admin = identity(AuthMethod::ApiKey, &[scopes::ADMIN]);
+        assert!(require_push_access(Some(&admin), PushAccess::Read).is_ok());
+        assert!(require_push_access(Some(&admin), PushAccess::Write).is_ok());
+        assert!(require_push_access(Some(&admin), PushAccess::Admin).is_ok());
+
+        assert_eq!(
+            require_push_access(Some(&read), PushAccess::Admin),
+            Err(StatusCode::FORBIDDEN)
+        );
+
+        let unscoped = identity(AuthMethod::ApiKey, &[]);
+        assert!(require_push_access(Some(&unscoped), PushAccess::Read).is_ok());
+        assert!(require_push_access(Some(&unscoped), PushAccess::Write).is_ok());
+        assert!(require_push_access(Some(&unscoped), PushAccess::Admin).is_ok());
+    }
+
     fn test_state(push_service: Option<Arc<PushService>>) -> AppState {
         let gateway = GatewayState::new(auth::resolve_auth(None, None), GatewayServices::noop());
         let cloudflare_tunnel_runtime = Arc::new(tokio::sync::RwLock::new(None));
@@ -494,11 +640,20 @@ mod tests {
     }
 
     fn subscribe_request(endpoint: &str, replaces: Option<&str>) -> SubscribeRequest {
+        #[rustfmt::skip]
+        let p256dh = [
+            0x04, 0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc,
+            0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2, 0x77, 0x03, 0x7d, 0x81, 0x2d,
+            0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98, 0xc2, 0x96,
+            0x4f, 0xe3, 0x42, 0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb,
+            0x4a, 0x7c, 0x0f, 0x9e, 0x16, 0x2b, 0xce, 0x33, 0x57, 0x6b, 0x31,
+            0x5e, 0xce, 0xcb, 0xb6, 0x40, 0x68, 0x37, 0xbf, 0x51, 0xf5,
+        ];
         SubscribeRequest {
             endpoint: endpoint.to_string(),
             keys: SubscriptionKeys {
-                p256dh: "p256dh".to_string(),
-                auth: "auth".to_string(),
+                p256dh: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(p256dh),
+                auth: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7_u8; 16]),
             },
             replaces: replaces.map(ToString::to_string),
         }
@@ -509,14 +664,17 @@ mod tests {
         let state = test_state(None);
 
         assert_eq!(
-            vapid_key_handler(State(state.clone())).await.err(),
+            vapid_key_handler(None, State(state.clone())).await.err(),
             Some(StatusCode::NOT_IMPLEMENTED)
         );
         assert_eq!(
             presence_handler(
+                None,
                 State(state.clone()),
                 Json(PresenceRequest {
-                    endpoint: "https://push.example/a".into(),
+                    endpoint: "https://8.8.8.8/a".into(),
+                    client_id: "tab-a".into(),
+                    sequence: Some(1),
                     session_key: None,
                     visible: true,
                 }),
@@ -526,14 +684,16 @@ mod tests {
             Some(StatusCode::NOT_IMPLEMENTED)
         );
         assert_eq!(
-            test_handler(State(state)).await.err(),
+            test_handler(None, State(state)).await.err(),
             Some(StatusCode::NOT_IMPLEMENTED)
         );
     }
 
     #[tokio::test]
     async fn status_reports_disabled_without_a_push_service() {
-        let response = status_handler(State(test_state(None))).await;
+        let response = status_handler(None, State(test_state(None)))
+            .await
+            .expect("status");
         assert!(!response.0.enabled);
         assert_eq!(response.0.subscription_count, 0);
         assert!(response.0.subscriptions.is_empty());
@@ -547,31 +707,86 @@ mod tests {
         headers.insert("x-forwarded-for", "203.0.113.5".parse().unwrap());
 
         let response = subscribe_handler(
+            None,
             State(state.clone()),
             ConnectInfo(addr()),
             headers,
-            Json(subscribe_request("https://push.example/a", None)),
+            Json(subscribe_request("https://8.8.8.8/a", None)),
         )
         .await
         .expect("subscribe")
         .into_response();
         assert_eq!(response.status(), StatusCode::CREATED);
 
-        let status = status_handler(State(state)).await;
+        let status = status_handler(None, State(state)).await.expect("status");
         assert!(status.0.enabled);
         assert_eq!(status.0.subscription_count, 1);
         let entry = &status.0.subscriptions[0];
         assert_eq!(entry.device, "iPhone");
         assert_eq!(entry.ip.as_deref(), Some("203.0.113.5"));
-        assert_eq!(entry.endpoint, "https://push.example/a");
+        assert_eq!(entry.endpoint, "https://8.8.8.8/a");
+    }
+
+    #[tokio::test]
+    async fn subscribe_rejects_unsafe_endpoint_without_storage() {
+        let (state, _dir) = state_with_push().await;
+        let response = subscribe_handler(
+            None,
+            State(state.clone()),
+            ConnectInfo(addr()),
+            HeaderMap::new(),
+            Json(subscribe_request("https://127.0.0.1/push", None)),
+        )
+        .await;
+        assert_eq!(response.err(), Some(StatusCode::BAD_REQUEST));
+        assert_eq!(
+            status_handler(None, State(state))
+                .await
+                .expect("status")
+                .0
+                .subscription_count,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn handler_enforces_read_and_write_scopes() {
+        let (state, _dir) = state_with_push().await;
+        let read = Some(Extension(identity(AuthMethod::ApiKey, &[scopes::READ])));
+        let write = Some(Extension(identity(AuthMethod::ApiKey, &[scopes::WRITE])));
+        let admin = Some(Extension(identity(AuthMethod::ApiKey, &[scopes::ADMIN])));
+
+        assert_eq!(
+            subscribe_handler(
+                read,
+                State(state.clone()),
+                ConnectInfo(addr()),
+                HeaderMap::new(),
+                Json(subscribe_request("https://8.8.8.8/a", None)),
+            )
+            .await
+            .err(),
+            Some(StatusCode::FORBIDDEN)
+        );
+        assert!(
+            vapid_key_handler(write.clone(), State(state.clone()))
+                .await
+                .is_ok()
+        );
+        assert_eq!(
+            status_handler(write, State(state.clone())).await.err(),
+            Some(StatusCode::FORBIDDEN)
+        );
+        assert!(status_handler(admin, State(state)).await.is_ok());
     }
 
     #[tokio::test]
     async fn subscribing_with_replaces_retires_the_rotated_endpoint() {
         let (state, _dir) = state_with_push().await;
 
-        for endpoint in ["https://push.example/old", "https://push.example/other"] {
+        for endpoint in ["https://8.8.8.8/old", "https://8.8.8.8/other"] {
             subscribe_handler(
+                None,
                 State(state.clone()),
                 ConnectInfo(addr()),
                 HeaderMap::new(),
@@ -582,28 +797,29 @@ mod tests {
         }
 
         subscribe_handler(
+            None,
             State(state.clone()),
             ConnectInfo(addr()),
             HeaderMap::new(),
             Json(subscribe_request(
-                "https://push.example/new",
-                Some("https://push.example/old"),
+                "https://8.8.8.8/new",
+                Some("https://8.8.8.8/old"),
             )),
         )
         .await
         .expect("subscribe");
 
-        let status = status_handler(State(state)).await;
+        let status = status_handler(None, State(state)).await.expect("status");
         let endpoints: Vec<&str> = status
             .0
             .subscriptions
             .iter()
             .map(|s| s.endpoint.as_str())
             .collect();
-        assert!(!endpoints.contains(&"https://push.example/old"));
-        assert!(endpoints.contains(&"https://push.example/new"));
+        assert!(!endpoints.contains(&"https://8.8.8.8/old"));
+        assert!(endpoints.contains(&"https://8.8.8.8/new"));
         assert!(
-            endpoints.contains(&"https://push.example/other"),
+            endpoints.contains(&"https://8.8.8.8/other"),
             "replacing one endpoint must not disturb the others"
         );
     }
@@ -615,9 +831,12 @@ mod tests {
         // An endpoint the server never stored is how a client learns its
         // subscription is stale, so it must not be silently accepted.
         let unknown = presence_handler(
+            None,
             State(state.clone()),
             Json(PresenceRequest {
-                endpoint: "https://push.example/unknown".into(),
+                endpoint: "https://8.8.8.8/unknown".into(),
+                client_id: "tab-a".into(),
+                sequence: Some(1),
                 session_key: Some("main".into()),
                 visible: true,
             }),
@@ -626,18 +845,22 @@ mod tests {
         assert_eq!(unknown.err(), Some(StatusCode::NOT_FOUND));
 
         subscribe_handler(
+            None,
             State(state.clone()),
             ConnectInfo(addr()),
             HeaderMap::new(),
-            Json(subscribe_request("https://push.example/a", None)),
+            Json(subscribe_request("https://8.8.8.8/a", None)),
         )
         .await
         .expect("subscribe");
 
         let known = presence_handler(
-            State(state),
+            None,
+            State(state.clone()),
             Json(PresenceRequest {
-                endpoint: "https://push.example/a".into(),
+                endpoint: "https://8.8.8.8/a".into(),
+                client_id: "tab-a".into(),
+                sequence: Some(1),
                 session_key: Some("main".into()),
                 visible: true,
             }),
@@ -646,38 +869,92 @@ mod tests {
         .expect("presence")
         .into_response();
         assert_eq!(known.status(), StatusCode::NO_CONTENT);
+
+        let stale = presence_handler(
+            None,
+            State(state),
+            Json(PresenceRequest {
+                endpoint: "https://8.8.8.8/a".into(),
+                client_id: "tab-a".into(),
+                sequence: Some(1),
+                session_key: None,
+                visible: false,
+            }),
+        )
+        .await;
+        assert_eq!(stale.err(), Some(StatusCode::CONFLICT));
+    }
+
+    #[tokio::test]
+    async fn legacy_presence_requests_default_and_can_repeat() {
+        let (state, _dir) = state_with_push().await;
+        let endpoint = "https://8.8.8.8/legacy";
+        subscribe_handler(
+            None,
+            State(state.clone()),
+            ConnectInfo(addr()),
+            HeaderMap::new(),
+            Json(subscribe_request(endpoint, None)),
+        )
+        .await
+        .expect("subscribe");
+
+        for visible in [true, false] {
+            let request: PresenceRequest = serde_json::from_value(serde_json::json!({
+                "endpoint": endpoint,
+                "session_key": "main",
+                "visible": visible,
+            }))
+            .expect("legacy request");
+            assert_eq!(request.client_id, "legacy");
+            assert_eq!(request.sequence, None);
+            let response = presence_handler(None, State(state.clone()), Json(request))
+                .await
+                .expect("legacy presence")
+                .into_response();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        }
     }
 
     #[tokio::test]
     async fn unsubscribe_removes_the_device() {
         let (state, _dir) = state_with_push().await;
         subscribe_handler(
+            None,
             State(state.clone()),
             ConnectInfo(addr()),
             HeaderMap::new(),
-            Json(subscribe_request("https://push.example/a", None)),
+            Json(subscribe_request("https://8.8.8.8/a", None)),
         )
         .await
         .expect("subscribe");
 
         let response = unsubscribe_handler(
+            None,
             State(state.clone()),
             Json(UnsubscribeRequest {
-                endpoint: "https://push.example/a".into(),
+                endpoint: "https://8.8.8.8/a".into(),
             }),
         )
         .await
         .expect("unsubscribe")
         .into_response();
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(status_handler(State(state)).await.0.subscription_count, 0);
+        assert_eq!(
+            status_handler(None, State(state))
+                .await
+                .expect("status")
+                .0
+                .subscription_count,
+            0
+        );
     }
 
     #[tokio::test]
     async fn test_notification_reports_zero_without_subscribers() {
         let (state, _dir) = state_with_push().await;
 
-        let response = test_handler(State(state))
+        let response = test_handler(None, State(state))
             .await
             .expect("test")
             .into_response();

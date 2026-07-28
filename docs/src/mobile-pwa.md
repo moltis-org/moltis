@@ -36,7 +36,9 @@ When installed as a PWA, moltis provides:
   closed — the service worker badges the icon as the push arrives. Badging only
   applies to an installed app; in a plain browser tab there is no icon to draw on.
 - **Safe area support**: Proper spacing for notched devices (iPhone X+)
-- **Non-disruptive updates**: A new version installs in the background and only takes over when the page asks it to, so an update never reloads the app mid-conversation
+- **Non-disruptive updates**: A new version installs in the background and takes
+  over after all existing app windows close. It never reloads a hidden page or
+  discards an unsent draft.
 
 ## Push Notifications
 
@@ -74,6 +76,12 @@ Moltis uses the Web Push API with VAPID (Voluntary Application Server Identifica
 3. **Registration**: The subscription details are sent to the server and stored
 4. **Notification**: When you need to be notified, the server encrypts and sends a push message
 
+Subscription endpoints must be absolute public HTTPS URLs. Moltis rejects
+loopback, private, link-local, and malformed destinations before storing them
+and checks them again before delivery. Sends have a ten-second deadline and
+bounded concurrency, so an unavailable push service cannot hold up channel
+delivery.
+
 ### Push API Routes
 
 The gateway exposes these API endpoints for push notifications:
@@ -86,6 +94,11 @@ The gateway exposes these API endpoints for push notifications:
 | `/api/push/presence` | POST | Report which session this device is viewing |
 | `/api/push/test` | POST | Send a test notification to every subscribed device |
 | `/api/push/status` | GET | Get push service status and subscription list |
+
+API keys need `operator.read` for the VAPID key and `operator.write` for
+subscription, presence, and test operations. Because status includes device
+metadata and complete endpoints, `/api/push/status` requires `operator.admin`.
+Password, passkey, and local access retain full access.
 
 ### Subscribe Request
 
@@ -109,6 +122,8 @@ same request rather than lingering until its next delivery failure.
 ```json
 {
   "endpoint": "https://fcm.googleapis.com/fcm/send/...",
+  "client_id": "7ec0d5ae-...",
+  "sequence": 42,
   "session_key": "main",
   "visible": true
 }
@@ -141,7 +156,7 @@ Push notifications include:
 
 ```json
 {
-  "title": "Deploy plan",
+  "title": "moltis",
   "body": "Rolled out to staging and the smoke tests pass.",
   "url": "/chats/main",
   "sessionKey": "main",
@@ -150,9 +165,10 @@ Push notifications include:
 }
 ```
 
-The title is the session's label (falling back to `moltis`), and the body is the
-reply with markdown syntax stripped so it reads as plain text in the
-notification shade.
+The title is always `moltis`, so a private session label is not exposed on a
+lock screen. The body is the reply with markdown syntax converted to readable
+plain text. Notification previews may still be visible on a locked device;
+control that exposure with the operating system's notification-preview setting.
 
 Clicking a notification focuses an existing window — preferring one already
 showing the target chat — and routes in place rather than reloading the app. If
@@ -166,16 +182,21 @@ Several details keep notifications from piling up or stepping on each other:
   chat produces one notification rather than a wall of them. The replacement
   sets `renotify`, so it still alerts you instead of being swapped in silently,
   and its body says how many earlier messages it folded in.
-- **Foreground suppression**: The browser reports which session it is showing.
-  A device that is visible and focused on a session is skipped when that session
-  produces a reply — your phone stays quiet for a message you are watching
-  stream in on that same phone. Other devices still get notified.
+- **Foreground suppression**: Each browser window maintains an ordered presence
+  lease and refreshes it while focused. A device is skipped only when at least
+  one window is visible, focused, and showing that exact chat. Other tabs and
+  devices still get notified.
 - **Server-side collapsing**: Messages carry a per-session `Topic`, so a device
   that was offline wakes to the latest message per session, not a backlog.
 - **Expiry**: Messages carry a 6-hour TTL. A push older than that is dropped by
   the push service rather than delivered as stale news.
 - **Endpoint hygiene**: Endpoints that return 410 Gone or 404 Not Found are
-  removed automatically, and rotated subscriptions re-register themselves.
+  removed automatically, and rotated or server-forgotten subscriptions
+  re-register themselves. Explicitly disabling notifications prevents recovery
+  from recreating the subscription.
+- **Badges**: The app badge is derived from every outstanding notification, not
+  only the latest chat. Opening or dismissing one chat decrements the total
+  without clearing notifications from other chats.
 
 ## Configuration
 

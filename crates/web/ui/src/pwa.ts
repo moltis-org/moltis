@@ -16,11 +16,12 @@ interface BeforeInstallPromptEvent extends Event {
 
 let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
 let swRegistration: ServiceWorkerRegistration | null = null;
+const INSTALLED_DISPLAY_MODES = ["standalone", "window-controls-overlay", "fullscreen", "minimal-ui"] as const;
 
 // Check if running in standalone mode (installed PWA)
 export function isStandalone(): boolean {
 	return (
-		window.matchMedia("(display-mode: standalone)").matches ||
+		INSTALLED_DISPLAY_MODES.some((mode) => window.matchMedia(`(display-mode: ${mode})`).matches) ||
 		(navigator as NavigatorStandalone).standalone === true ||
 		document.referrer.includes("android-app://")
 	);
@@ -81,7 +82,6 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
 // Dispatch custom event when update is available
 function dispatchUpdateAvailable(): void {
 	window.dispatchEvent(new CustomEvent("sw-update-available"));
-	scheduleUpdateActivation();
 }
 
 // Skip waiting and activate new service worker
@@ -89,28 +89,6 @@ export function activateUpdate(): void {
 	if (swRegistration?.waiting) {
 		swRegistration.waiting.postMessage({ type: "SKIP_WAITING" });
 	}
-}
-
-/**
- * Activate a waiting worker the next time the app is out of view.
- *
- * The service worker deliberately does not call skipWaiting() at install time,
- * so something has to hand control over eventually or updates would never land.
- * Doing it while the tab is hidden means the swap — and the reload that follows
- * it — never happens under someone who is mid-conversation.
- */
-function scheduleUpdateActivation(): void {
-	if (document.visibilityState === "hidden") {
-		activateUpdate();
-		return;
-	}
-
-	const onHidden = (): void => {
-		if (document.visibilityState !== "hidden") return;
-		document.removeEventListener("visibilitychange", onHidden);
-		activateUpdate();
-	};
-	document.addEventListener("visibilitychange", onHidden);
 }
 
 // Listen for beforeinstallprompt event (Android Chrome)
@@ -148,7 +126,14 @@ export function canPromptInstall(): boolean {
 // Listen for notification clicks from service worker
 export function setupNotificationHandler(callback?: (url: string) => void): void {
 	navigator.serviceWorker?.addEventListener("message", (event: MessageEvent) => {
-		if (event.data && event.data.type === "notification-click" && callback) callback(event.data.url);
+		if (!(event.data && event.data.type === "notification-click" && callback)) return;
+		try {
+			callback(event.data.url);
+		} catch (error) {
+			console.error("Failed to route notification click:", error);
+			return;
+		}
+		event.ports[0]?.postMessage({ handled: true });
 	});
 }
 
@@ -185,10 +170,13 @@ export function getNotificationPermission(): NotificationPermission {
  * Reporting it here — and having the worker persist it — is what lets a closed
  * app still show a count.
  */
-function reportInstalledState(): void {
+function reportInstalledState(installed = isStandalone()): void {
+	// A regular browser tab cannot prove the PWA was uninstalled. Never let one
+	// clear state previously reported by an installed window.
+	if (!installed) return;
 	navigator.serviceWorker?.ready
 		.then((registration) => {
-			registration.active?.postMessage({ type: "PWA_INSTALLED", installed: isStandalone() });
+			registration.active?.postMessage({ type: "PWA_INSTALLED", installed: true });
 		})
 		.catch(() => {
 			// No worker yet; the next page load reports again.
@@ -212,11 +200,6 @@ function setAppBadge(count: number): void {
 	});
 }
 
-// Clear the installed-app badge once the user is looking at the app.
-function clearAppBadge(): void {
-	setAppBadge(0);
-}
-
 /** Apply badge counts pushed by the service worker. */
 function setupBadgeHandler(): void {
 	navigator.serviceWorker?.addEventListener("message", (event: MessageEvent) => {
@@ -226,10 +209,17 @@ function setupBadgeHandler(): void {
 	});
 }
 
+function syncAppBadge(): void {
+	navigator.serviceWorker?.ready
+		.then((registration) => registration.active?.postMessage({ type: "SYNC_BADGE" }))
+		.catch(() => {
+			// The next visibility change retries once a worker is available.
+		});
+}
+
 // Initialize PWA features
 export function initPWA(): void {
 	syncStandaloneClass();
-	const hadControllerBeforeInit = Boolean(navigator.serviceWorker?.controller);
 
 	// Register service worker
 	registerServiceWorker();
@@ -240,62 +230,35 @@ export function initPWA(): void {
 
 	// The service worker mirrors badge updates here — see setAppBadge().
 	setupBadgeHandler();
+	syncAppBadge();
 
 	// Let the worker badge the icon while the app is closed.
 	reportInstalledState();
-	window.addEventListener("appinstalled", reportInstalledState);
-	window.matchMedia("(display-mode: standalone)").addEventListener("change", () => {
+	window.addEventListener("appinstalled", () => reportInstalledState(true));
+	const onDisplayModeChange = (): void => {
 		syncStandaloneClass();
 		reportInstalledState();
-	});
+	};
+	for (const mode of INSTALLED_DISPLAY_MODES) {
+		const media = window.matchMedia(`(display-mode: ${mode})`);
+		if (typeof media.addEventListener === "function") {
+			media.addEventListener("change", onDisplayModeChange);
+		} else if (typeof media.addListener === "function") {
+			media.addListener(onDisplayModeChange);
+		}
+	}
 
 	// Handle notification clicks — route in-place so the SPA keeps its state
 	// and open WebSocket instead of doing a full document reload.
 	setupNotificationHandler((url: string) => {
-		clearAppBadge();
 		if (url && url !== window.location.pathname) {
 			navigate(url);
 		}
 	});
 
-	if (document.visibilityState === "visible") {
-		clearAppBadge();
-	}
 	document.addEventListener("visibilitychange", () => {
 		if (document.visibilityState === "visible") {
-			clearAppBadge();
+			syncAppBadge();
 		}
 	});
-
-	// Listen for controller change (new SW activated)
-	navigator.serviceWorker?.addEventListener("controllerchange", () => {
-		// First service worker install should not force a reload.
-		if (!hadControllerBeforeInit) {
-			return;
-		}
-		// Avoid forced reload churn on onboarding; the app boot path will
-		// fetch fresh assets on the next navigation to the main UI.
-		if (window.location.pathname === "/onboarding") {
-			return;
-		}
-		reloadWhenHidden();
-	});
-}
-
-/**
- * Reload to pick up the new worker's assets, but only while the app is out of
- * view — a reload under an open conversation loses whatever is in the composer.
- */
-function reloadWhenHidden(): void {
-	if (document.visibilityState === "hidden") {
-		window.location.reload();
-		return;
-	}
-
-	const onHidden = (): void => {
-		if (document.visibilityState !== "hidden") return;
-		document.removeEventListener("visibilitychange", onHidden);
-		window.location.reload();
-	};
-	document.addEventListener("visibilitychange", onHidden);
 }

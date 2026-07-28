@@ -4,11 +4,112 @@
  * foreground presence so the server can skip devices already watching a chat.
  */
 
+import { sessionPath } from "./router";
 import { activeSessionKey } from "./stores/session-store";
 
 let currentSubscription: PushSubscription | null = null;
 
 let vapidPublicKey: string | null = null;
+let pushStateQueue: Promise<void> = Promise.resolve();
+
+const STATE_CACHE = "moltis-state";
+const PUSH_ENABLED_KEY = "/__moltis__/push-enabled";
+const PUSH_DISABLED_KEY = "/__moltis__/push-disabled";
+const PUSH_ROTATION_PENDING_KEY = "/__moltis__/push-rotation-pending";
+const PUSH_INTENT_KEY = "moltis-push-enabled";
+const PUSH_STATE_LOCK = "moltis-push-state";
+
+interface RotationPending {
+	replaces?: string;
+}
+
+async function getStateCache(): Promise<Cache> {
+	return await caches.open(STATE_CACHE);
+}
+
+function runPushStateOperation<T>(operation: () => Promise<T>): Promise<T> {
+	const globallyOrdered = async (): Promise<T> => {
+		if (!navigator.locks) return operation();
+		return await navigator.locks.request<Promise<T>>(PUSH_STATE_LOCK, operation);
+	};
+	const result = pushStateQueue.then(globallyOrdered, globallyOrdered);
+	pushStateQueue = result.then(
+		() => undefined,
+		() => undefined,
+	);
+	return result;
+}
+
+async function setPushEnabledIntent(enabled: boolean): Promise<void> {
+	try {
+		localStorage.setItem(PUSH_INTENT_KEY, enabled ? "1" : "0");
+	} catch (error) {
+		console.warn("Failed to persist push preference in local storage:", error);
+	}
+	try {
+		const cache = await getStateCache();
+		if (enabled) {
+			await Promise.all([cache.put(PUSH_ENABLED_KEY, new Response("1")), cache.delete(PUSH_DISABLED_KEY)]);
+			return;
+		}
+		await Promise.all([
+			cache.put(PUSH_DISABLED_KEY, new Response("1")),
+			cache.delete(PUSH_ENABLED_KEY),
+			cache.delete(PUSH_ROTATION_PENDING_KEY),
+		]);
+	} catch (error) {
+		console.warn("Failed to persist push notification preference:", error);
+	}
+}
+
+async function readPushEnabledIntent(): Promise<boolean | null> {
+	try {
+		const stored = localStorage.getItem(PUSH_INTENT_KEY);
+		if (stored === "1") return true;
+		if (stored === "0") return false;
+	} catch {
+		// Fall through to the worker-visible cache.
+	}
+	try {
+		const cache = await getStateCache();
+		if (await cache.match(PUSH_DISABLED_KEY)) return false;
+		return (await cache.match(PUSH_ENABLED_KEY)) ? true : null;
+	} catch {
+		return null;
+	}
+}
+
+async function readRotationPending(): Promise<RotationPending | null> {
+	let response: Response | undefined;
+	try {
+		response = await (await getStateCache()).match(PUSH_ROTATION_PENDING_KEY);
+	} catch {
+		return null;
+	}
+	if (!response) return null;
+
+	const text = (await response.text()).trim();
+	if (!(text && text !== "1" && text !== "true")) return {};
+	try {
+		const value: unknown = JSON.parse(text);
+		if (typeof value === "object" && value !== null) {
+			const marker = value as Record<string, unknown>;
+			const replaces = marker.replaces ?? marker.old_endpoint ?? marker.endpoint;
+			return typeof replaces === "string" ? { replaces } : {};
+		}
+	} catch {
+		// A plain response body is also accepted as the replaced endpoint.
+	}
+	return { replaces: text };
+}
+
+async function consumeRotationPending(): Promise<void> {
+	try {
+		await (await getStateCache()).delete(PUSH_ROTATION_PENDING_KEY);
+	} catch {
+		// Re-registration is idempotent; a stale marker only retries it later.
+	}
+}
 
 /**
  * Convert a base64 string to a Uint8Array (for VAPID key).
@@ -139,7 +240,7 @@ async function registerWithServer(subscription: PushSubscription, replaces?: str
  * Subscribe to push notifications.
  * Requests permission if needed, creates subscription, and registers with server.
  */
-export async function subscribeToPush(): Promise<PushResult> {
+async function subscribeToPushInner(): Promise<PushResult> {
 	if (!isPushSupported()) {
 		return { success: false, error: "Push notifications not supported" };
 	}
@@ -168,6 +269,8 @@ export async function subscribeToPush(): Promise<PushResult> {
 		await registerWithServer(subscription);
 
 		currentSubscription = subscription;
+		await setPushEnabledIntent(true);
+		await consumeRotationPending();
 		reportPresence();
 		return { success: true };
 	} catch (e) {
@@ -176,10 +279,22 @@ export async function subscribeToPush(): Promise<PushResult> {
 	}
 }
 
+export function subscribeToPush(): Promise<PushResult> {
+	return runPushStateOperation(subscribeToPushInner);
+}
+
 /**
  * Unsubscribe from push notifications.
  */
-export async function unsubscribeFromPush(): Promise<PushResult> {
+async function unsubscribeFromPushInner(): Promise<PushResult> {
+	try {
+		// An explicit disable must prevent startup recovery even if the local
+		// subscription has already disappeared.
+		await setPushEnabledIntent(false);
+	} catch (e) {
+		console.warn("Failed to clear push notification preference:", e);
+	}
+
 	const subscription = await getCurrentSubscription();
 	if (!subscription) {
 		return { success: true }; // Already unsubscribed
@@ -208,6 +323,10 @@ export async function unsubscribeFromPush(): Promise<PushResult> {
 	}
 }
 
+export function unsubscribeFromPush(): Promise<PushResult> {
+	return runPushStateOperation(unsubscribeFromPushInner);
+}
+
 /**
  * Re-register the local subscription if the server no longer knows about it.
  *
@@ -216,7 +335,7 @@ export async function unsubscribeFromPush(): Promise<PushResult> {
  * since rotated. Either way the browser still reports itself as subscribed
  * while no push can ever arrive, so reconcile both sides on load.
  */
-async function reconcileSubscription(subscription: PushSubscription): Promise<void> {
+async function reconcileSubscription(subscription: PushSubscription, pending: RotationPending | null): Promise<void> {
 	const key = await fetchVapidKey();
 	if (!key) return;
 
@@ -230,15 +349,17 @@ async function reconcileSubscription(subscription: PushSubscription): Promise<vo
 			userVisibleOnly: true,
 			applicationServerKey: urlBase64ToUint8Array(key).buffer as ArrayBuffer,
 		});
-		await registerWithServer(fresh, staleEndpoint);
+		await registerWithServer(fresh, pending?.replaces ?? staleEndpoint);
 		currentSubscription = fresh;
+		await setPushEnabledIntent(true);
+		await consumeRotationPending();
 		return;
 	}
 
-	const status = await getPushStatus();
-	const known = status?.subscriptions?.some((s) => s.endpoint === subscription.endpoint) ?? false;
-	if (!known) {
-		await registerWithServer(subscription);
+	await setPushEnabledIntent(true);
+	if (pending) {
+		await registerWithServer(subscription, pending.replaces);
+		await consumeRotationPending();
 	}
 }
 
@@ -250,14 +371,45 @@ async function reconcileSubscription(subscription: PushSubscription): Promise<vo
  * app was closed — leaves the browser believing it is subscribed while nothing
  * can ever be delivered. This load is the only chance to repair that.
  */
-export async function initPushState(): Promise<void> {
-	const subscription = await getCurrentSubscription();
-	if (!subscription) return;
+async function initPushStateInner(): Promise<void> {
 	try {
-		await reconcileSubscription(subscription);
+		const [enabledIntent, pending] = await Promise.all([readPushEnabledIntent(), readRotationPending()]);
+		let subscription = await getCurrentSubscription();
+		if (enabledIntent === false) {
+			if (subscription) {
+				await subscription.unsubscribe().catch(() => undefined);
+				currentSubscription = null;
+			}
+			if (pending) await consumeRotationPending();
+			return;
+		}
+
+		// Only restore a missing browser subscription when saved intent (or a
+		// rotation marker from an existing subscription) proves push was enabled,
+		// and the browser still grants permission.
+		if (!subscription && (enabledIntent === true || pending !== null) && getPermissionState() === "granted") {
+			const key = await fetchVapidKey();
+			if (!key) return;
+			const registration = await navigator.serviceWorker.ready;
+			subscription = await registration.pushManager.subscribe({
+				userVisibleOnly: true,
+				applicationServerKey: urlBase64ToUint8Array(key).buffer as ArrayBuffer,
+			});
+			await registerWithServer(subscription, pending?.replaces);
+			currentSubscription = subscription;
+			await setPushEnabledIntent(true);
+			if (pending) await consumeRotationPending();
+			return;
+		}
+
+		if (subscription) await reconcileSubscription(subscription, pending);
 	} catch (e) {
 		console.warn("Failed to reconcile push subscription:", e);
 	}
+}
+
+export function initPushState(): Promise<void> {
+	return runPushStateOperation(initPushStateInner);
 }
 
 /** A subscription as reported by the server. */
@@ -295,7 +447,7 @@ export async function getPushStatus(): Promise<PushStatus | null> {
  * Remove a subscription from the server by its endpoint.
  * This can be called from any device to remove any subscription.
  */
-export async function removeSubscription(endpoint: string): Promise<PushResult> {
+async function removeSubscriptionInner(endpoint: string): Promise<PushResult> {
 	try {
 		const response = await fetch("/api/push/unsubscribe", {
 			method: "POST",
@@ -317,6 +469,7 @@ export async function removeSubscription(endpoint: string): Promise<PushResult> 
 				// Ignore errors - subscription may already be gone
 			}
 			currentSubscription = null;
+			await setPushEnabledIntent(false);
 		}
 
 		return { success: true };
@@ -326,12 +479,24 @@ export async function removeSubscription(endpoint: string): Promise<PushResult> 
 	}
 }
 
+export function removeSubscription(endpoint: string): Promise<PushResult> {
+	return runPushStateOperation(() => removeSubscriptionInner(endpoint));
+}
+
 /**
  * Send a test notification to every subscribed device.
  *
  * Returns how many devices the push service accepted it for.
  */
-export async function sendTestNotification(): Promise<{ success: boolean; sent?: number; error?: string }> {
+interface TestNotificationResult extends PushResult {
+	sent?: number;
+	targeted?: number;
+	failed?: number;
+	timedOut?: number;
+	expired?: number;
+}
+
+export async function sendTestNotification(): Promise<TestNotificationResult> {
 	try {
 		const response = await fetch("/api/push/test", { method: "POST" });
 		if (!response.ok) {
@@ -340,8 +505,25 @@ export async function sendTestNotification(): Promise<{ success: boolean; sent?:
 				error: response.status === 501 ? "Push notifications are not enabled on the server" : "Failed to send",
 			};
 		}
-		const data = (await response.json()) as { sent: number };
-		return { success: true, sent: data.sent };
+		const data = (await response.json()) as {
+			sent: number;
+			targeted: number;
+			failed: number;
+			timed_out: number;
+			expired: number;
+		};
+		return {
+			success: data.failed === 0 && data.timed_out === 0,
+			sent: data.sent,
+			targeted: data.targeted,
+			failed: data.failed,
+			timedOut: data.timed_out,
+			expired: data.expired,
+			error:
+				data.failed > 0 || data.timed_out > 0
+					? `${data.failed + data.timed_out} device${data.failed + data.timed_out === 1 ? "" : "s"} failed delivery`
+					: undefined,
+		};
 	} catch (e) {
 		return { success: false, error: (e as Error).message };
 	}
@@ -349,8 +531,94 @@ export async function sendTestNotification(): Promise<{ success: boolean; sent?:
 
 // ── Foreground presence ─────────────────────────────────────────────────────
 
-/** Last presence payload sent, used to avoid redundant round-trips. */
-let lastPresence = "";
+interface PresencePayload {
+	endpoint: string;
+	session_key: string | null;
+	visible: boolean;
+	client_id: string;
+	sequence: number;
+}
+
+const PRESENCE_CLIENT_KEY = "moltis-presence-client-id";
+const PRESENCE_SEQUENCE_KEY = "moltis-presence-sequence";
+const presenceClientId = (() => {
+	const fallback =
+		globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+	try {
+		const prefix = `${PRESENCE_CLIENT_KEY}:`;
+		if (window.name.startsWith(prefix)) return window.name.slice(prefix.length);
+		window.name = `${prefix}${fallback}`;
+	} catch {
+		// The in-memory id still separates this page when window.name is blocked.
+	}
+	return fallback;
+})();
+let presenceSequence = (() => {
+	try {
+		return Number.parseInt(sessionStorage.getItem(PRESENCE_SEQUENCE_KEY) || "0", 10) || 0;
+	} catch {
+		return 0;
+	}
+})();
+let lastPresenceState = "";
+let queuedPresence: PresencePayload | null = null;
+let presenceRequestInFlight = false;
+
+/** Return the active session only when its exact chat route is displayed. */
+function displayedActiveSession(): string | null {
+	const sessionKey = activeSessionKey.value;
+	const expectedPath = sessionPath(sessionKey);
+	return window.location.pathname === expectedPath ? sessionKey : null;
+}
+
+function presencePayload(): PresencePayload | null {
+	if (!currentSubscription) return null;
+	const sessionKey = displayedActiveSession();
+	const visible = sessionKey !== null && document.visibilityState === "visible" && document.hasFocus();
+	return {
+		endpoint: currentSubscription.endpoint,
+		session_key: visible ? sessionKey : null,
+		visible,
+		client_id: presenceClientId,
+		sequence: 0,
+	};
+}
+
+function presenceState(payload: PresencePayload): string {
+	return JSON.stringify({
+		endpoint: payload.endpoint,
+		session_key: payload.session_key,
+		visible: payload.visible,
+	});
+}
+
+async function sendPresence(payload: PresencePayload): Promise<void> {
+	try {
+		const response = await fetch("/api/push/presence", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+			keepalive: true,
+		});
+		if (response.ok) return;
+
+		if (payload.sequence === presenceSequence) lastPresenceState = "";
+		if (response.status === 404) void recoverUnknownSubscription();
+	} catch {
+		// Presence is an optimisation; retry the current state on the next event.
+		if (payload.sequence === presenceSequence) lastPresenceState = "";
+	}
+}
+
+async function drainPresenceQueue(): Promise<void> {
+	if (presenceRequestInFlight || !queuedPresence) return;
+	presenceRequestInFlight = true;
+	const payload = queuedPresence;
+	queuedPresence = null;
+	await sendPresence(payload);
+	presenceRequestInFlight = false;
+	if (queuedPresence) void drainPresenceQueue();
+}
 
 /**
  * Tell the server which session this device is looking at, if any.
@@ -359,45 +627,25 @@ let lastPresence = "";
  * the session that just produced a response — that's what stops your phone from
  * buzzing for a message you are watching stream in on that same phone.
  */
-export function reportPresence(): void {
-	if (!currentSubscription) return;
+export function reportPresence(force = false): void {
+	const payload = presencePayload();
+	if (!payload) return;
+	const state = presenceState(payload);
+	if (!force && state === lastPresenceState) return;
+	payload.sequence = nextPresenceSequence();
+	lastPresenceState = state;
+	queuedPresence = payload;
+	void drainPresenceQueue();
+}
 
-	const visible = document.visibilityState === "visible" && document.hasFocus();
-	const sessionKey = visible ? activeSessionKey.value : null;
-	const payload = JSON.stringify({
-		endpoint: currentSubscription.endpoint,
-		session_key: sessionKey,
-		visible,
-	});
-
-	if (payload === lastPresence) return;
-	lastPresence = payload;
-
-	// keepalive lets the "hidden" report survive the page being backgrounded or
-	// closed, which is exactly when it matters most.
-	fetch("/api/push/presence", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: payload,
-		keepalive: true,
-	})
-		.then((response) => {
-			if (response.ok) return;
-
-			// `fetch` resolves for 4xx, so a 404 here would otherwise look like a
-			// successful report — and the cached payload would suppress every
-			// retry. 404 is the server saying it does not know this endpoint,
-			// which means push delivery is broken too, not just suppression.
-			lastPresence = "";
-			if (response.status === 404) {
-				void recoverUnknownSubscription();
-			}
-		})
-		.catch(() => {
-			// Presence is an optimisation — a failed report only means the device
-			// may receive a notification it could have suppressed.
-			lastPresence = "";
-		});
+function nextPresenceSequence(): number {
+	presenceSequence += 1;
+	try {
+		sessionStorage.setItem(PRESENCE_SEQUENCE_KEY, String(presenceSequence));
+	} catch {
+		// The in-memory sequence remains ordered for this page lifetime.
+	}
+	return presenceSequence;
 }
 
 /** Guards against several concurrent recovery attempts. */
@@ -417,26 +665,31 @@ const RECOVERY_COOLDOWN_MS = 60_000;
  * register/report loop. The cooldown bounds that to one attempt a minute.
  */
 async function recoverUnknownSubscription(): Promise<void> {
-	if (recovering || !currentSubscription) return;
-	if (Date.now() - lastRecoveryAt < RECOVERY_COOLDOWN_MS) return;
+	await runPushStateOperation(async () => {
+		if (recovering || !currentSubscription) return;
+		if ((await readPushEnabledIntent()) === false) return;
+		if (Date.now() - lastRecoveryAt < RECOVERY_COOLDOWN_MS) return;
 
-	recovering = true;
-	lastRecoveryAt = Date.now();
-	try {
-		await registerWithServer(currentSubscription);
-		reportPresence();
-	} catch (e) {
-		console.warn("Failed to re-register push subscription:", e);
-	} finally {
-		recovering = false;
-	}
+		recovering = true;
+		lastRecoveryAt = Date.now();
+		try {
+			await registerWithServer(currentSubscription);
+			reportPresence(true);
+		} catch (e) {
+			console.warn("Failed to re-register push subscription:", e);
+		} finally {
+			recovering = false;
+		}
+	});
 }
 
 /** Ask the service worker to clear notifications for the session in view. */
 function clearNotificationsForActiveSession(): void {
+	const sessionKey = displayedActiveSession();
+	if (!sessionKey || document.visibilityState !== "visible" || !document.hasFocus()) return;
 	navigator.serviceWorker?.controller?.postMessage({
 		type: "CLEAR_NOTIFICATIONS",
-		sessionKey: activeSessionKey.value,
+		sessionKey,
 	});
 }
 
@@ -451,16 +704,45 @@ export function initPresenceReporting(): void {
 
 	const onForeground = (): void => {
 		reportPresence();
-		if (document.visibilityState === "visible") {
-			clearNotificationsForActiveSession();
-		}
+		clearNotificationsForActiveSession();
+	};
+	const onPageHide = (): void => {
+		const payload = presencePayload();
+		if (!payload) return;
+		payload.session_key = null;
+		payload.visible = false;
+		payload.sequence = nextPresenceSequence();
+		lastPresenceState = presenceState(payload);
+		queuedPresence = null;
+		// Do not leave the final hidden update behind an in-flight heartbeat.
+		// Sequence ordering lets the backend reject an older tab response if it
+		// arrives after this keepalive request.
+		void sendPresence(payload);
 	};
 
 	document.addEventListener("visibilitychange", onForeground);
 	window.addEventListener("focus", onForeground);
-	window.addEventListener("blur", reportPresence);
-	window.addEventListener("pagehide", reportPresence);
+	window.addEventListener("blur", () => reportPresence());
+	window.addEventListener("pagehide", onPageHide);
 	activeSessionKey.subscribe(onForeground);
+	navigator.serviceWorker?.addEventListener("message", (event: MessageEvent) => {
+		if (event.data?.type !== "push-subscription-changed") return;
+		void runPushStateOperation(async () => {
+			await getCurrentSubscription();
+			reportPresence(true);
+		});
+	});
+
+	// Router navigation does not emit an event for history.pushState. This cheap
+	// poll clears presence promptly when a focused tab leaves the active chat.
+	let observedPath = window.location.pathname;
+	window.setInterval(() => {
+		if (window.location.pathname === observedPath) return;
+		observedPath = window.location.pathname;
+		onForeground();
+	}, 1_000);
+	// Refresh well before the backend's 120-second presence TTL.
+	window.setInterval(() => reportPresence(true), 45_000);
 
 	// Reconcile before the first report: this is the app-startup path, so it is
 	// where a subscription the server has forgotten gets re-registered rather

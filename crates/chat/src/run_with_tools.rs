@@ -1207,11 +1207,16 @@ pub(crate) async fn run_with_tools(
             broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
 
             if !is_silent {
-                // Send push notification when chat response completes
                 #[cfg(feature = "push-notifications")]
                 {
                     tracing::info!("push: checking push notification (agent mode)");
-                    send_chat_push_notification(state, session_key, &display_text).await;
+                    let push_state = Arc::clone(state);
+                    let push_session_key = session_key.to_string();
+                    let push_text = display_text.clone();
+                    tokio::spawn(async move {
+                        send_chat_push_notification(&push_state, &push_session_key, &push_text)
+                            .await;
+                    });
                 }
                 deliver_channel_replies(
                     state,

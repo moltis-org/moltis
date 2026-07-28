@@ -6,8 +6,6 @@
 #[cfg(feature = "push-notifications")]
 use {crate::runtime::ChatRuntime, std::sync::Arc, tracing::debug};
 
-use crate::types::truncate_at_char_boundary;
-
 /// Build the SPA URL for a push notification click-through.
 ///
 /// Must match the frontend `sessionPath()` in `router.ts`:
@@ -17,15 +15,18 @@ pub(crate) fn push_notification_url(session_key: &str) -> String {
     format!("/chats/{}", session_key.replace(':', "/"))
 }
 
-/// Build the notification title for a session.
-///
-/// A generic "Message received" is useless once more than one chat is running,
-/// so name the session when we can and fall back to the app name otherwise.
+/// Use a generic title so private session labels never appear on a lock screen.
 #[cfg(any(feature = "push-notifications", test))]
-pub(crate) fn push_notification_title(session_label: Option<&str>) -> String {
-    match session_label.map(str::trim).filter(|l| !l.is_empty()) {
-        Some(label) => truncate_at_char_boundary(label, 60).to_string(),
-        None => "moltis".to_string(),
+pub(crate) fn push_notification_title() -> &'static str {
+    "moltis"
+}
+
+#[cfg(any(feature = "push-notifications", test))]
+fn append_html_text(output: &mut String, html: &str) {
+    if let Ok(text) = html2text::config::with_decorator(html2text::render::TrivialDecorator::new())
+        .string_from_read(html.as_bytes(), 10_000)
+    {
+        output.push_str(&text);
     }
 }
 
@@ -35,21 +36,50 @@ pub(crate) fn push_notification_title(session_label: Option<&str>) -> String {
 /// characters all render literally, so a code-heavy reply becomes unreadable.
 #[cfg(any(feature = "push-notifications", test))]
 pub(crate) fn summarize_for_notification(text: &str, max_chars: usize) -> String {
-    let cleaned: String = text
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with("```"))
-        .map(|line| line.trim_start_matches('#').trim_start_matches('>').trim())
-        .collect::<Vec<_>>()
-        .join(" ");
-    let cleaned = cleaned.replace(['*', '_', '`'], "");
-    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    use pulldown_cmark::{Event, Parser, TagEnd};
+
+    let mut plain = String::new();
+    for event in Parser::new(text) {
+        match event {
+            Event::Text(value)
+            | Event::Code(value)
+            | Event::InlineMath(value)
+            | Event::DisplayMath(value)
+            | Event::FootnoteReference(value) => plain.push_str(&value),
+            Event::SoftBreak | Event::HardBreak | Event::Rule => plain.push(' '),
+            Event::TaskListMarker(checked) => {
+                plain.push_str(if checked {
+                    "[x] "
+                } else {
+                    "[ ] "
+                });
+            },
+            Event::End(
+                TagEnd::Paragraph
+                | TagEnd::Heading(_)
+                | TagEnd::BlockQuote(_)
+                | TagEnd::CodeBlock
+                | TagEnd::Item
+                | TagEnd::TableCell
+                | TagEnd::TableRow
+                | TagEnd::DefinitionListTitle
+                | TagEnd::DefinitionListDefinition,
+            ) => plain.push(' '),
+            Event::Html(value) | Event::InlineHtml(value) => {
+                append_html_text(&mut plain, &value);
+            },
+            Event::Start(_) | Event::End(_) => {},
+        }
+    }
+    let collapsed = plain.split_whitespace().collect::<Vec<_>>().join(" ");
 
     if collapsed.chars().count() > max_chars {
-        format!(
-            "{}…",
-            truncate_at_char_boundary(&collapsed, max_chars).trim_end()
-        )
+        if max_chars == 0 {
+            String::new()
+        } else {
+            let truncated: String = collapsed.chars().take(max_chars - 1).collect();
+            format!("{}…", truncated.trim_end())
+        }
     } else {
         collapsed
     }
@@ -67,16 +97,22 @@ pub(crate) async fn send_chat_push_notification(
         return;
     }
 
-    let session_label = state.session_label(session_key).await;
-    let title = push_notification_title(session_label.as_deref());
     let url = push_notification_url(session_key);
 
     match state
-        .send_push_notification(&title, &summary, Some(&url), Some(session_key))
+        .send_push_notification(
+            push_notification_title(),
+            &summary,
+            Some(&url),
+            Some(session_key),
+        )
         .await
     {
+        Ok(0) => {
+            debug!("push notification had no eligible delivery targets");
+        },
         Ok(sent) => {
-            tracing::info!(sent, "push notification sent");
+            tracing::info!(sent, "push notification accepted by push services");
         },
         Err(e) => {
             tracing::warn!("failed to send push notification: {e}");
@@ -108,21 +144,8 @@ mod tests {
     }
 
     #[test]
-    fn notification_title_uses_the_session_label() {
-        assert_eq!(push_notification_title(Some("Deploy plan")), "Deploy plan");
-    }
-
-    #[test]
-    fn notification_title_falls_back_when_label_is_missing_or_blank() {
-        assert_eq!(push_notification_title(None), "moltis");
-        assert_eq!(push_notification_title(Some("   ")), "moltis");
-    }
-
-    #[test]
-    fn notification_title_is_truncated_for_the_notification_shade() {
-        let long = "a".repeat(200);
-        let title = push_notification_title(Some(&long));
-        assert!(title.chars().count() <= 60);
+    fn notification_title_is_generic_to_avoid_label_leaks() {
+        assert_eq!(push_notification_title(), "moltis");
     }
 
     #[test]
@@ -147,7 +170,7 @@ mod tests {
         let text = "word ".repeat(100);
         let summary = summarize_for_notification(&text, 40);
         assert!(summary.ends_with('…'), "got: {summary}");
-        assert!(summary.chars().count() <= 41);
+        assert!(summary.chars().count() <= 40);
     }
 
     #[test]
@@ -159,6 +182,36 @@ mod tests {
     fn notification_summary_does_not_split_multibyte_characters() {
         let text = "é".repeat(100);
         let summary = summarize_for_notification(&text, 10);
-        assert!(summary.chars().count() <= 11, "got: {summary}");
+        assert_eq!(summary.chars().count(), 10, "got: {summary}");
+        assert_eq!(summary, format!("{}…", "é".repeat(9)));
+    }
+
+    #[test]
+    fn notification_summary_preserves_non_markdown_punctuation_and_identifiers() {
+        let text = "Use foo_bar, value*ptr, 2 * 3, and an unmatched `backtick.";
+        assert_eq!(summarize_for_notification(text, 140), text);
+    }
+
+    #[test]
+    fn notification_summary_strips_only_actual_inline_markdown() {
+        let text = "**bold** _emphasis_ and `code_name`, but foo_bar stays.";
+        assert_eq!(
+            summarize_for_notification(text, 140),
+            "bold emphasis and code_name, but foo_bar stays."
+        );
+    }
+
+    #[test]
+    fn notification_summary_preserves_visible_raw_html_text() {
+        let text = "<div>Visible &amp; safe<br>next line</div>";
+        assert_eq!(
+            summarize_for_notification(text, 140),
+            "Visible & safe next line"
+        );
+    }
+
+    #[test]
+    fn zero_character_limit_returns_an_empty_summary() {
+        assert_eq!(summarize_for_notification("message", 0), "");
     }
 }
