@@ -645,7 +645,7 @@ export function SessionHeader({
 			/>
 		) : (
 			<span
-				className="chat-session-name"
+				className="chat-session-name min-w-0 truncate"
 				style={nameStyle}
 				title={canRename ? "Click to rename" : ""}
 				onClick={startRename}
