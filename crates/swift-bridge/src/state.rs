@@ -197,14 +197,24 @@ pub(crate) static HTTPD: Mutex<Option<HttpdHandle>> = Mutex::new(None);
 
 pub(crate) fn stop_httpd_handle(handle: HttpdHandle, log_target: &str, stop_message: &str) {
     emit_log("INFO", log_target, stop_message);
-    let _ = handle.shutdown_tx.send(());
+    let HttpdHandle {
+        shutdown_tx,
+        server_task,
+        state,
+        ..
+    } = handle;
+    let _ = shutdown_tx.send(());
     BRIDGE.runtime.block_on(async {
-        if let Err(error) = handle.server_task.await {
+        if let Err(error) = server_task.await {
             emit_log(
                 "WARN",
                 log_target,
                 &format!("httpd task join failed during shutdown: {error}"),
             );
         }
+        state
+            .instrumentation
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
     });
 }

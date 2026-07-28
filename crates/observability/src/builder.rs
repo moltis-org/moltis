@@ -312,7 +312,10 @@ pub fn build(config: &InstrumentationConfig, release: &str) -> BuildOutcome {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
-    use secrecy::Secret;
+    use {
+        crate::{Event, ScoreRecord, ScoreValue, TraceId},
+        secrecy::Secret,
+    };
 
     use super::*;
 
@@ -424,6 +427,15 @@ mod tests {
         // Langfuse contributes two sinks: traces over OTLP and scores over the
         // ingestion API. It still reports as one backend to the operator.
         assert_eq!(built.sink.name(), "langfuse+langfuse-scores+otlp+datadog");
+        assert_eq!(
+            built
+                .sink
+                .delivery_stats()
+                .into_iter()
+                .map(|stats| stats.name)
+                .collect::<Vec<_>>(),
+            vec!["langfuse", "langfuse-scores", "otlp", "datadog"]
+        );
     }
 
     #[tokio::test]
@@ -438,6 +450,17 @@ mod tests {
         let built = build(&config, "test").built.expect("should build");
 
         assert_eq!(built.sink.name(), "langfuse+langfuse-scores");
+
+        built.sink.record(Event::Score(Box::new(ScoreRecord::new(
+            TraceId::generate(),
+            "quality",
+            ScoreValue::Numeric(1.0),
+        ))));
+        let delivery = built.sink.delivery_stats();
+        assert_eq!(delivery[0].name, "langfuse");
+        assert_eq!(delivery[0].accepted, 0);
+        assert_eq!(delivery[1].name, "langfuse-scores");
+        assert_eq!(delivery[1].accepted, 1);
     }
 
     #[tokio::test]

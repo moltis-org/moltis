@@ -87,8 +87,8 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 
 // ── Taxonomy ────────────────────────────────────────────────────────────────
 
-/// Observation kind. Mirrors Langfuse's `ObservationType` enum verbatim so the
-/// exporter never has to guess at a mapping.
+/// Observation kind. Mirrors Langfuse's observation taxonomy so the exporter
+/// never has to guess at a mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ObservationKind {
@@ -115,20 +115,20 @@ pub enum ObservationKind {
 }
 
 impl ObservationKind {
-    /// Langfuse wire representation.
+    /// Langfuse OTLP wire representation.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Span => "SPAN",
-            Self::Event => "EVENT",
-            Self::Generation => "GENERATION",
-            Self::Agent => "AGENT",
-            Self::Tool => "TOOL",
-            Self::Chain => "CHAIN",
-            Self::Retriever => "RETRIEVER",
-            Self::Evaluator => "EVALUATOR",
-            Self::Embedding => "EMBEDDING",
-            Self::Guardrail => "GUARDRAIL",
+            Self::Span => "span",
+            Self::Event => "event",
+            Self::Generation => "generation",
+            Self::Agent => "agent",
+            Self::Tool => "tool",
+            Self::Chain => "chain",
+            Self::Retriever => "retriever",
+            Self::Evaluator => "evaluator",
+            Self::Embedding => "embedding",
+            Self::Guardrail => "guardrail",
         }
     }
 
@@ -303,6 +303,9 @@ pub struct TraceRecord {
     /// Wall-clock start.
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
+    /// Wall-clock end; `None` until the turn is complete.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub end_time: Option<OffsetDateTime>,
     /// Trace-scoped attributes.
     pub scope: TraceScope,
     /// Structured context.
@@ -323,12 +326,18 @@ impl TraceRecord {
             id: TraceId::generate(),
             name: name.into(),
             timestamp: OffsetDateTime::now_utc(),
+            end_time: None,
             scope: TraceScope::default(),
             metadata: Metadata::new(),
             input: None,
             output: None,
             public: false,
         }
+    }
+
+    /// Stamp the trace end time as now.
+    pub fn finish(&mut self) {
+        self.end_time = Some(OffsetDateTime::now_utc());
     }
 }
 
@@ -345,6 +354,10 @@ pub struct ObservationRecord {
     pub kind: ObservationKind,
     /// Human-readable name.
     pub name: String,
+    /// Owning trace's display name, copied for stateless OTLP export.
+    pub trace_name: Option<String>,
+    /// Owning trace's filterable metadata, copied for stateless OTLP export.
+    pub trace_metadata: Metadata,
     /// Trace-scoped attributes, copied from the owning trace.
     pub scope: TraceScope,
     /// Wall-clock start.
@@ -390,6 +403,8 @@ impl ObservationRecord {
             parent_id: None,
             kind,
             name: name.into(),
+            trace_name: None,
+            trace_metadata: Metadata::new(),
             scope: TraceScope::default(),
             start_time: OffsetDateTime::now_utc(),
             end_time: None,
@@ -422,6 +437,14 @@ impl ObservationRecord {
         self
     }
 
+    /// Copy trace identity and filterable metadata onto this observation.
+    #[must_use]
+    pub fn with_trace_context(mut self, name: String, metadata: Metadata) -> Self {
+        self.trace_name = Some(name);
+        self.trace_metadata = metadata;
+        self
+    }
+
     /// Stamp the end time as now.
     pub fn finish(&mut self) {
         self.end_time = Some(OffsetDateTime::now_utc());
@@ -438,10 +461,12 @@ impl ObservationRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ScoreValue {
-    /// Numeric score. Also carries boolean scores as 0.0/1.0.
+    /// Numeric score.
     Numeric(f64),
     /// Categorical score, e.g. "helpful".
     Categorical(String),
+    /// Boolean score, e.g. end-user approval.
+    Boolean(bool),
 }
 
 /// A quality score attached to a trace or observation.
@@ -463,6 +488,27 @@ pub struct ScoreRecord {
     pub environment: Option<String>,
 }
 
+/// Delete a previously recorded score through the same ordered queue used for
+/// score creation. Keeping both mutations on one transport prevents an older
+/// queued create from racing a direct deletion and recreating the score.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScoreDeleteRecord {
+    /// Trace retained for sink routing and diagnostics.
+    pub trace_id: TraceId,
+    /// Stable Langfuse score id to delete.
+    pub score_id: String,
+}
+
+impl ScoreDeleteRecord {
+    #[must_use]
+    pub fn new(trace_id: TraceId, score_id: impl Into<String>) -> Self {
+        Self {
+            trace_id,
+            score_id: score_id.into(),
+        }
+    }
+}
+
 impl ScoreRecord {
     /// Build a score with a generated id.
     #[must_use]
@@ -482,14 +528,14 @@ impl ScoreRecord {
 /// A single unit of work handed to a sink.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
-    /// Create or update a trace.
+    /// A trace completed.
     Trace(Box<TraceRecord>),
-    /// An observation began. Emitted eagerly so long runs are visible live.
-    ObservationStart(Box<ObservationRecord>),
     /// An observation finished.
     ObservationEnd(Box<ObservationRecord>),
     /// A score was produced.
     Score(Box<ScoreRecord>),
+    /// A score was retracted.
+    ScoreDelete(Box<ScoreDeleteRecord>),
 }
 
 impl Event {
@@ -498,8 +544,9 @@ impl Event {
     pub fn trace_id(&self) -> &TraceId {
         match self {
             Self::Trace(t) => &t.id,
-            Self::ObservationStart(o) | Self::ObservationEnd(o) => &o.trace_id,
+            Self::ObservationEnd(o) => &o.trace_id,
             Self::Score(s) => &s.trace_id,
+            Self::ScoreDelete(s) => &s.trace_id,
         }
     }
 }

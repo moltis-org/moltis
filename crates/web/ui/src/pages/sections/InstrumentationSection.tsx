@@ -11,6 +11,7 @@ import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { Badge, Loading, SectionHeading, StatusMessage, SubHeading } from "../../components/forms";
 import { sendRpc } from "../../helpers";
+import { connected } from "../../signals";
 import { rerender } from "./_shared";
 
 type ContentMode = "full" | "metadata_only" | "none";
@@ -59,7 +60,20 @@ interface InstrumentationStatus {
 	active: boolean;
 	backends: string[];
 	skipped: SkippedBackend[];
+	delivery: DeliveryStats[];
 	config: InstrumentationConfig;
+}
+
+interface DeliveryStats {
+	name: string;
+	accepted: number;
+	dropped_queue_full: number;
+	dropped_failed: number;
+	delivered: number;
+	retries: number;
+	last_success_at: string | null;
+	last_error: string | null;
+	last_error_at: string | null;
 }
 
 interface TestResult {
@@ -93,6 +107,49 @@ function Row({ label, value, hint }: RowProps): VNode {
 	);
 }
 
+function deliveryLabel(name: string): string {
+	if (name === "langfuse") return "Langfuse traces";
+	if (name === "langfuse-scores") return "Langfuse scores";
+	if (name === "otlp") return "OpenTelemetry";
+	if (name === "datadog") return "Datadog";
+	return name;
+}
+
+function formatDeliveryTime(value?: string | null): string {
+	if (!value) return "never";
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+interface DeliveryRowsProps {
+	delivery: DeliveryStats[];
+}
+
+function DeliveryRows({ delivery }: DeliveryRowsProps): VNode {
+	if (delivery.length === 0) {
+		return <Row label="Delivery" value="no exporters running" />;
+	}
+
+	return (
+		<>
+			{delivery.map((stats) => {
+				const failures = `${stats.dropped_queue_full} queue drops, ${stats.dropped_failed} failed, ${stats.retries} retries`;
+				const latest = stats.last_error
+					? `Last success: ${formatDeliveryTime(stats.last_success_at)}. Last error: ${stats.last_error} (${formatDeliveryTime(stats.last_error_at)}).`
+					: `Last success: ${formatDeliveryTime(stats.last_success_at)}.`;
+				return (
+					<Row
+						key={stats.name}
+						label={deliveryLabel(stats.name)}
+						value={`${stats.accepted} enqueued, ${stats.delivered} delivered`}
+						hint={`${failures}. ${latest}`}
+					/>
+				);
+			})}
+		</>
+	);
+}
+
 interface BackendCardProps {
 	title: string;
 	purpose: string;
@@ -108,7 +165,7 @@ function BackendCard({ title, purpose, enabled, running, skippedReason, children
 			<div className="flex items-center justify-between gap-2">
 				<span className="font-medium text-sm">{title}</span>
 				{running ? (
-					<Badge label="Exporting" variant="running" />
+					<Badge label="Running" variant="running" />
 				) : enabled ? (
 					<Badge label="Not running" variant="error" />
 				) : (
@@ -151,7 +208,7 @@ function Backends({ config, status, testing, onTestLangfuse }: BackendsProps): V
 		<>
 			<BackendCard
 				title="Langfuse"
-				purpose="LLM observability: prompts, completions, cost, sessions, evaluation."
+				purpose="LLM observability: prompts, completions, sessions, inferred cost and reaction feedback."
 				enabled={config.langfuse.enabled}
 				running={isRunning("langfuse")}
 				skippedReason={skippedFor("langfuse")}
@@ -212,10 +269,10 @@ function ProfileExplainer(): VNode {
 		<div className="rounded border border-[var(--border)] p-3 flex flex-col gap-1">
 			<SubHeading title="What each backend receives" />
 			<p className="text-xs text-[var(--muted)]">
-				Langfuse gets the full conversation \u2014 its cost, session and evaluation features are built on it. OTLP and
-				Datadog get operational shape only: latency, errors, model and token counts, with payload sizes instead of
-				payloads. Prompt bodies in an APM mean unbounded span size, cardinality pressure, per-byte ingest billing, and
-				conversation content in a system nobody scoped for it.
+				Langfuse gets completed observations with the full conversation, token usage and session context. It infers cost
+				from its current model pricing. OTLP and Datadog get operational shape only: latency, errors, model and token
+				counts, with payload sizes instead of payloads. Prompt bodies in an APM mean unbounded span size, cardinality
+				pressure, per-byte ingest billing, and conversation content in a system nobody scoped for it.
 			</p>
 		</div>
 	);
@@ -229,6 +286,9 @@ export function InstrumentationSection(): VNode {
 	const [testing, setTesting] = useState(false);
 
 	useEffect(() => {
+		if (!connected.value) return;
+		setLoading(true);
+		setError(null);
 		sendRpc<InstrumentationStatus>("instrumentation.status", {})
 			.then((res) => {
 				if (res.payload) setStatus(res.payload);
@@ -239,7 +299,7 @@ export function InstrumentationSection(): VNode {
 				setLoading(false);
 				rerender();
 			});
-	}, []);
+	}, [connected.value]);
 
 	function onTestLangfuse(): void {
 		setTesting(true);
@@ -297,6 +357,7 @@ export function InstrumentationSection(): VNode {
 				<Row label="Environment" value={config.environment} />
 				<Row label="Sample rate" value={`${Math.round(config.sample_rate * 100)}% of turns`} />
 				<Row label="Queue capacity" value={String(config.queue_capacity)} />
+				<DeliveryRows delivery={status.delivery} />
 			</div>
 
 			<Backends config={config} status={status} testing={testing} onTestLangfuse={onTestLangfuse} />

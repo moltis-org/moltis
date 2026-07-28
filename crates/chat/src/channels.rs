@@ -57,6 +57,7 @@ pub(crate) async fn send_chat_push_notification(
 pub(crate) async fn deliver_channel_replies(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
+    trace_correlation_key: &str,
     text: &str,
     desired_reply_medium: ReplyMedium,
     streamed_target_keys: &HashSet<ChannelReplyTargetKey>,
@@ -136,6 +137,7 @@ pub(crate) async fn deliver_channel_replies(
             &logbook_html,
             state.feedback(),
             session_key,
+            trace_correlation_key,
         )
         .await;
     }
@@ -154,6 +156,7 @@ pub(crate) async fn deliver_channel_replies(
         outbound,
         targets,
         session_key,
+        trace_correlation_key,
         text,
         Arc::clone(state),
         desired_reply_medium,
@@ -193,6 +196,7 @@ async fn send_channel_logbook_follow_up_to_targets(
     logbook_html: &str,
     feedback: Option<Arc<moltis_channels::FeedbackService>>,
     session_key: &str,
+    trace_correlation_key: &str,
 ) {
     if targets.is_empty() || logbook_html.is_empty() {
         return;
@@ -200,12 +204,14 @@ async fn send_channel_logbook_follow_up_to_targets(
 
     let html = logbook_html.to_string();
     let session_key = session_key.to_string();
+    let trace_correlation_key = trace_correlation_key.to_string();
     let mut tasks = Vec::with_capacity(targets.len());
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let html = html.clone();
         let feedback = feedback.clone();
         let session_key = session_key.clone();
+        let trace_correlation_key = trace_correlation_key.clone();
         let to = target.outbound_to().into_owned();
         tasks.push(tokio::spawn(async move {
             match outbound
@@ -218,6 +224,7 @@ async fn send_channel_logbook_follow_up_to_targets(
                         &target,
                         &message_ids,
                         &session_key,
+                        &trace_correlation_key,
                     )
                     .await;
                 },

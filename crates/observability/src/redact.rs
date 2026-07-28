@@ -146,7 +146,14 @@ impl RedactionPolicy {
         if trimmed.len() < 8 {
             return false;
         }
-        SECRET_PREFIXES.iter().any(|p| trimmed.starts_with(p))
+        SECRET_PREFIXES.iter().any(|prefix| {
+            trimmed.match_indices(prefix).any(|(index, _)| {
+                index == 0
+                    || trimmed[..index].chars().next_back().is_some_and(|c| {
+                        c.is_whitespace() || matches!(c, '=' | ':' | '\'' | '"' | '`')
+                    })
+            })
+        })
     }
 
     /// Redact a JSON value in place-equivalent fashion, returning a clean copy.
@@ -253,6 +260,19 @@ mod tests {
         assert_eq!(out["stdout"], json!(REDACTED));
         assert_eq!(out["header"], json!(REDACTED));
         assert_eq!(out["note"], json!("the deploy finished successfully"));
+    }
+
+    #[test]
+    fn redacts_credentials_embedded_in_shell_output_and_commands() {
+        let policy = RedactionPolicy::default();
+        for value in [
+            "OPENAI_API_KEY=sk-abcdefghijklmnop",
+            "curl -H 'Authorization: Bearer abcdefghijklmnop' https://example.com",
+            "request failed: xoxb-example",
+        ] {
+            assert_eq!(policy.redact(&json!(value)), json!(REDACTED), "{value}");
+        }
+        assert!(!policy.looks_like_secret("ordinary task-sk-result text"));
     }
 
     #[test]

@@ -129,14 +129,14 @@ pub struct InstrumentationConfig {
     /// the built-in list; it cannot be narrowed.
     #[serde(default)]
     pub redact: Vec<String>,
-    /// Bounded export queue depth. Events are dropped once this fills rather
-    /// than blocking the agent loop.
+    /// Nonzero bounded export queue depth. Events are dropped once this fills
+    /// rather than blocking the agent loop.
     #[serde(default = "default_queue_capacity")]
     pub queue_capacity: usize,
-    /// Maximum time an event waits before being flushed.
+    /// Nonzero maximum time an event waits before being flushed.
     #[serde(default = "default_flush_interval_ms")]
     pub flush_interval_ms: u64,
-    /// Maximum estimated batch size in bytes before a forced flush.
+    /// Nonzero maximum estimated batch size in bytes before a forced flush.
     #[serde(default = "default_max_batch_bytes")]
     pub max_batch_bytes: usize,
     /// Langfuse backend.
@@ -220,7 +220,7 @@ pub struct LangfuseSettings {
     /// credentials to appear.
     #[serde(default = "default_true")]
     pub capture_tool_io: bool,
-    /// Per-request timeout in seconds.
+    /// Nonzero per-request timeout in seconds.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
 }
@@ -266,7 +266,7 @@ pub struct OtlpSettings {
     /// in an APM's index and often a compliance question.
     #[serde(default)]
     pub emit_user_id: bool,
-    /// Per-request timeout in seconds.
+    /// Nonzero per-request timeout in seconds.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
 }
@@ -314,7 +314,7 @@ pub struct DatadogSettings {
     /// How much conversation content this backend receives.
     #[serde(default)]
     pub content: ContentCaptureMode,
-    /// Per-request timeout in seconds.
+    /// Nonzero per-request timeout in seconds.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
 }

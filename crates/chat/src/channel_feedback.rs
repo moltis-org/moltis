@@ -22,7 +22,7 @@ pub(crate) async fn record_web_reply_trace(
     let Some(feedback) = state.feedback() else {
         return;
     };
-    let Some(trace_id) = moltis_observability::recent_trace(session_key) else {
+    let Some(trace_id) = moltis_observability::recent_trace(run_id) else {
         return;
     };
     feedback
@@ -53,6 +53,7 @@ pub(crate) async fn record_reply_trace(
     target: &moltis_channels::ChannelReplyTarget,
     message_ids: &[String],
     session_key: &str,
+    trace_correlation_key: &str,
 ) {
     if message_ids.is_empty() {
         return;
@@ -60,7 +61,7 @@ pub(crate) async fn record_reply_trace(
     let Some(feedback) = feedback else {
         return;
     };
-    let Some(trace_id) = moltis_observability::recent_trace(session_key) else {
+    let Some(trace_id) = moltis_observability::recent_trace(trace_correlation_key) else {
         return;
     };
     feedback
@@ -150,6 +151,7 @@ mod tests {
             &target,
             &["901".to_string(), "902".to_string()],
             session_key,
+            session_key,
         )
         .await;
 
@@ -167,6 +169,13 @@ mod tests {
 
     #[tokio::test]
     async fn nothing_is_recorded_without_a_feedback_service() {
-        record_reply_trace(None, &telegram_topic_target(), &["1".to_string()], "none").await;
+        record_reply_trace(
+            None,
+            &telegram_topic_target(),
+            &["1".to_string()],
+            "none",
+            "none",
+        )
+        .await;
     }
 }

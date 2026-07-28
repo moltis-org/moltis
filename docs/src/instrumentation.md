@@ -1,8 +1,8 @@
 # Instrumentation
 
-Moltis can export what an agent run actually did — every LLM call, tool
-invocation and retrieval, with timings, token usage and errors — to an external
-backend.
+Moltis can export what a completed agent run did — its LLM calls, tool
+invocations and retrievals, with timings, token usage and errors — to an
+external backend.
 
 Three backends are supported, and they are configured together under one
 `[instrumentation]` section because they are fed from a single instrumentation
@@ -10,7 +10,7 @@ pass in the agent runtime:
 
 | Backend | What it is for |
 | --- | --- |
-| **Langfuse** | LLM observability: prompts, completions, cost, sessions, prompt versions, evaluation |
+| **Langfuse** | LLM observability: prompts, completions, sessions, token usage, inferred cost, and reaction feedback |
 | **OTLP** | Any OpenTelemetry backend — Grafana Tempo/Alloy, Honeycomb, an OpenTelemetry Collector |
 | **Datadog** | Datadog APM, through the Datadog Agent's OTLP intake |
 
@@ -23,9 +23,9 @@ pass in the agent runtime:
 
 This is the most important thing to understand about the design.
 
-Langfuse is an LLM-native product. Its cost attribution, session replay,
-prompt-version comparison and evaluation features are all built on having the
-actual conversation. Sending it prompts and completions is the entire point.
+Langfuse is an LLM-native product. Moltis sends completed traces, conversation
+content, token usage, session and user attribution, and reaction feedback so
+Langfuse can provide LLM observability and infer costs.
 
 Datadog and Grafana are infrastructure tools. Sending them prompt bodies is
 actively harmful:
@@ -43,11 +43,10 @@ So Moltis applies a different **export profile** per backend:
 | Payload sizes (`moltis.input.bytes`) | — | ✅ sent |
 | Observation type (`AGENT`, `TOOL`, `RETRIEVER`, …) | ✅ `langfuse.observation.type` | ✅ as `gen_ai.operation.name` |
 | Model, latency, errors | ✅ | ✅ |
-| Token counts | ✅ with cache split and cost | ✅ counts only |
+| Token counts | ✅ usage details with cache split; Langfuse infers cost | ✅ counts only |
 | End-user id | ✅ | ❌ off by default (cardinality) |
 | Session id | ✅ | ✅ |
 | Tags | ✅ | ✅ OTLP · ❌ Datadog (billing) |
-| Managed-prompt version | ✅ | — |
 
 You can raise an APM's content level deliberately with
 `content = "full"`, or lower it to `none`. You cannot accidentally end up
@@ -60,7 +59,17 @@ without this feature. Moltis exposes a Prometheus endpoint at `/metrics` with
 that for dashboards and alerts; use the OTLP exporter here when you want
 per-run traces to correlate a latency spike with a specific agent run.
 
+Moltis does not currently integrate Langfuse Prompt Management, datasets or
+dataset runs, evaluators, or media uploads. User reaction scores are the only
+evaluation signal sent directly to Langfuse.
+
 ## Quick start: Langfuse
+
+Prefer the process environment for the secret key:
+
+```sh
+export MOLTIS_INSTRUMENTATION__LANGFUSE__SECRET_KEY='sk-lf-...'
+```
 
 ```toml
 [instrumentation]
@@ -71,7 +80,6 @@ environment = "production"
 enabled    = true
 host       = "https://cloud.langfuse.com"   # or your self-hosted URL
 public_key = "pk-lf-..."
-secret_key = "sk-lf-..."
 ```
 
 Keys come from your Langfuse project settings. For a self-hosted deployment,
@@ -123,18 +131,22 @@ with a reason; the others keep running.
 
 ## What gets sent
 
-With Langfuse enabled and default settings, each agent run produces:
+With Langfuse enabled and default settings, each completed agent run produces:
 
-- a **trace** named `agent-run`, carrying the user's message and the final
-  answer;
-- a **`GENERATION`** observation per LLM call, with the full message array sent
-  to the provider, the completion text, model, token usage split into fresh /
-  cache-read / cache-write buckets, and time-to-first-token;
-- a **`TOOL`** (or **`RETRIEVER`**) observation per tool call, with arguments
-  and results;
+- a trace named `agent-run` whose root observation has type **`AGENT`** and
+  carries the user's message and final answer;
+- a **`GENERATION`** observation for each completed LLM call, with the full
+  message array sent to the provider, completion text, model, token usage split
+  into fresh / cache-read / cache-write buckets, and time-to-first-token;
+- a completed **`TOOL`** or **`RETRIEVER`** observation for each tool call,
+  with arguments and results;
 - the session key as the session id, so a Langfuse session matches a Moltis
   conversation;
 - the channel sender as the user id, namespaced per channel (`telegram:42`).
+
+Root and child observations are immutable and exported exactly once, after
+completion. Moltis does not send in-progress observation updates. Cancelled or
+timed-out work is closed as an error rather than exported as successful work.
 
 You can narrow this without turning the backend off:
 
@@ -221,7 +233,7 @@ and shown in the settings UI — if you see them, raise `queue_capacity` or lowe
 | `enabled` | `false` | |
 | `host` | `https://cloud.langfuse.com` | Set to your self-hosted URL to keep data on-premises. |
 | `public_key` | `""` | |
-| `secret_key` | unset | Held as a secret; never logged or shown in config dumps. |
+| `secret_key` | unset | Prefer `MOLTIS_INSTRUMENTATION__LANGFUSE__SECRET_KEY`; a config value is also accepted and is never logged. |
 | `capture_input` | `true` | |
 | `capture_output` | `true` | |
 | `capture_tool_io` | `true` | |
@@ -260,9 +272,9 @@ and shown in the settings UI — if you see them, raise `queue_capacity` or lowe
 
 ## User feedback
 
-A thumbs up or down on a reply becomes a `user-feedback` score on the trace
-that produced it — `1.0` for positive, `0.0` for negative — visible in
-Langfuse alongside the conversation.
+A thumbs up or down on a reply becomes a `user-feedback` score with Langfuse
+data type `BOOLEAN`, attached to the trace that produced the reply. The Scores
+API represents the value as `1.0` for positive and `0.0` for negative.
 
 Feedback works in three places:
 
@@ -285,9 +297,11 @@ positive = ["👍", "🎉", "ship-it"]
 Setting one list leaves the other on its defaults.
 
 **Changing your mind works.** Score ids are derived from the trace and the
-reacting user, and Langfuse upserts on that id, so switching from 👍 to 👎
-replaces your vote instead of recording both. Removing the reaction retracts
-the score. Two people reacting to the same reply still count separately.
+reacting user. Switching from 👍 to 👎 submits the same id, so Langfuse replaces
+the vote instead of recording both. Removing the reaction deletes the score
+through the dedicated Scores API. Creates, replacements and deletions share one
+ordered delivery queue, preventing an older queued create from recreating a
+score after deletion. Two reacting users still count separately.
 
 ### Why a reaction sometimes does nothing
 
@@ -302,39 +316,30 @@ the score. Two people reacting to the same reply still count separately.
 
 ## Cost
 
-Cost is computed in-process from a built-in price table, so it is available
-whether or not any backend is configured, and every backend sees the same
-number instead of each deriving its own.
+Moltis exports the model id and token usage details, including separate
+cache-read and cache-write buckets, but it does not export costs from its static
+local price table. Langfuse infers cost using its own versioned model definitions
+and pricing tiers, avoiding stale Moltis prices overriding Langfuse's
+calculations.
 
-Cache reads and writes are priced on their own tiers rather than folded into
-input — a cache read can be an order of magnitude cheaper, and summing them
-would overstate spend on exactly the workloads caching exists to help.
-
-Model ids are matched by longest prefix after stripping any provider prefix,
-so `anthropic/claude-opus-4` and a dated snapshot like
-`claude-opus-4-5-20260101` both price as their family.
-
-**A model with no entry reports no cost at all** rather than falling back to
-an average. Prices go stale whenever a provider changes them, and a confident
-wrong number that looks authoritative is worse than a visible gap.
+Unknown, private or custom models may show no cost until their pricing is
+configured in Langfuse.
 
 ## How it works
 
-All three backends are fed over **OTLP/HTTP with a JSON payload**.
+Trace observations are sent to Langfuse using OTLP/HTTP JSON at
+`/api/public/otel/v1/traces`. Every OTLP request includes
+`x-langfuse-ingestion-version: 4`, selecting Langfuse's v4 ingestion contract.
+The exporter sends only completed, immutable root and child observations.
 
-For Langfuse this is deliberate rather than incidental. OTLP is Langfuse's own
-modern ingest path — the one its v3+ Python and v4+ JavaScript SDKs use — and
-the only one that carries the current observation taxonomy. Langfuse's native
-`/api/public/ingestion` API still exists, but its `observation-create` event is
-marked deprecated upstream and the supported `span-create` / `generation-create`
-pair cannot express `AGENT`, `TOOL`, `RETRIEVER` and the other newer types at
-all. The ingestion API is still used for **scores**, which OTLP has no way to
-represent.
+OTLP cannot represent feedback scores. Moltis therefore creates, replaces and
+deletes `BOOLEAN` feedback through Langfuse's dedicated Scores API at
+`/api/public/scores`, using a separate ordered sink.
 
 Spans carry two attribute vocabularies depending on the profile:
 
-- `langfuse.*` — Langfuse's own mapping, for the observation taxonomy, usage
-  and cost detail, and prompt linkage.
+- `langfuse.*` — Langfuse's mapping for trace context, observation taxonomy,
+  content, and detailed token usage.
 - `gen_ai.*` — the OpenTelemetry GenAI semantic conventions, understood by
   Grafana, Datadog, Honeycomb and other OTel consumers.
 

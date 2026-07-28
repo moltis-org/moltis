@@ -409,9 +409,9 @@ pub(super) async fn complete_startup(
     );
 
     // ── Agent instrumentation ─────────────────────────────────────────────
-    // Applied on the state's own instance so the RPC handlers and the shutdown
-    // flush observe the same backends that were installed here. Runs before
-    // any agent can be invoked, so the first turn is traced.
+    // Applied on the state's own instance so RPC and lifecycle callers observe
+    // the same backends that were installed here. Runs before any agent can be
+    // invoked, so the first turn is traced.
     {
         let status = state
             .instrumentation

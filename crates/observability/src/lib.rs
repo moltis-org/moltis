@@ -7,7 +7,8 @@
 //!
 //! * **Langfuse** gets the full conversation — prompts, completions, tool
 //!   arguments and results — plus the observation taxonomy, cache-aware token
-//!   usage, cost, and managed-prompt linkage.
+//!   usage, and reaction feedback. Langfuse infers cost from the model and
+//!   usage details.
 //! * **Grafana, Datadog, Honeycomb** get operational shape only: latency,
 //!   errors, model, token counts. No conversation content, no per-user
 //!   cardinality.
@@ -32,13 +33,13 @@ pub use {
         FeedbackSignal, FeedbackVocabulary, USER_FEEDBACK_SCORE, feedback_score, feedback_score_id,
     },
     model::{
-        Event, Level, ObservationId, ObservationKind, ObservationRecord, ScoreRecord, ScoreValue,
-        TokenUsage, TraceId, TraceRecord, TraceScope,
+        Event, Level, ObservationId, ObservationKind, ObservationRecord, ScoreDeleteRecord,
+        ScoreRecord, ScoreValue, TokenUsage, TraceId, TraceRecord, TraceScope,
     },
     pricing::{ModelPrice, cost_details, price_for, total_cost},
     profile::{ContentCapture, ExportProfile, Vocabulary},
     recent::{recent_trace, remember_trace},
-    recorder::{RecorderSettings, StepGuard, TurnRecorder},
+    recorder::{RecorderSettings, StepGuard, TurnRecorder, wait_for_active_turns},
     redact::RedactionPolicy,
     runtime::{BatchConfig, BatchSink, SinkStatsSnapshot, Transport, TransportError},
     sink::{

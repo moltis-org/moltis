@@ -10,7 +10,7 @@
 
 use std::{
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -43,6 +43,12 @@ pub trait Transport: Send + Sync + 'static {
 
     /// Deliver a batch. Called from the background task only.
     async fn send(&self, batch: &[Event]) -> Result<(), TransportError>;
+
+    /// Whether this transport can represent `event`. This runs on the recording
+    /// hot path and must be fast and non-blocking.
+    fn accepts(&self, _event: &Event) -> bool {
+        true
+    }
 
     /// Approximate serialized size of `event`, used for batch sizing.
     fn estimate_bytes(&self, event: &Event) -> usize {
@@ -88,6 +94,7 @@ impl Default for BatchConfig {
 /// Counters describing sink health, surfaced in the settings UI.
 #[derive(Debug, Default)]
 pub struct SinkStats {
+    name: String,
     /// Events accepted into the queue.
     pub accepted: AtomicU64,
     /// Events dropped because the queue was full.
@@ -98,11 +105,20 @@ pub struct SinkStats {
     pub batches_sent: AtomicU64,
     /// Batches that failed permanently.
     pub batches_failed: AtomicU64,
+    /// Events delivered successfully.
+    pub delivered: AtomicU64,
+    /// Retry attempts made after retryable failures.
+    pub retries: AtomicU64,
+    last_success_at: RwLock<Option<String>>,
+    last_error: RwLock<Option<String>>,
+    last_error_at: RwLock<Option<String>>,
 }
 
 /// Point-in-time snapshot of [`SinkStats`].
-#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SinkStatsSnapshot {
+    /// Sink whose counters are represented by this snapshot.
+    pub name: String,
     /// Events accepted into the queue.
     pub accepted: u64,
     /// Events dropped because the queue was full.
@@ -113,20 +129,73 @@ pub struct SinkStatsSnapshot {
     pub batches_sent: u64,
     /// Batches that failed permanently.
     pub batches_failed: u64,
+    /// Events delivered successfully.
+    pub delivered: u64,
+    /// Retry attempts made after retryable failures.
+    pub retries: u64,
+    /// RFC 3339 timestamp of the latest successful delivery.
+    pub last_success_at: Option<String>,
+    /// Most recent delivery error.
+    pub last_error: Option<String>,
+    /// RFC 3339 timestamp of the most recent delivery error.
+    pub last_error_at: Option<String>,
 }
 
 impl SinkStats {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            ..Default::default()
+        }
+    }
+
     /// Read every counter.
     #[must_use]
     pub fn snapshot(&self) -> SinkStatsSnapshot {
         SinkStatsSnapshot {
+            name: self.name.clone(),
             accepted: self.accepted.load(Ordering::Relaxed),
             dropped_queue_full: self.dropped_queue_full.load(Ordering::Relaxed),
             dropped_failed: self.dropped_failed.load(Ordering::Relaxed),
             batches_sent: self.batches_sent.load(Ordering::Relaxed),
             batches_failed: self.batches_failed.load(Ordering::Relaxed),
+            delivered: self.delivered.load(Ordering::Relaxed),
+            retries: self.retries.load(Ordering::Relaxed),
+            last_success_at: read_state(&self.last_success_at),
+            last_error: read_state(&self.last_error),
+            last_error_at: read_state(&self.last_error_at),
         }
     }
+
+    fn record_success(&self, count: u64) {
+        self.delivered.fetch_add(count, Ordering::Relaxed);
+        write_state(&self.last_success_at, now_rfc3339());
+    }
+
+    fn record_error(&self, reason: String) {
+        write_state(&self.last_error, Some(reason));
+        write_state(&self.last_error_at, now_rfc3339());
+    }
+}
+
+fn read_state(state: &RwLock<Option<String>>) -> Option<String> {
+    state
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+fn write_state(state: &RwLock<Option<String>>, value: Option<String>) {
+    match state.write() {
+        Ok(mut guard) => *guard = value,
+        Err(poisoned) => *poisoned.into_inner() = value,
+    }
+}
+
+fn now_rfc3339() -> Option<String> {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .ok()
 }
 
 /// Queue message: either an event or a flush barrier.
@@ -138,6 +207,7 @@ enum Message {
 /// An [`ObservationSink`] that batches into a [`Transport`].
 pub struct BatchSink {
     name: String,
+    transport: Arc<dyn Transport>,
     tx: mpsc::Sender<Message>,
     stats: Arc<SinkStats>,
 }
@@ -147,8 +217,8 @@ impl BatchSink {
     #[must_use]
     pub fn spawn(transport: Arc<dyn Transport>, config: BatchConfig) -> Self {
         let (tx, rx) = mpsc::channel(config.queue_capacity);
-        let stats = Arc::new(SinkStats::default());
         let name = transport.name().to_string();
+        let stats = Arc::new(SinkStats::new(name.clone()));
 
         tokio::spawn(export_loop(
             rx,
@@ -157,7 +227,12 @@ impl BatchSink {
             Arc::clone(&stats),
         ));
 
-        Self { name, tx, stats }
+        Self {
+            name,
+            transport,
+            tx,
+            stats,
+        }
     }
 
     /// Health counters for this sink.
@@ -174,6 +249,10 @@ impl ObservationSink for BatchSink {
     }
 
     fn record(&self, event: Event) {
+        if !self.transport.accepts(&event) {
+            return;
+        }
+
         // `try_send` never awaits: a saturated queue drops the event rather
         // than applying backpressure to the caller's turn.
         match self.tx.try_send(Message::Event(Box::new(event))) {
@@ -210,18 +289,23 @@ impl ObservationSink for BatchSink {
     }
 
     async fn flush(&self, timeout: Duration) -> anyhow::Result<()> {
-        let (ack_tx, ack_rx) = oneshot::channel();
-        if self.tx.send(Message::Flush(ack_tx)).await.is_err() {
-            return Err(anyhow::anyhow!("export task for {} has stopped", self.name));
-        }
-        match tokio::time::timeout(timeout, ack_rx).await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(_)) => Err(anyhow::anyhow!(
-                "export task for {} dropped the flush barrier",
-                self.name
-            )),
+        let flush = async {
+            let (ack_tx, ack_rx) = oneshot::channel();
+            if self.tx.send(Message::Flush(ack_tx)).await.is_err() {
+                return Err(anyhow::anyhow!("export task for {} has stopped", self.name));
+            }
+            ack_rx.await.map_err(|_| {
+                anyhow::anyhow!("export task for {} dropped the flush barrier", self.name)
+            })
+        };
+        match tokio::time::timeout(timeout, flush).await {
+            Ok(result) => result,
             Err(_) => Err(anyhow::anyhow!("flush of {} timed out", self.name)),
         }
+    }
+
+    fn delivery_stats(&self) -> Vec<SinkStatsSnapshot> {
+        vec![self.stats()]
     }
 }
 
@@ -294,6 +378,7 @@ async fn deliver(
         match transport.send(batch).await {
             Ok(()) => {
                 stats.batches_sent.fetch_add(1, Ordering::Relaxed);
+                stats.record_success(count);
                 trace!(sink = transport.name(), events = count, "batch delivered");
                 break;
             },
@@ -307,6 +392,7 @@ async fn deliver(
                 );
                 stats.batches_failed.fetch_add(1, Ordering::Relaxed);
                 stats.dropped_failed.fetch_add(count, Ordering::Relaxed);
+                stats.record_error(reason);
                 break;
             },
             Err(TransportError::Retryable(reason)) if attempt < config.max_retries => {
@@ -318,6 +404,8 @@ async fn deliver(
                     %reason,
                     "retrying observability export"
                 );
+                stats.retries.fetch_add(1, Ordering::Relaxed);
+                stats.record_error(reason);
                 tokio::time::sleep(delay).await;
                 attempt += 1;
             },
@@ -331,6 +419,7 @@ async fn deliver(
                 );
                 stats.batches_failed.fetch_add(1, Ordering::Relaxed);
                 stats.dropped_failed.fetch_add(count, Ordering::Relaxed);
+                stats.record_error(reason);
                 break;
             },
         }
@@ -437,6 +526,8 @@ mod tests {
 
         assert_eq!(transport.batches(), vec![2]);
         assert_eq!(sink.stats().accepted, 2);
+        assert_eq!(sink.stats().delivered, 2);
+        assert!(sink.stats().last_success_at.is_some());
     }
 
     #[tokio::test]
@@ -491,6 +582,10 @@ mod tests {
         assert_eq!(transport.batches(), vec![1]);
         assert_eq!(sink.stats().batches_sent, 1);
         assert_eq!(sink.stats().dropped_failed, 0);
+        assert_eq!(sink.stats().delivered, 1);
+        assert_eq!(sink.stats().retries, 2);
+        assert!(sink.stats().last_error.is_some());
+        assert!(sink.stats().last_success_at.is_some());
     }
 
     #[tokio::test]
@@ -511,6 +606,9 @@ mod tests {
         assert!(transport.batches().is_empty());
         assert_eq!(sink.stats().dropped_failed, 1);
         assert_eq!(sink.stats().batches_failed, 1);
+        assert_eq!(sink.stats().retries, 2);
+        assert_eq!(sink.stats().delivered, 0);
+        assert!(sink.stats().last_error_at.is_some());
     }
 
     #[tokio::test]
@@ -528,6 +626,12 @@ mod tests {
 
         assert_eq!(sink.stats().batches_failed, 1);
         assert_eq!(sink.stats().dropped_failed, 1);
+        assert_eq!(sink.stats().retries, 0);
+        assert!(
+            sink.stats()
+                .last_error
+                .is_some_and(|error| error.contains("unauthorized"))
+        );
     }
 
     #[tokio::test]
@@ -557,6 +661,7 @@ mod tests {
             stats.accepted < 500,
             "queue must not have absorbed every event"
         );
+        assert_eq!(stats.accepted + stats.dropped_queue_full, 500);
     }
 
     #[tokio::test]

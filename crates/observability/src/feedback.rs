@@ -31,15 +31,12 @@ pub enum FeedbackSignal {
 }
 
 impl FeedbackSignal {
-    /// Numeric value carried to the backend.
-    ///
-    /// Langfuse treats a 0/1 numeric score as a boolean for charting, which is
-    /// what a thumb is.
+    /// Boolean value carried to the backend.
     #[must_use]
-    pub const fn score_value(self) -> f64 {
+    pub const fn score_value(self) -> bool {
         match self {
-            Self::Positive => 1.0,
-            Self::Negative => 0.0,
+            Self::Positive => true,
+            Self::Negative => false,
         }
     }
 }
@@ -187,7 +184,7 @@ pub fn feedback_score(
         trace_id: trace_id.clone(),
         observation_id: None,
         name: USER_FEEDBACK_SCORE.to_string(),
-        value: ScoreValue::Numeric(signal.score_value()),
+        value: ScoreValue::Boolean(signal.score_value()),
         comment,
         environment,
     }
@@ -298,9 +295,9 @@ mod tests {
     }
 
     #[test]
-    fn signals_map_to_boolean_friendly_numbers() {
-        assert!((FeedbackSignal::Positive.score_value() - 1.0).abs() < f64::EPSILON);
-        assert!(FeedbackSignal::Negative.score_value().abs() < f64::EPSILON);
+    fn signals_map_to_booleans() {
+        assert!(FeedbackSignal::Positive.score_value());
+        assert!(!FeedbackSignal::Negative.score_value());
     }
 
     #[test]
@@ -367,7 +364,7 @@ mod tests {
         );
 
         assert_eq!(score.name, USER_FEEDBACK_SCORE);
-        assert_eq!(score.value, ScoreValue::Numeric(1.0));
+        assert_eq!(score.value, ScoreValue::Boolean(true));
         assert_eq!(score.comment.as_deref(), Some("great answer"));
         assert_eq!(score.environment.as_deref(), Some("production"));
     }

@@ -12,7 +12,7 @@ use std::{
 
 use async_trait::async_trait;
 
-use crate::model::Event;
+use crate::{model::Event, runtime::SinkStatsSnapshot};
 
 /// Destination for observability events.
 #[async_trait]
@@ -25,6 +25,11 @@ pub trait ObservationSink: Send + Sync {
 
     /// Flush pending events, giving up after `timeout`.
     async fn flush(&self, timeout: Duration) -> anyhow::Result<()>;
+
+    /// Point-in-time delivery health for this sink and any sinks below it.
+    fn delivery_stats(&self) -> Vec<SinkStatsSnapshot> {
+        Vec::new()
+    }
 }
 
 /// Fans one event out to several sinks, so Langfuse and an OTLP collector can
@@ -99,6 +104,13 @@ impl ObservationSink for SinkFanout {
         }
         Err(anyhow::anyhow!("sink flush failed: {}", errors.join("; ")))
     }
+
+    fn delivery_stats(&self) -> Vec<SinkStatsSnapshot> {
+        self.sinks
+            .iter()
+            .flat_map(|sink| sink.delivery_stats())
+            .collect()
+    }
 }
 
 // ── Process-wide registry ───────────────────────────────────────────────────
@@ -106,6 +118,9 @@ impl ObservationSink for SinkFanout {
 /// The active sink. `RwLock` rather than `OnceLock` because the settings UI can
 /// reconfigure instrumentation without a restart.
 static GLOBAL_SINK: RwLock<Option<Arc<dyn ObservationSink>>> = RwLock::new(None);
+
+#[cfg(test)]
+pub(crate) static GLOBAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Install `sink` as the process-wide destination, replacing any previous one.
 pub fn set_global_sink(sink: Arc<dyn ObservationSink>) {
@@ -283,6 +298,9 @@ mod tests {
     // single test to stay independent of test execution order.
     #[test]
     fn global_registry_install_record_and_clear() {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let sink = CollectingSink::new("global");
 
         assert!(!is_enabled());

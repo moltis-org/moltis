@@ -66,7 +66,7 @@ export function buildFeedbackButtons(
 		});
 
 		const payload = result?.payload as { ok?: boolean; outcome?: string } | undefined;
-		if (!result?.ok || !payload?.ok) {
+		if (!(result?.ok && payload?.ok)) {
 			// Say why rather than failing silently: "unknown_message" means the
 			// turn aged out of the retention window, which is not the user's
 			// fault and not something a retry fixes.

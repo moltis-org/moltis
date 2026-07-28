@@ -573,47 +573,53 @@ port = {port}                           # Port number (auto-generated for this i
 # INSTRUMENTATION (Langfuse / OpenTelemetry / Datadog)
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# Exports agent runs — LLM calls, tool calls, retrievals — to an external
-# backend. Disabled by default: enabling it sends data about your
-# conversations to a third party. See docs/src/instrumentation.md.
+# Exports completed agent runs — LLM calls, tool calls and retrievals — to an
+# external backend. Observations are immutable and sent once, after completion.
+# Disabled by default: enabling it sends conversation data to a third party.
+# See docs/src/instrumentation.md.
 #
 # Backends deliberately receive different data. Langfuse gets the full
-# conversation because its cost, session and evaluation features are built on
-# it. OTLP and Datadog get operational shape only — latency, errors, model,
-# token counts — because prompt bodies in an APM mean unbounded span size,
-# cardinality pressure, per-byte billing, and conversation content in a system
-# nobody scoped for it.
+# conversation, token usage and session context for LLM observability and cost
+# inference. Prompt Management, datasets, evaluators and media uploads are not
+# integrated. OTLP and Datadog receive operational shape only.
 
 # [instrumentation]
 # enabled = false                   # Master switch, gates every backend
 # environment = "production"        # Reported to every backend
 # sample_rate = 1.0                 # Fraction of turns traced (0.0-1.0)
 # redact = ["customer_ref"]         # Extra keys to redact; extends the defaults
-# queue_capacity = 10000            # Events are dropped, never blocking a turn
+# queue_capacity = 10000            # Must be nonzero; full queues drop events
+# flush_interval_ms = 5000          # Must be nonzero
+# max_batch_bytes = 3000000         # Must be nonzero
 
 # [instrumentation.langfuse]
 # enabled = false
 # host = "https://cloud.langfuse.com"   # Or a self-hosted URL
 # public_key = "pk-lf-..."
-# secret_key = "sk-lf-..."
+# Prefer MOLTIS_INSTRUMENTATION__LANGFUSE__SECRET_KEY in the process environment.
+# A secret_key config value is also accepted.
 # capture_input = true              # Turn and LLM inputs
 # capture_output = true             # Turn and LLM outputs
 # capture_tool_io = true            # Tool arguments and results
+# timeout_secs = 10                 # Must be nonzero
 
 # [instrumentation.otlp]            # Grafana Tempo/Alloy, Honeycomb, a collector
 # enabled = false
 # endpoint = "http://localhost:4318/v1/traces"
 # content = "metadata_only"         # "full" | "metadata_only" | "none"
 # emit_user_id = false              # High-cardinality in an APM index
+# timeout_secs = 10                 # Must be nonzero
 
 # [instrumentation.datadog]         # Via the Datadog Agent's OTLP intake
 # enabled = false
 # endpoint = "http://localhost:4318/v1/traces"
 # service = "moltis"
 # content = "metadata_only"
+# timeout_secs = 10                 # Must be nonzero
 
 # Reaction feedback. A thumbs up/down on a reply in Telegram, Discord or Slack
-# becomes a "user-feedback" score on the trace that produced it. Lists accept
+# becomes a BOOLEAN "user-feedback" score through Langfuse's dedicated Scores
+# API. Score creates/replacements and deletions retain queue order. Lists accept
 # raw emoji or shortcodes; empty means the built-in vocabulary.
 # [instrumentation.feedback]
 # enabled = true

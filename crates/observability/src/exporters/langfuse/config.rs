@@ -96,6 +96,13 @@ impl LangfuseConfig {
         headers
     }
 
+    /// Auth headers required by Langfuse's v4 OTLP ingestion contract.
+    fn otlp_auth_headers(&self) -> BTreeMap<String, String> {
+        let mut headers = self.auth_headers();
+        headers.insert("X-Langfuse-Ingestion-Version".to_string(), "4".to_string());
+        headers
+    }
+
     /// Build the OTLP transport that carries traces to Langfuse.
     ///
     /// The profile is fixed to [`ExportProfile::langfuse`]: content capture is
@@ -107,7 +114,7 @@ impl LangfuseConfig {
         OtlpTransport::new(OtlpConfig {
             name: "langfuse".to_string(),
             endpoint: self.url(OTEL_TRACES_PATH),
-            headers: self.auth_headers(),
+            headers: self.otlp_auth_headers(),
             timeout: self.timeout,
             service_name: "moltis".to_string(),
             service_version,
@@ -120,7 +127,14 @@ impl LangfuseConfig {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        crate::{model::Event, runtime::Transport},
+        wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{header, method, path},
+        },
+    };
 
     fn config(host: String) -> LangfuseConfig {
         LangfuseConfig {
@@ -176,5 +190,36 @@ mod tests {
             transport.endpoint(),
             "https://cloud.langfuse.com/api/public/otel/v1/traces"
         );
+    }
+
+    #[test]
+    fn otlp_headers_request_ingestion_version_four() {
+        let headers = config("https://cloud.langfuse.com".into()).otlp_auth_headers();
+        assert_eq!(
+            headers
+                .get("X-Langfuse-Ingestion-Version")
+                .map(String::as_str),
+            Some("4")
+        );
+    }
+
+    #[tokio::test]
+    async fn ingestion_version_four_is_sent_on_the_wire() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(OTEL_TRACES_PATH))
+            .and(header("x-langfuse-ingestion-version", "4"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let transport = config(server.uri()).build_transport("test".into());
+        let mut trace = crate::model::TraceRecord::new("turn");
+        trace.finish();
+
+        transport
+            .send(&[Event::Trace(Box::new(trace))])
+            .await
+            .expect("OTLP request accepted");
     }
 }

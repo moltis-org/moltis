@@ -25,7 +25,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 Ok(serde_json::json!({
                     // The control is only useful when something is collecting
                     // the result, so the UI hides it unless both are on.
-                    "enabled": config.enabled && config.feedback.enabled,
+                    "enabled": config.enabled
+                        && config.feedback.enabled
+                        && ctx.state.instrumentation.langfuse().is_some(),
                     "instrumentation_active": ctx.state.instrumentation.status().active,
                     "retention_days": config.feedback.link_retention_days,
                 }))

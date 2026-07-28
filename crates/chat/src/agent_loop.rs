@@ -169,6 +169,7 @@ pub(crate) struct ChannelStreamDispatcher {
     delivered: Arc<Mutex<Vec<(moltis_channels::ChannelReplyTarget, Vec<String>)>>>,
     feedback: Option<Arc<moltis_channels::FeedbackService>>,
     session_key: String,
+    trace_correlation_key: String,
     started: bool,
     sent_final_delta: bool,
 }
@@ -177,6 +178,7 @@ impl ChannelStreamDispatcher {
     pub(crate) async fn for_session(
         state: &Arc<dyn ChatRuntime>,
         session_key: &str,
+        trace_correlation_key: &str,
     ) -> Option<Self> {
         let outbound = state.channel_stream_outbound()?;
         let targets: Vec<moltis_channels::ChannelReplyTarget> = state
@@ -196,6 +198,7 @@ impl ChannelStreamDispatcher {
             delivered: Arc::new(Mutex::new(Vec::new())),
             feedback: state.feedback(),
             session_key: session_key.to_string(),
+            trace_correlation_key: trace_correlation_key.to_string(),
             started: false,
             sent_final_delta: false,
         };
@@ -323,6 +326,7 @@ impl ChannelStreamDispatcher {
                 &target,
                 &message_ids,
                 &self.session_key,
+                &self.trace_correlation_key,
             )
             .await;
         }
@@ -530,6 +534,7 @@ pub(crate) async fn run_explicit_shell_command(
         deliver_channel_replies(
             state,
             session_key,
+            run_id,
             &final_text,
             ReplyMedium::Text,
             &streamed_target_keys,
@@ -706,6 +711,7 @@ mod tests {
             delivered: Arc::new(Mutex::new(Vec::new())),
             feedback: None,
             session_key: "session".into(),
+            trace_correlation_key: "run".into(),
             started: false,
             sent_final_delta: false,
         }
@@ -803,6 +809,7 @@ mod tests {
         let mut dispatcher = dispatcher_with(outbound);
         dispatcher.feedback = Some(feedback);
         dispatcher.session_key = session_key.to_string();
+        dispatcher.trace_correlation_key = session_key.to_string();
 
         dispatcher.send_delta("final").await;
         dispatcher.finish().await;

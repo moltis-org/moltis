@@ -8,16 +8,19 @@
 //! Every entry point is a no-op when no sink is installed, and the constructor
 //! returns `None` in that case so callers pay nothing beyond one atomic read.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, LazyLock, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 
-use time::OffsetDateTime;
+use {time::OffsetDateTime, tokio::sync::Notify};
 
 use crate::{
     model::{
         Event, Level, ObservationId, ObservationKind, ObservationRecord, ScoreRecord, ScoreValue,
         TokenUsage, TraceId, TraceRecord, TraceScope,
     },
-    redact::RedactionPolicy,
+    redact::{REDACTED, RedactionPolicy},
     sink::{self, ObservationSink},
 };
 
@@ -71,7 +74,44 @@ pub struct TurnRecorder {
     /// The run's root observation, parent of every step.
     root_id: ObservationId,
     /// Trace record, retained so the closing update carries the final output.
-    trace: Mutex<TraceRecord>,
+    trace: Arc<Mutex<TraceRecord>>,
+    /// Present only for turns opened through the process-wide sink.
+    _active_turn: Option<ActiveTurnGuard>,
+}
+
+static ACTIVE_TURNS: AtomicUsize = AtomicUsize::new(0);
+static ACTIVE_TURNS_CHANGED: LazyLock<Notify> = LazyLock::new(Notify::new);
+
+struct ActiveTurnGuard;
+
+impl ActiveTurnGuard {
+    fn new() -> Self {
+        ACTIVE_TURNS.fetch_add(1, Ordering::AcqRel);
+        Self
+    }
+}
+
+impl Drop for ActiveTurnGuard {
+    fn drop(&mut self) {
+        ACTIVE_TURNS.fetch_sub(1, Ordering::AcqRel);
+        ACTIVE_TURNS_CHANGED.notify_waiters();
+    }
+}
+
+/// Wait until all turns opened through the process-wide sink have closed.
+///
+/// Returns `false` when the deadline expires first.
+pub async fn wait_for_active_turns(timeout: std::time::Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let changed = ACTIVE_TURNS_CHANGED.notified();
+        if ACTIVE_TURNS.load(Ordering::Acquire) == 0 {
+            return true;
+        }
+        if tokio::time::timeout_at(deadline, changed).await.is_err() {
+            return false;
+        }
+    }
 }
 
 impl TurnRecorder {
@@ -83,7 +123,13 @@ impl TurnRecorder {
         scope: TraceScope,
         settings: RecorderSettings,
     ) -> Option<Self> {
-        Self::begin_with_sink(sink::global_sink()?, name, scope, settings)
+        Self::begin_inner(
+            sink::global_sink()?,
+            name,
+            scope,
+            settings,
+            Some(ActiveTurnGuard::new()),
+        )
     }
 
     /// Begin recording a turn against an explicit sink.
@@ -98,6 +144,16 @@ impl TurnRecorder {
         name: impl Into<String>,
         scope: TraceScope,
         settings: RecorderSettings,
+    ) -> Option<Self> {
+        Self::begin_inner(sink, name, scope, settings, None)
+    }
+
+    fn begin_inner(
+        sink: Arc<dyn ObservationSink>,
+        name: impl Into<String>,
+        scope: TraceScope,
+        settings: RecorderSettings,
+        active_turn: Option<ActiveTurnGuard>,
     ) -> Option<Self> {
         if !settings.sampled() {
             return None;
@@ -117,9 +173,9 @@ impl TurnRecorder {
             trace_id: trace_id.clone(),
             scope,
             root_id,
-            trace: Mutex::new(trace.clone()),
+            trace: Arc::new(Mutex::new(trace)),
+            _active_turn: active_turn,
         };
-        recorder.sink.record(Event::Trace(Box::new(trace)));
         Some(recorder)
     }
 
@@ -149,8 +205,10 @@ impl TurnRecorder {
 
     /// Attach a metadata entry to the trace.
     pub fn set_metadata(&self, key: impl Into<String>, value: serde_json::Value) {
+        let key = key.into();
+        let value = self.redact_metadata_value(&key, value);
         self.with_trace(|trace| {
-            trace.metadata.insert(key.into(), value);
+            trace.metadata.insert(key, value);
         });
     }
 
@@ -173,14 +231,10 @@ impl TurnRecorder {
             .with_parent(parent.or_else(|| Some(self.root_id.clone())))
             .with_scope(self.scope.clone());
 
-        // Emit the start eagerly so a long-running turn is visible in the
-        // backend while it is still executing, rather than only at the end.
-        self.sink
-            .record(Event::ObservationStart(Box::new(record.clone())));
-
         StepGuard {
             sink: Arc::clone(&self.sink),
             settings: self.settings.clone(),
+            trace: Arc::clone(&self.trace),
             record: Some(record),
         }
     }
@@ -188,7 +242,7 @@ impl TurnRecorder {
     /// Record a score against this turn.
     pub fn score(&self, name: impl Into<String>, value: ScoreValue, comment: Option<String>) {
         let mut score = ScoreRecord::new(self.trace_id.clone(), name, value);
-        score.comment = comment;
+        score.comment = comment.map(|value| self.settings.redaction.redact_str(&value));
         score.environment = self.scope.environment.clone();
         self.sink.record(Event::Score(Box::new(score)));
     }
@@ -198,7 +252,17 @@ impl TurnRecorder {
     /// Takes `&self` rather than `self` so the recorder can be shared across
     /// the concurrently-executing tool futures in the agent loop.
     pub fn finish(&self) {
-        let trace = self.snapshot_trace();
+        let trace = {
+            let mut guard = self
+                .trace
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if guard.end_time.is_some() {
+                return;
+            }
+            guard.end_time = Some(OffsetDateTime::now_utc());
+            guard.clone()
+        };
         self.sink.record(Event::Trace(Box::new(trace)));
     }
 
@@ -216,11 +280,12 @@ impl TurnRecorder {
         f(&mut guard);
     }
 
-    fn snapshot_trace(&self) -> TraceRecord {
-        self.trace
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+    fn redact_metadata_value(&self, key: &str, value: serde_json::Value) -> serde_json::Value {
+        if self.settings.redaction.is_sensitive_key(key) {
+            serde_json::Value::String(REDACTED.to_string())
+        } else {
+            self.settings.redaction.redact(&value)
+        }
     }
 }
 
@@ -229,6 +294,7 @@ impl TurnRecorder {
 pub struct StepGuard {
     sink: Arc<dyn ObservationSink>,
     settings: RecorderSettings,
+    trace: Arc<Mutex<TraceRecord>>,
     /// `None` once the guard has emitted, so drop does not emit twice.
     record: Option<ObservationRecord>,
 }
@@ -327,8 +393,21 @@ impl StepGuard {
 
     /// Attach a metadata entry.
     pub fn set_metadata(&mut self, key: impl Into<String>, value: serde_json::Value) {
+        let key = key.into();
+        let value = if self.settings.redaction.is_sensitive_key(&key) {
+            serde_json::Value::String(REDACTED.to_string())
+        } else {
+            self.settings.redaction.redact(&value)
+        };
         if let Some(record) = self.record.as_mut() {
-            record.metadata.insert(key.into(), value);
+            record.metadata.insert(key, value);
+        }
+    }
+
+    /// Attach output-derived metadata while honoring the output capture switch.
+    pub fn set_output_metadata(&mut self, key: impl Into<String>, value: serde_json::Value) {
+        if self.capture_output_allowed() {
+            self.set_metadata(key, value);
         }
     }
 
@@ -336,14 +415,14 @@ impl StepGuard {
     pub fn set_level(&mut self, level: Level, message: Option<String>) {
         if let Some(record) = self.record.as_mut() {
             record.level = level;
-            record.status_message = message;
+            record.status_message = message.map(|value| self.settings.redaction.redact_str(&value));
         }
     }
 
     /// Mark the step failed. The span is still emitted on drop.
     pub fn fail(&mut self, message: impl Into<String>) {
         if let Some(record) = self.record.as_mut() {
-            record.fail(message);
+            record.fail(self.settings.redaction.redact_str(&message.into()));
         }
     }
 
@@ -356,6 +435,14 @@ impl StepGuard {
         let Some(mut record) = self.record.take() else {
             return;
         };
+        {
+            let trace = self
+                .trace
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            record.trace_name = Some(trace.name.clone());
+            record.trace_metadata = trace.metadata.clone();
+        }
         record.finish();
         self.sink.record(Event::ObservationEnd(Box::new(record)));
     }
@@ -364,14 +451,18 @@ impl StepGuard {
     /// switch, since they are the most likely place for credentials to appear.
     fn capture_input_allowed(&self) -> bool {
         match self.record.as_ref().map(|r| r.kind) {
-            Some(ObservationKind::Tool) => self.settings.capture_tool_io,
+            Some(ObservationKind::Tool | ObservationKind::Retriever) => {
+                self.settings.capture_tool_io
+            },
             _ => self.settings.capture_input,
         }
     }
 
     fn capture_output_allowed(&self) -> bool {
         match self.record.as_ref().map(|r| r.kind) {
-            Some(ObservationKind::Tool) => self.settings.capture_tool_io,
+            Some(ObservationKind::Tool | ObservationKind::Retriever) => {
+                self.settings.capture_tool_io
+            },
             _ => self.settings.capture_output,
         }
     }
@@ -379,9 +470,16 @@ impl StepGuard {
 
 impl Drop for StepGuard {
     fn drop(&mut self) {
-        // An early return through `?` must still close the span; otherwise the
-        // backend shows a step that never ended.
+        if let Some(record) = self.record.as_mut() {
+            record.fail("observation cancelled before completion");
+        }
         self.emit();
+    }
+}
+
+impl Drop for TurnRecorder {
+    fn drop(&mut self) {
+        self.finish_with_error("agent run cancelled before completion");
     }
 }
 
@@ -451,11 +549,8 @@ mod tests {
         }
     }
 
-    /// Serialises tests that touch the process-wide sink registry.
-    static GLOBAL_LOCK: StdMutex<()> = StdMutex::new(());
-
     fn with_sink<R>(f: impl FnOnce(Arc<CollectingSink>) -> R) -> R {
-        let _guard = GLOBAL_LOCK
+        let _guard = sink::GLOBAL_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let collected = CollectingSink::new();
@@ -478,7 +573,7 @@ mod tests {
 
     #[test]
     fn returns_none_when_no_sink_is_installed() {
-        let _guard = GLOBAL_LOCK
+        let _guard = sink::GLOBAL_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         sink::clear_global_sink();
@@ -556,19 +651,13 @@ mod tests {
     }
 
     #[test]
-    fn a_start_event_is_emitted_before_the_step_completes() {
+    fn no_observation_event_is_emitted_before_the_step_completes() {
         with_sink(|collected| {
             let recorder = TurnRecorder::begin("turn", scope(), RecorderSettings::default())
                 .expect("sink installed");
             let step = recorder.step(ObservationKind::Generation, "llm");
 
-            // A multi-minute turn should be visible while it is still running.
-            let starts = collected
-                .events()
-                .into_iter()
-                .filter(|e| matches!(e, Event::ObservationStart(_)))
-                .count();
-            assert_eq!(starts, 1);
+            assert!(collected.events().is_empty());
 
             step.finish();
             recorder.finish();
@@ -588,7 +677,34 @@ mod tests {
             let observations = collected.observations();
             assert_eq!(observations.len(), 1, "dropped step must still be emitted");
             assert!(observations[0].end_time.is_some());
+            assert_eq!(observations[0].level, Level::Error);
+            assert_eq!(
+                observations[0].status_message.as_deref(),
+                Some("observation cancelled before completion")
+            );
         });
+    }
+
+    #[test]
+    fn dropping_an_unfinished_turn_emits_an_error_root() {
+        let collected = CollectingSink::new();
+        let recorder = TurnRecorder::begin_with_sink(
+            collected.clone(),
+            "turn",
+            scope(),
+            RecorderSettings::default(),
+        )
+        .expect("sampled");
+
+        drop(recorder);
+
+        let traces = collected.traces();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(
+            traces[0].metadata["error"],
+            json!("agent run cancelled before completion")
+        );
+        assert!(traces[0].end_time.is_some());
     }
 
     #[test]
@@ -656,6 +772,27 @@ mod tests {
     }
 
     #[test]
+    fn output_capture_switch_suppresses_output_derived_metadata() {
+        with_sink(|collected| {
+            let settings = RecorderSettings {
+                capture_output: false,
+                ..Default::default()
+            };
+            let recorder = TurnRecorder::begin("turn", scope(), settings).expect("sink installed");
+            let mut step = recorder.step(ObservationKind::Generation, "llm");
+            step.set_output_metadata("reasoning", json!("private reasoning"));
+            step.finish();
+            recorder.finish();
+
+            assert!(
+                !collected.observations()[0]
+                    .metadata
+                    .contains_key("reasoning")
+            );
+        });
+    }
+
+    #[test]
     fn tool_io_switch_is_independent_of_the_generation_switches() {
         with_sink(|collected| {
             // Tool arguments are the likeliest place for credentials, so they
@@ -688,6 +825,28 @@ mod tests {
 
             assert!(tool.input.is_none());
             assert!(generation.input.is_some());
+        });
+    }
+
+    #[test]
+    fn retriever_io_uses_the_tool_capture_switch() {
+        with_sink(|collected| {
+            let settings = RecorderSettings {
+                capture_input: true,
+                capture_output: true,
+                capture_tool_io: false,
+                ..Default::default()
+            };
+            let recorder = TurnRecorder::begin("turn", scope(), settings).expect("sink installed");
+            let mut retriever = recorder.step(ObservationKind::Retriever, "memory-search");
+            retriever.set_input(json!({ "query": "secret" }));
+            retriever.set_output(json!({ "matches": ["private"] }));
+            retriever.finish();
+            recorder.finish();
+
+            let observed = &collected.observations()[0];
+            assert!(observed.input.is_none());
+            assert!(observed.output.is_none());
         });
     }
 
@@ -735,6 +894,38 @@ mod tests {
                 observed.status_message.as_deref(),
                 Some("provider returned 500")
             );
+        });
+    }
+
+    #[test]
+    fn metadata_status_and_score_comments_are_redacted() {
+        with_sink(|collected| {
+            let recorder = TurnRecorder::begin("turn", scope(), RecorderSettings::default())
+                .expect("sink installed");
+            recorder.set_metadata("api_key", json!("raw-trace-secret"));
+            recorder.set_metadata("context", json!({ "password": "raw-password" }));
+
+            let mut step = recorder.step(ObservationKind::Tool, "exec");
+            step.set_metadata("access_token", json!("raw-step-secret"));
+            step.set_level(
+                Level::Warning,
+                Some("Bearer abcdefghijklmnopqrstuvwxyz".into()),
+            );
+            step.finish();
+            recorder.score(
+                "review",
+                ScoreValue::Boolean(true),
+                Some("sk-live-abcdefghijkl".into()),
+            );
+            recorder.finish();
+
+            let rendered = serde_json::to_string(&collected.events()).expect("serializable");
+            assert!(!rendered.contains("raw-trace-secret"));
+            assert!(!rendered.contains("raw-password"));
+            assert!(!rendered.contains("raw-step-secret"));
+            assert!(!rendered.contains("Bearer abcdefghijklmnopqrstuvwxyz"));
+            assert!(!rendered.contains("sk-live-abcdefghijkl"));
+            assert!(rendered.contains(REDACTED));
         });
     }
 
@@ -830,6 +1021,29 @@ mod tests {
 
             let last = collected.traces().last().cloned().expect("trace emitted");
             assert_eq!(last.output, Some(json!("final answer")));
+        });
+    }
+
+    #[test]
+    fn trace_and_observation_are_emitted_once_after_completion() {
+        with_sink(|collected| {
+            let recorder = TurnRecorder::begin("turn", scope(), RecorderSettings::default())
+                .expect("sink installed");
+            recorder.set_metadata("tenant", json!("acme"));
+            recorder.step(ObservationKind::Generation, "llm").finish();
+            recorder.finish();
+            recorder.finish();
+
+            let traces = collected.traces();
+            assert_eq!(traces.len(), 1);
+            assert!(traces[0].end_time.is_some());
+            let observations = collected.observations();
+            assert_eq!(observations.len(), 1);
+            assert_eq!(observations[0].trace_name.as_deref(), Some("turn"));
+            assert_eq!(
+                observations[0].trace_metadata.get("tenant"),
+                Some(&json!("acme"))
+            );
         });
     }
 

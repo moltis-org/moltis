@@ -10,8 +10,8 @@ use {async_trait::async_trait, futures::StreamExt, secrecy::ExposeSecret, tokio_
 use tracing::{debug, trace, warn};
 
 use moltis_agents::model::{
-    AgentToolControls, ChatMessage, CompletionResponse, ContentPart, LlmProvider, StreamEvent,
-    ToolCall, ToolChoice, Usage, UserContent,
+    AgentToolControls, ChatMessage, CompletionResponse, ContentPart, InputTokenAccounting,
+    LlmProvider, StreamEvent, ToolCall, ToolChoice, Usage, UserContent,
 };
 
 pub struct AnthropicProvider {
@@ -823,16 +823,17 @@ impl LlmProvider for AnthropicProvider {
 
         let tool_calls = parse_tool_calls(&content);
 
-        let usage = Usage {
-            input_tokens: resp["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
-            output_tokens: resp["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens: resp["usage"]["cache_read_input_tokens"]
+        let usage = Usage::from_input_tokens(
+            InputTokenAccounting::Exclusive,
+            resp["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
+            resp["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
+            resp["usage"]["cache_read_input_tokens"]
                 .as_u64()
                 .unwrap_or(0) as u32,
-            cache_write_tokens: resp["usage"]["cache_creation_input_tokens"]
+            resp["usage"]["cache_creation_input_tokens"]
                 .as_u64()
                 .unwrap_or(0) as u32,
-        };
+        );
 
         if usage.cache_read_tokens > 0 || usage.cache_write_tokens > 0 {
             debug!(
@@ -1053,12 +1054,13 @@ impl LlmProvider for AnthropicProvider {
                                         }
                                     }
                                     "message_stop" => {
-                                        yield StreamEvent::Done(Usage {
+                                        yield StreamEvent::Done(Usage::from_input_tokens(
+                                            InputTokenAccounting::Exclusive,
                                             input_tokens,
                                             output_tokens,
                                             cache_read_tokens,
                                             cache_write_tokens,
-                                        });
+                                        ));
                                         return;
                                     }
                                     "error" => {

@@ -1371,6 +1371,7 @@ pub async fn start_gateway(
     // - SIGINT  (ctrl-c): immediate exit
     {
         let browser_for_shutdown = Arc::clone(&banner.browser_for_lifecycle);
+        let instrumentation_for_shutdown = Arc::clone(&state.instrumentation);
         #[cfg(feature = "tailscale")]
         let reset_tailscale_on_exit =
             banner.tailscale_mode != TailscaleMode::Off && banner.tailscale_reset_on_exit;
@@ -1406,19 +1407,18 @@ pub async fn start_gateway(
                 }
                 "SIGINT"
             };
-
             if signal_name == "SIGINT" {
-                info!("received SIGINT, exiting immediately");
+                info!("received SIGINT, flushing instrumentation before exit");
+                instrumentation_for_shutdown
+                    .shutdown(std::time::Duration::from_secs(1))
+                    .await;
                 std::process::exit(0);
             }
-
             info!(signal = signal_name, "starting graceful shutdown");
-
             #[cfg(feature = "mdns")]
             if let Some(ref daemon) = _mdns_daemon {
                 moltis_gateway::mdns::shutdown(daemon);
             }
-
             #[cfg(feature = "tailscale")]
             if reset_tailscale_on_exit {
                 info!("shutting down tailscale {ts_mode}");
@@ -1427,8 +1427,8 @@ pub async fn start_gateway(
                     warn!("failed to reset tailscale on exit: {e}");
                 }
             }
-
             let shutdown_grace = std::time::Duration::from_secs(5);
+            instrumentation_for_shutdown.shutdown(shutdown_grace).await;
             info!(
                 grace_secs = shutdown_grace.as_secs(),
                 "shutting down browser pool"

@@ -17,9 +17,7 @@ test.describe("Instrumentation settings", () => {
 		// an operator can see what is available without reading the docs first.
 		await expect(page.getByText("Langfuse", { exact: true })).toBeVisible();
 		await expect(page.getByText("Datadog", { exact: true })).toBeVisible();
-		await expect(
-			page.getByText("OpenTelemetry (Grafana, Honeycomb, Collector)", { exact: true }),
-		).toBeVisible();
+		await expect(page.getByText("OpenTelemetry (Grafana, Honeycomb, Collector)", { exact: true })).toBeVisible();
 	});
 
 	test("explains that backends receive different data", async ({ page }) => {
@@ -52,6 +50,13 @@ test.describe("Instrumentation settings", () => {
 		await expectRpcOk(page, "instrumentation.status", {});
 	});
 
+	test("shows honest delivery status before exporters are enabled", async ({ page }) => {
+		await navigateAndWait(page, "/settings/instrumentation");
+
+		await expect(page.getByText("Delivery", { exact: true })).toBeVisible();
+		await expect(page.getByText("no exporters running", { exact: true })).toBeVisible();
+	});
+
 	test("status RPC never returns the secret key", async ({ page }) => {
 		await navigateAndWait(page, "/settings/instrumentation");
 		const res = await expectRpcOk(page, "instrumentation.status", {});
@@ -59,7 +64,7 @@ test.describe("Instrumentation settings", () => {
 		// The UI only ever needs to know whether a key is configured. Returning
 		// the value would put it in every browser devtools network log.
 		const serialized = JSON.stringify(res);
-		expect(serialized).not.toContain("secret_key\"");
+		expect(serialized).not.toContain('secret_key"');
 		expect(serialized).toContain("secret_key_set");
 	});
 

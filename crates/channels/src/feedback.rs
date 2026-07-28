@@ -10,8 +10,8 @@ use std::sync::{Arc, RwLock};
 use {
     moltis_config::FeedbackSettings,
     moltis_observability::{
-        FeedbackSignal, FeedbackVocabulary, TraceId, exporters::langfuse::LangfuseClient,
-        feedback_score, feedback_score_id,
+        FeedbackSignal, FeedbackVocabulary, ScoreDeleteRecord, TraceId,
+        exporters::langfuse::LangfuseClient, feedback_score, feedback_score_id,
     },
     tracing::{debug, warn},
 };
@@ -164,6 +164,9 @@ impl FeedbackService {
         let Some(signal) = signal else {
             return FeedbackOutcome::NotFeedback;
         };
+        if langfuse.is_none() {
+            return FeedbackOutcome::Disabled;
+        }
 
         let link = match links.lookup(channel, account_id, chat_id, message_id).await {
             Ok(Some(link)) => link,
@@ -198,13 +201,9 @@ impl FeedbackService {
         }
 
         let score_id = feedback_score_id(&trace_id, Some(&scoped_user));
-        let Some(client) = langfuse else {
-            // Nothing to retract against; the score sink has no delete path.
-            return FeedbackOutcome::Retracted;
-        };
-        if let Err(error) = client.delete_score(&score_id).await {
-            warn!(%error, channel, "failed to retract reaction feedback");
-        }
+        moltis_observability::record(moltis_observability::Event::ScoreDelete(Box::new(
+            ScoreDeleteRecord::new(trace_id, score_id),
+        )));
         FeedbackOutcome::Retracted
     }
 
@@ -296,6 +295,19 @@ mod tests {
         (service, links)
     }
 
+    fn langfuse_client() -> Arc<LangfuseClient> {
+        Arc::new(LangfuseClient::new(
+            moltis_observability::exporters::langfuse::LangfuseConfig {
+                host: "https://cloud.langfuse.com".into(),
+                public_key: "pk-test".into(),
+                secret_key: "sk-test".to_string().into(),
+                environment: Some("test".into()),
+                release: None,
+                timeout: std::time::Duration::from_secs(1),
+            },
+        ))
+    }
+
     /// Collects scores emitted through the global sink.
     ///
     /// The sink is process-wide, so the tests that assert on emitted scores
@@ -381,6 +393,7 @@ mod tests {
 
         let (service, links) = service(true);
         link_reply(&links, "42", "trace-1").await;
+        let langfuse = langfuse_client();
 
         let outcome = service
             .on_reaction(
@@ -391,7 +404,7 @@ mod tests {
                 "\u{1f44d}",
                 "99",
                 true,
-                None,
+                Some(&langfuse),
             )
             .await;
 
@@ -433,6 +446,7 @@ mod tests {
     #[tokio::test]
     async fn a_reaction_on_an_unlinked_message_is_ignored() {
         let (service, _links) = service(true);
+        let langfuse = langfuse_client();
         let outcome = service
             .on_reaction(
                 "telegram",
@@ -442,7 +456,7 @@ mod tests {
                 "\u{1f44d}",
                 "99",
                 true,
-                None,
+                Some(&langfuse),
             )
             .await;
 
@@ -451,6 +465,37 @@ mod tests {
 
     #[tokio::test]
     async fn removing_a_reaction_retracts_rather_than_scoring_again() {
+        let _guard = sink_guard().await;
+        let sink = Arc::new(CollectingSink::default());
+        moltis_observability::set_global_sink(Arc::clone(&sink) as Arc<_>);
+        let (service, links) = service(true);
+        link_reply(&links, "42", "trace-1").await;
+        let langfuse = langfuse_client();
+
+        let outcome = service
+            .on_reaction(
+                "telegram",
+                "bot-1",
+                "chat-1",
+                "42",
+                "\u{1f44d}",
+                "99",
+                false,
+                Some(&langfuse),
+            )
+            .await;
+
+        assert_eq!(outcome, FeedbackOutcome::Retracted);
+        let events = sink.events.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(matches!(events.as_slice(), [
+            moltis_observability::Event::ScoreDelete(_)
+        ]));
+        drop(events);
+        moltis_observability::clear_global_sink();
+    }
+
+    #[tokio::test]
+    async fn score_feedback_is_disabled_without_langfuse() {
         let (service, links) = service(true);
         link_reply(&links, "42", "trace-1").await;
 
@@ -462,12 +507,12 @@ mod tests {
                 "42",
                 "\u{1f44d}",
                 "99",
-                false,
+                true,
                 None,
             )
             .await;
 
-        assert_eq!(outcome, FeedbackOutcome::Retracted);
+        assert_eq!(outcome, FeedbackOutcome::Disabled);
     }
 
     #[tokio::test]

@@ -189,6 +189,10 @@ impl Transport for OtlpTransport {
         let body = body.chars().take(512).collect::<String>();
         Err(Self::classify(status, body))
     }
+
+    fn accepts(&self, event: &Event) -> bool {
+        !matches!(event, Event::Score(_) | Event::ScoreDelete(_))
+    }
 }
 
 #[cfg(test)]

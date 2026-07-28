@@ -143,7 +143,7 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 	// Appended asynchronously: availability depends on whether any backend is
 	// collecting scores, and the action bar must not wait on that check.
 	void feedbackStatus().then((status) => {
-		if (!status?.enabled || !status.instrumentation_active) return;
+		if (!(status?.enabled && status.instrumentation_active)) return;
 		if (!bar.isConnected) return;
 		const buttons = buildFeedbackButtons({ sessionKey, runId: ctx.runId }, actionButton);
 		if (!buttons) return;

@@ -11,7 +11,10 @@ use {
     },
 };
 
-use crate::model::{Usage, UserContent};
+use crate::{
+    model::{AgentToolControls, ChatMessage, LlmProvider, ProviderIdentity, Usage, UserContent},
+    runner::{AgentRunError, AgentRunResult, tool_result::tool_result_failure},
+};
 
 /// Derive the trace scope from the session and channel context.
 ///
@@ -98,6 +101,7 @@ pub fn release(config: &moltis_config::InstrumentationConfig) -> String {
 #[must_use]
 pub fn begin_turn(
     session_key: &str,
+    trace_correlation_key: Option<&str>,
     channel: Option<&ChannelBinding>,
     provider: &str,
     model: &str,
@@ -109,9 +113,12 @@ pub fn begin_turn(
     let scope = trace_scope(session_key, channel, environment, release);
     let recorder = TurnRecorder::begin("agent-run", scope, settings)?;
 
-    // The reply for this turn is sent by a dispatcher far from here, and needs
-    // the trace id to attribute a later reaction to the right run.
-    moltis_observability::remember_trace(session_key, recorder.trace_id());
+    // Only top-level chat runs provide a correlation key. Sub-agents deliberately
+    // omit it, so they cannot overwrite the trace used to attribute the parent
+    // run's delivered reply.
+    if let Some(key) = trace_correlation_key {
+        moltis_observability::remember_trace(key, recorder.trace_id());
+    }
 
     recorder.set_metadata("provider", serde_json::Value::String(provider.to_string()));
     recorder.set_metadata("model", serde_json::Value::String(model.to_string()));
@@ -157,6 +164,111 @@ pub fn generation_name(provider: &str, model: &str) -> String {
     format!("{provider}/{model}")
 }
 
+/// Attach request parameters already exposed by the provider and agent model.
+pub fn set_generation_parameters(
+    step: &mut moltis_observability::StepGuard,
+    provider: &dyn LlmProvider,
+    controls: &AgentToolControls,
+) {
+    if let Some(effort) = provider.reasoning_effort() {
+        step.set_model_parameter("reasoning_effort", serde_json::json!(effort.as_str()));
+    }
+    if let Some(tool_choice) = &controls.tool_choice {
+        step.set_model_parameter("tool_choice", serde_json::json!(tool_choice));
+    }
+}
+
+/// Open a generation observation for the concrete provider selected for an attempt.
+pub fn begin_generation_step(
+    recorder: Option<&TurnRecorder>,
+    identity: &ProviderIdentity,
+    provider: &dyn LlmProvider,
+    controls: &AgentToolControls,
+    iteration: usize,
+    tool_count: usize,
+    messages: &[ChatMessage],
+) -> Option<moltis_observability::StepGuard> {
+    recorder.map(|recorder| {
+        let mut step = recorder.step(
+            ObservationKind::Generation,
+            generation_name(&identity.provider, &identity.model),
+        );
+        step.set_model(identity.model.clone());
+        step.set_metadata("provider", serde_json::json!(identity.provider));
+        set_generation_parameters(&mut step, provider, controls);
+        step.set_metadata("iteration", serde_json::json!(iteration));
+        step.set_metadata("tool_count", serde_json::json!(tool_count));
+        step.set_input(serde_json::Value::Array(
+            messages.iter().map(ChatMessage::to_openai_value).collect(),
+        ));
+        step
+    })
+}
+
+/// Extract a provider's terminal reason from a raw streaming event.
+#[must_use]
+pub fn finish_reason(raw: &serde_json::Value) -> Option<String> {
+    raw.pointer("/choices/0/finish_reason")
+        .or_else(|| raw.get("stop_reason"))
+        .or_else(|| raw.pointer("/response/status"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+/// Extract separately reported reasoning-token usage from a raw event.
+#[must_use]
+pub fn reasoning_tokens(raw: &serde_json::Value) -> Option<u32> {
+    [
+        "/usage/completion_tokens_details/reasoning_tokens",
+        "/usage/output_tokens_details/reasoning_tokens",
+        "/response/usage/output_tokens_details/reasoning_tokens",
+        "/choices/0/usage/completion_tokens_details/reasoning_tokens",
+    ]
+    .iter()
+    .find_map(|pointer| raw.pointer(pointer).and_then(serde_json::Value::as_u64))
+    .map(|tokens| u32::try_from(tokens).unwrap_or(u32::MAX))
+}
+
+/// Close the trace root for every return path from an agent loop.
+pub fn finish_turn(
+    recorder: Option<&TurnRecorder>,
+    result: &Result<AgentRunResult, AgentRunError>,
+) {
+    let Some(recorder) = recorder else {
+        return;
+    };
+    match result {
+        Ok(run) => {
+            recorder.set_output(serde_json::Value::String(run.text.clone()));
+            recorder.set_metadata("iterations", serde_json::json!(run.iterations));
+            recorder.set_metadata("tool_calls", serde_json::json!(run.tool_calls_made));
+            recorder.finish();
+        },
+        Err(error) => recorder.finish_with_error(error.to_string()),
+    }
+}
+
+/// Close a tool observation with the exact content persisted for the model.
+pub fn finish_tool_step(
+    step: Option<moltis_observability::StepGuard>,
+    persisted_output: &str,
+    success: bool,
+    error: Option<&str>,
+    persisted_result: &serde_json::Value,
+) {
+    let Some(mut step) = step else {
+        return;
+    };
+    step.set_output(serde_json::Value::String(persisted_output.to_string()));
+    let failure = error
+        .map(str::to_string)
+        .or_else(|| tool_result_failure(persisted_result));
+    if !success || failure.is_some() {
+        step.fail(failure.unwrap_or_else(|| "tool execution failed".to_string()));
+    }
+    step.finish();
+}
+
 /// The observation kind a tool call should be recorded as.
 ///
 /// Retrieval tools are reported as `RETRIEVER` so backends that special-case
@@ -179,8 +291,50 @@ pub fn tool_observation_kind(tool_name: &str) -> ObservationKind {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    use moltis_observability::{Event, ObservationSink, RecorderSettings, RedactionPolicy};
+
     use super::*;
+
+    #[derive(Default)]
+    struct CollectingSink {
+        events: Mutex<Vec<Event>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ObservationSink for CollectingSink {
+        fn name(&self) -> &str {
+            "agent-test"
+        }
+
+        fn record(&self, event: Event) {
+            self.events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(event);
+        }
+
+        async fn flush(&self, _timeout: Duration) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn test_recorder(sink: Arc<CollectingSink>) -> TurnRecorder {
+        TurnRecorder::begin_with_sink(sink, "agent-run", TraceScope::default(), RecorderSettings {
+            redaction: RedactionPolicy::default(),
+            capture_input: true,
+            capture_output: true,
+            capture_tool_io: true,
+            sample_rate: 1.0,
+        })
+        .expect("sampled recorder")
+    }
 
     fn binding() -> ChannelBinding {
         ChannelBinding {
@@ -321,6 +475,110 @@ mod tests {
         assert_eq!(
             generation_name("anthropic", "claude-opus-4"),
             "anthropic/claude-opus-4"
+        );
+    }
+
+    #[test]
+    fn finish_reason_supports_chat_anthropic_and_responses_shapes() {
+        assert_eq!(
+            finish_reason(&serde_json::json!({"choices": [{"finish_reason": "tool_calls"}]}))
+                .as_deref(),
+            Some("tool_calls")
+        );
+        assert_eq!(
+            finish_reason(&serde_json::json!({"stop_reason": "end_turn"})).as_deref(),
+            Some("end_turn")
+        );
+        assert_eq!(
+            finish_reason(&serde_json::json!({"response": {"status": "completed"}})).as_deref(),
+            Some("completed")
+        );
+    }
+
+    #[test]
+    fn reasoning_tokens_supports_chat_and_responses_usage() {
+        assert_eq!(
+            reasoning_tokens(&serde_json::json!({
+                "usage": {"completion_tokens_details": {"reasoning_tokens": 42}}
+            })),
+            Some(42)
+        );
+        assert_eq!(
+            reasoning_tokens(&serde_json::json!({
+                "response": {"usage": {"output_tokens_details": {"reasoning_tokens": 84}}}
+            })),
+            Some(84)
+        );
+    }
+
+    #[test]
+    fn collecting_sink_receives_successful_and_failed_turn_completions() {
+        let sink = Arc::new(CollectingSink::default());
+        let successful = test_recorder(Arc::clone(&sink));
+        finish_turn(
+            Some(&successful),
+            &Ok(AgentRunResult {
+                text: "finished".into(),
+                iterations: 2,
+                tool_calls_made: 1,
+                usage: Usage::default(),
+                request_usage: Usage::default(),
+                raw_llm_responses: Vec::new(),
+            }),
+        );
+
+        let failed = test_recorder(Arc::clone(&sink));
+        finish_turn(
+            Some(&failed),
+            &Err(AgentRunError::Other(anyhow::anyhow!("provider failed"))),
+        );
+
+        let traces = sink
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter_map(|event| match event {
+                Event::Trace(trace) => Some((**trace).clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(traces.iter().any(|trace| {
+            trace.output == Some(serde_json::Value::String("finished".into()))
+                && trace.metadata.get("iterations") == Some(&serde_json::json!(2))
+        }));
+        assert!(traces.iter().any(|trace| {
+            trace.metadata.get("error") == Some(&serde_json::json!("provider failed"))
+        }));
+    }
+
+    #[test]
+    fn collecting_sink_gets_persisted_tool_output_and_logical_failure() {
+        let sink = Arc::new(CollectingSink::default());
+        let recorder = test_recorder(Arc::clone(&sink));
+        let mut step = recorder.step(ObservationKind::Tool, "browser");
+        step.set_input(serde_json::json!({"url": "https://example.com"}));
+        let persisted = serde_json::json!({"result": {"success": false, "secret": "[removed]"}});
+        let output = persisted.to_string();
+
+        finish_tool_step(Some(step), &output, true, None, &persisted);
+
+        let events = sink
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tool = events.iter().find_map(|event| match event {
+            Event::ObservationEnd(observation) if observation.kind == ObservationKind::Tool => {
+                Some(observation)
+            },
+            _ => None,
+        });
+        let tool = tool.expect("completed tool observation");
+        assert_eq!(tool.output, Some(serde_json::Value::String(output)));
+        assert_eq!(tool.level, moltis_observability::Level::Error);
+        assert_eq!(
+            tool.status_message.as_deref(),
+            Some("tool returned success: false")
         );
     }
 }

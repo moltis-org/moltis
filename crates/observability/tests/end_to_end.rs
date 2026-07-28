@@ -88,6 +88,7 @@ async fn run_turn_against(server: &MockServer, profile: ExportProfile) -> Vec<Va
         )
         .expect("recorder should start");
         recorder.set_input(Value::String(SECRET_PROMPT.into()));
+        recorder.set_metadata("tenant", serde_json::json!("acme"));
 
         let mut generation = recorder.step(ObservationKind::Generation, "anthropic/claude-opus-4");
         generation.set_model("claude-opus-4");
@@ -154,8 +155,7 @@ async fn langfuse_profile_delivers_the_full_conversation() {
         "completion missing from Langfuse export"
     );
 
-    // Langfuse receives both the in-progress span and the completion; the
-    // model and usage only exist on the latter.
+    // Immutable OTLP receives only the completed generation.
     let spans = all_spans(&bodies);
     let generation = spans
         .iter()
@@ -167,6 +167,18 @@ async fn langfuse_profile_delivers_the_full_conversation() {
         Some(&serde_json::json!({ "stringValue": "claude-opus-4" }))
     );
     assert!(span_attr(generation, "langfuse.observation.completion_start_time").is_some());
+
+    let root = spans
+        .iter()
+        .find(|span| span.get("parentSpanId").is_none())
+        .expect("root span present");
+    assert_eq!(
+        span_attr(root, "langfuse.observation.type"),
+        Some(&serde_json::json!({ "stringValue": "agent" }))
+    );
+    assert_ne!(root["startTimeUnixNano"], root["endTimeUnixNano"]);
+    assert!(span_attr(root, "langfuse.observation.input").is_some());
+    assert!(span_attr(root, "langfuse.observation.output").is_some());
 }
 
 #[tokio::test]
@@ -268,6 +280,32 @@ async fn the_span_tree_is_correctly_nested() {
         generation["spanId"].as_str(),
         "tool must nest under the generation that called it"
     );
+}
+
+#[tokio::test]
+async fn every_completed_wire_id_is_exported_once() {
+    let server = collector().await;
+    let bodies = run_turn_against(&server, ExportProfile::langfuse()).await;
+    let spans = all_spans(&bodies);
+    let ids: std::collections::HashSet<(&str, &str)> = spans
+        .iter()
+        .filter_map(|span| Some((span["traceId"].as_str()?, span["spanId"].as_str()?)))
+        .collect();
+
+    assert_eq!(spans.len(), 3, "root, generation, and tool expected");
+    assert_eq!(ids.len(), spans.len(), "duplicate OTLP wire span ID");
+
+    for span in &spans {
+        assert_eq!(
+            span_attr(span, "langfuse.trace.name"),
+            Some(&serde_json::json!({ "stringValue": "agent-run" }))
+        );
+        let metadata = span_attr(span, "langfuse.trace.metadata")
+            .and_then(|value| value["stringValue"].as_str())
+            .map(|value| serde_json::from_str::<Value>(value).expect("valid metadata"))
+            .expect("filterable trace metadata");
+        assert_eq!(metadata["tenant"], "acme");
+    }
 }
 
 #[tokio::test]

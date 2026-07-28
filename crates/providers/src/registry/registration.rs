@@ -457,6 +457,9 @@ impl ProviderRegistry {
             let provider = Arc::new(genai_provider::GenaiProvider::new(
                 model_id.clone(),
                 genai_provider_name.clone(),
+                // genai normalizes every adapter to inclusive prompt tokens,
+                // including Anthropic's otherwise-exclusive API counters.
+                moltis_agents::model::InputTokenAccounting::Inclusive,
                 resolved_key,
             ));
             self.register(

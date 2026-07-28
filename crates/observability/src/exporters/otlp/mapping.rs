@@ -4,6 +4,8 @@
 //! same agent run yields a content-rich payload for Langfuse and a lean
 //! operational span for Datadog or Grafana. See `crate::profile` for why.
 
+use std::collections::HashSet;
+
 use time::OffsetDateTime;
 
 use {
@@ -47,11 +49,15 @@ fn clamp(text: String, max: usize) -> String {
     if max == 0 || text.len() <= max {
         return text;
     }
-    let mut end = max;
+    const SUFFIX: &str = "...";
+    if max <= SUFFIX.len() {
+        return SUFFIX[..max].to_string();
+    }
+    let mut end = max - SUFFIX.len();
     while end > 0 && !text.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}…", &text[..end])
+    format!("{}{SUFFIX}", &text[..end])
 }
 
 /// Serialize a value for an attribute slot that expects JSON text.
@@ -59,9 +65,36 @@ fn json_attr(key: &str, value: &serde_json::Value, max: usize) -> Option<wire::K
     match value {
         serde_json::Value::Null => None,
         serde_json::Value::String(s) => Some(wire::KeyValue::string(key, clamp(s.clone(), max))),
-        other => serde_json::to_string(other)
-            .ok()
-            .map(|s| wire::KeyValue::string(key, clamp(s, max))),
+        other => bounded_json(other, max).map(|s| wire::KeyValue::string(key, s)),
+    }
+}
+
+/// Serialize structured JSON without ever truncating it into invalid syntax.
+fn bounded_json(value: &serde_json::Value, max: usize) -> Option<String> {
+    let serialized = serde_json::to_string(value).ok()?;
+    if max == 0 || serialized.len() <= max {
+        return Some(serialized);
+    }
+
+    let marker = serde_json::json!({
+        "moltis_truncated": true,
+        "original_bytes": serialized.len(),
+    })
+    .to_string();
+    if marker.len() <= max {
+        return Some(marker);
+    }
+    (max >= 4).then(|| "null".to_string())
+}
+
+fn push_structured_attr(
+    out: &mut Vec<wire::KeyValue>,
+    key: &str,
+    value: &serde_json::Value,
+    max: usize,
+) {
+    if let Some(serialized) = bounded_json(value, max) {
+        out.push(wire::KeyValue::string(key, serialized));
     }
 }
 
@@ -119,16 +152,36 @@ fn push_scope_attrs(out: &mut Vec<wire::KeyValue>, scope: &TraceScope, profile: 
 
 /// Build the span representing a trace's root.
 ///
-/// Langfuse reconstructs the trace record from its spans, so trace-level input,
-/// output and metadata ride on a zero-duration root span.
+/// Langfuse reconstructs the trace from its spans, so the completed root is a
+/// real AGENT observation and also carries the trace-level compatibility attrs.
 #[must_use]
 pub fn trace_to_span(trace: &TraceRecord, ctx: &ExportContext) -> wire::Span {
     let profile = &ctx.profile;
     let mut attributes = Vec::new();
+    let error_message = trace
+        .metadata
+        .get("error")
+        .and_then(serde_json::Value::as_str);
 
     if profile.emits_langfuse_attrs() {
         attributes.push(wire::KeyValue::string(attr::TRACE_NAME, trace.name.clone()));
-        attributes.push(wire::KeyValue::string(attr::OBSERVATION_TYPE, "SPAN"));
+        attributes.push(wire::KeyValue::string(attr::OBSERVATION_TYPE, "agent"));
+        attributes.push(wire::KeyValue::string(
+            attr::OBSERVATION_LEVEL,
+            if error_message.is_some() {
+                Level::Error.as_str()
+            } else {
+                Level::Default.as_str()
+            },
+        ));
+        if let Some(message) = error_message {
+            attributes.push(wire::KeyValue::string(
+                attr::OBSERVATION_STATUS_MESSAGE,
+                clamp(message.to_string(), profile.max_attribute_bytes),
+            ));
+        }
+    } else {
+        attributes.push(wire::KeyValue::string(attr::GEN_AI_OPERATION_NAME, "agent"));
     }
     push_scope_attrs(&mut attributes, &trace.scope, profile);
 
@@ -136,12 +189,24 @@ pub fn trace_to_span(trace: &TraceRecord, ctx: &ExportContext) -> wire::Span {
         if let Some(input) = &trace.input
             && let Some(kv) = json_attr(attr::TRACE_INPUT, input, profile.max_attribute_bytes)
         {
-            attributes.push(kv);
+            attributes.push(kv.clone());
+            if let Some(observation) =
+                json_attr(attr::OBSERVATION_INPUT, input, profile.max_attribute_bytes)
+            {
+                attributes.push(observation);
+            }
         }
         if let Some(output) = &trace.output
             && let Some(kv) = json_attr(attr::TRACE_OUTPUT, output, profile.max_attribute_bytes)
         {
-            attributes.push(kv);
+            attributes.push(kv.clone());
+            if let Some(observation) = json_attr(
+                attr::OBSERVATION_OUTPUT,
+                output,
+                profile.max_attribute_bytes,
+            ) {
+                attributes.push(observation);
+            }
         }
     } else if profile.emits_content_metadata() {
         // Size without content: enough to spot a runaway prompt in an APM
@@ -161,13 +226,20 @@ pub fn trace_to_span(trace: &TraceRecord, ctx: &ExportContext) -> wire::Span {
     }
 
     if profile.emits_langfuse_attrs() {
-        if !trace.metadata.is_empty()
-            && let Ok(meta) = serde_json::to_string(&trace.metadata)
-        {
-            attributes.push(wire::KeyValue::string(
+        if !trace.metadata.is_empty() {
+            let metadata = serde_json::to_value(&trace.metadata).unwrap_or_default();
+            push_structured_attr(
+                &mut attributes,
                 attr::TRACE_METADATA,
-                clamp(meta, profile.max_attribute_bytes),
-            ));
+                &metadata,
+                profile.max_attribute_bytes,
+            );
+            push_structured_attr(
+                &mut attributes,
+                attr::OBSERVATION_METADATA,
+                &metadata,
+                profile.max_attribute_bytes,
+            );
         }
         if trace.public {
             attributes.push(wire::KeyValue::bool(attr::TRACE_PUBLIC, true));
@@ -184,10 +256,12 @@ pub fn trace_to_span(trace: &TraceRecord, ctx: &ExportContext) -> wire::Span {
         parent_span_id: None,
         name: trace.name.clone(),
         kind: wire::SPAN_KIND_INTERNAL,
-        end_time_unix_nano: start.clone(),
+        end_time_unix_nano: unix_nanos(trace.end_time.unwrap_or(trace.timestamp)),
         start_time_unix_nano: start,
         attributes,
-        status: wire::Status::unset(),
+        status: error_message.map_or_else(wire::Status::unset, |message| {
+            wire::Status::error(Some(message.to_string()))
+        }),
     }
 }
 
@@ -198,6 +272,18 @@ pub fn observation_to_span(obs: &ObservationRecord, ctx: &ExportContext) -> wire
     let mut attributes = Vec::new();
 
     if profile.emits_langfuse_attrs() {
+        if let Some(trace_name) = &obs.trace_name {
+            attributes.push(wire::KeyValue::string(attr::TRACE_NAME, trace_name.clone()));
+        }
+        if !obs.trace_metadata.is_empty() {
+            let metadata = serde_json::to_value(&obs.trace_metadata).unwrap_or_default();
+            push_structured_attr(
+                &mut attributes,
+                attr::TRACE_METADATA,
+                &metadata,
+                profile.max_attribute_bytes,
+            );
+        }
         attributes.push(wire::KeyValue::string(
             attr::OBSERVATION_TYPE,
             obs.kind.as_str(),
@@ -211,7 +297,7 @@ pub fn observation_to_span(obs: &ObservationRecord, ctx: &ExportContext) -> wire
         // operation name is the GenAI-conventional way to express it.
         attributes.push(wire::KeyValue::string(
             attr::GEN_AI_OPERATION_NAME,
-            obs.kind.as_str().to_lowercase(),
+            obs.kind.as_str(),
         ));
     }
 
@@ -236,17 +322,21 @@ pub fn observation_to_span(obs: &ObservationRecord, ctx: &ExportContext) -> wire
 
     if profile.emits_langfuse_attrs() {
         push_prompt_attrs(&mut attributes, obs);
-        if !obs.metadata.is_empty()
-            && let Ok(meta) = serde_json::to_string(&obs.metadata)
-        {
-            attributes.push(wire::KeyValue::string(
+        if !obs.metadata.is_empty() {
+            let metadata = serde_json::to_value(&obs.metadata).unwrap_or_default();
+            push_structured_attr(
+                &mut attributes,
                 attr::OBSERVATION_METADATA,
-                clamp(meta, profile.max_attribute_bytes),
-            ));
+                &metadata,
+                profile.max_attribute_bytes,
+            );
         }
     }
 
-    if obs.kind == crate::model::ObservationKind::Tool {
+    if matches!(
+        obs.kind,
+        crate::model::ObservationKind::Tool | crate::model::ObservationKind::Retriever
+    ) {
         attributes.push(wire::KeyValue::string(
             attr::GEN_AI_TOOL_NAME,
             obs.name.clone(),
@@ -351,13 +441,14 @@ fn push_model_attrs(
     if obs.model_parameters.is_empty() {
         return;
     }
-    if profile.emits_langfuse_attrs()
-        && let Ok(params) = serde_json::to_string(&obs.model_parameters)
-    {
-        out.push(wire::KeyValue::string(
+    if profile.emits_langfuse_attrs() {
+        let parameters = serde_json::to_value(&obs.model_parameters).unwrap_or_default();
+        push_structured_attr(
+            out,
             attr::OBSERVATION_MODEL_PARAMETERS,
-            clamp(params, profile.max_attribute_bytes),
-        ));
+            &parameters,
+            profile.max_attribute_bytes,
+        );
     }
     // Promote the two parameters GenAI consumers actually chart.
     if let Some(temp) = obs
@@ -406,12 +497,13 @@ fn push_usage_attrs(
             // Only Langfuse prices the cache buckets; elsewhere this is an
             // opaque JSON blob nothing can chart.
             let details = usage.to_usage_details();
-            if let Ok(json) = serde_json::to_string(&details) {
-                out.push(wire::KeyValue::string(
-                    attr::OBSERVATION_USAGE_DETAILS,
-                    json,
-                ));
-            }
+            let details = serde_json::to_value(details).unwrap_or_default();
+            push_structured_attr(
+                out,
+                attr::OBSERVATION_USAGE_DETAILS,
+                &details,
+                profile.max_attribute_bytes,
+            );
         }
         out.push(wire::KeyValue::int(
             attr::GEN_AI_USAGE_INPUT_TOKENS,
@@ -423,12 +515,9 @@ fn push_usage_attrs(
         ));
     }
 
-    if profile.emits_langfuse_attrs()
-        && !obs.cost_details.is_empty()
-        && let Ok(json) = serde_json::to_string(&obs.cost_details)
-    {
-        out.push(wire::KeyValue::string(attr::OBSERVATION_COST_DETAILS, json));
-    }
+    // Keep locally computed costs inside Moltis. Langfuse maintains versioned
+    // model definitions and pricing tiers; sending our static table would take
+    // precedence over that inference and make stale prices authoritative.
 }
 
 /// Managed-prompt linkage. Langfuse-only: no other backend models it.
@@ -472,19 +561,18 @@ pub fn resource_attributes(ctx: &ExportContext) -> Vec<wire::KeyValue> {
 /// delivered through the backend's scoring API instead.
 #[must_use]
 pub fn batch_to_request(events: &[Event], ctx: &ExportContext) -> wire::ExportTraceServiceRequest {
+    let mut exported_ids = HashSet::new();
     let spans: Vec<wire::Span> = events
         .iter()
         .filter_map(|event| match event {
-            Event::Trace(trace) => Some(trace_to_span(trace, ctx)),
-            // Backends that treat spans as immutable get only the completion,
-            // or the same step would appear twice in the trace.
-            Event::ObservationStart(obs) => ctx
-                .profile
-                .emits_partial_spans()
-                .then(|| observation_to_span(obs, ctx)),
-            Event::ObservationEnd(obs) => Some(observation_to_span(obs, ctx)),
-            Event::Score(_) => None,
+            Event::Trace(trace) if trace.end_time.is_some() => Some(trace_to_span(trace, ctx)),
+            Event::ObservationEnd(obs) if obs.end_time.is_some() => {
+                Some(observation_to_span(obs, ctx))
+            },
+            Event::Trace(_) | Event::ObservationEnd(_) => None,
+            Event::Score(_) | Event::ScoreDelete(_) => None,
         })
+        .filter(|span| exported_ids.insert((span.trace_id.clone(), span.span_id.clone())))
         .collect();
 
     wire::ExportTraceServiceRequest {
@@ -677,7 +765,7 @@ mod tests {
         assert!(attr_value(&otel, attr::OBSERVATION_USAGE_DETAILS).is_none());
 
         let lf = observation_to_span(&obs, &langfuse_ctx());
-        assert!(attr_value(&lf, attr::OBSERVATION_COST_DETAILS).is_some());
+        assert!(attr_value(&lf, attr::OBSERVATION_COST_DETAILS).is_none());
     }
 
     #[test]
@@ -748,7 +836,8 @@ mod tests {
     fn clamping_does_not_split_multibyte_characters() {
         // Slicing blindly at a byte offset would panic on this input.
         let clamped = clamp("ααααααααα".to_string(), 5);
-        assert!(clamped.ends_with('…'));
+        assert!(clamped.ends_with("..."));
+        assert!(clamped.len() <= 5);
     }
 
     // ── Shared structural behaviour ─────────────────────────────────────
@@ -761,7 +850,7 @@ mod tests {
 
         assert_eq!(
             attr_value(&span, attr::OBSERVATION_TYPE),
-            Some(json!({ "stringValue": "TOOL" }))
+            Some(json!({ "stringValue": "tool" }))
         );
     }
 
@@ -888,6 +977,48 @@ mod tests {
     }
 
     #[test]
+    fn completed_trace_is_a_duration_bearing_agent_observation() {
+        let mut trace = TraceRecord::new("turn");
+        trace.timestamp = OffsetDateTime::UNIX_EPOCH;
+        trace.end_time = Some(OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(2));
+        trace.input = Some(json!({ "role": "user", "content": "hello" }));
+        trace.output = Some(json!({ "role": "assistant", "content": "hi" }));
+        let span = trace_to_span(&trace, &langfuse_ctx());
+
+        assert_eq!(span.start_time_unix_nano, "0");
+        assert_eq!(span.end_time_unix_nano, "2000000000");
+        assert_eq!(
+            attr_value(&span, attr::OBSERVATION_TYPE),
+            Some(json!({ "stringValue": "agent" }))
+        );
+        assert!(attr_value(&span, attr::OBSERVATION_INPUT).is_some());
+        assert!(attr_value(&span, attr::OBSERVATION_OUTPUT).is_some());
+        // Trace attrs are retained because Langfuse builds its trace view from
+        // them independently of the root observation view.
+        assert!(attr_value(&span, attr::TRACE_INPUT).is_some());
+        assert!(attr_value(&span, attr::TRACE_OUTPUT).is_some());
+    }
+
+    #[test]
+    fn child_spans_carry_filterable_trace_context() {
+        let mut obs = generation();
+        obs.trace_name = Some("support-agent".into());
+        obs.trace_metadata.insert("tenant".into(), json!("acme"));
+        let span = observation_to_span(&obs, &langfuse_ctx());
+
+        assert_eq!(
+            attr_value(&span, attr::TRACE_NAME),
+            Some(json!({ "stringValue": "support-agent" }))
+        );
+        let metadata_attr = attr_value(&span, attr::TRACE_METADATA).expect("trace metadata");
+        let metadata = metadata_attr["stringValue"]
+            .as_str()
+            .map(|value| serde_json::from_str::<serde_json::Value>(value).expect("valid json"))
+            .expect("trace metadata string");
+        assert_eq!(metadata["tenant"], "acme");
+    }
+
+    #[test]
     fn string_inputs_are_not_double_encoded() {
         let mut trace = TraceRecord::new("turn");
         trace.input = Some(json!("what is the weather"));
@@ -961,14 +1092,13 @@ mod tests {
     }
 
     #[test]
-    fn in_progress_spans_are_dropped_for_immutable_span_backends() {
+    fn in_progress_spans_are_dropped_for_all_immutable_span_backends() {
         let mut obs = generation();
         obs.end_time = None;
-        let events = vec![Event::ObservationStart(Box::new(obs))];
+        let events = vec![Event::ObservationEnd(Box::new(obs))];
 
-        // Langfuse upserts by id, so the live view is worth the extra span.
         let lf = batch_to_request(&events, &langfuse_ctx());
-        assert_eq!(lf.resource_spans[0].scope_spans[0].spans.len(), 1);
+        assert!(lf.resource_spans[0].scope_spans[0].spans.is_empty());
 
         // Tempo and Datadog would render this and the later completion as two
         // separate spans with the same id.
@@ -999,7 +1129,9 @@ mod tests {
 
     #[test]
     fn batch_carries_resource_and_scope_identity() {
-        let events = vec![Event::Trace(Box::new(TraceRecord::new("turn")))];
+        let mut trace = TraceRecord::new("turn");
+        trace.finish();
+        let events = vec![Event::Trace(Box::new(trace))];
         let request = batch_to_request(&events, &langfuse_ctx());
         let json = serde_json::to_value(&request).expect("serializable");
 
@@ -1024,5 +1156,45 @@ mod tests {
         // OTLP treats the field as unsigned; a negative value wraps to a
         // far-future timestamp in collectors.
         assert_eq!(span.start_time_unix_nano, "0");
+    }
+
+    #[test]
+    fn incomplete_roots_and_duplicate_completed_ids_are_filtered() {
+        let incomplete = TraceRecord::new("turn");
+        let mut complete = incomplete.clone();
+        complete.finish();
+        let observation = generation();
+        let events = vec![
+            Event::Trace(Box::new(incomplete)),
+            Event::Trace(Box::new(complete.clone())),
+            Event::Trace(Box::new(complete)),
+            Event::ObservationEnd(Box::new(observation.clone())),
+            Event::ObservationEnd(Box::new(observation)),
+        ];
+        let request = batch_to_request(&events, &langfuse_ctx());
+        let spans = &request.resource_spans[0].scope_spans[0].spans;
+        let ids: HashSet<_> = spans.iter().map(|span| span.span_id.as_str()).collect();
+
+        assert_eq!(spans.len(), 2);
+        assert_eq!(ids.len(), spans.len(), "each wire id must occur once");
+    }
+
+    #[test]
+    fn oversized_structured_attributes_remain_valid_json_within_the_limit() {
+        let mut obs = generation();
+        obs.output = Some(json!({ "items": ["x".repeat(500), "y".repeat(500)] }));
+        obs.metadata.insert("large".into(), json!("z".repeat(500)));
+        let profile = ExportProfile {
+            max_attribute_bytes: 80,
+            ..ExportProfile::langfuse()
+        };
+        let span = observation_to_span(&obs, &ctx(profile));
+
+        for key in [attr::OBSERVATION_OUTPUT, attr::OBSERVATION_METADATA] {
+            let attribute = attr_value(&span, key).expect("attribute present");
+            let value = attribute["stringValue"].as_str().expect("string value");
+            assert!(value.len() <= 80);
+            serde_json::from_str::<serde_json::Value>(value).expect("valid bounded json");
+        }
     }
 }

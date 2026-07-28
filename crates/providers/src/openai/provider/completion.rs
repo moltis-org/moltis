@@ -15,7 +15,8 @@ use crate::{
 };
 
 use moltis_agents::model::{
-    AgentToolControls, ChatMessage, CompletionResponse, Usage, decode_tool_call_arguments_from_str,
+    AgentToolControls, ChatMessage, CompletionResponse, InputTokenAccounting, Usage,
+    decode_tool_call_arguments_from_str,
 };
 
 use {
@@ -550,12 +551,13 @@ impl OpenAiProvider {
         Ok(CompletionResponse {
             text,
             tool_calls,
-            usage: Usage {
+            usage: Usage::from_input_tokens(
+                InputTokenAccounting::Inclusive,
                 input_tokens,
                 output_tokens,
                 cache_read_tokens,
                 cache_write_tokens,
-            },
+            ),
         })
     }
 }

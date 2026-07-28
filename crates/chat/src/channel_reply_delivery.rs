@@ -33,6 +33,7 @@ async fn deliver_logbook_follow_up(
     to: &str,
     logbook_html: &str,
     session_key: &str,
+    trace_correlation_key: &str,
 ) {
     if logbook_html.is_empty() {
         return;
@@ -47,6 +48,7 @@ async fn deliver_logbook_follow_up(
                 target,
                 &message_ids,
                 session_key,
+                trace_correlation_key,
             )
             .await;
         },
@@ -78,6 +80,7 @@ pub(crate) async fn deliver_text_reply(
     logbook_html: &str,
     reply_to: Option<&str>,
     session_key: &str,
+    trace_correlation_key: &str,
 ) {
     let result = if logbook_html.is_empty() {
         outbound
@@ -101,6 +104,7 @@ pub(crate) async fn deliver_text_reply(
                 target,
                 &message_ids,
                 session_key,
+                trace_correlation_key,
             )
             .await;
         },
@@ -119,6 +123,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
     outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
     targets: Vec<moltis_channels::ChannelReplyTarget>,
     session_key: &str,
+    trace_correlation_key: &str,
     text: &str,
     state: Arc<dyn ChatRuntime>,
     desired_reply_medium: ReplyMedium,
@@ -126,6 +131,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
     streamed_target_keys: &HashSet<ChannelReplyTargetKey>,
 ) {
     let session_key = session_key.to_string();
+    let trace_correlation_key = trace_correlation_key.to_string();
     let text = text.to_string();
     let logbook_html = format_logbook_html(&status_log);
     // Resolved once rather than per target: it is the same service either way.
@@ -136,6 +142,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
         let state = Arc::clone(&state);
         let feedback = feedback.clone();
         let session_key = session_key.clone();
+        let trace_correlation_key = trace_correlation_key.clone();
         let text = text.clone();
         let logbook_html = logbook_html.clone();
         // Text was already delivered via edit-in-place streaming — skip text
@@ -176,6 +183,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                                 &to,
                                 &logbook_html,
                                 &session_key,
+                                &trace_correlation_key,
                             )
                             .await;
                         } else {
@@ -211,6 +219,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                                     &to,
                                     &logbook_html,
                                     &session_key,
+                                    &trace_correlation_key,
                                 )
                                 .await;
                             } else {
@@ -240,6 +249,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                                     &logbook_html,
                                     None,
                                     &session_key,
+                                    &trace_correlation_key,
                                 )
                                 .await;
                             }
@@ -255,6 +265,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             &to,
                             &logbook_html,
                             &session_key,
+                            &trace_correlation_key,
                         )
                         .await;
                     },
@@ -268,6 +279,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             &logbook_html,
                             reply_to,
                             &session_key,
+                            &trace_correlation_key,
                         )
                         .await;
                     },
@@ -296,6 +308,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             &to,
                             &logbook_html,
                             &session_key,
+                            &trace_correlation_key,
                         )
                         .await;
                     },
@@ -309,6 +322,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             &logbook_html,
                             reply_to,
                             &session_key,
+                            &trace_correlation_key,
                         )
                         .await;
                     },
@@ -469,6 +483,7 @@ mod tests {
             "chan",
             "<blockquote>log</blockquote>",
             "session",
+            "run",
         )
         .await;
 
@@ -481,7 +496,16 @@ mod tests {
         let recorder = Arc::new(ReportingOutbound::default());
         let outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound> = recorder.clone();
 
-        deliver_logbook_follow_up(&outbound, None, &reply_target(), "chan", "", "session").await;
+        deliver_logbook_follow_up(
+            &outbound,
+            None,
+            &reply_target(),
+            "chan",
+            "",
+            "session",
+            "run",
+        )
+        .await;
 
         let calls = recorder.calls.lock().unwrap_or_else(|e| e.into_inner());
         assert!(calls.is_empty(), "expected no send, got {calls:?}");
@@ -523,6 +547,7 @@ mod tests {
             "<blockquote>log</blockquote>",
             None,
             "session",
+            "run",
         )
         .await;
 
@@ -544,6 +569,7 @@ mod tests {
             "",
             None,
             "session",
+            "run",
         )
         .await;
 
