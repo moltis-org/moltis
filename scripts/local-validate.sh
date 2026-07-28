@@ -274,7 +274,7 @@ build_targeted_rust_test_cmd() {
 
     local base_cmd
     base_cmd="$(nextest_base_cmd_for_package "$package")"
-    if [[ "$file" == */tests/*.rs ]]; then
+    if [[ "$file" =~ ^crates/[^/]+/tests/[^/]+\.rs$ ]]; then
       local test_name
       test_name="$(basename "$file" .rs)"
       commands+=("$base_cmd --test $test_name")
