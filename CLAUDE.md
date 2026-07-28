@@ -187,8 +187,7 @@ CLI: `moltis auth reset-password`, `moltis auth reset-identity`.
 ## Testing
 
 ```bash
-cargo test                           # All tests
-cargo test <test_name>               # Specific test
+cargo test <test_name>               # Specific changed/added test
 cargo test -- --nocapture            # With stdout
 ```
 
@@ -199,9 +198,12 @@ Helpers in `e2e/helpers.js`.
 
 ```bash
 cd crates/web/ui
-npx playwright test                              # All
 npx playwright test e2e/specs/chat-input.spec.js # Specific
 ```
+
+For local validation, run only Rust tests and Playwright specs changed or added
+on the branch. Do not run the full Rust test suite or full E2E suite locally
+unless explicitly requested; CI covers the full suites.
 
 Rules: use `getByRole()`/`getByText({ exact: true })` selectors, shared helpers
 (`navigateAndWait`, `waitForWsConnected`, `watchPageErrors`), assert no JS errors,
@@ -331,6 +333,12 @@ other AI/assistant session links) to commit messages or PR descriptions. Update
 ### Local Validation
 
 **Always** run `./scripts/local-validate.sh <PR_NUMBER>` when a PR exists.
+This runs broad validation for formatting, line limits, linting, builds, and
+platform checks, but Rust tests and Playwright E2E are targeted to tests changed
+or added on the branch.
+
+When explicitly asked to run the full local validation test suites, use
+`just local-validate-full <PR_NUMBER>`.
 
 For incremental local edits before full validation:
 - TS/TSX changed: run `biome check --write` and `cd crates/web/ui && npm run build`.
@@ -340,7 +348,8 @@ For incremental local edits before full validation:
 Exact commands (must match `local-validate.sh`):
 - Fmt: `cargo fmt --all -- --check`
 - Clippy: `just lint` (OS-aware: on macOS excludes CUDA features, on Linux uses `--all-features`)
-- Tests: `just test` (OS-aware: on macOS uses nextest without CUDA features, on Linux uses `--all-features`)
+- Tests: targeted changed/added Rust tests only, derived from the branch diff. Override with `LOCAL_VALIDATE_TEST_CMD` when needed.
+- E2E: targeted changed/added Playwright specs only, derived from the branch diff. Override with `LOCAL_VALIDATE_E2E_CMD` when needed.
 - macOS app (Darwin hosts): `./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination "platform=macOS" -derivedDataPath apps/macos/.derivedData-local-validate CODE_SIGNING_ALLOWED=NO build`
 - iOS app (Darwin hosts): `cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build`
 
@@ -360,7 +369,8 @@ with exact commands), `## Manual QA`. Include concrete test steps.
 - [ ] Rust fmt passes (exact command above)
 - [ ] `just lint` passes (OS-aware clippy)
 - [ ] `just release-preflight` passes
-- [ ] `just test` passes
+- [ ] Changed/added Rust tests pass
+- [ ] Changed/added Playwright specs pass for web UI changes
 - [ ] Conventional commit message
 - [ ] No debug code or temp files
 
