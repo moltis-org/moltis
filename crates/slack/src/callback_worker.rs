@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 use {
     moltis_channels::plugin::{ChannelEventSink, ChannelReplyTarget},
@@ -121,9 +121,11 @@ async fn run_worker(
     loop {
         let job = tokio::select! {
             () = cancel.cancelled() => {
+                // Drain what was already admitted before shutting down: those
+                // callbacks were acknowledged to Slack and will not be redelivered.
                 receiver.close();
                 while let Some(job) = receiver.recv().await {
-                    process(job).await;
+                    process_isolated(job).await;
                 }
                 break;
             },
@@ -132,7 +134,28 @@ async fn run_worker(
                 None => break,
             },
         };
-        process(job).await;
+        process_isolated(job).await;
+    }
+}
+
+async fn process_isolated(job: CallbackJob) {
+    run_isolated(process(job)).await;
+}
+
+/// Run one callback so a panic inside it cannot take the worker down.
+///
+/// There is a single worker behind this queue, so an unguarded panic would stop
+/// *all* subsequent Socket Mode callbacks for the life of the process — the bot
+/// would go quiet with nothing but the panic in the log to say why. Running on a
+/// dedicated task localizes the unwind, and awaiting it immediately keeps
+/// callbacks strictly ordered. Mirrors the panic isolation the HTTP callback
+/// workers already have.
+async fn run_isolated<F>(future: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    if let Err(error) = tokio::spawn(future).await {
+        warn!("Slack callback job panicked: {error}");
     }
 }
 
@@ -228,5 +251,35 @@ mod tests {
             Err(CallbackAdmissionError::Canceled)
         );
         assert!(!dedup.contains(DedupKind::Event, "canceled"));
+    }
+
+    #[tokio::test]
+    async fn a_panicking_job_does_not_stop_later_jobs() {
+        // There is one worker behind this queue, so an unguarded panic would
+        // silence every subsequent Slack callback for the life of the process.
+        let ran = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let panicking = {
+            let ran = Arc::clone(&ran);
+            async move {
+                ran.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                panic!("callback exploded");
+            }
+        };
+        run_isolated(panicking).await;
+
+        let following = {
+            let ran = Arc::clone(&ran);
+            async move {
+                ran.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        };
+        run_isolated(following).await;
+
+        assert_eq!(
+            ran.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "the job after the panicking one never ran"
+        );
     }
 }

@@ -1,5 +1,40 @@
 use super::*;
 
+/// Prepare client-supplied `chat.send`/`chat.send_sync` params for the chat
+/// service: drop anything the client must not be able to claim, then inject the
+/// connection's own context.
+///
+/// The `_`-prefixed params are internal plumbing, and some of them are set
+/// legitimately by the web UI (`_session_key`, `_audio_filename`,
+/// `_document_files`), so this is a targeted removal rather than a blanket
+/// strip: `_ack_keys` names a *channel message's* acknowledgment-reaction slot
+/// and is only ever minted by the channel dispatch path (which calls the chat
+/// service directly, not through this registry). Letting a WebSocket client
+/// send it would let one authenticated user drive the ✅/❌ reaction on an
+/// unrelated inbound Slack message.
+async fn prepare_chat_send_params(ctx: &MethodContext) -> serde_json::Value {
+    let mut params = ctx.params.clone();
+    if let Some(object) = params.as_object_mut() {
+        object.remove(moltis_chat::channel_acks::ACK_KEYS_PARAM);
+    }
+    params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
+
+    // Forward client Accept-Language, public remote IP, and timezone.
+    let registry = ctx.state.client_registry.read().await;
+    if let Some(client) = registry.clients.get(&ctx.client_conn_id) {
+        if let Some(ref lang) = client.accept_language {
+            params["_accept_language"] = serde_json::json!(lang);
+        }
+        if let Some(ref ip) = client.remote_ip {
+            params["_remote_ip"] = serde_json::json!(ip);
+        }
+        if let Some(ref tz) = client.timezone {
+            params["_timezone"] = serde_json::json!(tz);
+        }
+    }
+    params
+}
+
 pub(super) fn register(reg: &mut MethodRegistry) {
     // Config
     reg.register(
@@ -533,30 +568,13 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
 
-    // Chat (uses chat_override if set, otherwise falls back to services.chat)
-    // Inject _conn_id and _accept_language so the chat service can resolve
-    // the active session and forward the user's locale to web tools.
+    // Chat (uses chat_override if set, otherwise falls back to services.chat).
+    // See `prepare_chat_send_params` for what is stripped and injected.
     reg.register(
         "chat.send",
         Box::new(|ctx| {
             Box::pin(async move {
-                let mut params = ctx.params.clone();
-                params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
-                // Forward client Accept-Language, public remote IP, and timezone.
-                {
-                    let registry = ctx.state.client_registry.read().await;
-                    if let Some(client) = registry.clients.get(&ctx.client_conn_id) {
-                        if let Some(ref lang) = client.accept_language {
-                            params["_accept_language"] = serde_json::json!(lang);
-                        }
-                        if let Some(ref ip) = client.remote_ip {
-                            params["_remote_ip"] = serde_json::json!(ip);
-                        }
-                        if let Some(ref tz) = client.timezone {
-                            params["_timezone"] = serde_json::json!(tz);
-                        }
-                    }
-                }
+                let params = prepare_chat_send_params(&ctx).await;
                 ctx.state
                     .chat()
                     .send(params)
@@ -569,22 +587,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "chat.send_sync",
         Box::new(|ctx| {
             Box::pin(async move {
-                let mut params = ctx.params.clone();
-                params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
-                {
-                    let registry = ctx.state.client_registry.read().await;
-                    if let Some(client) = registry.clients.get(&ctx.client_conn_id) {
-                        if let Some(ref lang) = client.accept_language {
-                            params["_accept_language"] = serde_json::json!(lang);
-                        }
-                        if let Some(ref ip) = client.remote_ip {
-                            params["_remote_ip"] = serde_json::json!(ip);
-                        }
-                        if let Some(ref tz) = client.timezone {
-                            params["_timezone"] = serde_json::json!(tz);
-                        }
-                    }
-                }
+                let params = prepare_chat_send_params(&ctx).await;
                 ctx.state
                     .chat()
                     .send_sync(params)
@@ -1306,5 +1309,82 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 })
             }),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::{
+        auth::{AuthMode, ResolvedAuth},
+        services::GatewayServices,
+        state::GatewayState,
+    };
+
+    fn context(params: serde_json::Value) -> MethodContext {
+        MethodContext {
+            request_id: "test".into(),
+            method: "chat.send".into(),
+            params,
+            client_conn_id: "conn-1".into(),
+            client_role: "operator".into(),
+            client_scopes: vec!["operator.write".to_string()],
+            state: GatewayState::new(
+                ResolvedAuth {
+                    mode: AuthMode::Token,
+                    token: None,
+                    password: None,
+                },
+                GatewayServices::noop(),
+            ),
+            channel: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn client_supplied_ack_keys_are_stripped() {
+        // A WebSocket client must not be able to claim the acknowledgment slot
+        // of an inbound channel message it has nothing to do with.
+        let params = prepare_chat_send_params(&context(serde_json::json!({
+            "text": "hi",
+            moltis_chat::channel_acks::ACK_KEYS_PARAM: ["slack-acct:C123:1700000000.1"],
+        })))
+        .await;
+
+        assert!(
+            params
+                .get(moltis_chat::channel_acks::ACK_KEYS_PARAM)
+                .is_none()
+        );
+        assert_eq!(params["text"], "hi");
+    }
+
+    #[tokio::test]
+    async fn connection_context_is_injected_and_not_client_controlled() {
+        let params = prepare_chat_send_params(&context(serde_json::json!({
+            "text": "hi",
+            "_conn_id": "someone-elses-connection",
+        })))
+        .await;
+
+        assert_eq!(params["_conn_id"], "conn-1");
+    }
+
+    #[tokio::test]
+    async fn legitimate_internal_params_survive() {
+        // The web UI sets these itself; stripping them would break uploads and
+        // explicit session targeting.
+        let params = prepare_chat_send_params(&context(serde_json::json!({
+            "text": "hi",
+            "_session_key": "session:42",
+            "_audio_filename": "voice.ogg",
+            "_document_files": [{ "name": "a.pdf" }],
+        })))
+        .await;
+
+        assert_eq!(params["_session_key"], "session:42");
+        assert_eq!(params["_audio_filename"], "voice.ogg");
+        assert_eq!(params["_document_files"][0]["name"], "a.pdf");
     }
 }

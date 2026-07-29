@@ -83,7 +83,7 @@ pub fn markdown_to_blocks(markdown: &str) -> Option<Vec<Value>> {
                     blocks.push(section_block(&chunk));
                 }
             } else {
-                blocks.push(header_block(&text));
+                blocks.push(header_block(&strip_inline_markdown(&text)));
             }
             continue;
         }
@@ -136,6 +136,63 @@ fn heading_text(line: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Reduce a heading to plain text for a `header` block.
+///
+/// A header's text is a `plain_text` field, which Slack renders verbatim — it
+/// does not interpret mrkdwn. Headings from an LLM routinely carry inline
+/// formatting (`## Install \`foo\``, `## **Important**`), and passing that
+/// through unchanged shows the raw syntax to the user.
+///
+/// Only unambiguously paired constructs are unwrapped: links keep their label,
+/// and inline code, bold and strikethrough lose their delimiters. Single `*`/`_`
+/// are deliberately left alone — in a heading they are far more likely to be
+/// part of an identifier (`API_KEY`, `snake_case`) than an emphasis marker, and
+/// stripping them would corrupt the text rather than tidy it.
+fn strip_inline_markdown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(index) = rest.find(['`', '[', '*', '~']) {
+        let (head, tail) = rest.split_at(index);
+        out.push_str(head);
+
+        // `label` of a `[label](url)` link, dropping the target.
+        if let Some(after) = tail.strip_prefix('[')
+            && let Some((label, remainder)) = after.split_once("](")
+            && let Some((_url, remainder)) = remainder.split_once(')')
+        {
+            out.push_str(&strip_inline_markdown(label));
+            rest = remainder;
+            continue;
+        }
+
+        // Paired `code`, **bold**, ~~strike~~ — delimiters removed, body kept.
+        let delimiter = match tail.as_bytes() {
+            [b'`', ..] => "`",
+            [b'*', b'*', ..] => "**",
+            [b'~', b'~', ..] => "~~",
+            _ => "",
+        };
+        if !delimiter.is_empty()
+            && let Some(after) = tail.strip_prefix(delimiter)
+            && let Some((body, remainder)) = after.split_once(delimiter)
+        {
+            out.push_str(&strip_inline_markdown(body));
+            rest = remainder;
+            continue;
+        }
+
+        // Unpaired marker: keep it verbatim and move past it.
+        let mut chars = tail.chars();
+        if let Some(ch) = chars.next() {
+            out.push(ch);
+        }
+        rest = chars.as_str();
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Build a header block. Callers must ensure `text` fits [`MAX_HEADER_CHARS`];
@@ -288,6 +345,37 @@ mod tests {
             rendered.contains("a\n\n\nb"),
             "blank lines collapsed: {rendered:?}"
         );
+    }
+
+    #[test]
+    fn heading_inline_formatting_is_not_shown_as_raw_syntax() {
+        // A header block's text is `plain_text`: Slack shows it verbatim, so
+        // markdown delimiters must not reach it.
+        let blocks = markdown_to_blocks("## Install `foo` and **restart**").unwrap();
+        assert_eq!(blocks[0]["type"], "header");
+        assert_eq!(blocks[0]["text"]["text"], "Install foo and restart");
+    }
+
+    #[test]
+    fn heading_link_keeps_its_label_and_drops_the_target() {
+        let blocks = markdown_to_blocks("# See [the docs](https://example.com)").unwrap();
+        assert_eq!(blocks[0]["text"]["text"], "See the docs");
+    }
+
+    #[test]
+    fn heading_identifiers_with_underscores_and_stars_survive_intact() {
+        // Single `*`/`_` in a heading are far more likely to be part of an
+        // identifier than an emphasis marker; stripping them would corrupt it.
+        for heading in ["API_KEY setup", "glob a*b", "snake_case_name"] {
+            let blocks = markdown_to_blocks(&format!("# {heading}")).unwrap();
+            assert_eq!(blocks[0]["text"]["text"], heading, "{heading}");
+        }
+    }
+
+    #[test]
+    fn unpaired_heading_delimiters_are_left_verbatim() {
+        let blocks = markdown_to_blocks("# 50% off `unclosed").unwrap();
+        assert_eq!(blocks[0]["text"]["text"], "50% off `unclosed");
     }
 
     #[test]
