@@ -769,7 +769,7 @@ impl LlmProvider for OpenAiCodexProvider {
 
                     if let Ok(evt) = serde_json::from_str::<serde_json::Value>(data) {
                         let evt_type = evt["type"].as_str().unwrap_or("");
-                        trace!(evt_type = %evt_type, evt = %evt, "openai-codex stream event");
+                        trace!(evt_type = %evt_type, event_bytes = data.len(), "openai-codex stream event");
 
                         match evt_type {
                             "response.output_text.delta" => {

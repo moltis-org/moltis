@@ -19,6 +19,7 @@ use {
 use {
     moltis_agents::tool_registry::ToolRegistry,
     moltis_providers::ProviderRegistry,
+    moltis_service_traits::ServiceError,
     moltis_sessions::{
         PersistedMessage,
         message::{PersistedFunction, PersistedToolCall},
@@ -263,6 +264,26 @@ pub struct LiveChatService {
 }
 
 impl LiveChatService {
+    pub(in crate::service) async fn load_turn_history(
+        &self,
+        session_key: &str,
+        limits: Option<(usize, usize)>,
+    ) -> Result<Vec<Value>, ServiceError> {
+        let Some((max_messages, max_bytes)) = limits else {
+            return Ok(self
+                .session_store
+                .read(session_key)
+                .await
+                .unwrap_or_default());
+        };
+        self.session_store
+            .read_bounded(session_key, max_messages, max_bytes)
+            .await
+            .map_err(|error| {
+                ServiceError::message(format!("failed to read session history: {error}"))
+            })
+    }
+
     /// Reads persisted history with strict pre-allocation bounds for non-UI
     /// protocol surfaces such as ACP session replay.
     pub async fn read_session_history_bounded(

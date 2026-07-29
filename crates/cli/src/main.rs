@@ -328,6 +328,7 @@ fn telemetry_target_allowed(target: &str, protocol_payloads_possible: bool) -> b
         "moltis_chat",
         "moltis_mcp",
         "moltis_providers",
+        "moltis_tools",
     ]
     .iter()
     .any(|prefix| target.starts_with(prefix))
@@ -735,6 +736,7 @@ mod tests {
         ));
         assert!(!telemetry_target_allowed("moltis_providers::openai", true));
         assert!(!telemetry_target_allowed("moltis_mcp::transport", true));
+        assert!(!telemetry_target_allowed("moltis_tools::exec", true));
         assert!(telemetry_target_allowed("moltis_cli::acp_backend", true));
         assert!(telemetry_target_allowed("moltis_providers::openai", false));
     }

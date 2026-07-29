@@ -74,7 +74,6 @@ pub struct MoltisBackend {
 }
 
 struct SessionRuntime {
-    cwd: PathBuf,
     mcp: Option<SessionMcpRuntime>,
 }
 
@@ -187,7 +186,7 @@ impl MoltisBackend {
             anyhow::bail!("ACP backend is shutting down");
         }
         let cwd = Self::canonical_cwd(setup).await?;
-        let mcp = SessionMcpRuntime::start(setup).await?;
+        let mcp = SessionMcpRuntime::start(key, setup).await?;
         if self.lifecycle.closing.load(Ordering::Acquire) {
             if let Some(runtime) = mcp {
                 runtime.shutdown().await;
@@ -217,7 +216,7 @@ impl MoltisBackend {
             .sessions
             .write()
             .await
-            .insert(key.clone(), SessionRuntime { cwd, mcp });
+            .insert(key.clone(), SessionRuntime { mcp });
         if let Some(previous) = previous
             && let Some(mcp) = previous.mcp
         {
@@ -273,6 +272,20 @@ fn send_mapped_update(
     }
     mapper.record_sent(&update);
     true
+}
+
+fn reconcile_final_text(
+    updates: &TurnUpdates,
+    mapper: &mut FrameMapper,
+    final_text: &str,
+) -> anyhow::Result<()> {
+    let Some(update) = mapper.finish_text(final_text).map_err(anyhow::Error::msg)? else {
+        return Ok(());
+    };
+    if !send_mapped_update(updates, mapper, update) {
+        anyhow::bail!("ACP client stopped reading final turn output");
+    }
+    Ok(())
 }
 
 /// Connection metadata for the synthetic client backing one ACP turn.
@@ -349,7 +362,7 @@ impl AcpBackend for MoltisBackend {
         // protocol layer rejects anything outside it.
         let key = SessionKey::namespaced(uuid::Uuid::new_v4().to_string());
         self.install_session(&key, setup).await?;
-        debug!(session = %key, cwd = %setup.cwd().display(), "ACP session created");
+        debug!(session = %key, "ACP session created");
         Ok(key)
     }
 
@@ -414,6 +427,10 @@ impl AcpBackend for MoltisBackend {
             let turn = self.chat.send_sync(json!({
                 "text": prompt,
                 "_session_key": key.as_str(),
+                "_history_limits": {
+                    "max_messages": MAX_HISTORY_UPDATES,
+                    "max_bytes": MAX_HISTORY_BYTES,
+                },
             }));
             let mut turn = std::pin::pin!(turn);
 
@@ -465,7 +482,10 @@ impl AcpBackend for MoltisBackend {
 
             // Frames already queued when the turn resolved are still this turn's
             // output; dropping them would truncate the visible reply.
-            'flush: while !cancelled && !delivery_failed && let Ok(frame) = frames.try_recv() {
+            'flush: while !cancelled
+                && !delivery_failed
+                && let Ok(frame) = frames.try_recv()
+            {
                 match mapper.map(&frame, key.as_str()) {
                     FrameAction::Emit(batch) => {
                         for update in batch {
@@ -503,19 +523,7 @@ impl AcpBackend for MoltisBackend {
                     },
                     Ok(result) => {
                         if let Some(final_text) = result.get("text").and_then(Value::as_str) {
-                            match mapper.finish_text(final_text) {
-                                Ok(Some(update)) => {
-                                    if !updates.send(update) {
-                                        anyhow::bail!(
-                                            "ACP client stopped reading final turn output"
-                                        );
-                                    }
-                                },
-                                Ok(_) => {},
-                                Err(error) => {
-                                    debug!(session = %key, %error, "could not reconcile ACP streamed reply");
-                                },
-                            }
+                            reconcile_final_text(&updates, &mut mapper, final_text)?;
                         }
                         Ok(acp::StopReason::EndTurn)
                     },
@@ -523,7 +531,7 @@ impl AcpBackend for MoltisBackend {
                         // Prefer the broadcast's message: `send_sync` reports a generic
                         // failure while the frame carries the provider's own words.
                         let detail = reported_error.unwrap_or_else(|| error.to_string());
-                        warn!(session = %key, "ACP turn failed: {detail}");
+                        warn!(session = %key, "ACP turn failed");
                         Err(anyhow::anyhow!(detail))
                     },
                 }
@@ -584,7 +592,7 @@ impl AcpBackend for MoltisBackend {
             if let Some(mcp) = runtime.mcp {
                 mcp.shutdown().await;
             }
-            debug!(session = %key, cwd = %runtime.cwd.display(), "ACP session shut down");
+            debug!(session = %key, "ACP session shut down");
         }
         self.core.mcp_manager.shutdown_all().await;
         debug!("ACP backend shut down");
@@ -745,5 +753,39 @@ mod tests {
                 .finish_text("firstsecond")
                 .is_ok_and(|value| value.is_some())
         );
+    }
+
+    #[test]
+    fn divergent_final_text_fails_the_turn() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let updates = TurnUpdates::new(tx);
+        let mut mapper = FrameMapper::new();
+        let streamed = acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+            acp::ContentBlock::from("draft"),
+        ));
+        assert!(send_mapped_update(&updates, &mut mapper, streamed));
+        let error = reconcile_final_text(&updates, &mut mapper, "corrected").unwrap_err();
+        assert!(error.to_string().contains("diverged"));
+    }
+
+    #[test]
+    fn missing_final_suffix_is_delivered() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let updates = TurnUpdates::new(tx);
+        let mut mapper = FrameMapper::new();
+        let streamed = acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+            acp::ContentBlock::from("partial"),
+        ));
+        assert!(send_mapped_update(&updates, &mut mapper, streamed));
+        assert!(reconcile_final_text(&updates, &mut mapper, "partial response").is_ok());
+        assert!(rx.try_recv().is_ok());
+        let update = rx.try_recv().expect("missing final suffix update");
+        let acp::SessionUpdate::AgentMessageChunk(chunk) = update else {
+            panic!("expected agent message");
+        };
+        let acp::ContentBlock::Text(text) = chunk.content else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.text, " response");
     }
 }

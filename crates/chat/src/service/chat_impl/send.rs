@@ -48,6 +48,14 @@ impl LiveChatService {
         completion: Option<oneshot::Sender<ServiceResult>>,
         queue_if_busy: bool,
     ) -> ServiceResult {
+        let history_limits = params
+            .get("_history_limits")
+            .and_then(Value::as_object)
+            .and_then(|limits| {
+                let max_messages = usize::try_from(limits.get("max_messages")?.as_u64()?).ok()?;
+                let max_bytes = usize::try_from(limits.get("max_bytes")?.as_u64()?).ok()?;
+                Some((max_messages, max_bytes))
+            });
         // Support both text-only and multimodal content.
         // - "text": string → plain text message
         // - "content": array → multimodal content (text + images)
@@ -288,11 +296,7 @@ impl LiveChatService {
                 run_id: Some(run_id.clone()),
             };
 
-            let history = self
-                .session_store
-                .read(&session_key)
-                .await
-                .unwrap_or_default();
+            let history = self.load_turn_history(&session_key, history_limits).await?;
             let user_message_index = history.len();
 
             // Ensure the session exists in metadata and counts are up to date.
@@ -611,11 +615,7 @@ impl LiveChatService {
 
         // Load conversation history (the current user message is NOT yet
         // persisted — run_streaming / run_agent_loop add it themselves).
-        let mut history = self
-            .session_store
-            .read(&session_key)
-            .await
-            .unwrap_or_default();
+        let mut history = self.load_turn_history(&session_key, history_limits).await?;
         info!(
             session = %session_key,
             history_len = history.len(),
@@ -1048,11 +1048,7 @@ impl LiveChatService {
             match self.compact(compact_params).await {
                 Ok(_) => {
                     // Reload history after compaction.
-                    history = self
-                        .session_store
-                        .read(&session_key)
-                        .await
-                        .unwrap_or_default();
+                    history = self.load_turn_history(&session_key, history_limits).await?;
                     // This `auto_compact done` event is a lifecycle
                     // signal for subscribers that pre-emptive
                     // auto-compact finished. The mode/token metadata

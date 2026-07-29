@@ -51,13 +51,73 @@ const MAX_MCP_STDERR_LINE_BYTES: usize = 64 * 1024;
 /// Stdio-based transport for an MCP server process.
 pub struct StdioTransport {
     child: Mutex<Child>,
-    stdin: Mutex<tokio::process::ChildStdin>,
+    stdin: Arc<Mutex<tokio::process::ChildStdin>>,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse>>>>,
     next_id: AtomicU64,
     request_timeout: Duration,
     reader_closed: Arc<AtomicBool>,
     /// Handle to the reader task so we can abort on drop.
     reader_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+struct PendingRequestGuard {
+    id_key: Option<String>,
+    request_id: serde_json::Value,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse>>>>,
+    stdin: Arc<Mutex<tokio::process::ChildStdin>>,
+}
+
+impl PendingRequestGuard {
+    fn disarm(&mut self) {
+        self.id_key = None;
+    }
+
+    async fn cancel(&mut self) {
+        let Some(id_key) = self.id_key.take() else {
+            return;
+        };
+        self.pending.lock().await.remove(&id_key);
+        tokio::spawn(send_cancellation_notification(
+            self.request_id.clone(),
+            Arc::clone(&self.stdin),
+        ));
+    }
+}
+
+impl Drop for PendingRequestGuard {
+    fn drop(&mut self) {
+        let Some(id_key) = self.id_key.take() else {
+            return;
+        };
+        let request_id = self.request_id.clone();
+        let pending = Arc::clone(&self.pending);
+        let stdin = Arc::clone(&self.stdin);
+        tokio::spawn(async move {
+            pending.lock().await.remove(&id_key);
+            send_cancellation_notification(request_id, stdin).await;
+        });
+    }
+}
+
+async fn send_cancellation_notification(
+    request_id: serde_json::Value,
+    stdin: Arc<Mutex<tokio::process::ChildStdin>>,
+) {
+    let notification = JsonRpcNotification {
+        jsonrpc: "2.0".into(),
+        method: "notifications/cancelled".into(),
+        params: Some(serde_json::json!({
+            "requestId": request_id,
+            "reason": "request cancelled by client",
+        })),
+    };
+    let Ok(mut payload) = serde_json::to_string(&notification) else {
+        return;
+    };
+    payload.push('\n');
+    let mut writer = stdin.lock().await;
+    let _ = writer.write_all(payload.as_bytes()).await;
+    let _ = writer.flush().await;
 }
 
 impl StdioTransport {
@@ -127,7 +187,7 @@ impl StdioTransport {
 
         let transport = Arc::new(Self {
             child: Mutex::new(child),
-            stdin: Mutex::new(stdin),
+            stdin: Arc::new(Mutex::new(stdin)),
             pending: Arc::clone(&pending),
             next_id: AtomicU64::new(1),
             request_timeout,
@@ -227,28 +287,33 @@ impl McpTransport for StdioTransport {
             }
             map.insert(id_key.clone(), tx);
         }
+        let mut pending_guard = PendingRequestGuard {
+            id_key: Some(id_key.clone()),
+            request_id: req.id.clone(),
+            pending: Arc::clone(&self.pending),
+            stdin: Arc::clone(&self.stdin),
+        };
 
         let mut payload = serde_json::to_string(&req)?;
         payload.push('\n');
 
         debug!(method = %method, id = %id, "client -> MCP server");
 
-        {
+        let write_result = async {
             let mut stdin = self.stdin.lock().await;
-            if let Err(error) = stdin.write_all(payload.as_bytes()).await {
-                self.pending.lock().await.remove(&id_key);
-                return Err(error.into());
-            }
-            if let Err(error) = stdin.flush().await {
-                self.pending.lock().await.remove(&id_key);
-                return Err(error.into());
-            }
+            stdin.write_all(payload.as_bytes()).await?;
+            stdin.flush().await
+        }
+        .await;
+        if let Err(error) = write_result {
+            pending_guard.cancel().await;
+            return Err(error.into());
         }
 
         let received = match tokio::time::timeout(self.request_timeout, rx).await {
             Ok(received) => received,
             Err(_) => {
-                self.pending.lock().await.remove(&id_key);
+                pending_guard.cancel().await;
                 return Err(Error::message(format!(
                     "MCP request '{method}' timed out after {}s (no response from server)",
                     self.request_timeout.as_secs()
@@ -258,6 +323,7 @@ impl McpTransport for StdioTransport {
         let resp = received.with_context(|| {
             format!("MCP reader task dropped while waiting for '{method}' response")
         })?;
+        pending_guard.disarm();
 
         if let Some(ref err) = resp.error {
             return Err(Error::message(format!(
@@ -345,6 +411,60 @@ mod tests {
         let err = transport.request("tools/list", None).await.unwrap_err();
         assert!(err.to_string().contains("timed out after 1s"));
         assert!(transport.pending.lock().await.is_empty());
+
+        transport.kill().await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_request_removes_pending_entry() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let messages = temp_dir.path().join("messages.jsonl");
+        let script = format!(
+            "while IFS= read -r line; do printf '%s\\n' \"$line\" >> '{}'; done",
+            messages.display()
+        );
+        let args = vec!["-c".to_string(), script];
+        let transport = StdioTransport::spawn_with_timeout(
+            "sh",
+            &args,
+            &HashMap::new(),
+            Duration::from_secs(30),
+        )
+        .await
+        .unwrap();
+        let request_transport = Arc::clone(&transport);
+        let request =
+            tokio::spawn(async move { request_transport.request("tools/call", None).await });
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while transport.pending.lock().await.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        request.abort();
+        let _ = request.await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !transport.pending.lock().await.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let content = tokio::fs::read_to_string(&messages)
+                    .await
+                    .unwrap_or_default();
+                if content.contains("notifications/cancelled") {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
 
         transport.kill().await;
     }

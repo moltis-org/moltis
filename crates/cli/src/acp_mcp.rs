@@ -8,7 +8,7 @@ use {
     tokio::sync::RwLock,
 };
 
-use moltis_acp::SessionSetup;
+use moltis_acp::{SessionKey, SessionSetup};
 
 const MAX_PROVIDER_TOOL_NAME_BYTES: usize = 64;
 
@@ -21,8 +21,19 @@ fn runtime_server_name(namespace: &str, index: usize) -> String {
     format!("acp_{namespace}_{index}")
 }
 
+fn runtime_namespace(key: &SessionKey) -> String {
+    key.as_str()
+        .strip_prefix("acp:")
+        .unwrap_or_else(|| key.as_str())
+        .bytes()
+        .filter(u8::is_ascii_alphanumeric)
+        .take(12)
+        .map(char::from)
+        .collect()
+}
+
 impl SessionMcpRuntime {
-    pub async fn start(setup: &SessionSetup) -> anyhow::Result<Option<Self>> {
+    pub async fn start(key: &SessionKey, setup: &SessionSetup) -> anyhow::Result<Option<Self>> {
         if setup.mcp_servers().is_empty() {
             return Ok(None);
         }
@@ -32,8 +43,7 @@ impl SessionMcpRuntime {
             current_dir: Some(setup.cwd().to_path_buf()),
             inherit_parent_env: false,
         };
-        let mut namespace = uuid::Uuid::new_v4().simple().to_string();
-        namespace.truncate(12);
+        let namespace = runtime_namespace(key);
         for (index, server) in setup.mcp_servers().iter().enumerate() {
             let acp::McpServer::Stdio(server) = server else {
                 manager.shutdown_all().await;
@@ -104,8 +114,12 @@ mod tests {
 
     #[test]
     fn client_mcp_servers_receive_session_local_names() {
-        let first = runtime_server_name("0123456789ab", 0);
-        let second = runtime_server_name("abcdef012345", 0);
+        let first_key = SessionKey::new("acp:01234567-89ab-cdef-0123-456789abcdef");
+        let second_key = SessionKey::new("acp:abcdef01-2345-6789-abcd-ef0123456789");
+        let first_namespace = runtime_namespace(&first_key);
+        assert_eq!(first_namespace, runtime_namespace(&first_key));
+        let first = runtime_server_name(&first_namespace, 0);
+        let second = runtime_server_name(&runtime_namespace(&second_key), 0);
         assert_eq!(first, "acp_0123456789ab_0");
         assert_ne!(first, second);
         assert_ne!(first, "github");

@@ -19,10 +19,10 @@ impl TestBroadcaster {
     }
 }
 
-#[test]
-fn truncate_output_for_display_handles_multibyte_boundary() {
-    let mut output = format!("{}л{}", "a".repeat(1999), "z".repeat(10));
-    truncate_output_for_display(&mut output, 2000);
+#[tokio::test]
+async fn limited_output_handles_multibyte_boundary() {
+    let input = format!("{}л{}", "a".repeat(1999), "z".repeat(10));
+    let output = read_output_limited(input.as_bytes(), 2000).await.unwrap();
     assert!(output.contains("[output truncated]"));
     assert!(!output.contains('л'));
 }
@@ -72,6 +72,21 @@ async fn test_exec_timeout() {
     };
     let result = exec_command("sleep 10", &opts).await;
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_exec_timeout_kills_before_later_side_effect() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let marker = temp_dir.path().join("should-not-exist");
+    let command = format!("sleep 1; touch '{}'", marker.display());
+    let opts = ExecOpts {
+        timeout: Duration::from_millis(50),
+        ..Default::default()
+    };
+
+    assert!(exec_command(&command, &opts).await.is_err());
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert!(!marker.exists(), "timed-out shell continued running");
 }
 
 #[tokio::test]
