@@ -88,7 +88,7 @@ async fn test_exec_timeout() {
 async fn test_exec_timeout_kills_before_later_side_effect() {
     let temp_dir = tempfile::tempdir().unwrap();
     let marker = temp_dir.path().join("should-not-exist");
-    let command = format!("sleep 1; touch '{}'", marker.display());
+    let command = format!("(sleep 1; touch '{}') & wait", marker.display());
     let opts = ExecOpts {
         timeout: Duration::from_millis(50),
         ..Default::default()
@@ -96,7 +96,7 @@ async fn test_exec_timeout_kills_before_later_side_effect() {
 
     assert!(exec_command(&command, &opts).await.is_err());
     tokio::time::sleep(Duration::from_millis(1100)).await;
-    assert!(!marker.exists(), "timed-out shell continued running");
+    assert!(!marker.exists(), "timed-out descendant continued running");
 }
 
 #[tokio::test]

@@ -13,7 +13,10 @@ use {
     tracing::{debug, info, warn},
 };
 
-use crate::{Result, error::Error};
+use {
+    crate::{Result, error::Error},
+    moltis_common::process_tree::OwnedProcessTree,
+};
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{
@@ -167,11 +170,7 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
     cmd.stderr(std::process::Stdio::piped());
     // Prevent the child from inheriting stdin.
     cmd.stdin(std::process::Stdio::null());
-    // Cancellation and timeout drop the execution future. Do not leave the
-    // direct child running after its owner has gone away.
-    cmd.kill_on_drop(true);
-
-    let mut child = cmd.spawn().map_err(|e| {
+    let mut child = OwnedProcessTree::spawn(cmd).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             if let Some(ref dir) = opts.working_dir {
                 Error::message(format!(
@@ -187,12 +186,10 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
     })?;
 
     let stdout = child
-        .stdout
-        .take()
+        .take_stdout()
         .ok_or_else(|| Error::message("failed to capture command stdout"))?;
     let stderr = child
-        .stderr
-        .take()
+        .take_stderr()
         .ok_or_else(|| Error::message("failed to capture command stderr"))?;
     let execution = async {
         tokio::try_join!(
@@ -221,6 +218,7 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
         },
         Ok(Err(e)) => Err(Error::message(format!("failed to run command: {e}"))),
         Err(_) => {
+            let _ = child.kill().await;
             warn!(command_bytes = command.len(), "exec timeout");
             Err(Error::message(format!(
                 "command timed out after {}s",

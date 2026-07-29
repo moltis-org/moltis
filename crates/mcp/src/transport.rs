@@ -32,17 +32,20 @@ use {
     secrecy::{ExposeSecret, Secret},
     tokio::{
         io::AsyncWriteExt,
-        process::{Child, Command},
+        process::Command,
         sync::{Mutex, oneshot},
     },
     tokio_util::codec::{FramedRead, LinesCodec},
     tracing::{debug, info, trace, warn},
 };
 
-use crate::{
-    error::{Context, Error, Result},
-    traits::McpTransport,
-    types::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse},
+use {
+    crate::{
+        error::{Context, Error, Result},
+        traits::McpTransport,
+        types::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse},
+    },
+    moltis_common::process_tree::OwnedProcessTree,
 };
 
 const MAX_MCP_STDOUT_LINE_BYTES: usize = 4 * 1024 * 1024;
@@ -50,7 +53,7 @@ const MAX_MCP_STDERR_LINE_BYTES: usize = 64 * 1024;
 
 /// Stdio-based transport for an MCP server process.
 pub struct StdioTransport {
-    child: Mutex<Child>,
+    child: Mutex<OwnedProcessTree>,
     stdin: Arc<Mutex<tokio::process::ChildStdin>>,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse>>>>,
     next_id: AtomicU64,
@@ -162,8 +165,7 @@ impl StdioTransport {
         cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            .stderr(Stdio::piped());
         if !options.inherit_parent_env {
             cmd.env_clear();
         }
@@ -174,13 +176,12 @@ impl StdioTransport {
             cmd.env(name, value.expose_secret());
         }
 
-        let mut child = cmd
-            .spawn()
+        let mut child = OwnedProcessTree::spawn(cmd)
             .with_context(|| format!("failed to spawn MCP server: {command}"))?;
 
-        let stdin = child.stdin.take().context("failed to capture stdin")?;
-        let stdout = child.stdout.take().context("failed to capture stdout")?;
-        let stderr = child.stderr.take();
+        let stdin = child.take_stdin().context("failed to capture stdin")?;
+        let stdout = child.take_stdout().context("failed to capture stdout")?;
+        let stderr = child.take_stderr();
 
         let pending: Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse>>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -388,6 +389,34 @@ mod tests {
         // After kill, process should be dead.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert!(!transport.is_alive().await);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_kill_terminates_descendants() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let started = temp_dir.path().join("started");
+        let marker = temp_dir.path().join("should-not-exist");
+        let script = format!(
+            "touch '{}'; (sleep 1; touch '{}') & cat",
+            started.display(),
+            marker.display()
+        );
+        let args = vec!["-c".to_string(), script];
+        let transport = StdioTransport::spawn("sh", &args, &HashMap::new())
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !started.exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        transport.kill().await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        assert!(!marker.exists(), "MCP descendant survived transport kill");
     }
 
     #[tokio::test]
