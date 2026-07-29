@@ -730,6 +730,11 @@ export function EditChannelModal(): VNode | null {
 					}}
 				/>
 				<label className="text-xs text-[var(--muted)]">Operators</label>
+				<p className="text-xs text-[var(--muted)]" data-testid="operators-description">
+					Senders who may run <code>/sh</code> and other commands on <strong>this machine</strong>, and read this
+					instance's sessions and memory. This is equivalent to giving someone your terminal — add yourself, or
+					someone you trust with the host. Entries are exact, case-sensitive platform sender IDs.
+				</p>
 				<AllowlistInput
 					value={operatorItems.value}
 					preserveAt={true}

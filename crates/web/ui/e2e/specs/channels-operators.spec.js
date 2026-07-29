@@ -17,24 +17,27 @@ async function installChannelMock(page, channel) {
 		const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
 		window.__channelUpdateRequest = null;
 		state.setConnected(true);
+		const handlers = {
+			"channels.status": () => ({ channels: [mockChannel] }),
+			"channels.senders.list": () => ({ senders: mockChannel.__senders || [] }),
+			"agents.list": () => ({ agents: [] }),
+			"channels.senders.approve": (params) => {
+				window.__senderApproveRequest = params || null;
+				return {};
+			},
+			"channels.update": (params) => {
+				window.__channelUpdateRequest = params || null;
+				return {};
+			},
+		};
 		state.setWs({
 			readyState: wsOpen,
 			send(raw) {
 				const req = JSON.parse(raw || "{}");
 				const resolver = state.pending[req.id];
 				if (!resolver) return;
-				if (req.method === "channels.status") {
-					resolver({ ok: true, payload: { channels: [mockChannel] } });
-				} else if (req.method === "channels.senders.list") {
-					resolver({ ok: true, payload: { senders: [] } });
-				} else if (req.method === "agents.list") {
-					resolver({ ok: true, payload: { agents: [] } });
-				} else if (req.method === "channels.update") {
-					window.__channelUpdateRequest = req.params || null;
-					resolver({ ok: true, payload: {} });
-				} else {
-					resolver({ ok: true, payload: {} });
-				}
+				const handler = handlers[req.method];
+				resolver({ ok: true, payload: handler ? handler(req.params) : {} });
 				delete state.pending[req.id];
 			},
 		});
@@ -127,6 +130,65 @@ test.describe("Channel operators", () => {
 		const modal = await openEditModal(page, discordChannel({ allowlist: [], operators: [] }));
 
 		await expect(modal.getByTestId("operators-hint")).toContainText("disabled for every sender");
+
+		expect(pageErrors).toEqual([]);
+	});
+});
+
+// Approving a sender for access and granting them the host are separate
+// decisions, so "Approve" must always ask which one is meant.
+test.describe("Sender approval role", () => {
+	async function openApprovalDialog(page, config) {
+		const channel = discordChannel(config);
+		channel.__senders = [
+			{ peer_id: "400347514466992128", sender_name: "Fabien", username: "fabien", message_count: 2, allowed: false },
+		];
+		await installChannelMock(page, channel);
+		// The tab bar renders role="tab", and the badge puts the count in the
+		// accessible name, so match on the label rather than the exact string.
+		await page.getByRole("tab", { name: /Senders/ }).click();
+		await page.getByRole("button", { name: "Approve", exact: true }).click();
+		return page.locator(".modal-box");
+	}
+
+	test("operator is preselected while the channel has no operators", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/channels");
+		await waitForWsConnected(page);
+
+		const modal = await openApprovalDialog(page, { allowlist: [], operators: [] });
+
+		await expect(modal.getByTestId("approve-role-operator")).toHaveAttribute("data-selected", "true");
+		await expect(modal.getByTestId("approve-role-guest")).toHaveAttribute("data-selected", "false");
+		await expect(modal.getByTestId("approve-first-operator-hint")).toBeVisible();
+
+		// The operator grant must carry peer_id: operators match exact platform
+		// IDs, so approving on the username alone would never take effect.
+		await modal.getByRole("button", { name: "Approve as operator", exact: true }).click();
+		await expect
+			.poll(() => page.evaluate(() => window.__senderApproveRequest))
+			.toMatchObject({
+				identifier: "fabien",
+				peer_id: "400347514466992128",
+				role: "operator",
+			});
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("guest is the default once an operator exists", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/channels");
+		await waitForWsConnected(page);
+
+		const modal = await openApprovalDialog(page, { allowlist: [], operators: ["someone-else"] });
+
+		await expect(modal.getByTestId("approve-role-guest")).toHaveAttribute("data-selected", "true");
+		await expect(modal.getByTestId("approve-role-operator")).toHaveAttribute("data-selected", "false");
+		await expect(modal.getByTestId("approve-first-operator-hint")).toHaveCount(0);
+
+		await modal.getByRole("button", { name: "Approve", exact: true }).click();
+		await expect.poll(() => page.evaluate(() => window.__senderApproveRequest)).toMatchObject({ role: "guest" });
 
 		expect(pageErrors).toEqual([]);
 	});

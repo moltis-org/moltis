@@ -280,7 +280,24 @@ fail closed as shared.
 Untrusted turns also omit owner-private prompt context: user profile, project
 context, long-term memory, skills, and automatic memory extraction.
 
-Edit the list in the web UI under **Settings → Channels → Edit → Operators**.
+### Granting operator
+
+Two places, and both state what it means:
+
+- **When approving a sender.** Approving asks for a role: *Guest* (may chat) or
+  *Operator* (may run commands on this machine). While an account has no
+  operators at all, Operator is pre-selected — on a fresh install the person
+  holding the OTP code read it off this very UI, so they are almost certainly
+  the owner. Once one operator exists, Guest is the default.
+- **Settings → Channels → Edit → Operators**, to add or remove IDs directly.
+
+Approving as operator records the sender's exact platform ID, not their
+username, because operator matching is exact.
+
+```admonish tip title="Locked out of your own bot?"
+Send `/sh`. The refusal tells you your sender ID on that channel, which is what
+`operators` needs.
+```
 
 ```admonish warning title="This matters most in group and guild chats"
 In a Discord guild or a group chat, every member who passes the group policy
