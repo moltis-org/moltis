@@ -28,10 +28,18 @@
 <p>When installed as a PWA, moltis provides:</p>
 <ul>
 <li><strong>Standalone mode</strong>: Full-screen experience without browser UI</li>
-<li><strong>Offline support</strong>: Previously loaded content remains accessible</li>
+<li><strong>Offline support</strong>: Previously loaded content remains accessible, with a dedicated offline page that reloads automatically once the connection returns</li>
 <li><strong>Fast loading</strong>: Assets are cached locally</li>
 <li><strong>Home screen icon</strong>: Quick access from your device’s home screen</li>
+<li><strong>App shortcuts</strong>: Long-press the icon to jump straight to Chats, Projects, or Settings</li>
+<li><strong>App badge</strong>: The installed app icon shows an unread count while notifications
+are pending (Android, Windows, macOS Dock), including when the app is fully
+closed — the service worker badges the icon as the push arrives. Badging only
+applies to an installed app; in a plain browser tab there is no icon to draw on.</li>
 <li><strong>Safe area support</strong>: Proper spacing for notched devices (iPhone X+)</li>
+<li><strong>Non-disruptive updates</strong>: A new version installs in the background and takes
+over after all existing app windows close. It never reloads a hidden page or
+discards an unsent draft.</li>
 </ul>
 <h2 id="push-notifications">Push Notifications</h2>
 <p>Push notifications allow you to receive alerts when the LLM responds, even when you’re not actively viewing the app.</p>
@@ -54,7 +62,10 @@
 <li><strong>IP address</strong>: Client IP at subscription time (supports proxies via X-Forwarded-For)</li>
 <li><strong>Subscription date</strong>: When the device subscribed</li>
 </ul>
-<p>You can remove any subscription by clicking the <strong>Remove</strong> button. This works from any device - useful for revoking access to old devices.</p>
+<p>You can remove any subscription by clicking the <strong>Remove</strong> button. This works
+from any device and durably revokes that endpoint: automatic presence and
+rotation recovery cannot silently add it back. The user must explicitly enable
+notifications again on the removed device.</p>
 <p>Subscription changes are broadcast in real-time via WebSocket, so all connected clients see updates immediately.</p>
 <h3 id="how-it-works">How It Works</h3>
 <p>Moltis uses the Web Push API with VAPID (Voluntary Application Server Identification) keys:</p>
@@ -64,6 +75,11 @@
 <li><strong>Registration</strong>: The subscription details are sent to the server and stored</li>
 <li><strong>Notification</strong>: When you need to be notified, the server encrypts and sends a push message</li>
 </ol>
+<p>Subscription endpoints must be absolute public HTTPS URLs. Moltis rejects
+loopback, private, link-local, and malformed destinations before storing them
+and checks them again before delivery. Sends have a ten-second deadline and
+bounded concurrency, so an unavailable push service cannot hold up channel
+delivery.</p>
 <h3 id="push-api-routes">Push API Routes</h3>
 <p>The gateway exposes these API endpoints for push notifications:</p>
 
@@ -96,21 +112,65 @@
 
 
 
-<table><thead><tr><th>Endpoint</th><th>Method</th><th>Description</th></tr></thead><tbody><tr><td><code>/api/push/vapid-key</code></td><td>GET</td><td>Get the VAPID public key for subscription</td></tr><tr><td><code>/api/push/subscribe</code></td><td>POST</td><td>Register a push subscription</td></tr><tr><td><code>/api/push/unsubscribe</code></td><td>POST</td><td>Remove a push subscription</td></tr><tr><td><code>/api/push/status</code></td><td>GET</td><td>Get push service status and subscription list</td></tr></tbody></table>
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Endpoint</th><th>Method</th><th>Description</th></tr></thead><tbody><tr><td><code>/api/push/vapid-key</code></td><td>GET</td><td>Get the VAPID public key for subscription</td></tr><tr><td><code>/api/push/subscribe</code></td><td>POST</td><td>Register a push subscription</td></tr><tr><td><code>/api/push/unsubscribe</code></td><td>POST</td><td>Remove a push subscription</td></tr><tr><td><code>/api/push/presence</code></td><td>POST</td><td>Report which session this device is viewing</td></tr><tr><td><code>/api/push/test</code></td><td>POST</td><td>Send a test notification to every subscribed device</td></tr><tr><td><code>/api/push/status</code></td><td>GET</td><td>Get push service status and subscription list</td></tr></tbody></table>
+<p>API keys need <code>operator.read</code> for the VAPID key and <code>operator.write</code> for
+subscription, presence, and test operations. Because status includes device
+metadata and complete endpoints, <code>/api/push/status</code> requires <code>operator.admin</code>.
+Password, passkey, and local access retain full access.</p>
 <h3 id="subscribe-request">Subscribe Request</h3>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="json" data-code="{
   &#x22;endpoint&#x22;: &#x22;https://fcm.googleapis.com/fcm/send/...&#x22;,
   &#x22;keys&#x22;: {
     &#x22;p256dh&#x22;: &#x22;base64url-encoded-key&#x22;,
     &#x22;auth&#x22;: &#x22;base64url-encoded-auth&#x22;
-  }
+  },
+  &#x22;replaces&#x22;: &#x22;https://fcm.googleapis.com/fcm/send/old-endpoint&#x22;,
+  &#x22;revive&#x22;: false
 }"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">{</span></span>
 <span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "endpoint"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "https://fcm.googleapis.com/fcm/send/..."</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
 <span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "keys"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> {</span></span>
 <span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">    "p256dh"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "base64url-encoded-key"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
 <span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">    "auth"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "base64url-encoded-auth"</span></span>
-<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">  }</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "replaces"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "https://fcm.googleapis.com/fcm/send/old-endpoint"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "revive"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> false</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+<p><code>replaces</code> is optional. The service worker sends it when the browser rotates a
+subscription (<code>pushsubscriptionchange</code>) so the dead endpoint is retired in the
+same request rather than lingering until its next delivery failure.</p>
+<p><code>revive</code> defaults to <code>false</code>. Automatic reconciliation always leaves it false,
+so a remotely removed device stays removed. Only an explicit user <strong>Enable</strong>
+action sends <code>true</code>; that clears the endpoint’s durable revocation marker.
+Registering a revoked endpoint without that authorization returns <code>410 Gone</code>.</p>
+<h3 id="presence-request">Presence Request</h3>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="json" data-code="{
+  &#x22;endpoint&#x22;: &#x22;https://fcm.googleapis.com/fcm/send/...&#x22;,
+  &#x22;client_id&#x22;: &#x22;7ec0d5ae-...&#x22;,
+  &#x22;sequence&#x22;: 42,
+  &#x22;session_key&#x22;: &#x22;main&#x22;,
+  &#x22;visible&#x22;: true
+}"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">{</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "endpoint"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "https://fcm.googleapis.com/fcm/send/..."</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "client_id"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "7ec0d5ae-..."</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "sequence"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 42</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "session_key"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "main"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "visible"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+<p>Returns <code>204 No Content</code> when recorded, <code>404 Not Found</code> if the server merely
+does not know the endpoint, or <code>410 Gone</code> if it was explicitly revoked. A <code>404</code>
+replaces the unknown browser capability with a fresh subscription before
+registering it. A <code>410</code> instead disables and removes the browser subscription so
+remote revocation remains effective.</p>
 <h3 id="status-response">Status Response</h3>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="json" data-code="{
   &#x22;enabled&#x22;: true,
@@ -139,16 +199,54 @@
 <p>Push notifications include:</p>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="json" data-code="{
   &#x22;title&#x22;: &#x22;moltis&#x22;,
-  &#x22;body&#x22;: &#x22;New response available&#x22;,
-  &#x22;url&#x22;: &#x22;/chats&#x22;,
-  &#x22;sessionKey&#x22;: &#x22;session-id&#x22;
+  &#x22;body&#x22;: &#x22;Rolled out to staging and the smoke tests pass.&#x22;,
+  &#x22;url&#x22;: &#x22;/chats/main&#x22;,
+  &#x22;sessionKey&#x22;: &#x22;main&#x22;,
+  &#x22;order&#x22;: 42,
+  &#x22;notificationId&#x22;: &#x22;5f1c…&#x22;,
+  &#x22;timestamp&#x22;: &#x22;2026-07-26T09:12:44Z&#x22;
 }"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">{</span></span>
 <span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "title"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "moltis"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
-<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "body"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "New response available"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
-<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "url"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "/chats"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
-<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "sessionKey"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "session-id"</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "body"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "Rolled out to staging and the smoke tests pass."</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "url"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "/chats/main"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "sessionKey"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "main"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "order"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 42</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "notificationId"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "5f1c…"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "timestamp"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "2026-07-26T09:12:44Z"</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">}</span></span></code></pre>
-<p>Clicking a notification will open or focus the app and navigate to the relevant chat.</p>
+<p>The title is always <code>moltis</code>, so a private session label is not exposed on a
+lock screen. The body is the reply with markdown syntax converted to readable
+plain text. Notification previews may still be visible on a locked device;
+control that exposure with the operating system’s notification-preview setting.</p>
+<p>Clicking a notification focuses an existing window — preferring one already
+showing the target chat — and routes in place rather than reloading the app. If
+no window is open, one is opened at the chat.</p>
+<h3 id="delivery-behaviour">Delivery Behaviour</h3>
+<p>Several details keep notifications from piling up or stepping on each other:</p>
+<ul>
+<li><strong>Per-session grouping</strong>: Notifications are tagged per session, so one busy
+chat produces one notification rather than a wall of them. The replacement
+sets <code>renotify</code>, so it still alerts you instead of being swapped in silently,
+and its body says how many earlier messages it folded in.</li>
+<li><strong>Foreground suppression</strong>: Each browser window maintains an ordered presence
+lease and refreshes it while focused. A device is skipped only when at least
+one window is visible, focused, and showing that exact chat. Other tabs and
+devices still get notified.</li>
+<li><strong>Server-side collapsing</strong>: Messages carry a per-session <code>Topic</code>, so a device
+that was offline wakes to the latest message per session, not a backlog.</li>
+<li><strong>Ordered completion delivery</strong>: Detached sends retain the assistant message
+order. A slow older send cannot replace a newer response from the same
+session.</li>
+<li><strong>Expiry</strong>: Messages carry a 6-hour TTL. A push older than that is dropped by
+the push service rather than delivered as stale news.</li>
+<li><strong>Endpoint hygiene</strong>: Push-service endpoints that expire are removed
+automatically. Rotated or merely server-forgotten subscriptions re-register,
+while explicitly revoked endpoints remain disabled until the user enables
+them again.</li>
+<li><strong>Badges</strong>: The app badge is derived from every outstanding notification, not
+only the latest chat. Opening or dismissing one chat decrements the total
+without clearing notifications from other chats.</li>
+</ul>
 <h2 id="configuration">Configuration</h2>
 <h3 id="feature-flag">Feature Flag</h3>
 <p>Push notifications are controlled by the <code>push-notifications</code> feature flag, which is enabled by default. To disable:</p>
@@ -164,8 +262,12 @@ moltis-gateway = { default-features = false, features = [&#x22;web-ui&#x22;, &#x
 <ul>
 <li><strong>VAPID keys</strong>: Generated once and reused</li>
 <li><strong>Subscriptions</strong>: List of all registered browser subscriptions</li>
+<li><strong>Revocations</strong>: Removed endpoints that automatic recovery must not recreate</li>
 </ul>
-<p>The VAPID keys are persisted so subscriptions remain valid across restarts.</p>
+<p>The store is replaced atomically, and malformed JSON disables push initialization
+instead of silently rotating VAPID keys and invalidating every subscription. The
+rest of the gateway still starts. VAPID keys are persisted so subscriptions
+remain valid across restarts.</p>
 <h2 id="mobile-ui-considerations">Mobile UI Considerations</h2>
 <p>The mobile interface adapts for smaller screens:</p>
 <ul>
@@ -225,9 +327,12 @@ moltis-gateway = { default-features = false, features = [&#x22;web-ui&#x22;, &#x
 <h2 id="troubleshooting">Troubleshooting</h2>
 <h3 id="notifications-not-working">Notifications Not Working</h3>
 <ol>
+<li><strong>Send a test notification</strong>: Settings > Notifications has a <strong>Send</strong> button that
+pushes to every subscribed device and reports how many accepted it. This is the
+fastest way to tell a broken subscription apart from a chat that never fired one.</li>
 <li><strong>Check permissions</strong>: Ensure notifications are allowed in browser/OS settings</li>
 <li><strong>Check subscription</strong>: Go to Settings > Notifications to see if your device is listed</li>
-<li><strong>Check server logs</strong>: Look for <code>push:</code> prefixed log messages for delivery status</li>
+<li><strong>Check server logs</strong>: Look for <code>push notification</code> messages for delivery status</li>
 <li><strong>Safari/iOS specific</strong>:
 <ul>
 <li>Must be installed as PWA (Add to Dock/Home Screen)</li>
