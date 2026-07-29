@@ -210,8 +210,17 @@ strip_all_features_flag() {
 
 changed_files() {
   if [[ "$LOCAL_ONLY" -eq 0 ]]; then
-    gh pr diff "$PR_NUMBER" --repo "$BASE_REPO" --name-only
-    return
+    # `gh pr diff` answers HTTP 406 once a PR exceeds 20,000 diff lines, and it
+    # exits 0 while printing nothing usable. Left alone that turns the targeted
+    # contexts into no-ops that still report "passed", so a large PR would be
+    # the least tested one. Fall back to the local range instead.
+    local pr_files=""
+    if pr_files="$(gh pr diff "$PR_NUMBER" --repo "$BASE_REPO" --name-only 2>/dev/null)" \
+      && [[ -n "$pr_files" ]]; then
+      printf '%s\n' "$pr_files"
+      return
+    fi
+    echo "[changed-files] gh pr diff unavailable for #${PR_NUMBER}; using the local branch range." >&2
   fi
 
   local base_ref="${LOCAL_VALIDATE_BASE_REF:-$BASE_REF_NAME}"
@@ -290,6 +299,9 @@ build_targeted_rust_test_cmd() {
   done < <(changed_files)
 
   if [[ "${#commands[@]}" -eq 0 ]]; then
+    # Announced here, in the main log: the context's own output is captured and
+    # discarded on success, so a skip would otherwise look like a green run.
+    echo "[local/test] no changed Rust tests detected; nothing to run." >&2
     printf '%s' 'echo "No changed Rust tests detected; skipping local/test."'
     return
   fi
@@ -315,6 +327,7 @@ build_targeted_e2e_cmd() {
   done < <(changed_files)
 
   if [[ "${#specs[@]}" -eq 0 ]]; then
+    echo "[local/e2e] no changed Playwright specs detected; nothing to run." >&2
     printf '%s' 'echo "No changed Playwright specs detected; skipping local/e2e."'
     return
   fi
