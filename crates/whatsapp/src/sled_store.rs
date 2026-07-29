@@ -37,8 +37,6 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 /// Persistent store backed by sled, implementing all wacore storage traits.
 pub struct SledStore {
-    #[allow(dead_code)]
-    db: sled::Db,
     identities: sled::Tree,
     sessions: sled::Tree,
     prekeys: sled::Tree,
@@ -58,6 +56,8 @@ pub struct SledStore {
     tc_tokens: sled::Tree,
     sent_messages: sled::Tree,
     msg_secrets: sled::Tree,
+    // Drop the cloned tree handles before the database releases its file lock.
+    db: sled::Db,
 }
 
 fn json_err(e: serde_json::Error) -> StoreError {

@@ -77,18 +77,27 @@ fn validate_response_url(url: &str) -> ChannelResult<reqwest::Url> {
     Ok(url)
 }
 
-fn build_response_url_http_client() -> ChannelResult<reqwest::Client> {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|error| ChannelError::external("Slack response_url client", error))
+fn response_url_http_client() -> ChannelResult<&'static reqwest::Client> {
+    static CLIENT: std::sync::OnceLock<Result<reqwest::Client, String>> =
+        std::sync::OnceLock::new();
+    match CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(3))
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|error| error.to_string())
+    }) {
+        Ok(client) => Ok(client),
+        Err(error) => Err(ChannelError::unavailable(format!(
+            "failed to build Slack response_url client: {error}"
+        ))),
+    }
 }
 
 pub(crate) async fn post_response_url(url: &str, text: &str) -> ChannelResult<()> {
     let url = validate_response_url(url)?;
-    let response = build_response_url_http_client()?
+    let response = response_url_http_client()?
         .post(url)
         .json(&serde_json::json!({
             "response_type": "ephemeral",
@@ -930,6 +939,13 @@ mod tests {
         }
     }
 
+    #[test]
+    fn response_url_client_is_reused() {
+        let first = response_url_http_client().unwrap();
+        let second = response_url_http_client().unwrap();
+        assert!(std::ptr::eq(first, second));
+    }
+
     #[tokio::test]
     async fn response_url_client_does_not_follow_redirects() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -949,7 +965,7 @@ mod tests {
                 .is_ok()
         });
 
-        let response = build_response_url_http_client()
+        let response = response_url_http_client()
             .unwrap()
             .post(format!("http://{address}/initial"))
             .send()

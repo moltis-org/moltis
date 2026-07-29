@@ -789,6 +789,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pending_limit_evicts_only_after_crossing_the_boundary() {
+        let registry = ReactionRegistry {
+            pending_limit: 1,
+            ..ReactionRegistry::default()
+        };
+        let oldest = park(&registry, "msg-oldest").await;
+        assert_eq!(ops_of(&oldest), vec!["+👀"]);
+
+        let newest = park(&registry, "msg-newest").await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        assert_eq!(ops_of(&oldest), vec!["+👀", "-👀"]);
+        assert_eq!(ops_of(&newest), vec!["+👀"]);
+    }
+
+    #[tokio::test]
     async fn superseded_turn_terminal_does_not_clear_the_current_turn() {
         // Turn 1 activates, is superseded by turn 2, then turn 1's terminal
         // arrives late. It must not release turn 2's acknowledgment.
