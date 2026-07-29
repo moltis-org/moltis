@@ -85,8 +85,9 @@ public_key = "pk-lf-..."
 Keys come from your Langfuse project settings. For a self-hosted deployment,
 point `host` at your own instance — no data leaves your network.
 
-Use **Settings → Instrumentation → Test connection** in the web UI to verify
-the host is reachable and the credentials are accepted before relying on it.
+Once Moltis has restarted, use **Settings → Instrumentation → Test connection**
+in the web UI to verify the host is reachable and the credentials are accepted
+before relying on it.
 
 ## Quick start: Grafana / OpenTelemetry Collector
 
@@ -121,6 +122,20 @@ service  = "moltis"
 
 To post to Datadog's intake directly instead, set `endpoint` to the regional
 OTLP intake URL and supply `api_key`.
+
+## Where the settings live
+
+Instrumentation is configured in `moltis.toml` under `[instrumentation]`, either
+by editing the file directly or through **Settings → Configuration** in the web
+UI, which edits the same TOML. Either way the change takes effect on restart.
+
+**Settings → Instrumentation is a read-only view.** It reports what is actually
+running — active backends, any that failed to start and why, delivery counters,
+the capture policy in force, and whether credentials are present — and it can
+test the Langfuse connection. It deliberately has no fields to edit: turning
+instrumentation on sends conversation data to a third party, so that decision
+lives in the config file next to the credential it needs, not behind a toggle in
+a browser.
 
 ## Build features
 

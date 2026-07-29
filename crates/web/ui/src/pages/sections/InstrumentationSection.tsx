@@ -335,9 +335,9 @@ export function InstrumentationSection(): VNode {
 			<SectionHeading title="Instrumentation" />
 
 			<p className="text-xs text-[var(--muted)]">
-				Exports what each agent run did \u2014 LLM calls, tool calls, retrievals \u2014 to an external backend.
-				Configured in <code>moltis.toml</code> under <code>[instrumentation]</code>; this page shows what is running and
-				lets you verify connectivity.
+				Exports what each agent run did (LLM calls, tool calls, retrievals) to an external backend. Configured in{" "}
+				<code>moltis.toml</code> under <code>[instrumentation]</code>, or in Settings then Configuration, and applied on
+				restart. This page is read-only: it shows what is running and lets you verify connectivity.
 			</p>
 
 			{config.enabled ? null : (
