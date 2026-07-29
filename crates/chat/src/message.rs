@@ -278,8 +278,7 @@ pub(crate) fn user_audio_path_from_params(params: &Value, session_key: &str) -> 
         return None;
     }
 
-    let key = SessionStore::key_to_filename(session_key);
-    Some(format!("media/{key}/{filename}"))
+    SessionStore::media_reference(session_key, filename).ok()
 }
 
 pub(crate) fn user_documents_from_params(
@@ -288,7 +287,6 @@ pub(crate) fn user_documents_from_params(
     session_store: &SessionStore,
 ) -> Option<Vec<UserDocument>> {
     let documents = params.get("_document_files")?.as_array()?;
-    let media_dir_key = SessionStore::key_to_filename(session_key);
     let mut parsed = Vec::new();
 
     for document in documents {
@@ -304,18 +302,19 @@ pub(crate) fn user_documents_from_params(
 
         let display_name = sanitize_user_document_display_name(&document.display_name)
             .unwrap_or_else(|| stored_filename.to_string());
+        let Ok(media_ref) = SessionStore::media_reference(session_key, stored_filename) else {
+            continue;
+        };
+        let Ok(absolute_path) = session_store.media_path_for(session_key, stored_filename) else {
+            continue;
+        };
         parsed.push(UserDocument {
             display_name,
             stored_filename: stored_filename.to_string(),
             mime_type: mime_type.to_string(),
             size_bytes: document.size_bytes,
-            media_ref: format!("media/{media_dir_key}/{stored_filename}"),
-            absolute_path: Some(
-                session_store
-                    .media_path_for(session_key, stored_filename)
-                    .to_string_lossy()
-                    .to_string(),
-            ),
+            media_ref,
+            absolute_path: Some(absolute_path.to_string_lossy().to_string()),
         });
     }
 

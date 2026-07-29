@@ -151,7 +151,15 @@ pub fn import_sessions(
                 .unwrap_or("unknown");
             let dest_key = format!("oc:{moltis_agent_id}:{stem}");
             let dest_file =
-                dest_sessions_dir.join(format!("{}.jsonl", sanitize_session_key(&dest_key)));
+                moltis_sessions::store::SessionStore::new(dest_sessions_dir.to_path_buf())
+                    .history_path_for(&dest_key);
+            if let Some(parent) = dest_file.parent()
+                && let Err(error) = std::fs::create_dir_all(parent)
+            {
+                warn!(%error, key = %dest_key, "failed to create session storage directory");
+                errors.push(format!("{dest_key}: {error}"));
+                continue;
+            }
 
             let source_lines = count_lines(&path);
 
@@ -491,10 +499,6 @@ fn count_lines(path: &Path) -> u32 {
     BufReader::new(file).lines().count() as u32
 }
 
-fn sanitize_session_key(key: &str) -> String {
-    key.replace(':', "_")
-}
-
 /// Load existing session metadata from disk.
 fn load_session_metadata(path: &Path) -> HashMap<String, ImportedSessionEntry> {
     if !path.is_file() {
@@ -669,6 +673,13 @@ mod tests {
         std::fs::write(dir.join(format!("{key}.jsonl")), content).unwrap();
     }
 
+    fn imported_history_path(destination: &Path, key: &str) -> std::path::PathBuf {
+        let path = moltis_sessions::store::SessionStore::new(destination.to_path_buf())
+            .history_path_for(key);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        path
+    }
+
     #[test]
     fn convert_basic_session() {
         let tmp = tempfile::tempdir().unwrap();
@@ -690,7 +701,7 @@ mod tests {
         assert_eq!(report.items_imported, 1);
 
         // Verify converted JSONL
-        let converted_path = dest.join("oc_main_test-session.jsonl");
+        let converted_path = imported_history_path(&dest, "oc:main:test-session");
         assert!(converted_path.is_file());
 
         let content = std::fs::read_to_string(&converted_path).unwrap();
@@ -724,7 +735,7 @@ mod tests {
 
         assert_eq!(report.status, ImportStatus::Success);
         assert_eq!(report.items_imported, 1);
-        assert!(dest.join("oc_main_legacy-session.jsonl").is_file());
+        assert!(imported_history_path(&dest, "oc:main:legacy-session").is_file());
     }
 
     #[test]
@@ -744,7 +755,8 @@ mod tests {
 
         assert_eq!(report.items_imported, 1);
 
-        let content = std::fs::read_to_string(dest.join("oc_main_tools.jsonl")).unwrap();
+        let content =
+            std::fs::read_to_string(imported_history_path(&dest, "oc:main:tools")).unwrap();
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines.len(), 2);
 
@@ -824,8 +836,8 @@ mod tests {
         assert_eq!(report.items_imported, 2);
 
         // Verify both sessions were imported with correct keys
-        assert!(dest.join("oc_main_s1.jsonl").is_file());
-        assert!(dest.join("oc_research_s2.jsonl").is_file());
+        assert!(imported_history_path(&dest, "oc:main:s1").is_file());
+        assert!(imported_history_path(&dest, "oc:research:s2").is_file());
 
         // Verify metadata has correct agent_id
         let metadata: HashMap<String, ImportedSessionEntry> =
@@ -876,7 +888,8 @@ mod tests {
         let report = import_sessions(&detection, &dest, &mem, &default_mapping());
 
         assert_eq!(report.items_imported, 1);
-        let content = std::fs::read_to_string(dest.join("oc_main_messy.jsonl")).unwrap();
+        let content =
+            std::fs::read_to_string(imported_history_path(&dest, "oc:main:messy")).unwrap();
         assert_eq!(content.lines().count(), 1);
     }
 
@@ -950,7 +963,8 @@ mod tests {
         assert_eq!(report1.items_imported, 1);
         assert_eq!(report1.items_updated, 0);
 
-        let content1 = std::fs::read_to_string(dest.join("oc_main_growing.jsonl")).unwrap();
+        let content1 =
+            std::fs::read_to_string(imported_history_path(&dest, "oc:main:growing")).unwrap();
         assert_eq!(content1.lines().count(), 1);
 
         // Append a new message to the source
@@ -966,7 +980,8 @@ mod tests {
         assert_eq!(report2.items_skipped, 0);
 
         // Destination should now have 2 messages
-        let content2 = std::fs::read_to_string(dest.join("oc_main_growing.jsonl")).unwrap();
+        let content2 =
+            std::fs::read_to_string(imported_history_path(&dest, "oc:main:growing")).unwrap();
         assert_eq!(content2.lines().count(), 2);
     }
 
@@ -1102,7 +1117,7 @@ mod tests {
 
         // Also write a destination JSONL so it looks like a previous import happened
         std::fs::write(
-            dest.join("oc_main_legacy.jsonl"),
+            imported_history_path(&dest, "oc:main:legacy"),
             r#"{"role":"user","content":"old message"}"#,
         )
         .unwrap();
@@ -1141,7 +1156,8 @@ mod tests {
         assert_eq!(report.status, ImportStatus::Success);
         assert_eq!(report.items_imported, 1);
 
-        let converted = std::fs::read_to_string(dest.join("oc_main_timed.jsonl")).unwrap();
+        let converted =
+            std::fs::read_to_string(imported_history_path(&dest, "oc:main:timed")).unwrap();
         let mut lines = converted.lines();
         let first: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
         let second: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();

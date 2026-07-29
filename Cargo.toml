@@ -254,6 +254,7 @@ gix                = "0.83"
 hex                = "0.4"
 hmac               = "0.12"
 jsonwebtoken       = { features = ["aws_lc_rs"], version = "10" }
+libc               = "0.2"
 llama-cpp-2        = "0.1"
 matrix-sdk         = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
 mockito            = "1.7"

@@ -8080,6 +8080,7 @@ dependencies = [
  "moltis-common",
  "moltis-config",
  "moltis-oauth",
+ "moltis-sessions",
  "notify-debouncer-full",
  "secrecy 0.8.0",
  "serde",
@@ -8290,6 +8291,8 @@ name = "moltis-sessions"
 version = "0.1.0"
 dependencies = [
  "fd-lock",
+ "hex",
+ "libc",
  "moltis-common",
  "moltis-metrics",
  "serde",
