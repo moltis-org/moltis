@@ -22,8 +22,10 @@ const OFFLINE_URL = "/offline.html";
 const STATE_CACHE = "moltis-state";
 const STATE_KEYS = {
 	installed: "/__moltis__/installed",
+	pushEnabled: "/__moltis__/push-enabled",
 	pushDisabled: "/__moltis__/push-disabled",
 	pushRotationPending: "/__moltis__/push-rotation-pending",
+	notificationOrder: "/__moltis__/push-notification-order",
 } as const;
 const PUSH_STATE_LOCK = "moltis-push-state";
 
@@ -64,9 +66,9 @@ async function precache(): Promise<void> {
 }
 
 // Install event - cache static assets.
-// Deliberately does NOT call skipWaiting(): the page decides when to activate a
-// new worker (see `activateUpdate()` in pwa.ts) so an update never reloads the
-// app out from under someone mid-conversation.
+// Deliberately does NOT call skipWaiting(): the worker activates normally only
+// after every page using the old worker closes, avoiding old-page/new-chunk
+// incompatibility during an update.
 sw.addEventListener("install", (event: ExtendableEvent) => {
 	event.waitUntil(precache());
 });
@@ -202,6 +204,8 @@ interface PushData {
 	requireInteraction?: boolean;
 	/** ISO 8601 timestamp of the underlying event. */
 	timestamp?: string;
+	/** Monotonic delivery order within a session. */
+	order?: number;
 }
 
 /** Options accepted by showNotification beyond the DOM lib's NotificationOptions. */
@@ -217,6 +221,20 @@ interface StoredNotificationData {
 	sessionKey?: string;
 	notificationId?: string;
 	count?: number;
+	order?: number;
+}
+
+interface RotationPending {
+	replaces?: string;
+	revive?: boolean;
+}
+
+interface OrderedPushState {
+	cache: Cache;
+	orders: Record<string, number>;
+	sessionKey: string;
+	order: number;
+	stale: boolean;
 }
 
 /** Group notifications per session so one chat never floods the shade. */
@@ -239,6 +257,13 @@ function storedNotificationData(notification: Notification): StoredNotificationD
 function storedNotificationCount(notification: Notification): number {
 	const count = storedNotificationData(notification).count;
 	return typeof count === "number" && Number.isFinite(count) ? Math.max(0, count) : 1;
+}
+
+function notificationMatchesSession(notification: Notification, sessionKey: string): boolean {
+	return (
+		notification.tag === `moltis:session:${sessionKey}` ||
+		storedNotificationData(notification).sessionKey === sessionKey
+	);
 }
 
 function buildBody(data: PushData, existing: Notification[]): { body: string; count: number } {
@@ -274,9 +299,47 @@ async function setStateFlag(key: (typeof STATE_KEYS)[keyof typeof STATE_KEYS], e
 	await cache.delete(key);
 }
 
-async function setRotationPending(replaces: string | undefined): Promise<void> {
+async function readRotationPending(cache: Cache): Promise<RotationPending | null> {
+	const response = await cache.match(STATE_KEYS.pushRotationPending);
+	if (!response) return null;
+	const text = (await response.text()).trim();
+	if (!(text && text !== "1" && text !== "true")) return {};
+	try {
+		const value: unknown = JSON.parse(text);
+		if (typeof value === "object" && value !== null) {
+			const marker = value as Record<string, unknown>;
+			const replaces = marker.replaces ?? marker.old_endpoint ?? marker.endpoint;
+			return {
+				...(typeof replaces === "string" ? { replaces } : {}),
+				...(marker.revive === true ? { revive: true } : {}),
+			};
+		}
+	} catch {
+		// Legacy markers may contain only the replaced endpoint.
+	}
+	return { replaces: text };
+}
+
+async function setRotationPending(replaces: string | undefined, revive = false): Promise<void> {
 	const cache = await caches.open(STATE_CACHE);
-	await cache.put(STATE_KEYS.pushRotationPending, new Response(JSON.stringify({ replaces })));
+	await cache.put(STATE_KEYS.pushRotationPending, new Response(JSON.stringify({ replaces, revive })));
+}
+
+async function preserveRotationPending(cache: Cache, oldEndpoint: string | undefined): Promise<RotationPending> {
+	const pending = await readRotationPending(cache);
+	const replaces = pending?.replaces ?? oldEndpoint;
+	const revive = pending?.revive === true;
+	await setRotationPending(replaces, revive);
+	return { replaces, revive };
+}
+
+async function markPushDisabled(): Promise<void> {
+	const cache = await caches.open(STATE_CACHE);
+	await Promise.all([
+		cache.put(STATE_KEYS.pushDisabled, new Response("1")),
+		cache.delete(STATE_KEYS.pushEnabled),
+		cache.delete(STATE_KEYS.pushRotationPending),
+	]);
 }
 
 /** Record a positive installed report; ordinary tabs cannot disprove it. */
@@ -327,13 +390,71 @@ async function updateBadge(count: number): Promise<void> {
 	}
 }
 
-async function updateBadgeFromNotifications(excludedIds: ReadonlySet<string> = new Set()): Promise<void> {
+async function updateBadgeFromNotifications(
+	excludedIds: ReadonlySet<string> = new Set(),
+	excludedTags: ReadonlySet<string> = new Set(),
+	excludedSessions: ReadonlySet<string> = new Set(),
+): Promise<void> {
 	const notifications = await sw.registration.getNotifications();
 	const count = notifications.reduce((sum, notification) => {
-		const id = storedNotificationData(notification).notificationId;
-		return id && excludedIds.has(id) ? sum : sum + storedNotificationCount(notification);
+		const data = storedNotificationData(notification);
+		return (data.notificationId && excludedIds.has(data.notificationId)) ||
+			excludedTags.has(notification.tag) ||
+			(data.sessionKey && excludedSessions.has(data.sessionKey))
+			? sum
+			: sum + storedNotificationCount(notification);
 	}, 0);
 	await updateBadge(count);
+}
+
+function addClosedNotificationExclusions(
+	notification: Notification,
+	ids: Set<string>,
+	tags: Set<string>,
+	sessions: Set<string>,
+): void {
+	const data = storedNotificationData(notification);
+	if (data.notificationId) {
+		ids.add(data.notificationId);
+		return;
+	}
+	// Legacy notifications have no stable ID, so tag/session are the only way
+	// to exclude a close that has not disappeared from getNotifications() yet.
+	if (notification.tag) tags.add(notification.tag);
+	if (data.sessionKey) sessions.add(data.sessionKey);
+}
+
+async function readNotificationOrders(cache: Cache): Promise<Record<string, number>> {
+	const response = await cache.match(STATE_KEYS.notificationOrder);
+	if (!response) return Object.create(null) as Record<string, number>;
+	try {
+		const value: unknown = await response.json();
+		if (typeof value !== "object" || value === null) return Object.create(null) as Record<string, number>;
+		return Object.fromEntries(
+			Object.entries(value).filter(
+				(entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]),
+			),
+		);
+	} catch {
+		return Object.create(null) as Record<string, number>;
+	}
+}
+
+async function writeNotificationOrders(cache: Cache, orders: Record<string, number>): Promise<void> {
+	await cache.put(STATE_KEYS.notificationOrder, new Response(JSON.stringify(orders)));
+}
+
+async function orderedPushState(data: PushData): Promise<OrderedPushState | null> {
+	if (!(data.sessionKey && typeof data.order === "number" && Number.isFinite(data.order))) return null;
+	const cache = await caches.open(STATE_CACHE);
+	const orders = await readNotificationOrders(cache);
+	return {
+		cache,
+		orders,
+		sessionKey: data.sessionKey,
+		order: data.order,
+		stale: (orders[data.sessionKey] ?? Number.NEGATIVE_INFINITY) >= data.order,
+	};
 }
 
 /**
@@ -367,6 +488,9 @@ async function isSessionVisible(sessionKey: string | undefined): Promise<boolean
 let pushQueue: Promise<void> = Promise.resolve();
 
 async function handlePush(data: PushData): Promise<void> {
+	const ordered = await orderedPushState(data);
+	if (ordered?.stale) return;
+
 	const outstanding = await sw.registration.getNotifications();
 	if (
 		data.notificationId &&
@@ -379,7 +503,10 @@ async function handlePush(data: PushData): Promise<void> {
 	// A visible push remains user-visible, but without sound or vibration.
 	const alreadyVisible = await isSessionVisible(data.sessionKey);
 	const tag = notificationTag(data);
-	const existing = outstanding.filter((notification) => notification.tag === tag);
+	const sessionKey = data.sessionKey;
+	const existing = sessionKey
+		? outstanding.filter((notification) => notificationMatchesSession(notification, sessionKey))
+		: outstanding.filter((notification) => notification.tag === tag);
 	const { body, count } = buildBody(data, existing);
 	const silent = alreadyVisible || data.silent === true;
 	const notificationId = data.notificationId ?? newNotificationId();
@@ -398,6 +525,7 @@ async function handlePush(data: PushData): Promise<void> {
 			sessionKey: data.sessionKey,
 			notificationId,
 			count,
+			order: data.order,
 		},
 		actions: [
 			{ action: "open", title: "View" },
@@ -409,12 +537,22 @@ async function handlePush(data: PushData): Promise<void> {
 	}
 
 	await sw.registration.showNotification(data.title || "moltis", options);
+	if (ordered) {
+		ordered.orders[ordered.sessionKey] = ordered.order;
+		await writeNotificationOrders(ordered.cache, ordered.orders);
+	}
+	for (const notification of existing) {
+		if (notification.tag !== tag) notification.close();
+	}
 	const replacedIds = new Set(
 		existing
 			.map((notification) => storedNotificationData(notification).notificationId)
 			.filter((id) => id !== undefined),
 	);
-	await updateBadgeFromNotifications(replacedIds);
+	const legacyTags = new Set(
+		existing.filter((notification) => notification.tag !== tag).map((notification) => notification.tag),
+	);
+	await updateBadgeFromNotifications(replacedIds, legacyTags);
 }
 
 sw.addEventListener("push", (event: PushEvent) => {
@@ -451,9 +589,7 @@ sw.addEventListener("pushsubscriptionchange", (event: Event) => {
 			return;
 		}
 		const oldEndpoint = subscriptionEvent.oldSubscription?.endpoint;
-		await setRotationPending(oldEndpoint).catch((error) => {
-			console.warn("failed to persist push rotation state:", error);
-		});
+		const pending = await preserveRotationPending(state, oldEndpoint);
 		let subscription = subscriptionEvent.newSubscription ?? null;
 
 		if (!subscription) {
@@ -475,7 +611,8 @@ sw.addEventListener("pushsubscriptionchange", (event: Event) => {
 			body: JSON.stringify({
 				endpoint: subscription.endpoint,
 				keys: json.keys,
-				replaces: oldEndpoint,
+				replaces: pending.replaces,
+				revive: pending.revive === true,
 			}),
 		});
 
@@ -484,6 +621,11 @@ sw.addEventListener("pushsubscriptionchange", (event: Event) => {
 		// endpoint the server never stored — push stays dead with nothing to
 		// signal it.
 		if (!registered.ok) {
+			if (registered.status === 410) {
+				await markPushDisabled();
+				await subscription.unsubscribe().catch(() => undefined);
+				return;
+			}
 			throw new Error(`push re-registration failed: ${registered.status}`);
 		}
 
@@ -567,9 +709,12 @@ sw.addEventListener("notificationclick", (event: NotificationEvent) => {
 	event.waitUntil(
 		(async () => {
 			const notificationData = storedNotificationData(event.notification);
-			const excludedIds = new Set(notificationData.notificationId ? [notificationData.notificationId] : []);
+			const excludedIds = new Set<string>();
+			const excludedTags = new Set<string>();
+			const excludedSessions = new Set<string>();
+			addClosedNotificationExclusions(event.notification, excludedIds, excludedTags, excludedSessions);
 			event.notification.close();
-			await updateBadgeFromNotifications(excludedIds);
+			await updateBadgeFromNotifications(excludedIds, excludedTags, excludedSessions);
 			if (event.action === "dismiss") return;
 
 			const targetUrl = safeNotificationUrl(notificationData.url);
@@ -580,16 +725,15 @@ sw.addEventListener("notificationclick", (event: NotificationEvent) => {
 
 // Recount after browser-shade dismissal, excluding a close still being removed.
 sw.addEventListener("notificationclose", (event: NotificationEvent) => {
-	const id = storedNotificationData(event.notification).notificationId;
-	event.waitUntil(updateBadgeFromNotifications(new Set(id ? [id] : [])));
+	const ids = new Set<string>();
+	const tags = new Set<string>();
+	const sessions = new Set<string>();
+	addClosedNotificationExclusions(event.notification, ids, tags, sessions);
+	event.waitUntil(updateBadgeFromNotifications(ids, tags, sessions));
 });
 
 // Handle messages from the main app
 sw.addEventListener("message", (event: ExtendableMessageEvent) => {
-	if (event.data?.type === "SKIP_WAITING") {
-		sw.skipWaiting();
-		return;
-	}
 	// Only an installed app has an icon to badge, and the worker cannot detect
 	// display-mode itself — so the page tells it, and the answer is persisted for
 	// the pushes that arrive once every page is gone.
@@ -609,15 +753,18 @@ sw.addEventListener("message", (event: ExtendableMessageEvent) => {
 		const sessionKey = event.data.sessionKey as string | undefined;
 		event.waitUntil(
 			(async () => {
-				const tag = sessionKey ? `moltis:session:${sessionKey}` : undefined;
-				const notifications = await sw.registration.getNotifications(tag ? { tag } : {});
+				const outstanding = await sw.registration.getNotifications();
+				const notifications = sessionKey
+					? outstanding.filter((notification) => notificationMatchesSession(notification, sessionKey))
+					: outstanding;
 				const closedIds = new Set<string>();
+				const closedTags = new Set<string>();
+				const closedSessions = new Set<string>();
 				for (const notification of notifications) {
-					const id = storedNotificationData(notification).notificationId;
-					if (id) closedIds.add(id);
+					addClosedNotificationExclusions(notification, closedIds, closedTags, closedSessions);
 					notification.close();
 				}
-				await updateBadgeFromNotifications(closedIds);
+				await updateBadgeFromNotifications(closedIds, closedTags, closedSessions);
 			})(),
 		);
 	}

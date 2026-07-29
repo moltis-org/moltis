@@ -63,7 +63,10 @@ The Settings > Notifications page shows all subscribed devices:
 - **IP address**: Client IP at subscription time (supports proxies via X-Forwarded-For)
 - **Subscription date**: When the device subscribed
 
-You can remove any subscription by clicking the **Remove** button. This works from any device - useful for revoking access to old devices.
+You can remove any subscription by clicking the **Remove** button. This works
+from any device and durably revokes that endpoint: automatic presence and
+rotation recovery cannot silently add it back. The user must explicitly enable
+notifications again on the removed device.
 
 Subscription changes are broadcast in real-time via WebSocket, so all connected clients see updates immediately.
 
@@ -109,13 +112,19 @@ Password, passkey, and local access retain full access.
     "p256dh": "base64url-encoded-key",
     "auth": "base64url-encoded-auth"
   },
-  "replaces": "https://fcm.googleapis.com/fcm/send/old-endpoint"
+  "replaces": "https://fcm.googleapis.com/fcm/send/old-endpoint",
+  "revive": false
 }
 ```
 
 `replaces` is optional. The service worker sends it when the browser rotates a
 subscription (`pushsubscriptionchange`) so the dead endpoint is retired in the
 same request rather than lingering until its next delivery failure.
+
+`revive` defaults to `false`. Automatic reconciliation always leaves it false,
+so a remotely removed device stays removed. Only an explicit user **Enable**
+action sends `true`; that clears the endpoint's durable revocation marker.
+Registering a revoked endpoint without that authorization returns `410 Gone`.
 
 ### Presence Request
 
@@ -129,9 +138,11 @@ same request rather than lingering until its next delivery failure.
 }
 ```
 
-Returns `204 No Content` when recorded, or `404 Not Found` if the server does not
-know the endpoint — which tells the client its subscription is stale and it
-should re-register.
+Returns `204 No Content` when recorded, `404 Not Found` if the server merely
+does not know the endpoint, or `410 Gone` if it was explicitly revoked. A `404`
+replaces the unknown browser capability with a fresh subscription before
+registering it. A `410` instead disables and removes the browser subscription so
+remote revocation remains effective.
 
 ### Status Response
 
@@ -160,6 +171,7 @@ Push notifications include:
   "body": "Rolled out to staging and the smoke tests pass.",
   "url": "/chats/main",
   "sessionKey": "main",
+  "order": 42,
   "notificationId": "5f1c…",
   "timestamp": "2026-07-26T09:12:44Z"
 }
@@ -188,12 +200,15 @@ Several details keep notifications from piling up or stepping on each other:
   devices still get notified.
 - **Server-side collapsing**: Messages carry a per-session `Topic`, so a device
   that was offline wakes to the latest message per session, not a backlog.
+- **Ordered completion delivery**: Detached sends retain the assistant message
+  order. A slow older send cannot replace a newer response from the same
+  session.
 - **Expiry**: Messages carry a 6-hour TTL. A push older than that is dropped by
   the push service rather than delivered as stale news.
-- **Endpoint hygiene**: Endpoints that return 410 Gone or 404 Not Found are
-  removed automatically, and rotated or server-forgotten subscriptions
-  re-register themselves. Explicitly disabling notifications prevents recovery
-  from recreating the subscription.
+- **Endpoint hygiene**: Push-service endpoints that expire are removed
+  automatically. Rotated or merely server-forgotten subscriptions re-register,
+  while explicitly revoked endpoints remain disabled until the user enables
+  them again.
 - **Badges**: The app badge is derived from every outstanding notification, not
   only the latest chat. Opening or dismissing one chat decrements the total
   without clearing notifications from other chats.
@@ -222,8 +237,12 @@ Push notification data is stored in `push.json` in the data directory:
 
 - **VAPID keys**: Generated once and reused
 - **Subscriptions**: List of all registered browser subscriptions
+- **Revocations**: Removed endpoints that automatic recovery must not recreate
 
-The VAPID keys are persisted so subscriptions remain valid across restarts.
+The store is replaced atomically, and malformed JSON disables push initialization
+instead of silently rotating VAPID keys and invalidating every subscription. The
+rest of the gateway still starts. VAPID keys are persisted so subscriptions
+remain valid across restarts.
 
 ## Mobile UI Considerations
 
@@ -259,7 +278,7 @@ Note: iOS push notifications require iOS 16.4 or later and the app must be insta
    fastest way to tell a broken subscription apart from a chat that never fired one.
 2. **Check permissions**: Ensure notifications are allowed in browser/OS settings
 3. **Check subscription**: Go to Settings > Notifications to see if your device is listed
-4. **Check server logs**: Look for `push:` prefixed log messages for delivery status
+4. **Check server logs**: Look for `push notification` messages for delivery status
 5. **Safari/iOS specific**:
    - Must be installed as PWA (Add to Dock/Home Screen)
    - iOS requires version 16.4 or later

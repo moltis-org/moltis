@@ -1165,15 +1165,18 @@ pub(super) async fn complete_startup(
         tool_registry.register(Box::new(moltis_tools::task_list::TaskListTool::new(
             &data_dir,
         )));
-        let mut speak_tool =
-            crate::voice_agent_tools::SpeakTool::new(Arc::clone(&state.services.tts));
-        if let Some(ref vps) = state.services.voice_persona_store {
-            speak_tool = speak_tool.with_voice_persona_store(Arc::clone(vps));
+        #[cfg(feature = "voice")]
+        {
+            let mut speak_tool =
+                crate::voice_agent_tools::SpeakTool::new(Arc::clone(&state.services.tts));
+            if let Some(ref vps) = state.services.voice_persona_store {
+                speak_tool = speak_tool.with_voice_persona_store(Arc::clone(vps));
+            }
+            tool_registry.register(Box::new(speak_tool));
+            tool_registry.register(Box::new(crate::voice_agent_tools::TranscribeTool::new(
+                Arc::clone(&state.services.stt),
+            )));
         }
-        tool_registry.register(Box::new(speak_tool));
-        tool_registry.register(Box::new(crate::voice_agent_tools::TranscribeTool::new(
-            Arc::clone(&state.services.stt),
-        )));
 
         {
             use moltis_skills::{discover::FsSkillDiscoverer, usage::SkillUsageStore};

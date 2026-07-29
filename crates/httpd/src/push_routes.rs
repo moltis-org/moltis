@@ -36,6 +36,9 @@ pub struct SubscribeRequest {
     /// subscription via `pushsubscriptionchange`.
     #[serde(default)]
     pub replaces: Option<String>,
+    /// Explicit user enable may revive an endpoint revoked on another client.
+    #[serde(default)]
+    pub revive: bool,
 }
 
 /// Request reporting which session a subscribed device is currently viewing.
@@ -127,6 +130,7 @@ fn require_push_access(
 fn subscription_error_status(error: &anyhow::Error) -> StatusCode {
     match error.downcast_ref::<PushSubscriptionValidationError>() {
         Some(PushSubscriptionValidationError::LimitReached) => StatusCode::TOO_MANY_REQUESTS,
+        Some(PushSubscriptionValidationError::Revoked) => StatusCode::GONE,
         Some(PushSubscriptionValidationError::Invalid(_)) => StatusCode::BAD_REQUEST,
         None => StatusCode::INTERNAL_SERVER_ERROR,
     }
@@ -215,7 +219,7 @@ async fn subscribe_handler(
     };
 
     push_service
-        .add_subscription(subscription, req.replaces.as_deref())
+        .add_subscription_with_revival(subscription, req.replaces.as_deref(), req.revive)
         .await
         .map_err(|error| subscription_error_status(&error))?;
 
@@ -245,7 +249,7 @@ async fn unsubscribe_handler(
     push_service
         .remove_subscription(&req.endpoint)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|error| subscription_error_status(&error))?;
 
     // Broadcast subscription change
     moltis_gateway::broadcast::broadcast(
@@ -344,6 +348,7 @@ async fn presence_handler(
     match result {
         PresenceUpdateResult::Recorded => Ok(StatusCode::NO_CONTENT),
         PresenceUpdateResult::UnknownEndpoint => Err(StatusCode::NOT_FOUND),
+        PresenceUpdateResult::Revoked => Err(StatusCode::GONE),
         PresenceUpdateResult::Stale => Err(StatusCode::CONFLICT),
         PresenceUpdateResult::Invalid => Err(StatusCode::BAD_REQUEST),
         PresenceUpdateResult::TooManyClients => Err(StatusCode::TOO_MANY_REQUESTS),
@@ -656,6 +661,7 @@ mod tests {
                 auth: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7_u8; 16]),
             },
             replaces: replaces.map(ToString::to_string),
+            revive: false,
         }
     }
 
@@ -822,6 +828,77 @@ mod tests {
             endpoints.contains(&"https://8.8.8.8/other"),
             "replacing one endpoint must not disturb the others"
         );
+    }
+
+    #[test]
+    fn legacy_subscribe_request_defaults_to_non_reviving() {
+        let request: SubscribeRequest = serde_json::from_value(serde_json::json!({
+            "endpoint": "https://8.8.8.8/a",
+            "keys": {"p256dh": "key", "auth": "secret"}
+        }))
+        .expect("request");
+        assert!(!request.revive);
+    }
+
+    #[tokio::test]
+    async fn revoked_subscription_and_presence_return_gone_until_explicit_revival() {
+        let (state, _dir) = state_with_push().await;
+        let endpoint = "https://8.8.8.8/revoked";
+        subscribe_handler(
+            None,
+            State(state.clone()),
+            ConnectInfo(addr()),
+            HeaderMap::new(),
+            Json(subscribe_request(endpoint, None)),
+        )
+        .await
+        .expect("initial subscribe");
+        unsubscribe_handler(
+            None,
+            State(state.clone()),
+            Json(UnsubscribeRequest {
+                endpoint: endpoint.to_string(),
+            }),
+        )
+        .await
+        .expect("unsubscribe");
+
+        let automatic = subscribe_handler(
+            None,
+            State(state.clone()),
+            ConnectInfo(addr()),
+            HeaderMap::new(),
+            Json(subscribe_request(endpoint, None)),
+        )
+        .await;
+        assert_eq!(automatic.err(), Some(StatusCode::GONE));
+        let presence = presence_handler(
+            None,
+            State(state.clone()),
+            Json(PresenceRequest {
+                endpoint: endpoint.to_string(),
+                client_id: "tab-a".into(),
+                sequence: Some(1),
+                session_key: Some("main".into()),
+                visible: true,
+            }),
+        )
+        .await;
+        assert_eq!(presence.err(), Some(StatusCode::GONE));
+
+        let mut explicit = subscribe_request(endpoint, None);
+        explicit.revive = true;
+        let response = subscribe_handler(
+            None,
+            State(state),
+            ConnectInfo(addr()),
+            HeaderMap::new(),
+            Json(explicit),
+        )
+        .await
+        .expect("explicit revival")
+        .into_response();
+        assert_eq!(response.status(), StatusCode::CREATED);
     }
 
     #[tokio::test]

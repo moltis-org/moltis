@@ -4,7 +4,36 @@
 //! subscribed PWA clients when an agent finishes replying.
 
 #[cfg(feature = "push-notifications")]
-use {crate::runtime::ChatRuntime, std::sync::Arc, tracing::debug};
+use {
+    crate::runtime::ChatRuntime,
+    std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    tracing::debug,
+};
+
+/// Return an order that remains monotonic when a session's history is reset.
+///
+/// Assistant message indices restart at zero after reset, so they cannot serve
+/// as a durable high-water mark in the service worker. Wall-clock microseconds
+/// preserve order across normal restarts, while the atomic increment handles
+/// simultaneous completions and local clock granularity.
+#[cfg(feature = "push-notifications")]
+pub(crate) fn next_push_notification_order() -> u64 {
+    static LAST_ORDER: AtomicU64 = AtomicU64::new(0);
+
+    let wall_order = u64::try_from(chrono::Utc::now().timestamp_micros()).unwrap_or_default();
+    let mut previous = LAST_ORDER.load(Ordering::Acquire);
+    loop {
+        let next = wall_order.max(previous.saturating_add(1));
+        match LAST_ORDER.compare_exchange_weak(previous, next, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => return next,
+            Err(current) => previous = current,
+        }
+    }
+}
 
 /// Build the SPA URL for a push notification click-through.
 ///
@@ -90,6 +119,7 @@ pub(crate) async fn send_chat_push_notification(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
     text: &str,
+    order: u64,
 ) {
     let summary = summarize_for_notification(text, 140);
     if summary.is_empty() {
@@ -100,11 +130,12 @@ pub(crate) async fn send_chat_push_notification(
     let url = push_notification_url(session_key);
 
     match state
-        .send_push_notification(
+        .send_ordered_push_notification(
             push_notification_title(),
             &summary,
             Some(&url),
             Some(session_key),
+            order,
         )
         .await
     {
@@ -213,5 +244,13 @@ mod tests {
     #[test]
     fn zero_character_limit_returns_an_empty_summary() {
         assert_eq!(summarize_for_notification("message", 0), "");
+    }
+
+    #[cfg(feature = "push-notifications")]
+    #[test]
+    fn notification_order_is_monotonic_independent_of_history_indices() {
+        let before_reset = next_push_notification_order();
+        let after_reset = next_push_notification_order();
+        assert!(after_reset > before_reset);
     }
 }

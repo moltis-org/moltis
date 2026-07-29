@@ -15,7 +15,6 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
-let swRegistration: ServiceWorkerRegistration | null = null;
 const INSTALLED_DISPLAY_MODES = ["standalone", "window-controls-overlay", "fullscreen", "minimal-ui"] as const;
 
 // Check if running in standalone mode (installed PWA)
@@ -49,45 +48,14 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
 	}
 
 	try {
-		swRegistration = await navigator.serviceWorker.register("/sw.js", {
+		const registration = await navigator.serviceWorker.register("/sw.js", {
 			scope: "/",
 		});
-		console.log("Service worker registered:", swRegistration.scope);
-
-		// A worker that installed while the page was closed is already waiting.
-		if (swRegistration.waiting && navigator.serviceWorker.controller) {
-			dispatchUpdateAvailable();
-		}
-
-		// Handle updates
-		swRegistration.addEventListener("updatefound", () => {
-			const newWorker = swRegistration?.installing;
-			if (newWorker) {
-				newWorker.addEventListener("statechange", () => {
-					if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-						// New content is available, notify user
-						dispatchUpdateAvailable();
-					}
-				});
-			}
-		});
-
-		return swRegistration;
+		console.log("Service worker registered:", registration.scope);
+		return registration;
 	} catch (error) {
 		console.error("Service worker registration failed:", error);
 		return null;
-	}
-}
-
-// Dispatch custom event when update is available
-function dispatchUpdateAvailable(): void {
-	window.dispatchEvent(new CustomEvent("sw-update-available"));
-}
-
-// Skip waiting and activate new service worker
-export function activateUpdate(): void {
-	if (swRegistration?.waiting) {
-		swRegistration.waiting.postMessage({ type: "SKIP_WAITING" });
 	}
 }
 

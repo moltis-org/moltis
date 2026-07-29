@@ -6,6 +6,12 @@
 
 #[path = "push_client.rs"]
 mod push_client;
+#[path = "push_order.rs"]
+mod push_order;
+#[path = "push_store_io.rs"]
+mod push_store_io;
+#[path = "push_subscriptions.rs"]
+mod push_subscriptions;
 
 use {
     anyhow::{Context, Result},
@@ -66,6 +72,8 @@ pub enum PushSubscriptionValidationError {
     Invalid(String),
     #[error("push subscription limit reached ({MAX_SUBSCRIPTIONS})")]
     LimitReached,
+    #[error("push subscription was revoked")]
+    Revoked,
 }
 
 /// Outcome of an ordered client presence update.
@@ -73,6 +81,7 @@ pub enum PushSubscriptionValidationError {
 pub enum PresenceUpdateResult {
     Recorded,
     UnknownEndpoint,
+    Revoked,
     Stale,
     Invalid,
     TooManyClients,
@@ -130,6 +139,9 @@ pub struct PushPayload {
     /// Session key for deduplication.
     #[serde(rename = "sessionKey", skip_serializing_if = "Option::is_none")]
     pub session_key: Option<String>,
+    /// Monotonic assistant message index within the session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order: Option<u64>,
     /// Unique id for this notification, so the service worker can tell a fresh
     /// notification apart from a redelivery of one it already showed.
     #[serde(rename = "notificationId")]
@@ -152,9 +164,17 @@ impl PushPayload {
             body: body.into(),
             url,
             session_key,
+            order: None,
             notification_id: uuid::Uuid::new_v4().to_string(),
             timestamp: Utc::now(),
         }
+    }
+
+    /// Attach a monotonic per-session delivery order.
+    #[must_use]
+    pub fn with_order(mut self, order: u64) -> Self {
+        self.order = Some(order);
+        self
     }
 
     /// Collapse key for the push service.
@@ -205,12 +225,28 @@ impl Presence {
 }
 
 /// Stored push data (VAPID keys + subscriptions).
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PushStore {
     #[serde(skip_serializing_if = "Option::is_none")]
     vapid: Option<VapidKeys>,
     #[serde(default)]
     subscriptions: Vec<PushSubscription>,
+    #[serde(default)]
+    revoked_endpoints: Vec<RevokedEndpoint>,
+}
+
+impl PushStore {
+    fn is_revoked(&self, endpoint: &str, replaces: Option<&str>) -> bool {
+        self.revoked_endpoints.iter().any(|revoked| {
+            revoked.endpoint == endpoint || replaces == Some(revoked.endpoint.as_str())
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RevokedEndpoint {
+    endpoint: String,
+    revoked_at: DateTime<Utc>,
 }
 
 /// Push notification service.
@@ -224,6 +260,7 @@ pub struct PushService {
     send_timeout: Duration,
     fanout_timeout: Duration,
     fanout_slots: Semaphore,
+    ordered_deliveries: push_order::OrderedDeliveryGates,
 }
 
 fn invalid_subscription(message: impl Into<String>) -> PushSubscriptionValidationError {
@@ -306,6 +343,12 @@ fn is_expired_endpoint_error(error: &anyhow::Error) -> bool {
     )
 }
 
+fn same_subscription_material(current: &PushSubscription, attempted: &PushSubscription) -> bool {
+    current.endpoint == attempted.endpoint
+        && current.p256dh == attempted.p256dh
+        && current.auth == attempted.auth
+}
+
 impl PushService {
     /// Create a new push service, loading or generating VAPID keys.
     pub async fn new(data_dir: &std::path::Path) -> Result<Arc<Self>> {
@@ -320,14 +363,7 @@ impl PushService {
         fanout_timeout: Duration,
     ) -> Result<Arc<Self>> {
         let store_path = data_dir.join("push.json");
-        let store = if store_path.exists() {
-            let content = tokio::fs::read_to_string(&store_path)
-                .await
-                .context("Failed to read push store")?;
-            serde_json::from_str(&content).unwrap_or_default()
-        } else {
-            PushStore::default()
-        };
+        let store = push_store_io::load(&store_path).await?;
 
         let service = Arc::new(Self {
             store: RwLock::new(store),
@@ -337,6 +373,7 @@ impl PushService {
             send_timeout,
             fanout_timeout,
             fanout_slots: Semaphore::new(MAX_CONCURRENT_FANOUTS),
+            ordered_deliveries: push_order::OrderedDeliveryGates::default(),
         });
 
         // Generate VAPID keys if not present.
@@ -370,12 +407,10 @@ impl PushService {
             private_key_pem: private_key_pem.to_string(),
         };
 
-        {
-            let mut store = self.store.write().await;
-            store.vapid = Some(keys);
-        }
-
-        self.save_store().await?;
+        let mut store = self.store.write().await;
+        let mut candidate = store.clone();
+        candidate.vapid = Some(keys);
+        self.commit_store(&mut store, candidate).await?;
         info!("VAPID keys generated and saved");
         Ok(())
     }
@@ -434,67 +469,9 @@ impl PushService {
         Ok(endpoint)
     }
 
-    /// Add a new push subscription.
-    ///
-    /// `replaces` carries the endpoint a browser just rotated away from, so a
-    /// `pushsubscriptionchange` re-registration retires the dead endpoint
-    /// instead of leaving it to accumulate until its next 410.
-    pub async fn add_subscription(
-        &self,
-        sub: PushSubscription,
-        replaces: Option<&str>,
-    ) -> Result<()> {
-        // Validate the replacement only after the new subscription has passed
-        // every check, so malformed rotation requests cannot retire a working
-        // endpoint.
-        Self::validate_subscription(&sub).await?;
-        if let Some(old) = replaces {
-            // The old endpoint is only an opaque deletion key. Requiring its
-            // host to still resolve would make recovery fail for the exact dead
-            // endpoints rotation is meant to retire.
-            validate_endpoint(old)?;
-        }
-
-        {
-            let mut store = self.store.write().await;
-            let mut presence = self.presence.write().await;
-            let retained = store
-                .subscriptions
-                .iter()
-                .filter(|existing| {
-                    existing.endpoint != sub.endpoint
-                        && replaces.is_none_or(|old| existing.endpoint != old)
-                })
-                .count();
-            if retained >= MAX_SUBSCRIPTIONS {
-                return Err(PushSubscriptionValidationError::LimitReached.into());
-            }
-            // Remove any existing subscription with the same endpoint.
-            store.subscriptions.retain(|s| s.endpoint != sub.endpoint);
-            if let Some(old) = replaces {
-                store.subscriptions.retain(|s| s.endpoint != old);
-                presence.remove(old);
-            }
-            store.subscriptions.push(sub);
-        }
-        self.save_store().await?;
-        info!("Added push subscription");
-        Ok(())
-    }
-
-    /// Remove a subscription by endpoint.
-    pub async fn remove_subscription(&self, endpoint: &str) -> Result<()> {
-        {
-            let mut store = self.store.write().await;
-            let mut presence = self.presence.write().await;
-            let before = store.subscriptions.len();
-            store.subscriptions.retain(|s| s.endpoint != endpoint);
-            presence.remove(endpoint);
-            if store.subscriptions.len() < before {
-                info!("Removed push subscription");
-            }
-        }
-        self.save_store().await?;
+    async fn commit_store(&self, store: &mut PushStore, candidate: PushStore) -> Result<()> {
+        push_store_io::save(&self.store_path, &candidate).await?;
+        *store = candidate;
         Ok(())
     }
 
@@ -529,7 +506,16 @@ impl PushService {
             .iter()
             .any(|subscription| subscription.endpoint == endpoint)
         {
-            debug!(endpoint, "ignoring presence for unknown push subscription");
+            let endpoint_id = push_client::endpoint_identifier(endpoint);
+            if store
+                .revoked_endpoints
+                .iter()
+                .any(|revoked| revoked.endpoint == endpoint)
+            {
+                debug!(%endpoint_id, "ignoring presence for revoked push subscription");
+                return PresenceUpdateResult::Revoked;
+            }
+            debug!(%endpoint_id, "ignoring presence for unknown push subscription");
             return PresenceUpdateResult::UnknownEndpoint;
         }
 
@@ -592,6 +578,18 @@ impl PushService {
 
     /// Send to all eligible subscriptions and return aggregate delivery stats.
     pub async fn send_to_all_with_stats(&self, payload: &PushPayload) -> Result<PushSendStats> {
+        let _ordered_delivery = if let (Some(session_key), Some(order)) =
+            (payload.session_key.as_deref(), payload.order)
+        {
+            let Some(guard) = self.ordered_deliveries.start(session_key, order).await? else {
+                debug!(session_key, order, "skipping stale push notification");
+                return Ok(PushSendStats::default());
+            };
+            Some(guard)
+        } else {
+            None
+        };
+
         let (vapid, subscriptions) = {
             let store = self.store.read().await;
             (store.vapid.clone(), store.subscriptions.clone())
@@ -667,13 +665,12 @@ impl PushService {
                 let topic = topic.clone();
                 let payload_json = payload_json.as_slice();
                 async move {
-                    let endpoint = sub.endpoint.clone();
                     let result = tokio::time::timeout(
                         self.send_timeout,
                         self.send_to_subscription(vapid, &sub, payload_json, topic),
                     )
                     .await;
-                    (endpoint, result)
+                    (sub, result)
                 }
             }))
             .buffer_unordered(FANOUT_CONCURRENCY),
@@ -700,42 +697,56 @@ impl PushService {
             timed_out: fanout_timed_out,
             ..PushSendStats::default()
         };
-        let mut expired_endpoints = Vec::new();
-        for (endpoint, result) in results {
+        let mut expired_subscriptions = Vec::new();
+        for (subscription, result) in results {
+            let endpoint_id = push_client::endpoint_identifier(&subscription.endpoint);
             match result {
                 Ok(Ok(())) => stats.sent += 1,
                 Ok(Err(e)) => {
                     // Match the typed error rather than sniffing the message for
                     // "410": the push service's wording is not an API contract.
                     if is_expired_endpoint_error(&e) {
-                        info!(%endpoint, "push endpoint expired, removing subscription");
-                        expired_endpoints.push(endpoint);
+                        info!(%endpoint_id, "push endpoint expired, removing subscription");
+                        expired_subscriptions.push(subscription);
                         stats.expired += 1;
                     } else {
-                        error!(%endpoint, error = %e, "Failed to send push notification");
+                        let error_kind = e
+                            .downcast_ref::<WebPushError>()
+                            .map(WebPushError::short_description)
+                            .unwrap_or("push_error");
+                        error!(%endpoint_id, error_kind, "Failed to send push notification");
                         stats.failed += 1;
                     }
                 },
                 Err(_) => {
-                    warn!(%endpoint, timeout_secs = self.send_timeout.as_secs_f64(), "push notification send timed out");
+                    warn!(%endpoint_id, timeout_secs = self.send_timeout.as_secs_f64(), "push notification send timed out");
                     stats.timed_out += 1;
                 },
             }
         }
 
         // Clean up invalid subscriptions.
-        if !expired_endpoints.is_empty() {
-            {
-                let mut store = self.store.write().await;
-                let mut presence = self.presence.write().await;
-                store
+        if !expired_subscriptions.is_empty() {
+            let mut store = self.store.write().await;
+            let mut candidate = store.clone();
+            let mut removed_endpoints = Vec::new();
+            for expired in &expired_subscriptions {
+                if let Some(index) = candidate
                     .subscriptions
-                    .retain(|s| !expired_endpoints.contains(&s.endpoint));
-                for endpoint in &expired_endpoints {
-                    presence.remove(endpoint);
+                    .iter()
+                    .position(|current| same_subscription_material(current, expired))
+                {
+                    candidate.subscriptions.remove(index);
+                    removed_endpoints.push(expired.endpoint.clone());
                 }
             }
-            self.save_store().await?;
+            if !removed_endpoints.is_empty() {
+                self.commit_store(&mut store, candidate).await?;
+                let mut presence = self.presence.write().await;
+                for endpoint in removed_endpoints {
+                    presence.remove(&endpoint);
+                }
+            }
         }
 
         if stats.failed > 0 || stats.timed_out > 0 || stats.expired > 0 {
@@ -798,15 +809,8 @@ impl PushService {
         let message = builder.build()?;
         self.client.send(message).await?;
 
-        debug!(endpoint = %sub.endpoint, "Sent push notification");
-        Ok(())
-    }
-
-    /// Save the store to disk.
-    async fn save_store(&self) -> Result<()> {
-        let store = self.store.read().await;
-        let content = serde_json::to_string_pretty(&*store)?;
-        tokio::fs::write(&self.store_path, content).await?;
+        let endpoint_id = push_client::endpoint_identifier(&sub.endpoint);
+        debug!(%endpoint_id, "Sent push notification");
         Ok(())
     }
 }
@@ -825,6 +829,26 @@ pub async fn send_push_notification(
         url.map(String::from),
         session_key.map(String::from),
     );
+
+    push_service.send_to_all(&payload).await
+}
+
+/// Send an ordered push notification to all subscribers.
+pub async fn send_ordered_push_notification(
+    push_service: &Arc<PushService>,
+    title: &str,
+    body: &str,
+    url: Option<&str>,
+    session_key: Option<&str>,
+    order: u64,
+) -> Result<usize> {
+    let payload = PushPayload::new(
+        title,
+        body,
+        url.map(String::from),
+        session_key.map(String::from),
+    )
+    .with_order(order);
 
     push_service.send_to_all(&payload).await
 }
@@ -1021,10 +1045,12 @@ mod tests {
             "Body",
             Some("/chats/main".into()),
             Some("main".into()),
-        );
+        )
+        .with_order(42);
         let value = serde_json::to_value(&payload).expect("serialize");
         assert_eq!(value["title"], "Title");
         assert_eq!(value["sessionKey"], "main");
+        assert_eq!(value["order"], 42);
         assert!(value["notificationId"].is_string());
         assert!(value["timestamp"].is_string());
     }
@@ -1034,6 +1060,8 @@ mod tests {
         let a = PushPayload::new("t", "b", None, None);
         let b = PushPayload::new("t", "b", None, None);
         assert_ne!(a.notification_id, b.notification_id);
+        assert_eq!(a.order, None);
+        assert_eq!(b.with_order(9).order, Some(9));
     }
 
     #[tokio::test]
@@ -1316,21 +1344,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subscribing_twice_with_the_same_endpoint_does_not_duplicate() {
-        let (service, _dir) = service().await;
-        let endpoint = "https://8.8.8.8/abc";
-        service
-            .add_subscription(subscription(endpoint), None)
-            .await
-            .expect("first");
-        service
-            .add_subscription(subscription(endpoint), None)
-            .await
-            .expect("second");
-        assert_eq!(service.subscription_count().await, 1);
-    }
-
-    #[tokio::test]
     async fn send_skips_devices_watching_the_session() {
         let (service, _dir) = service().await;
         let watching = "https://8.8.8.8/watching";
@@ -1386,83 +1399,5 @@ mod tests {
             "fanout exceeded its concurrency bound"
         );
         assert_eq!(client.active.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn malformed_retained_subscription_is_failed_without_dispatch() {
-        let (service, client, _dir) = mock_service(Duration::from_millis(30), Duration::ZERO).await;
-        let mut malformed = subscription("https://8.8.8.8/malformed");
-        malformed.endpoint = "not a URI".to_string();
-        service.store.write().await.subscriptions.push(malformed);
-
-        let stats = service
-            .send_to_all_with_stats(&PushPayload::new("title", "body", None, None))
-            .await
-            .expect("fanout");
-        assert_eq!(stats.failed, 1);
-        assert_eq!(stats.sent, 0);
-        assert_eq!(client.sent.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn removing_a_subscription_drops_its_presence() {
-        let (service, _dir) = service().await;
-        let endpoint = "https://8.8.8.8/abc";
-        service
-            .add_subscription(subscription(endpoint), None)
-            .await
-            .expect("add");
-        service
-            .record_presence(
-                endpoint,
-                "client-a",
-                Some(1),
-                Some("main".to_string()),
-                true,
-            )
-            .await;
-
-        service.remove_subscription(endpoint).await.expect("remove");
-
-        assert_eq!(service.subscription_count().await, 0);
-        assert!(service.presence.read().await.is_empty());
-    }
-
-    /// Subscriptions are dropped only on a typed `WebPushError`, never on the
-    /// text of an error message.
-    ///
-    /// `web_push` does not export `ErrorInfo`, so the expired variants cannot be
-    /// constructed here and only the negative cases are covered. Those are the
-    /// ones that matter: the previous implementation matched on
-    /// `e.to_string().contains("410")`, which threw away working subscriptions
-    /// whenever an unrelated error happened to mention that number.
-    #[test]
-    fn transient_errors_never_expire_a_subscription() {
-        assert!(!is_expired_endpoint_error(&anyhow::Error::from(
-            WebPushError::Unspecified
-        )));
-        assert!(!is_expired_endpoint_error(&anyhow::Error::from(
-            WebPushError::InvalidUri
-        )));
-        assert!(
-            !is_expired_endpoint_error(&anyhow::anyhow!("request failed with status 410")),
-            "an untyped error must not be read as an expired endpoint"
-        );
-        assert!(!is_expired_endpoint_error(&anyhow::anyhow!("Gone")));
-    }
-
-    #[tokio::test]
-    async fn vapid_keys_persist_across_restarts() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let first = PushService::new(dir.path()).await.expect("first");
-        let key = first.vapid_public_key().await.expect("key");
-        drop(first);
-
-        let second = PushService::new(dir.path()).await.expect("second");
-        assert_eq!(
-            second.vapid_public_key().await.as_deref(),
-            Some(key.as_str()),
-            "rotating VAPID keys on restart would invalidate every subscription"
-        );
     }
 }

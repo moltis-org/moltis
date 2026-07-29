@@ -150,6 +150,20 @@ pub trait ChatRuntime: Send + Sync {
         session_key: Option<&str>,
     ) -> crate::error::Result<usize>;
 
+    /// Send an ordered notification. External runtimes that do not implement
+    /// ordering retain their existing delivery behavior by default.
+    async fn send_ordered_push_notification(
+        &self,
+        title: &str,
+        body: &str,
+        url: Option<&str>,
+        session_key: Option<&str>,
+        _order: u64,
+    ) -> crate::error::Result<usize> {
+        self.send_push_notification(title, body, url, session_key)
+            .await
+    }
+
     // ── Local LLM ────────────────────────────────────────────────────────
 
     /// Ensure a local model is cached/downloaded. No-op if local-llm is disabled.

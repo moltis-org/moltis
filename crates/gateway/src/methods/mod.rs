@@ -6,6 +6,7 @@ mod pairing;
 pub(crate) mod phone;
 mod services;
 mod subscribe;
+#[cfg(feature = "voice")]
 mod voice;
 
 pub(crate) use dispatch::load_disabled_hooks;

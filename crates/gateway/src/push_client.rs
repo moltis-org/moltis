@@ -85,6 +85,22 @@ fn parse_response(
     }
 }
 
+#[cfg(test)]
+pub(super) fn expired_endpoint_error() -> WebPushError {
+    match parse_response(StatusCode::GONE, &HeaderMap::new(), Vec::new()) {
+        Err(error) => error,
+        Ok(()) => WebPushError::Unspecified,
+    }
+}
+
+pub(super) fn endpoint_identifier(endpoint: &str) -> String {
+    use {base64::Engine, sha2::Digest};
+
+    let digest = sha2::Sha256::digest(endpoint.as_bytes());
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
+    format!("endpoint#{}", &encoded[..10])
+}
+
 #[async_trait]
 impl WebPushClient for PinnedWebPushClient {
     async fn send(&self, message: WebPushMessage) -> Result<(), WebPushError> {
@@ -176,5 +192,30 @@ mod tests {
                 ..
             }) if duration == Duration::from_secs(12)
         ));
+    }
+
+    #[test]
+    fn endpoint_identifier_omits_capability_path_and_token() {
+        let identifier = endpoint_identifier(
+            "https://push.example.test/private/capability?token=super-secret-token",
+        );
+        assert!(identifier.starts_with("endpoint#"));
+        assert_eq!(identifier.len(), 19);
+        assert!(!identifier.contains("push.example.test"));
+        assert!(!identifier.contains("private"));
+        assert!(!identifier.contains("super-secret-token"));
+        assert!(!identifier.contains("token="));
+        assert_eq!(
+            identifier,
+            endpoint_identifier(
+                "https://push.example.test/private/capability?token=super-secret-token"
+            )
+        );
+        assert_ne!(
+            identifier,
+            endpoint_identifier(
+                "https://push.example.test/private/capability?token=different-token"
+            )
+        );
     }
 }

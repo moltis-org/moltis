@@ -16,7 +16,7 @@ include_dir     = { optional = true, workspace = true }
 moltis-channels = { workspace = true }
 moltis-config   = { workspace = true }
 moltis-cron     = { workspace = true }
-moltis-gateway  = { features = ["voice"], workspace = true }
+moltis-gateway  = { workspace = true }
 moltis-httpd    = { workspace = true }
 moltis-media    = { workspace = true }
 moltis-skills   = { workspace = true }
@@ -54,7 +54,7 @@ tailscale          = ["moltis-httpd/tailscale"]
 tls                = ["moltis-httpd/tls"]
 trusted-network    = ["moltis-httpd/trusted-network"]
 vault              = ["moltis-httpd/vault"]
-voice              = []
+voice              = ["moltis-gateway/voice"]
 web-ui             = ["moltis-httpd/web-ui"]
 
 [lints]

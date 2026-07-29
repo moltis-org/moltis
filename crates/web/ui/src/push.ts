@@ -16,11 +16,14 @@ const STATE_CACHE = "moltis-state";
 const PUSH_ENABLED_KEY = "/__moltis__/push-enabled";
 const PUSH_DISABLED_KEY = "/__moltis__/push-disabled";
 const PUSH_ROTATION_PENDING_KEY = "/__moltis__/push-rotation-pending";
+const PUSH_INTENT_GENERATION_KEY = "/__moltis__/push-intent-generation";
 const PUSH_INTENT_KEY = "moltis-push-enabled";
 const PUSH_STATE_LOCK = "moltis-push-state";
+let intentGeneration = 0;
 
 interface RotationPending {
 	replaces?: string;
+	revive?: boolean;
 }
 
 async function getStateCache(): Promise<Cache> {
@@ -62,21 +65,43 @@ async function setPushEnabledIntent(enabled: boolean): Promise<void> {
 	}
 }
 
-async function readPushEnabledIntent(): Promise<boolean | null> {
+async function readIntentGeneration(): Promise<number> {
 	try {
-		const stored = localStorage.getItem(PUSH_INTENT_KEY);
-		if (stored === "1") return true;
-		if (stored === "0") return false;
+		const response = await (await getStateCache()).match(PUSH_INTENT_GENERATION_KEY);
+		if (!response) return 0;
+		const generation = Number.parseInt(await response.text(), 10);
+		return Number.isSafeInteger(generation) && generation >= 0 ? generation : 0;
 	} catch {
-		// Fall through to the worker-visible cache.
+		return 0;
 	}
+}
+
+async function advanceIntentGeneration(): Promise<number> {
+	const generation = (await readIntentGeneration()) + 1;
+	await (await getStateCache()).put(PUSH_INTENT_GENERATION_KEY, new Response(String(generation)));
+	intentGeneration = generation;
+	return generation;
+}
+
+async function readPushEnabledIntent(): Promise<boolean | null> {
+	let cacheEnabled = false;
 	try {
 		const cache = await getStateCache();
+		// The worker cannot update localStorage. Its durable revocation marker
+		// must therefore win over a stale page-side enabled value.
 		if (await cache.match(PUSH_DISABLED_KEY)) return false;
-		return (await cache.match(PUSH_ENABLED_KEY)) ? true : null;
+		cacheEnabled = Boolean(await cache.match(PUSH_ENABLED_KEY));
 	} catch {
-		return null;
+		// Fall through to localStorage when Cache Storage is unavailable.
 	}
+	try {
+		const stored = localStorage.getItem(PUSH_INTENT_KEY);
+		if (stored === "0") return false;
+		if (stored === "1") return true;
+	} catch {
+		// The worker-visible cache remains authoritative.
+	}
+	return cacheEnabled ? true : null;
 }
 
 async function readRotationPending(): Promise<RotationPending | null> {
@@ -95,12 +120,20 @@ async function readRotationPending(): Promise<RotationPending | null> {
 		if (typeof value === "object" && value !== null) {
 			const marker = value as Record<string, unknown>;
 			const replaces = marker.replaces ?? marker.old_endpoint ?? marker.endpoint;
-			return typeof replaces === "string" ? { replaces } : {};
+			return {
+				...(typeof replaces === "string" ? { replaces } : {}),
+				...(marker.revive === true ? { revive: true } : {}),
+			};
 		}
 	} catch {
 		// A plain response body is also accepted as the replaced endpoint.
 	}
 	return { replaces: text };
+}
+
+async function setRotationPending(replaces?: string, revive = false): Promise<void> {
+	const cache = await getStateCache();
+	await cache.put(PUSH_ROTATION_PENDING_KEY, new Response(JSON.stringify({ replaces, revive })));
 }
 
 async function consumeRotationPending(): Promise<void> {
@@ -213,8 +246,15 @@ function encodeKey(buffer: ArrayBuffer | null): string | null {
 	return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+class PushRegistrationError extends Error {
+	constructor(readonly status: number) {
+		super(`Server rejected subscription (${status})`);
+		this.name = "PushRegistrationError";
+	}
+}
+
 /** Post a subscription to the server, optionally replacing a rotated endpoint. */
-async function registerWithServer(subscription: PushSubscription, replaces?: string): Promise<void> {
+async function registerWithServer(subscription: PushSubscription, replaces?: string, revive = false): Promise<void> {
 	const p256dh = encodeKey(subscription.getKey("p256dh"));
 	const auth = encodeKey(subscription.getKey("auth"));
 	if (!(p256dh && auth)) {
@@ -228,11 +268,37 @@ async function registerWithServer(subscription: PushSubscription, replaces?: str
 			endpoint: subscription.endpoint,
 			keys: { p256dh, auth },
 			replaces,
+			revive,
 		}),
 	});
 
 	if (!response.ok) {
-		throw new Error("Server rejected subscription");
+		throw new PushRegistrationError(response.status);
+	}
+}
+
+async function disableRevokedSubscription(subscription: PushSubscription | null): Promise<void> {
+	await setPushEnabledIntent(false);
+	queuedPresence = null;
+	lastPresenceState = "";
+	currentSubscription = null;
+	await subscription?.unsubscribe().catch(() => undefined);
+}
+
+async function registerAutomatically(
+	subscription: PushSubscription,
+	replaces?: string,
+	revive = false,
+): Promise<boolean> {
+	try {
+		await registerWithServer(subscription, replaces, revive);
+		return true;
+	} catch (error) {
+		if (error instanceof PushRegistrationError && error.status === 410) {
+			await disableRevokedSubscription(subscription);
+			return false;
+		}
+		throw error;
 	}
 }
 
@@ -266,10 +332,12 @@ async function subscribeToPushInner(): Promise<PushResult> {
 			applicationServerKey: urlBase64ToUint8Array(key).buffer as ArrayBuffer,
 		});
 
-		await registerWithServer(subscription);
-
+		await advanceIntentGeneration();
 		currentSubscription = subscription;
 		await setPushEnabledIntent(true);
+		const pending = await readRotationPending();
+		await setRotationPending(pending?.replaces, true);
+		await registerWithServer(subscription, pending?.replaces, true);
 		await consumeRotationPending();
 		reportPresence();
 		return { success: true };
@@ -290,10 +358,11 @@ async function unsubscribeFromPushInner(): Promise<PushResult> {
 	try {
 		// An explicit disable must prevent startup recovery even if the local
 		// subscription has already disappeared.
-		await setPushEnabledIntent(false);
+		await advanceIntentGeneration();
 	} catch (e) {
-		console.warn("Failed to clear push notification preference:", e);
+		console.warn("Failed to advance push notification intent generation:", e);
 	}
+	await setPushEnabledIntent(false);
 
 	const subscription = await getCurrentSubscription();
 	if (!subscription) {
@@ -343,22 +412,25 @@ async function reconcileSubscription(subscription: PushSubscription, pending: Ro
 	const currentKey = encodeKey(subscription.options?.applicationServerKey ?? null);
 	if (currentKey && currentKey !== key) {
 		const staleEndpoint = subscription.endpoint;
+		const replaces = pending?.replaces ?? staleEndpoint;
 		await subscription.unsubscribe().catch(() => undefined);
 		const registration = await navigator.serviceWorker.ready;
 		const fresh = await registration.pushManager.subscribe({
 			userVisibleOnly: true,
 			applicationServerKey: urlBase64ToUint8Array(key).buffer as ArrayBuffer,
 		});
-		await registerWithServer(fresh, pending?.replaces ?? staleEndpoint);
 		currentSubscription = fresh;
 		await setPushEnabledIntent(true);
+		const revive = pending?.revive === true;
+		await setRotationPending(replaces, revive);
+		if (!(await registerAutomatically(fresh, replaces, revive))) return;
 		await consumeRotationPending();
 		return;
 	}
 
 	await setPushEnabledIntent(true);
 	if (pending) {
-		await registerWithServer(subscription, pending.replaces);
+		if (!(await registerAutomatically(subscription, pending.replaces, pending.revive === true))) return;
 		await consumeRotationPending();
 	}
 }
@@ -373,7 +445,12 @@ async function reconcileSubscription(subscription: PushSubscription, pending: Ro
  */
 async function initPushStateInner(): Promise<void> {
 	try {
-		const [enabledIntent, pending] = await Promise.all([readPushEnabledIntent(), readRotationPending()]);
+		const [enabledIntent, pending, generation] = await Promise.all([
+			readPushEnabledIntent(),
+			readRotationPending(),
+			readIntentGeneration(),
+		]);
+		intentGeneration = generation;
 		let subscription = await getCurrentSubscription();
 		if (enabledIntent === false) {
 			if (subscription) {
@@ -395,10 +472,11 @@ async function initPushStateInner(): Promise<void> {
 				userVisibleOnly: true,
 				applicationServerKey: urlBase64ToUint8Array(key).buffer as ArrayBuffer,
 			});
-			await registerWithServer(subscription, pending?.replaces);
 			currentSubscription = subscription;
 			await setPushEnabledIntent(true);
-			if (pending) await consumeRotationPending();
+			await setRotationPending(pending?.replaces, pending?.revive === true);
+			if (!(await registerAutomatically(subscription, pending?.replaces, pending?.revive === true))) return;
+			await consumeRotationPending();
 			return;
 		}
 
@@ -469,6 +547,7 @@ async function removeSubscriptionInner(endpoint: string): Promise<PushResult> {
 				// Ignore errors - subscription may already be gone
 			}
 			currentSubscription = null;
+			await advanceIntentGeneration();
 			await setPushEnabledIntent(false);
 		}
 
@@ -537,6 +616,7 @@ interface PresencePayload {
 	visible: boolean;
 	client_id: string;
 	sequence: number;
+	intent_generation: number;
 }
 
 const PRESENCE_CLIENT_KEY = "moltis-presence-client-id";
@@ -581,6 +661,7 @@ function presencePayload(): PresencePayload | null {
 		visible,
 		client_id: presenceClientId,
 		sequence: 0,
+		intent_generation: intentGeneration,
 	};
 }
 
@@ -589,7 +670,32 @@ function presenceState(payload: PresencePayload): string {
 		endpoint: payload.endpoint,
 		session_key: payload.session_key,
 		visible: payload.visible,
+		intent_generation: payload.intent_generation,
 	});
+}
+
+async function matchingBrowserSubscription(payload: PresencePayload): Promise<PushSubscription | null> {
+	const registration = await navigator.serviceWorker.ready;
+	const [generation, subscription] = await Promise.all([
+		readIntentGeneration(),
+		registration.pushManager.getSubscription(),
+	]);
+	if (generation === payload.intent_generation && subscription?.endpoint === payload.endpoint) return subscription;
+
+	// Another tab changed the shared browser subscription while this request was
+	// in flight. Adopt that state before ignoring the stale response so future
+	// presence heartbeats use the live endpoint and generation without a reload.
+	intentGeneration = generation;
+	currentSubscription = subscription;
+	if (subscription) reportPresence(true);
+	return null;
+}
+
+async function disableRevokedPresence(payload: PresencePayload): Promise<void> {
+	const subscription = await matchingBrowserSubscription(payload);
+	if (!subscription) return;
+
+	await disableRevokedSubscription(subscription);
 }
 
 async function sendPresence(payload: PresencePayload): Promise<void> {
@@ -603,7 +709,11 @@ async function sendPresence(payload: PresencePayload): Promise<void> {
 		if (response.ok) return;
 
 		if (payload.sequence === presenceSequence) lastPresenceState = "";
-		if (response.status === 404) void recoverUnknownSubscription();
+		if (response.status === 410) {
+			void runPushStateOperation(() => disableRevokedPresence(payload));
+		} else if (response.status === 404) {
+			void recoverUnknownSubscription(payload);
+		}
 	} catch {
 		// Presence is an optimisation; retry the current state on the next event.
 		if (payload.sequence === presenceSequence) lastPresenceState = "";
@@ -655,7 +765,7 @@ let lastRecoveryAt = 0;
 const RECOVERY_COOLDOWN_MS = 60_000;
 
 /**
- * Re-register a subscription the server has forgotten.
+ * Replace a subscription the server has forgotten.
  *
  * Reached when presence reports 404. Left alone, the browser would keep a
  * subscription that receives nothing while the server has no record to push to.
@@ -664,16 +774,34 @@ const RECOVERY_COOLDOWN_MS = 60_000;
  * after accepting the registration would otherwise drive an endless
  * register/report loop. The cooldown bounds that to one attempt a minute.
  */
-async function recoverUnknownSubscription(): Promise<void> {
+async function recoverUnknownSubscription(payload: PresencePayload): Promise<void> {
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: recovery validates intent, generation, endpoint, key, and registration atomically.
 	await runPushStateOperation(async () => {
-		if (recovering || !currentSubscription) return;
+		if (recovering) return;
 		if ((await readPushEnabledIntent()) === false) return;
 		if (Date.now() - lastRecoveryAt < RECOVERY_COOLDOWN_MS) return;
+		const subscription = await matchingBrowserSubscription(payload);
+		if (!subscription) return;
+		const registration = await navigator.serviceWorker.ready;
 
 		recovering = true;
 		lastRecoveryAt = Date.now();
 		try {
-			await registerWithServer(currentSubscription);
+			const key = await fetchVapidKey();
+			if (!key) return;
+			const pending = await readRotationPending();
+			const replaces = pending?.replaces ?? subscription.endpoint;
+			const revive = pending?.revive === true;
+			await subscription.unsubscribe().catch(() => undefined);
+			const fresh = await registration.pushManager.subscribe({
+				userVisibleOnly: true,
+				applicationServerKey: urlBase64ToUint8Array(key).buffer as ArrayBuffer,
+			});
+			currentSubscription = fresh;
+			await setPushEnabledIntent(true);
+			await setRotationPending(replaces, revive);
+			if (!(await registerAutomatically(fresh, replaces, revive))) return;
+			await consumeRotationPending();
 			reportPresence(true);
 		} catch (e) {
 			console.warn("Failed to re-register push subscription:", e);
