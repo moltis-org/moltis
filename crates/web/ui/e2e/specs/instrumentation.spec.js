@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, watchPageErrors, expectRpcOk } = require("../helpers");
+const { navigateAndWait, watchPageErrors, expectRpcOk, waitForWsConnected } = require("../helpers");
 
 test.describe("Instrumentation settings", () => {
 	test("page loads with the section heading", async ({ page }) => {
@@ -47,6 +47,7 @@ test.describe("Instrumentation settings", () => {
 
 	test("status RPC responds", async ({ page }) => {
 		await navigateAndWait(page, "/settings/instrumentation");
+		await waitForWsConnected(page);
 		await expectRpcOk(page, "instrumentation.status", {});
 	});
 
@@ -59,6 +60,7 @@ test.describe("Instrumentation settings", () => {
 
 	test("status RPC never returns the secret key", async ({ page }) => {
 		await navigateAndWait(page, "/settings/instrumentation");
+		await waitForWsConnected(page);
 		const res = await expectRpcOk(page, "instrumentation.status", {});
 
 		// The UI only ever needs to know whether a key is configured. Returning

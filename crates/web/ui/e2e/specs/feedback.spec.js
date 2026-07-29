@@ -1,9 +1,10 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, watchPageErrors, expectRpcOk, sendRpcFromPage } = require("../helpers");
+const { navigateAndWait, watchPageErrors, expectRpcOk, sendRpcFromPage, waitForWsConnected } = require("../helpers");
 
 test.describe("Reaction feedback", () => {
 	test("status RPC responds", async ({ page }) => {
 		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
 
 		const response = await expectRpcOk(page, "feedback.status", {});
 		expect(typeof response.payload.enabled).toBe("boolean");
@@ -12,6 +13,7 @@ test.describe("Reaction feedback", () => {
 
 	test("reports feedback as unavailable while instrumentation is off", async ({ page }) => {
 		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
 
 		// A thumb that goes nowhere is worse than no thumb, so the control is
 		// gated on something actually collecting the score.
@@ -21,6 +23,7 @@ test.describe("Reaction feedback", () => {
 
 	test("submitting without a session key is rejected", async ({ page }) => {
 		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
 
 		const response = await sendRpcFromPage(page, "feedback.submit", {
 			messageId: "run-1",
@@ -32,6 +35,7 @@ test.describe("Reaction feedback", () => {
 
 	test("submitting an unknown signal is rejected", async ({ page }) => {
 		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
 
 		// The wire format must not be able to smuggle an arbitrary value into
 		// the score.
@@ -46,6 +50,7 @@ test.describe("Reaction feedback", () => {
 
 	test("a thumb on an unlinked message reports why rather than failing silently", async ({ page }) => {
 		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
 
 		const response = await sendRpcFromPage(page, "feedback.submit", {
 			sessionKey: "agent:main:main",
