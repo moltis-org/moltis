@@ -139,14 +139,14 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             "_session_key": &session_key,
             // Defer reply-target registration until chat.send() actually
             // starts executing this message (after semaphore acquire).
-            "_channel_reply_target": &reply_to,
+            moltis_chat::params::CHANNEL_REPLY_TARGET: &reply_to,
         });
 
         // Carry this message's acknowledgment identity into the run so the
         // reaction follows the message itself — through queueing and replay —
         // rather than whatever else shares the session.
         if let Some(ref key) = ack_key {
-            params[moltis_chat::channel_acks::ACK_KEYS_PARAM] = serde_json::json!([key]);
+            params[moltis_chat::params::ACK_KEYS] = serde_json::json!([key]);
         }
 
         // Attach thread context if available.

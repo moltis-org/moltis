@@ -333,7 +333,7 @@ impl LiveChatService {
                 if is_active {
                     match serde_json::to_value(&target) {
                         Ok(target_val) => {
-                            params["_channel_reply_target"] = target_val;
+                            params[crate::params::CHANNEL_REPLY_TARGET] = target_val;
                         },
                         Err(e) => {
                             warn!(
@@ -346,23 +346,22 @@ impl LiveChatService {
                 }
             }
 
-            let deferred_channel_target =
-                params
-                    .get("_channel_reply_target")
-                    .cloned()
-                    .and_then(|value| {
-                        match serde_json::from_value::<moltis_channels::ChannelReplyTarget>(value) {
-                            Ok(target) => Some(target),
-                            Err(e) => {
-                                warn!(
-                                    session = %session_key,
-                                    error = %e,
-                                    "ignoring invalid _channel_reply_target for /sh"
-                                );
-                                None
-                            },
-                        }
-                    });
+            let deferred_channel_target = params
+                .get(crate::params::CHANNEL_REPLY_TARGET)
+                .cloned()
+                .and_then(|value| {
+                    match serde_json::from_value::<moltis_channels::ChannelReplyTarget>(value) {
+                        Ok(target) => Some(target),
+                        Err(e) => {
+                            warn!(
+                                session = %session_key,
+                                error = %e,
+                                "ignoring invalid _channel_reply_target for /sh"
+                            );
+                            None
+                        },
+                    }
+                });
 
             info!(
                 run_id = %run_id,
@@ -678,7 +677,7 @@ impl LiveChatService {
             if is_active {
                 match serde_json::to_value(&target) {
                     Ok(target_val) => {
-                        params["_channel_reply_target"] = target_val;
+                        params[crate::params::CHANNEL_REPLY_TARGET] = target_val;
                     },
                     Err(e) => {
                         warn!(
@@ -691,23 +690,22 @@ impl LiveChatService {
             }
         }
 
-        let deferred_channel_target =
-            params
-                .get("_channel_reply_target")
-                .cloned()
-                .and_then(|value| {
-                    match serde_json::from_value::<moltis_channels::ChannelReplyTarget>(value) {
-                        Ok(target) => Some(target),
-                        Err(e) => {
-                            warn!(
-                                session = %session_key,
-                                error = %e,
-                                "ignoring invalid _channel_reply_target"
-                            );
-                            None
-                        },
-                    }
-                });
+        let deferred_channel_target = params
+            .get(crate::params::CHANNEL_REPLY_TARGET)
+            .cloned()
+            .and_then(|value| {
+                match serde_json::from_value::<moltis_channels::ChannelReplyTarget>(value) {
+                    Ok(target) => Some(target),
+                    Err(e) => {
+                        warn!(
+                            session = %session_key,
+                            error = %e,
+                            "ignoring invalid _channel_reply_target"
+                        );
+                        None
+                    },
+                }
+            });
 
         // Dispatch the `MessageReceived` hook before the turn starts. The
         // hook can:

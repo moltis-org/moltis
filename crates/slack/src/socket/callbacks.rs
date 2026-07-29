@@ -203,6 +203,7 @@ pub(super) async fn interaction_events_callback(
                 DedupKind::Interaction,
                 &trigger_id,
                 CallbackJob::ResponseUrl {
+                    account_id: account_id.to_string(),
                     response_url,
                     text: "Access denied.".to_string(),
                 },

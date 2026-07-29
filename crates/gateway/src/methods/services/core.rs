@@ -7,16 +7,15 @@ use super::*;
 /// The `_`-prefixed params are internal plumbing, and some of them are set
 /// legitimately by the web UI (`_session_key`, `_audio_filename`,
 /// `_document_files`), so this is a targeted removal rather than a blanket
-/// strip: `_ack_keys` names a *channel message's* acknowledgment-reaction slot
-/// and is only ever minted by the channel dispatch path (which calls the chat
-/// service directly, not through this registry). Letting a WebSocket client
-/// send it would let one authenticated user drive the ✅/❌ reaction on an
-/// unrelated inbound Slack message.
+/// strip. See [`moltis_chat::params::SERVER_ONLY`] for which keys are dropped
+/// and why; the server re-derives each of them from state it trusts.
+///
+/// Only the channel dispatch path sets those keys, and it calls the chat service
+/// directly rather than through this registry, so stripping here cannot affect
+/// it.
 async fn prepare_chat_send_params(ctx: &MethodContext) -> serde_json::Value {
     let mut params = ctx.params.clone();
-    if let Some(object) = params.as_object_mut() {
-        object.remove(moltis_chat::channel_acks::ACK_KEYS_PARAM);
-    }
+    moltis_chat::params::strip_server_only(&mut params);
     params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
 
     // Forward client Accept-Language, public remote IP, and timezone.
@@ -1343,20 +1342,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn client_supplied_ack_keys_are_stripped() {
+    async fn client_supplied_server_only_params_are_stripped() {
         // A WebSocket client must not be able to claim the acknowledgment slot
-        // of an inbound channel message it has nothing to do with.
+        // of an inbound channel message, nor name the chat a reply is sent to.
+        // Both are re-derived server-side from state the server trusts.
         let params = prepare_chat_send_params(&context(serde_json::json!({
             "text": "hi",
-            moltis_chat::channel_acks::ACK_KEYS_PARAM: ["slack-acct:C123:1700000000.1"],
+            moltis_chat::params::ACK_KEYS: ["slack-acct:C123:1700000000.1"],
+            moltis_chat::params::CHANNEL_REPLY_TARGET: {
+                "channel_type": "slack",
+                "account_id": "victim-workspace",
+                "chat_id": "C999",
+            },
         })))
         .await;
 
-        assert!(
-            params
-                .get(moltis_chat::channel_acks::ACK_KEYS_PARAM)
-                .is_none()
-        );
+        for key in moltis_chat::params::SERVER_ONLY {
+            assert!(params.get(*key).is_none(), "{key} was not stripped");
+        }
         assert_eq!(params["text"], "hi");
     }
 

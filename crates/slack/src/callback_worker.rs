@@ -1,7 +1,10 @@
 use std::{future::Future, sync::Arc};
 
 use {
-    moltis_channels::plugin::{ChannelEventSink, ChannelReplyTarget},
+    moltis_channels::{
+        fair_queue::{Admission, FairQueue, FairQueueConfig, FairQueueJob},
+        plugin::{ChannelEventSink, ChannelReplyTarget},
+    },
     slack_morphism::prelude::SlackPushEventCallback,
     tracing::warn,
 };
@@ -11,7 +14,12 @@ use crate::{
     state::{AccountStateMap, DedupKind, EventDedup},
 };
 
+/// Total Socket Mode callbacks that may be queued or in flight, across every
+/// account.
 const CALLBACK_QUEUE_CAPACITY: usize = 256;
+/// Callbacks processed concurrently, and so the number of accounts served at
+/// once. Matches the HTTP callback path so both behave the same under load.
+const CALLBACK_WORKER_LIMIT: usize = 16;
 
 pub(crate) enum CallbackJob {
     Push {
@@ -33,14 +41,35 @@ pub(crate) enum CallbackJob {
         response_url: Option<String>,
     },
     ResponseUrl {
+        account_id: String,
         response_url: String,
         text: String,
     },
 }
 
+impl FairQueueJob for CallbackJob {
+    fn account_id(&self) -> &str {
+        match self {
+            Self::Push { account_id, .. } | Self::ResponseUrl { account_id, .. } => account_id,
+            // A command or interaction is addressed to the account its reply
+            // target names.
+            Self::Command { reply_to, .. } | Self::Interaction { reply_to, .. } => {
+                &reply_to.account_id
+            },
+        }
+    }
+}
+
+/// Bounded, account-fair queue for Socket Mode callbacks.
+///
+/// Slack expects the socket callback to be acknowledged in seconds, so work is
+/// admitted synchronously and processed afterwards. Accounts are served
+/// round-robin with a capped share each, so one busy workspace cannot
+/// head-of-line block the others — the same scheduler the HTTP callback path
+/// uses.
 #[derive(Clone)]
 pub(crate) struct CallbackQueue {
-    sender: tokio::sync::mpsc::Sender<CallbackJob>,
+    queue: Arc<FairQueue<CallbackJob>>,
     cancel: tokio_util::sync::CancellationToken,
 }
 
@@ -69,9 +98,29 @@ impl std::error::Error for CallbackAdmissionError {}
 
 impl CallbackQueue {
     pub(crate) fn start(cancel: tokio_util::sync::CancellationToken) -> Self {
-        let (sender, receiver) = bounded_channel(CALLBACK_QUEUE_CAPACITY);
-        tokio::spawn(run_worker(receiver, cancel.clone()));
-        Self { sender, cancel }
+        Self::start_with(
+            FairQueueConfig::new(CALLBACK_QUEUE_CAPACITY, CALLBACK_WORKER_LIMIT),
+            cancel,
+            process,
+        )
+    }
+
+    /// Start with an explicit config and processor, so tests can use a small
+    /// capacity and a processor that does not reach the network.
+    fn start_with<F, Fut>(
+        config: FairQueueConfig,
+        cancel: tokio_util::sync::CancellationToken,
+        process: F,
+    ) -> Self
+    where
+        F: Fn(CallbackJob) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let queue = FairQueue::start(config, &cancel, process);
+        Self {
+            queue: Arc::new(queue),
+            cancel,
+        }
     }
 
     /// Admit work immediately, allowing the Socket Mode callback to ACK in time.
@@ -79,18 +128,17 @@ impl CallbackQueue {
         if self.cancel.is_cancelled() {
             return Err(CallbackAdmissionError::Canceled);
         }
-        match self.sender.try_send(job) {
-            Ok(()) => Ok(()),
-            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                Err(CallbackAdmissionError::Full)
-            },
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                Err(CallbackAdmissionError::Canceled)
-            },
+        match self.queue.admit(job) {
+            Admission::Admitted => Ok(()),
+            Admission::Rejected => Err(CallbackAdmissionError::Full),
         }
     }
 
     /// Atomically check deduplication and commit it only after queue admission.
+    ///
+    /// Committing only on success matters: a callback refused for capacity gets
+    /// no acknowledgement, so Slack redelivers it, and that retry must be
+    /// admitted rather than dropped as an already-seen duplicate.
     pub(crate) fn try_send_deduplicated(
         &self,
         dedup: &mut EventDedup,
@@ -106,56 +154,11 @@ impl CallbackQueue {
         debug_assert!(inserted, "dedup changed while its lock was held");
         Ok(CallbackAdmission::Queued)
     }
-}
 
-fn bounded_channel<T>(
-    capacity: usize,
-) -> (tokio::sync::mpsc::Sender<T>, tokio::sync::mpsc::Receiver<T>) {
-    tokio::sync::mpsc::channel(capacity)
-}
-
-async fn run_worker(
-    mut receiver: tokio::sync::mpsc::Receiver<CallbackJob>,
-    cancel: tokio_util::sync::CancellationToken,
-) {
-    loop {
-        let job = tokio::select! {
-            () = cancel.cancelled() => {
-                // Drain what was already admitted before shutting down: those
-                // callbacks were acknowledged to Slack and will not be redelivered.
-                receiver.close();
-                while let Some(job) = receiver.recv().await {
-                    process_isolated(job).await;
-                }
-                break;
-            },
-            job = receiver.recv() => match job {
-                Some(job) => job,
-                None => break,
-            },
-        };
-        process_isolated(job).await;
-    }
-}
-
-async fn process_isolated(job: CallbackJob) {
-    run_isolated(process(job)).await;
-}
-
-/// Run one callback so a panic inside it cannot take the worker down.
-///
-/// There is a single worker behind this queue, so an unguarded panic would stop
-/// *all* subsequent Socket Mode callbacks for the life of the process — the bot
-/// would go quiet with nothing but the panic in the log to say why. Running on a
-/// dedicated task localizes the unwind, and awaiting it immediately keeps
-/// callbacks strictly ordered. Mirrors the panic isolation the HTTP callback
-/// workers already have.
-async fn run_isolated<F>(future: F)
-where
-    F: Future<Output = ()> + Send + 'static,
-{
-    if let Err(error) = tokio::spawn(future).await {
-        warn!("Slack callback job panicked: {error}");
+    /// Callbacks queued or being processed. Test and diagnostic use.
+    #[cfg(test)]
+    fn in_flight(&self) -> usize {
+        self.queue.in_flight()
     }
 }
 
@@ -197,7 +200,11 @@ async fn process(job: CallbackJob) {
                 warn!("failed to send Slack interaction response: {error}");
             }
         },
-        CallbackJob::ResponseUrl { response_url, text } => {
+        CallbackJob::ResponseUrl {
+            response_url,
+            text,
+            account_id: _,
+        } => {
             if let Err(error) = post_response_url(&response_url, &text).await {
                 warn!("failed to send Slack callback response: {error}");
             }
@@ -210,76 +217,116 @@ async fn process(job: CallbackJob) {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn queue_full_and_cancellation_do_not_commit_dedup() {
-        let cancel = tokio_util::sync::CancellationToken::new();
-        let (sender, mut receiver) = bounded_channel(1);
-        let queue = CallbackQueue {
-            sender,
-            cancel: cancel.clone(),
-        };
-        let mut dedup = EventDedup::default();
-        let job = |text: &str| CallbackJob::ResponseUrl {
+    use tokio_util::sync::CancellationToken;
+
+    fn job(account_id: &str) -> CallbackJob {
+        CallbackJob::ResponseUrl {
+            account_id: account_id.to_string(),
             response_url: "https://hooks.slack.com/actions/test".to_string(),
-            text: text.to_string(),
-        };
+            text: "body".to_string(),
+        }
+    }
+
+    /// A queue whose jobs block on `gate` until it is cancelled, so admission
+    /// can be driven to saturation without touching the network.
+    fn blocking_queue(capacity: usize, gate: CancellationToken) -> CallbackQueue {
+        CallbackQueue::start_with(
+            FairQueueConfig {
+                capacity,
+                workers: 1,
+                per_account_capacity: capacity,
+            },
+            CancellationToken::new(),
+            move |_job| {
+                let gate = gate.clone();
+                async move { gate.cancelled().await }
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn a_rejected_callback_does_not_commit_dedup() {
+        // Slack got no ACK for a refused callback and will redeliver it, so the
+        // retry must be admitted rather than dropped as already-seen.
+        let gate = CancellationToken::new();
+        let queue = blocking_queue(1, gate.clone());
+        let mut dedup = EventDedup::default();
 
         assert_eq!(
-            queue.try_send_deduplicated(&mut dedup, DedupKind::Event, "first", job("first")),
+            queue.try_send_deduplicated(&mut dedup, DedupKind::Event, "first", job("acct")),
             Ok(CallbackAdmission::Queued)
         );
         assert_eq!(
-            queue.try_send_deduplicated(&mut dedup, DedupKind::Event, "first", job("duplicate")),
+            queue.try_send_deduplicated(&mut dedup, DedupKind::Event, "first", job("acct")),
             Ok(CallbackAdmission::Duplicate)
         );
         assert_eq!(
-            queue.try_send_deduplicated(&mut dedup, DedupKind::Event, "retry", job("full")),
+            queue.try_send_deduplicated(&mut dedup, DedupKind::Event, "retry", job("acct")),
             Err(CallbackAdmissionError::Full)
         );
         assert!(!dedup.contains(DedupKind::Event, "retry"));
 
-        assert!(receiver.recv().await.is_some());
+        gate.cancel();
+        while queue.in_flight() > 0 {
+            tokio::task::yield_now().await;
+        }
         assert_eq!(
-            queue.try_send_deduplicated(&mut dedup, DedupKind::Event, "retry", job("retry")),
+            queue.try_send_deduplicated(&mut dedup, DedupKind::Event, "retry", job("acct")),
             Ok(CallbackAdmission::Queued)
         );
-        assert!(receiver.recv().await.is_some());
+    }
 
+    #[tokio::test]
+    async fn a_canceled_queue_admits_nothing_and_commits_nothing() {
+        let cancel = CancellationToken::new();
+        let queue = CallbackQueue::start_with(
+            FairQueueConfig::new(16, 1),
+            cancel.clone(),
+            |_job| async move {},
+        );
+        let mut dedup = EventDedup::default();
         cancel.cancel();
+
         assert_eq!(
-            queue.try_send_deduplicated(&mut dedup, DedupKind::Event, "canceled", job("canceled")),
+            queue.try_send_deduplicated(&mut dedup, DedupKind::Event, "canceled", job("acct")),
             Err(CallbackAdmissionError::Canceled)
         );
         assert!(!dedup.contains(DedupKind::Event, "canceled"));
     }
 
     #[tokio::test]
-    async fn a_panicking_job_does_not_stop_later_jobs() {
-        // There is one worker behind this queue, so an unguarded panic would
-        // silence every subsequent Slack callback for the life of the process.
-        let ran = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
-        let panicking = {
-            let ran = Arc::clone(&ran);
-            async move {
-                ran.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                panic!("callback exploded");
-            }
+    async fn a_busy_account_does_not_block_another_accounts_callbacks() {
+        // The regression this queue exists to prevent: before it, one worker
+        // served every account, so a slow workspace stalled all the others.
+        let gate = CancellationToken::new();
+        let ran = Arc::new(tokio::sync::Notify::new());
+        let queue = {
+            let (gate, ran) = (gate.clone(), Arc::clone(&ran));
+            CallbackQueue::start_with(
+                FairQueueConfig::new(16, 4),
+                CancellationToken::new(),
+                move |job: CallbackJob| {
+                    let (gate, ran) = (gate.clone(), Arc::clone(&ran));
+                    async move {
+                        if job.account_id() == "busy" {
+                            gate.cancelled().await;
+                        } else {
+                            ran.notify_one();
+                        }
+                    }
+                },
+            )
         };
-        run_isolated(panicking).await;
 
-        let following = {
-            let ran = Arc::clone(&ran);
-            async move {
-                ran.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            }
-        };
-        run_isolated(following).await;
+        assert!(queue.try_send(job("busy")).is_ok());
+        assert!(queue.try_send(job("quiet")).is_ok());
 
-        assert_eq!(
-            ran.load(std::sync::atomic::Ordering::SeqCst),
-            2,
-            "the job after the panicking one never ran"
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), ran.notified())
+                .await
+                .is_ok(),
+            "a busy Slack account head-of-line blocked an unrelated one"
         );
+        gate.cancel();
     }
 }

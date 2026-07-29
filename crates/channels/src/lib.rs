@@ -10,6 +10,7 @@ pub mod commands;
 pub mod config_view;
 pub mod contract;
 pub mod error;
+pub mod fair_queue;
 pub mod gating;
 pub mod media_download;
 pub mod message_log;
