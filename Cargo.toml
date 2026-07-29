@@ -71,6 +71,7 @@ default-members = [
   "crates/webhooks",
   "crates/whatsapp",
 ]
+exclude = ["vendor/agent-client-protocol"]
 members = [
   "apps/courier",
   "crates/acp",
@@ -145,6 +146,9 @@ members = [
 resolver = "2"
 
 [patch.crates-io]
+# Keep ACP stdin cancellation and EOF processing independent of blocked stdout,
+# while bounding queued wire bytes. Remove once a compatible release includes it.
+agent-client-protocol = { path = "vendor/agent-client-protocol" }
 # Widen libsqlite3-sys pin (0.30.1 → >=0.30.1,<0.36.0) so sqlx-sqlite 0.8.6
 # can coexist with matrix-sdk-sqlite's rusqlite 0.37 (libsqlite3-sys 0.35).
 # Remove once sqlx ≥ 0.9 ships stable.

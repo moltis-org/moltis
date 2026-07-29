@@ -51,10 +51,11 @@ where
     W: AsyncWrite + Unpin + 'static,
 {
     let agent = Rc::new(MoltisAgent::new(Arc::clone(&backend)));
-    let (connection, io_task) = acp::AgentSideConnection::new(
+    let (connection, io_task) = acp::AgentSideConnection::new_with_limits(
         Rc::clone(&agent),
         output.compat_write(),
         bounded_input(input).compat(),
+        acp::ConnectionLimits::bounded(MAX_JSON_RPC_FRAME_BYTES, MAX_JSON_RPC_FRAME_BYTES, 256),
         |future| {
             tokio::task::spawn_local(future);
         },
@@ -84,9 +85,43 @@ pub async fn run_stdio(backend: Arc<dyn AcpBackend>) -> anyhow::Result<()> {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+        time::Duration,
+    };
 
-    use super::*;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        sync::oneshot,
+    };
+
+    use {super::*, crate::echo::EchoBackend};
+
+    struct BlockingOutput {
+        started: Option<oneshot::Sender<()>>,
+    }
+
+    impl AsyncWrite for BlockingOutput {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _bytes: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            if let Some(started) = self.started.take() {
+                let _ = started.send(());
+            }
+            Poll::Pending
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
 
     #[tokio::test]
     async fn oversized_json_rpc_frames_are_rejected() {
@@ -106,5 +141,41 @@ mod tests {
             .expect_err("oversized frame must fail");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         write.await.expect("writer task");
+    }
+
+    #[tokio::test]
+    async fn blocked_output_does_not_prevent_eof_shutdown() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (mut input, server_input) = tokio::io::duplex(1024);
+                let (started_tx, started_rx) = oneshot::channel();
+                let server = tokio::task::spawn_local(serve(
+                    Arc::new(EchoBackend::new()),
+                    server_input,
+                    BlockingOutput {
+                        started: Some(started_tx),
+                    },
+                ));
+
+                input
+                    .write_all(
+                        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"unknown\",\"params\":{}}\n",
+                    )
+                    .await
+                    .expect("write request");
+                tokio::time::timeout(Duration::from_secs(1), started_rx)
+                    .await
+                    .expect("output write started")
+                    .expect("output signal");
+
+                input.shutdown().await.expect("close input");
+                let result = tokio::time::timeout(Duration::from_secs(1), server)
+                    .await
+                    .expect("server stops after EOF")
+                    .expect("server task");
+                assert!(result.is_ok());
+            })
+            .await;
     }
 }
