@@ -252,16 +252,15 @@ open to any sender who clears the access gate:
 
 | | Commands |
 |---|---|
-| **Anyone who may chat** | `/help`, `/new`, `/clear`, `/fork`, `/stop`, `/model`, `/mode`, `/fast` |
-| **Operators in proven direct chats only** | `/sh`, `/update`, `/approve`, `/deny`, `/approvals`, `/sandbox`, `/attach`, `/sessions`, `/context`, `/insights`, `/peek`, `/btw`, `/rollback`, `/agent`, `/steer`, `/queue`, `/compact`, `/title` |
+| **Anyone who may chat** | `/help`, `/new`, `/clear`, `/compact`, `/title`, `/fork`, `/stop`, `/model`, `/mode`, `/fast` |
+| **Operators in proven direct chats only** | `/sh`, `/update`, `/approve`, `/deny`, `/approvals`, `/sandbox`, `/attach`, `/sessions`, `/context`, `/insights`, `/peek`, `/btw`, `/rollback`, `/agent`, `/steer`, `/queue` |
 
 The public set can only disrupt the room's own conversation — something any
 member can already do by talking. The operator set runs host commands (`/sh`,
 `/update`), acts on the owner's behalf (`/approve` and `/deny` resolve the
 *owner's* pending exec requests, which is code execution by proxy), weakens
-isolation (`/sandbox` can turn the sandbox off), or reads or rewrites private
-state (`/attach`, `/sessions`, `/context`, `/insights`, `/peek`, `/btw`,
-`/compact`, `/title`).
+isolation (`/sandbox` can turn the sandbox off), or reads state outside the
+current chat (`/attach`, `/sessions`, `/context`, `/insights`, `/peek`, `/btw`).
 
 New commands default to operator direct-chat only, so adding one is safe until
 it is deliberately reviewed.

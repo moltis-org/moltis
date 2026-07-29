@@ -216,10 +216,10 @@ Slash commands appear in Discord's command palette (type `/` in any channel wher
 the bot is present). Responses are ephemeral — only visible to the user who
 invoked the command.
 
-Commands that require an operator direct chat, including `/compact`,
-`/context`, `/sessions`, and `/agent`, currently fail closed on Discord because
-the gateway cannot yet prove Discord conversation topology from its channel ID.
-Use the authenticated web UI for those commands.
+Commands that require an operator direct chat, including `/context`,
+`/sessions`, and `/agent`, currently fail closed on Discord because the gateway
+cannot yet prove Discord conversation topology from its channel ID. Use the
+authenticated web UI for those commands.
 
 ```admonish note
 Text-based `/` commands (e.g. typing `/model` as a regular message) continue to

@@ -71,8 +71,8 @@ impl CommandDef {
             // Help lists the commands and marks which need an operator.
             "help"
             // Scoped to this chat's own session: start it over, clear it,
-            // branch it, or abort its current run.
-            | "new" | "clear" | "fork" | "stop"
+            // summarize it, retitle it, branch it, or abort its current run.
+            | "new" | "clear" | "compact" | "title" | "fork" | "stop"
             // Which model/mode answers in this chat. Reversible, and bounded by
             // the account's own provider configuration.
             | "model" | "mode" | "fast" => CommandPrivilege::Public,
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn only_reviewed_commands_are_public() {
         const PUBLIC: &[&str] = &[
-            "help", "new", "clear", "fork", "stop", "model", "mode", "fast",
+            "help", "new", "clear", "compact", "title", "fork", "stop", "model", "mode", "fast",
         ];
 
         for command in all_commands() {
@@ -405,8 +405,6 @@ mod tests {
             "agent",
             "steer",
             "queue",
-            "compact",
-            "title",
         ] {
             let command = all_commands()
                 .iter()

@@ -12,8 +12,8 @@ Type `/` in the chat input to see the autocomplete popup.
 |---------|-------------|
 | `/new` | Start a new session |
 | `/clear` | Clear session history |
-| `/compact` | Summarize conversation to save tokens — **operator DMs only on channels** |
-| `/title` | Generate a title from session history — **operator DMs only on channels** |
+| `/compact` | Summarize conversation to save tokens |
+| `/title` | Generate a title from session history |
 | `/context` | Show session context and project info — **operator DMs only on channels** |
 | `/sessions` | List and switch sessions (channels only) — **operator DMs only** |
 | `/attach` | Attach an existing session to this channel (channels only) — **operator DMs only** |
@@ -47,14 +47,13 @@ Available in web UI, all channels, and via the `sessions.fork` RPC. See
 
 ```admonish warning title="Some commands are restricted on channels"
 Commands scoped to the current conversation — `/help`, `/new`, `/clear`,
-`/fork`, `/stop`, `/model`, `/mode`, `/fast` — are open to any sender who clears
-the channel's access gate.
+`/compact`, `/title`, `/fork`, `/stop`, `/model`, `/mode`, `/fast` — are open to
+any sender who clears the channel's access gate.
 
-Commands that reach the host, act on the owner's behalf, or read or rewrite
-private state require the sender to be an **operator in a proven direct chat**.
-This includes `/compact` and `/title`, which process session history. An empty
-`operators` list means nobody, so these are disabled until you configure it.
-Non-operators can still chat normally.
+Commands that reach the host, act on the owner's behalf, or read state outside
+the current chat require the sender to be an **operator in a proven direct
+chat**. An empty `operators` list means nobody, so these are disabled until you
+configure it. Non-operators can still chat normally.
 
 Shared-room, unknown-topology, and guest turns receive no tools or owner-private
 context. `/sh` and other privileged commands are also denied there. See
