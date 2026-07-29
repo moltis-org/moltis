@@ -568,6 +568,7 @@ mod tests {
         assert!(shared.content.contains(SHARE_REDACTED_VALUE));
     }
 
+    #[cfg(feature = "voice")]
     struct MockTtsService {
         status_payload: Value,
         convert_payload: Option<Value>,
@@ -576,6 +577,7 @@ mod tests {
         last_convert_params: std::sync::Mutex<Option<Value>>,
     }
 
+    #[cfg(feature = "voice")]
     impl MockTtsService {
         fn new(status_payload: Value, convert_payload: Option<Value>) -> Self {
             Self {
@@ -598,6 +600,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "voice")]
     #[async_trait]
     impl TtsService for MockTtsService {
         async fn status(&self) -> ServiceResult {
@@ -632,6 +635,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "voice")]
     #[tokio::test]
     async fn voice_generate_reuses_existing_audio_without_tts_convert() {
         let dir = tempfile::tempdir().unwrap();
@@ -682,6 +686,7 @@ mod tests {
         assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 0);
     }
 
+    #[cfg(feature = "voice")]
     #[tokio::test]
     async fn voice_generate_uses_mp3_for_openai_compatible_tts() {
         let dir = tempfile::tempdir().unwrap();
@@ -750,6 +755,7 @@ mod tests {
         assert_eq!(saved, audio_bytes);
     }
 
+    #[cfg(feature = "voice")]
     #[tokio::test]
     async fn voice_generate_keeps_ogg_for_non_openai_tts() {
         let dir = tempfile::tempdir().unwrap();
@@ -805,6 +811,7 @@ mod tests {
         assert_eq!(convert_params["format"].as_str(), Some("opus"));
     }
 
+    #[cfg(feature = "voice")]
     #[tokio::test]
     async fn voice_generate_rejects_non_assistant_target() {
         let dir = tempfile::tempdir().unwrap();
@@ -834,6 +841,7 @@ mod tests {
         assert!(error.to_string().contains("not an assistant"));
     }
 
+    #[cfg(feature = "voice")]
     #[tokio::test]
     async fn voice_generate_prefers_run_id_over_non_assistant_message_index() {
         let dir = tempfile::tempdir().unwrap();
@@ -930,6 +938,24 @@ mod tests {
         moltis_projects::run_migrations(&pool).await.unwrap();
         SqliteSessionMetadata::init(&pool).await.unwrap();
         pool
+    }
+
+    #[cfg(not(feature = "voice"))]
+    #[tokio::test]
+    async fn voice_generate_reports_not_configured_without_voice() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let service = LiveSessionService::new(store, metadata);
+
+        let error = SessionService::voice_generate(&service, serde_json::json!({}))
+            .await
+            .expect_err("voice generation should be unavailable");
+
+        assert_eq!(
+            error.to_string(),
+            "session voice generation is not configured"
+        );
     }
 
     #[tokio::test]

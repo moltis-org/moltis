@@ -218,6 +218,11 @@ impl ChatRuntime for GatewayChatRuntime {
 
     // ── Push notifications ──────────────────────────────────────────────────
 
+    async fn session_label(&self, session_key: &str) -> Option<String> {
+        let metadata = self.state.services.session_metadata.as_ref()?;
+        metadata.get(session_key).await?.label
+    }
+
     async fn send_push_notification(
         &self,
         title: &str,
@@ -240,6 +245,33 @@ impl ChatRuntime for GatewayChatRuntime {
             }
         }
         let _ = (title, body, url, session_key);
+        Ok(0)
+    }
+
+    async fn send_ordered_push_notification(
+        &self,
+        title: &str,
+        body: &str,
+        url: Option<&str>,
+        session_key: Option<&str>,
+        order: u64,
+    ) -> error::Result<usize> {
+        #[cfg(feature = "push-notifications")]
+        {
+            if let Some(push_service) = self.state.get_push_service().await {
+                return crate::push::send_ordered_push_notification(
+                    &push_service,
+                    title,
+                    body,
+                    url,
+                    session_key,
+                    order,
+                )
+                .await
+                .map_err(|source| error::Error::message(source.to_string()));
+            }
+        }
+        let _ = (title, body, url, session_key, order);
         Ok(0)
     }
 
@@ -312,5 +344,39 @@ impl ChatRuntime for GatewayChatRuntime {
         tokio::spawn(async move {
             crate::session::title::generate_title_if_needed(&state, &key).await;
         });
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn runtime() -> GatewayChatRuntime {
+        GatewayChatRuntime {
+            state: GatewayState::new(
+                crate::auth::resolve_auth(None, None),
+                crate::services::GatewayServices::noop(),
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_and_ordered_chat_runtime_push_apis_are_available() {
+        let runtime = runtime();
+        assert_eq!(
+            runtime
+                .send_push_notification("title", "body", None, Some("main"))
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            runtime
+                .send_ordered_push_notification("title", "body", None, Some("main"), 9)
+                .await
+                .unwrap(),
+            0
+        );
     }
 }

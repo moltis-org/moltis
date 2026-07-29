@@ -261,6 +261,7 @@ fn is_public_path(path: &str) -> bool {
         "/health"
             | "/auth/callback"
             | "/manifest.json"
+            | "/offline.html"
             | "/sw.js"
             | "/login"
             | "/setup-required"
@@ -686,6 +687,12 @@ mod tests {
     #[test]
     fn public_identity_path_is_public() {
         assert!(is_public_path("/api/public/identity"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn offline_fallback_is_public() {
+        assert!(is_public_path("/offline.html"));
     }
 
     #[tokio::test]
