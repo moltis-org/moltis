@@ -1,25 +1,40 @@
 //! Construction of live sinks from `[instrumentation]` configuration.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use {
-    moltis_config::{
-        ContentCaptureMode, DatadogSettings, InstrumentationConfig, LangfuseSettings, OtlpSettings,
-    },
-    secrecy::ExposeSecret,
+    moltis_config::{ContentCaptureMode, InstrumentationConfig},
     tracing::{info, warn},
 };
 
 use crate::{
-    exporters::{
-        langfuse::{LangfuseClient, LangfuseConfig, ScoreSink},
-        otlp::{OtlpConfig, OtlpTransport},
-    },
-    profile::{ContentCapture, ExportProfile},
+    profile::ContentCapture,
     recorder::RecorderSettings,
     redact::RedactionPolicy,
-    runtime::{BatchConfig, BatchSink},
     sink::{ObservationSink, SinkFanout},
+};
+
+// Everything below is needed only by an exporter that was compiled in. A build
+// with no exporter feature still parses `[instrumentation]` and reports each
+// enabled backend as skipped, so the config never silently does nothing.
+#[cfg(feature = "langfuse")]
+use {
+    crate::exporters::langfuse::{LangfuseClient, LangfuseConfig, ScoreSink},
+    moltis_config::LangfuseSettings,
+};
+#[cfg(any(feature = "langfuse", feature = "otlp"))]
+use {
+    crate::runtime::{BatchConfig, BatchSink},
+    secrecy::ExposeSecret,
+    std::time::Duration,
+};
+#[cfg(feature = "otlp")]
+use {
+    crate::{
+        exporters::otlp::{OtlpConfig, OtlpTransport},
+        profile::ExportProfile,
+    },
+    moltis_config::{DatadogSettings, OtlpSettings},
 };
 
 /// Convert the config-level content mode to the profile-level one.
@@ -39,8 +54,14 @@ pub struct BuiltInstrumentation {
     pub sink: Arc<dyn ObservationSink>,
     /// Settings the agent runtime applies when recording.
     pub recorder_settings: RecorderSettings,
+    /// Whether a backend that accepts scores is running.
+    ///
+    /// Scores are the one event type most backends have no representation for,
+    /// so the feedback surfaces ask this rather than naming a backend.
+    pub scores: bool,
     /// Langfuse REST client, present when the Langfuse backend is enabled.
-    /// Used for scores and the settings UI connection test.
+    /// Used for the settings UI connection test.
+    #[cfg(feature = "langfuse")]
     pub langfuse: Option<Arc<LangfuseClient>>,
     /// Names of the backends that were built.
     pub backends: Vec<String>,
@@ -65,6 +86,7 @@ pub struct BuildOutcome {
 }
 
 /// Batching parameters shared by every backend.
+#[cfg(any(feature = "langfuse", feature = "otlp"))]
 fn batch_config(config: &InstrumentationConfig) -> BatchConfig {
     BatchConfig {
         max_batch_bytes: config.max_batch_bytes,
@@ -92,6 +114,7 @@ fn validate_batch_config(config: &InstrumentationConfig) -> Result<(), String> {
 /// conversation content and credentials in a header, and shipping them
 /// unencrypted across a network is not a trade-off an operator should make by
 /// typing a URL. Loopback is allowed for a local Agent or collector.
+#[cfg(any(feature = "langfuse", feature = "otlp"))]
 fn validate_endpoint(raw: &str) -> Result<(), String> {
     let Ok(url) = reqwest::Url::parse(raw) else {
         return Err("endpoint is not a valid URL".to_string());
@@ -126,6 +149,7 @@ fn validate_endpoint(raw: &str) -> Result<(), String> {
 /// no representation for a score and drops those events, so scores need their
 /// own sink onto the ingestion API — otherwise every score recorded would be
 /// silently discarded on the way out.
+#[cfg(feature = "langfuse")]
 fn build_langfuse(
     settings: &LangfuseSettings,
     config: &InstrumentationConfig,
@@ -162,6 +186,7 @@ fn build_langfuse(
 }
 
 /// Build a generic OTLP backend.
+#[cfg(feature = "otlp")]
 fn build_otlp(
     settings: &OtlpSettings,
     config: &InstrumentationConfig,
@@ -194,7 +219,8 @@ fn build_otlp(
     Ok(Arc::new(BatchSink::spawn(transport, batch_config(config))))
 }
 
-/// Build the Datadog backend.
+/// Build the Datadog backend, over the same OTLP wire format.
+#[cfg(feature = "otlp")]
 fn build_datadog(
     settings: &DatadogSettings,
     config: &InstrumentationConfig,
@@ -242,6 +268,13 @@ fn build_datadog(
 /// Must be called from within a Tokio runtime — each backend spawns a
 /// background export task.
 #[must_use]
+// With no exporter compiled in there is nothing to build: every enabled backend
+// is reported as skipped, so the accumulators are never written and the release
+// string is never read.
+#[cfg_attr(
+    not(any(feature = "langfuse", feature = "otlp")),
+    allow(unused_mut, unused_variables)
+)]
 pub fn build(config: &InstrumentationConfig, release: &str) -> BuildOutcome {
     let mut skipped = Vec::new();
 
@@ -273,9 +306,11 @@ pub fn build(config: &InstrumentationConfig, release: &str) -> BuildOutcome {
 
     let mut sinks: Vec<Arc<dyn ObservationSink>> = Vec::new();
     let mut backends = Vec::new();
+    #[cfg(feature = "langfuse")]
     let mut langfuse_client = None;
 
     if config.langfuse.enabled {
+        #[cfg(feature = "langfuse")]
         match build_langfuse(&config.langfuse, config, release) {
             Ok((langfuse_sinks, client)) => {
                 sinks.extend(langfuse_sinks);
@@ -290,9 +325,12 @@ pub fn build(config: &InstrumentationConfig, release: &str) -> BuildOutcome {
                 });
             },
         }
+        #[cfg(not(feature = "langfuse"))]
+        skipped.push(not_compiled_in("langfuse"));
     }
 
     if config.otlp.enabled {
+        #[cfg(feature = "otlp")]
         match build_otlp(&config.otlp, config, release) {
             Ok(sink) => {
                 sinks.push(sink);
@@ -306,9 +344,12 @@ pub fn build(config: &InstrumentationConfig, release: &str) -> BuildOutcome {
                 });
             },
         }
+        #[cfg(not(feature = "otlp"))]
+        skipped.push(not_compiled_in("otlp"));
     }
 
     if config.datadog.enabled {
+        #[cfg(feature = "otlp")]
         match build_datadog(&config.datadog, config, release) {
             Ok(sink) => {
                 sinks.push(sink);
@@ -322,6 +363,9 @@ pub fn build(config: &InstrumentationConfig, release: &str) -> BuildOutcome {
                 });
             },
         }
+        // Datadog is reached over the same OTLP wire format.
+        #[cfg(not(feature = "otlp"))]
+        skipped.push(not_compiled_in("datadog"));
     }
 
     if sinks.is_empty() {
@@ -348,6 +392,10 @@ pub fn build(config: &InstrumentationConfig, release: &str) -> BuildOutcome {
         built: Some(BuiltInstrumentation {
             sink: Arc::new(SinkFanout::new(sinks)),
             recorder_settings,
+            // Langfuse is the only backend with a score representation; the
+            // OTLP mapping drops score events on the floor.
+            scores: backends.iter().any(|name| name == "langfuse"),
+            #[cfg(feature = "langfuse")]
             langfuse: langfuse_client,
             backends,
         }),
@@ -355,7 +403,27 @@ pub fn build(config: &InstrumentationConfig, release: &str) -> BuildOutcome {
     }
 }
 
-#[cfg(test)]
+/// Report a backend the operator enabled but this binary cannot speak to.
+///
+/// Reported as a skipped backend rather than logged, so a build without the
+/// exporter feature explains itself in the settings UI instead of looking like
+/// a misconfiguration.
+#[cfg(not(all(feature = "langfuse", feature = "otlp")))]
+fn not_compiled_in(name: &str) -> SkippedBackend {
+    warn!(
+        backend = name,
+        "instrumentation backend enabled in config but not compiled into this build"
+    );
+    SkippedBackend {
+        name: name.to_string(),
+        reason: "not compiled into this build".to_string(),
+    }
+}
+
+// These build real backends, so they need the exporters compiled in. `langfuse`
+// implies `otlp`, so gating on it covers the default feature set; the reduced
+// builds are covered by `reduced_build_tests` below.
+#[cfg(all(test, feature = "langfuse"))]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use {
@@ -675,5 +743,45 @@ mod tests {
             ContentCapture::from(ContentCaptureMode::None),
             ContentCapture::None
         );
+    }
+}
+
+/// Coverage for builds that left an exporter out.
+#[cfg(all(test, not(feature = "langfuse")))]
+mod reduced_build_tests {
+    use {moltis_config::LangfuseSettings, secrecy::Secret};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_backend_this_build_lacks_is_skipped_with_a_reason() {
+        // Enabling a backend the binary cannot speak to must explain itself,
+        // otherwise it is indistinguishable from bad credentials.
+        let config = InstrumentationConfig {
+            enabled: true,
+            langfuse: LangfuseSettings {
+                enabled: true,
+                host: "https://cloud.langfuse.com".into(),
+                public_key: "pk-lf-1".into(),
+                secret_key: Some(Secret::new("sk-lf-1".to_string())),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let outcome = build(&config, "test");
+
+        assert!(outcome.built.is_none());
+        assert_eq!(outcome.skipped.len(), 1);
+        assert_eq!(outcome.skipped[0].name, "langfuse");
+        assert_eq!(outcome.skipped[0].reason, "not compiled into this build");
+    }
+
+    #[tokio::test]
+    async fn an_untouched_config_still_builds_nothing() {
+        let outcome = build(&InstrumentationConfig::default(), "test");
+
+        assert!(outcome.built.is_none());
+        assert!(outcome.skipped.is_empty());
     }
 }

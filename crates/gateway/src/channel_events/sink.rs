@@ -41,7 +41,7 @@ async fn handle_reaction_feedback(state: &Arc<GatewayState>, event: &ChannelEven
             emoji,
             user_id,
             *added,
-            state.instrumentation.langfuse().as_ref(),
+            state.instrumentation.scores_available(),
         )
         .await;
     debug!(

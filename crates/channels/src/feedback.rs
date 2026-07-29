@@ -10,8 +10,8 @@ use std::sync::{Arc, RwLock};
 use {
     moltis_config::FeedbackSettings,
     moltis_observability::{
-        FeedbackSignal, FeedbackVocabulary, ScoreDeleteRecord, TraceId,
-        exporters::langfuse::LangfuseClient, feedback_score, feedback_score_id,
+        FeedbackSignal, FeedbackVocabulary, ScoreDeleteRecord, TraceId, feedback_score,
+        feedback_score_id,
     },
     tracing::{debug, warn},
 };
@@ -132,9 +132,9 @@ impl FeedbackService {
 
     /// Handle a reaction change on a channel message.
     ///
-    /// `langfuse` is only needed to retract: adding a score goes through the
-    /// instrumentation sink like any other event, but deletion has no sink
-    /// representation and must call the API directly.
+    /// `scores_available` says whether a backend that can store a score is
+    /// running. Without one, both halves of the toggle would be recorded into
+    /// nothing, so the reaction is reported as disabled instead.
     pub async fn on_reaction(
         &self,
         channel: &str,
@@ -144,7 +144,7 @@ impl FeedbackService {
         emoji: &str,
         user_id: &str,
         added: bool,
-        langfuse: Option<&Arc<LangfuseClient>>,
+        scores_available: bool,
     ) -> FeedbackOutcome {
         // Classify before the database lookup: most reactions in a busy chat
         // are not feedback, and they should not cost a query each.
@@ -168,7 +168,7 @@ impl FeedbackService {
             added.then_some(signal),
             user_id,
             Some(format!("{channel} reaction {emoji}")),
-            langfuse,
+            scores_available,
         )
         .await
     }
@@ -184,7 +184,7 @@ impl FeedbackService {
         signal: Option<FeedbackSignal>,
         user_id: &str,
         comment: Option<String>,
-        langfuse: Option<&Arc<LangfuseClient>>,
+        scores_available: bool,
     ) -> FeedbackOutcome {
         let Some((links, enabled, environment, retention_days)) = self.read(|active| {
             (
@@ -196,7 +196,7 @@ impl FeedbackService {
         }) else {
             return FeedbackOutcome::Disabled;
         };
-        if !enabled || langfuse.is_none() {
+        if !enabled || !scores_available {
             return FeedbackOutcome::Disabled;
         }
 
@@ -333,19 +333,6 @@ mod tests {
         (service, links)
     }
 
-    fn langfuse_client() -> Arc<LangfuseClient> {
-        Arc::new(LangfuseClient::new(
-            moltis_observability::exporters::langfuse::LangfuseConfig {
-                host: "https://cloud.langfuse.com".into(),
-                public_key: "pk-test".into(),
-                secret_key: "sk-test".to_string().into(),
-                environment: Some("test".into()),
-                release: None,
-                timeout: std::time::Duration::from_secs(1),
-            },
-        ))
-    }
-
     /// Collects scores emitted through the global sink.
     ///
     /// The sink is process-wide, so the tests that assert on emitted scores
@@ -431,7 +418,6 @@ mod tests {
 
         let (service, links) = service(true);
         link_reply(&links, "42", "trace-1").await;
-        let langfuse = langfuse_client();
 
         let outcome = service
             .on_reaction(
@@ -442,7 +428,7 @@ mod tests {
                 "\u{1f44d}",
                 "99",
                 true,
-                Some(&langfuse),
+                true,
             )
             .await;
 
@@ -474,7 +460,7 @@ mod tests {
                 "\u{1f389}",
                 "99",
                 true,
-                None,
+                false,
             )
             .await;
 
@@ -484,7 +470,6 @@ mod tests {
     #[tokio::test]
     async fn a_reaction_on_an_unlinked_message_is_ignored() {
         let (service, _links) = service(true);
-        let langfuse = langfuse_client();
         let outcome = service
             .on_reaction(
                 "telegram",
@@ -494,7 +479,7 @@ mod tests {
                 "\u{1f44d}",
                 "99",
                 true,
-                Some(&langfuse),
+                true,
             )
             .await;
 
@@ -508,7 +493,6 @@ mod tests {
         moltis_observability::set_global_sink(Arc::clone(&sink) as Arc<_>);
         let (service, links) = service(true);
         link_reply(&links, "42", "trace-1").await;
-        let langfuse = langfuse_client();
 
         let outcome = service
             .on_reaction(
@@ -519,7 +503,7 @@ mod tests {
                 "\u{1f44d}",
                 "99",
                 false,
-                Some(&langfuse),
+                true,
             )
             .await;
 
@@ -549,7 +533,6 @@ mod tests {
             Some("production".into()),
         );
         link_reply(&links, "42", "trace-1").await;
-        let langfuse = langfuse_client();
 
         let outcome = service
             .submit_signal(
@@ -560,7 +543,7 @@ mod tests {
                 Some(FeedbackSignal::Positive),
                 "99",
                 Some("typed feedback".into()),
-                Some(&langfuse),
+                true,
             )
             .await;
 
@@ -590,7 +573,6 @@ mod tests {
             })
             .await
             .unwrap();
-        let langfuse = langfuse_client();
 
         let outcome = service
             .on_reaction(
@@ -601,7 +583,7 @@ mod tests {
                 "\u{1f44d}",
                 "99",
                 true,
-                Some(&langfuse),
+                true,
             )
             .await;
 
@@ -609,7 +591,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn score_feedback_is_disabled_without_langfuse() {
+    async fn score_feedback_is_disabled_without_a_score_backend() {
         let (service, links) = service(true);
         link_reply(&links, "42", "trace-1").await;
 
@@ -622,7 +604,7 @@ mod tests {
                 "\u{1f44d}",
                 "99",
                 true,
-                None,
+                false,
             )
             .await;
 
@@ -643,7 +625,7 @@ mod tests {
                 "\u{1f44d}",
                 "99",
                 true,
-                None,
+                true,
             )
             .await;
 
@@ -690,7 +672,7 @@ mod tests {
                     "\u{1f44d}",
                     "99",
                     true,
-                    None,
+                    true,
                 )
                 .await,
             FeedbackOutcome::Disabled
@@ -732,7 +714,7 @@ mod tests {
                     "\u{1f44d}",
                     "99",
                     true,
-                    None,
+                    true,
                 )
                 .await,
             FeedbackOutcome::Disabled

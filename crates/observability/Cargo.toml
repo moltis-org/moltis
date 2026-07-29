@@ -5,7 +5,7 @@ version.workspace = true
 
 [features]
 default  = ["langfuse", "otlp"]
-langfuse = []
+langfuse = ["otlp"]
 metrics  = ["dep:moltis-metrics"]
 otlp     = []
 

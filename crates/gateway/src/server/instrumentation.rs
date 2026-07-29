@@ -11,12 +11,12 @@ use std::{
 
 use {
     moltis_config::InstrumentationConfig,
-    moltis_observability::{
-        BuiltInstrumentation, ObservationSink, SinkStatsSnapshot, SkippedBackend,
-        exporters::langfuse::LangfuseClient,
-    },
+    moltis_observability::{ObservationSink, SinkStatsSnapshot, SkippedBackend},
     tracing::{info, warn},
 };
+
+#[cfg(feature = "langfuse")]
+use moltis_observability::exporters::langfuse::LangfuseClient;
 
 /// Live instrumentation state, surfaced by the `instrumentation.*` RPC methods.
 #[derive(Default)]
@@ -30,6 +30,8 @@ struct InstrumentationSnapshot {
     sink: Option<Arc<dyn ObservationSink>>,
     backends: Vec<String>,
     skipped: Vec<SkippedBackend>,
+    scores: bool,
+    #[cfg(feature = "langfuse")]
     langfuse: Option<Arc<LangfuseClient>>,
 }
 
@@ -55,19 +57,16 @@ impl InstrumentationState {
     pub fn apply(&self, config: &InstrumentationConfig, release: &str) -> InstrumentationStatus {
         let outcome = moltis_observability::build(config, release);
         let snapshot = match outcome.built {
-            Some(BuiltInstrumentation {
-                sink,
-                langfuse,
-                backends,
-                ..
-            }) => {
-                moltis_observability::set_global_sink(Arc::clone(&sink));
-                info!(backends = ?backends, "agent instrumentation active");
+            Some(built) => {
+                moltis_observability::set_global_sink(Arc::clone(&built.sink));
+                info!(backends = ?built.backends, "agent instrumentation active");
                 InstrumentationSnapshot {
-                    sink: Some(sink),
-                    backends,
+                    sink: Some(built.sink),
+                    backends: built.backends,
                     skipped: outcome.skipped,
-                    langfuse,
+                    scores: built.scores,
+                    #[cfg(feature = "langfuse")]
+                    langfuse: built.langfuse,
                 }
             },
             None => {
@@ -109,7 +108,21 @@ impl InstrumentationState {
         guard.status()
     }
 
+    /// Whether a running backend can store scores.
+    ///
+    /// The feedback surfaces ask this instead of naming a backend: a thumb that
+    /// nothing records is worse than no thumb at all.
+    #[must_use]
+    pub fn scores_available(&self) -> bool {
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.scores
+    }
+
     /// The Langfuse client, when that backend is running.
+    #[cfg(feature = "langfuse")]
     #[must_use]
     pub fn langfuse(&self) -> Option<Arc<LangfuseClient>> {
         let guard = self
@@ -186,6 +199,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg(feature = "langfuse")]
     fn valid_langfuse_config() -> InstrumentationConfig {
         InstrumentationConfig {
             enabled: true,
@@ -271,6 +285,7 @@ mod tests {
         moltis_observability::clear_global_sink();
     }
 
+    #[cfg(feature = "langfuse")]
     #[tokio::test]
     #[serial_test::serial(instrumentation_global_sink)]
     async fn applying_a_valid_config_installs_the_sink() {
@@ -294,6 +309,7 @@ mod tests {
         moltis_observability::clear_global_sink();
     }
 
+    #[cfg(feature = "langfuse")]
     #[tokio::test]
     #[serial_test::serial(instrumentation_global_sink)]
     async fn reapplying_a_disabled_config_tears_the_sink_down() {
@@ -310,6 +326,7 @@ mod tests {
         assert!(state.langfuse().is_none());
     }
 
+    #[cfg(feature = "langfuse")]
     #[tokio::test]
     #[serial_test::serial(instrumentation_global_sink)]
     async fn skipped_backends_are_reported_not_just_logged() {
@@ -328,6 +345,34 @@ mod tests {
         assert_eq!(current.skipped, status.skipped);
 
         moltis_observability::clear_global_sink();
+    }
+
+    #[cfg(not(feature = "langfuse"))]
+    #[tokio::test]
+    #[serial_test::serial(instrumentation_global_sink)]
+    async fn a_backend_this_build_lacks_is_reported_as_skipped() {
+        // Without the exporter compiled in, enabling it in config must explain
+        // itself rather than looking like a credential mistake.
+        let config = InstrumentationConfig {
+            enabled: true,
+            langfuse: LangfuseSettings {
+                enabled: true,
+                host: "https://cloud.langfuse.com".into(),
+                public_key: "pk-lf-1".into(),
+                secret_key: Some(Secret::new("sk-lf-1".to_string())),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let state = InstrumentationState::default();
+        let status = state.apply(&config, "test");
+
+        assert!(!status.active);
+        assert!(!state.scores_available());
+        assert_eq!(status.skipped.len(), 1);
+        assert_eq!(status.skipped[0].name, "langfuse");
+        assert_eq!(status.skipped[0].reason, "not compiled into this build");
     }
 
     #[tokio::test]

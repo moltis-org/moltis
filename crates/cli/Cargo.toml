@@ -158,6 +158,7 @@ full = [
   "lang-rust",
   "lang-toml",
   "lang-typescript",
+  "langfuse",
   "llm-compaction",
   "local-embeddings",
   "local-llm",
@@ -170,6 +171,7 @@ full = [
   "ngrok",
   "nostr",
   "openclaw-import",
+  "otlp",
   "prometheus",
   "provider-github-copilot",
   "provider-kimi-code",
@@ -221,8 +223,13 @@ lang-typescript    = ["moltis-memory/lang-typescript"]
 # jemalloc is intentionally unavailable on linux/aarch64 to avoid runtime
 # crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
 claude-import = ["dep:moltis-claude-import", "moltis-gateway/claude-import"]
-codex-import = ["dep:moltis-codex-import", "moltis-gateway/codex-import"]
+codex-import  = ["dep:moltis-codex-import", "moltis-gateway/codex-import"]
 hermes-import = ["dep:moltis-hermes-import", "moltis-gateway/hermes-import"]
+# Instrumentation exporters. Default-on so the `[instrumentation]` config can be
+# switched on without a rebuild; enabling the config, not the feature, is what
+# starts sending data. `langfuse` implies `otlp`: Langfuse ingests traces over
+# the OTLP wire format.
+langfuse = ["moltis-gateway/langfuse"]
 lightweight = ["jemalloc", "tls", "web-ui"]
 local-embeddings = ["moltis-gateway/local-embeddings"]
 local-llm = ["moltis-gateway/local-llm"]
@@ -237,6 +244,7 @@ netbird = ["moltis-httpd/netbird", "moltis-web?/netbird"]
 ngrok = ["moltis-httpd/ngrok", "moltis-web?/ngrok"]
 nostr = ["moltis-httpd/nostr"]
 openclaw-import = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-import"]
+otlp = ["moltis-gateway/otlp"]
 prometheus = ["moltis-httpd/prometheus"]
 provider-github-copilot = [
   "moltis-gateway/provider-github-copilot",

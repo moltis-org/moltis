@@ -1,4 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+// Every case here drives the OTLP transport, which a build without that feature
+// does not have. The Langfuse cases use the Langfuse *profile* over the same
+// transport, so `otlp` is the only feature they need.
+#![cfg(feature = "otlp")]
 //! End-to-end tests over the real export path.
 //!
 //! The unit tests check the mapping in isolation; these drive a recorder

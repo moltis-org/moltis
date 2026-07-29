@@ -28,7 +28,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     // the result, so the UI hides it unless both are on.
                     "enabled": config.enabled
                         && config.feedback.enabled
-                        && ctx.state.instrumentation.langfuse().is_some(),
+                        && ctx.state.instrumentation.scores_available(),
                     "instrumentation_active": ctx.state.instrumentation.status().active,
                     "retention_days": config.feedback.link_retention_days,
                 }))
@@ -112,7 +112,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         signal,
                         user_id,
                         Some("web feedback".to_string()),
-                        ctx.state.instrumentation.langfuse().as_ref(),
+                        ctx.state.instrumentation.scores_available(),
                     )
                     .await;
 

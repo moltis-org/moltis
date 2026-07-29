@@ -47,8 +47,8 @@ moltis-msteams          = { optional = true, workspace = true }
 moltis-netbird          = { optional = true, workspace = true }
 moltis-network-filter   = { features = ["proxy", "service"], optional = true, workspace = true }
 moltis-nostr            = { optional = true, workspace = true }
-moltis-observability = { workspace = true }
 moltis-oauth            = { workspace = true }
+moltis-observability    = { workspace = true }
 moltis-onboarding       = { workspace = true }
 moltis-openclaw-import  = { optional = true, workspace = true }
 moltis-plugins          = { workspace = true }
@@ -126,6 +126,7 @@ default = [
   "graphql",
   "hermes-import",
   "home-assistant",
+  "langfuse",
   "local-llm",
   "local-llm-metal",
   "matrix",
@@ -135,6 +136,7 @@ default = [
   "netbird",
   "nostr",
   "openclaw-import",
+  "otlp",
   "prometheus",
   "provider-github-copilot",
   "provider-kimi-code",
@@ -166,6 +168,7 @@ fs-tools = ["moltis-tools/fs-tools"]
 graphql = []
 hermes-import = ["dep:moltis-hermes-import"]
 home-assistant = ["dep:moltis-home-assistant"]
+langfuse = ["moltis-observability/langfuse"]
 llm-compaction = ["moltis-chat/llm-compaction"]
 local-embeddings = ["moltis-memory/local-embeddings"]
 local-llm = [
@@ -186,12 +189,14 @@ metrics = [
   "moltis-metrics/sqlite",
   "moltis-msteams?/metrics",
   "moltis-nostr?/metrics",
+  "moltis-observability/metrics",
   "moltis-signal?/metrics",
 ]
 msteams = ["dep:moltis-msteams"]
 netbird = ["dep:moltis-netbird"]
 nostr = ["dep:moltis-nostr"]
 openclaw-import = ["dep:moltis-openclaw-import"]
+otlp = ["moltis-observability/otlp"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 provider-github-copilot = [
   "moltis-provider-setup/provider-github-copilot",

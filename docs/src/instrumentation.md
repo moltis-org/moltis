@@ -122,6 +122,25 @@ service  = "moltis"
 To post to Datadog's intake directly instead, set `endpoint` to the regional
 OTLP intake URL and supply `api_key`.
 
+## Build features
+
+Both exporter families are compiled in by default, so nothing here needs a
+rebuild — only the config above switches them on. To leave one out of a build:
+
+```bash
+# Langfuse only (drops the generic OTLP and Datadog exporters).
+cargo build --no-default-features --features "web-ui,tls,langfuse"
+
+# No exporter at all.
+cargo build --no-default-features --features "web-ui,tls"
+```
+
+`langfuse` implies `otlp`, because Langfuse ingests traces over the OTLP wire
+format, and `otlp` also carries Datadog. A backend enabled in config that the
+running binary was not built with is reported in **Settings → Instrumentation**
+as skipped with the reason `not compiled into this build`, rather than failing
+quietly.
+
 ## Running several backends at once
 
 Backends are independent. Enabling all three sends full traces to Langfuse and

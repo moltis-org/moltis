@@ -403,7 +403,7 @@ moltis-network-filter   = { default-features = false, path = "crates/network-fil
 moltis-node-host        = { path = "crates/node-host" }
 moltis-nostr            = { path = "crates/nostr" }
 moltis-oauth            = { path = "crates/oauth" }
-moltis-observability    = { path = "crates/observability" }
+moltis-observability    = { default-features = false, path = "crates/observability" }
 moltis-onboarding       = { path = "crates/onboarding" }
 moltis-openclaw-import  = { path = "crates/openclaw-import" }
 moltis-plugins          = { path = "crates/plugins" }

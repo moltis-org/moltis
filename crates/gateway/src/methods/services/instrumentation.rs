@@ -70,6 +70,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .unwrap_or("langfuse");
 
                 match backend {
+                    #[cfg(feature = "langfuse")]
                     "langfuse" => {
                         let Some(client) = ctx.state.instrumentation.langfuse() else {
                             return Ok(serde_json::json!({
@@ -86,6 +87,13 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             })),
                         }
                     },
+                    // Say so rather than falling through to the generic "no test
+                    // available" answer, which would read as a Langfuse quirk.
+                    #[cfg(not(feature = "langfuse"))]
+                    "langfuse" => Ok(serde_json::json!({
+                        "ok": false,
+                        "error": "this build was compiled without the `langfuse` feature",
+                    })),
                     // OTLP collectors have no standard health endpoint, and
                     // POSTing a probe span would pollute the operator's traces
                     // with fake data. Live delivery counters are the honest
