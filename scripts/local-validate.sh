@@ -238,7 +238,7 @@ package_name_for_path() {
 
   while [[ "$dir" != "." && "$dir" != "/" ]]; do
     if [[ -f "$dir/Cargo.toml" ]]; then
-      sed -nE 's/^name[[:space:]]*=[[:space:]]*"([^"]+)"/\1/p' "$dir/Cargo.toml" | head -n1
+      sed -nE 's/^name[[:space:]]*=[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' "$dir/Cargo.toml" | head -n1
       return
     fi
     dir="$(dirname "$dir")"
