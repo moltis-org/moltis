@@ -57,8 +57,6 @@ pub const OBSERVATION_MODEL: &str = "langfuse.observation.model.name";
 pub const OBSERVATION_MODEL_PARAMETERS: &str = "langfuse.observation.model.parameters";
 /// Token usage breakdown.
 pub const OBSERVATION_USAGE_DETAILS: &str = "langfuse.observation.usage_details";
-/// Cost breakdown in USD.
-pub const OBSERVATION_COST_DETAILS: &str = "langfuse.observation.cost_details";
 /// Managed-prompt name this generation was rendered from.
 pub const OBSERVATION_PROMPT_NAME: &str = "langfuse.observation.prompt.name";
 /// Managed-prompt version this generation was rendered from.

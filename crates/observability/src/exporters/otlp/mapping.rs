@@ -515,9 +515,9 @@ fn push_usage_attrs(
         ));
     }
 
-    // Keep locally computed costs inside Moltis. Langfuse maintains versioned
-    // model definitions and pricing tiers; sending our static table would take
-    // precedence over that inference and make stale prices authoritative.
+    // No cost attribute: Langfuse maintains versioned model definitions and
+    // prices spend from the model plus these counts, and no other backend has
+    // a price table to send one to.
 }
 
 /// Managed-prompt linkage. Langfuse-only: no other backend models it.
@@ -755,18 +755,17 @@ mod tests {
     }
 
     #[test]
-    fn token_counts_reach_every_backend_but_cost_detail_does_not() {
-        let mut obs = generation();
-        obs.cost_details.insert("total".into(), 0.42);
+    fn token_counts_reach_every_backend_but_usage_details_do_not() {
+        let obs = generation();
 
         let otel = observation_to_span(&obs, &otel_ctx());
         assert!(attr_value(&otel, attr::GEN_AI_USAGE_INPUT_TOKENS).is_some());
-        // No APM has a model price table, so the breakdown is dead weight.
-        assert!(attr_value(&otel, attr::OBSERVATION_COST_DETAILS).is_none());
+        // The cache-aware breakdown is a Langfuse concept; an APM gets counts.
         assert!(attr_value(&otel, attr::OBSERVATION_USAGE_DETAILS).is_none());
 
         let lf = observation_to_span(&obs, &langfuse_ctx());
-        assert!(attr_value(&lf, attr::OBSERVATION_COST_DETAILS).is_none());
+        assert!(attr_value(&lf, attr::GEN_AI_USAGE_INPUT_TOKENS).is_some());
+        assert!(attr_value(&lf, attr::OBSERVATION_USAGE_DETAILS).is_some());
     }
 
     #[test]

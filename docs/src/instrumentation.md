@@ -317,10 +317,10 @@ score after deletion. Two reacting users still count separately.
 ## Cost
 
 Moltis exports the model id and token usage details, including separate
-cache-read and cache-write buckets, but it does not export costs from its static
-local price table. Langfuse infers cost using its own versioned model definitions
-and pricing tiers, avoiding stale Moltis prices overriding Langfuse's
-calculations.
+cache-read and cache-write buckets, but it does not compute or export a cost of
+its own. Langfuse infers cost from its own versioned model definitions and
+pricing tiers, which stay current without Moltis shipping a price table that
+would go stale and then override them.
 
 Unknown, private or custom models may show no cost until their pricing is
 configured in Langfuse.

@@ -19,7 +19,6 @@ pub mod builder;
 pub mod exporters;
 pub mod feedback;
 pub mod model;
-pub mod pricing;
 pub mod profile;
 pub mod recent;
 pub mod recorder;
@@ -36,7 +35,6 @@ pub use {
         Event, Level, ObservationId, ObservationKind, ObservationRecord, ScoreDeleteRecord,
         ScoreRecord, ScoreValue, TokenUsage, TraceId, TraceRecord, TraceScope,
     },
-    pricing::{ModelPrice, cost_details, price_for, total_cost},
     profile::{ContentCapture, ExportProfile, Vocabulary},
     recent::{recent_trace, remember_trace},
     recorder::{RecorderSettings, StepGuard, TurnRecorder, wait_for_active_turns},

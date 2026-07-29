@@ -385,8 +385,6 @@ pub struct ObservationRecord {
     pub model_parameters: Metadata,
     /// Token usage, for generation-like observations.
     pub usage: Option<TokenUsage>,
-    /// Cost breakdown in USD, when locally known.
-    pub cost_details: BTreeMap<String, f64>,
     /// Managed-prompt name this generation was rendered from.
     pub prompt_name: Option<String>,
     /// Managed-prompt version this generation was rendered from.
@@ -417,7 +415,6 @@ impl ObservationRecord {
             model: None,
             model_parameters: Metadata::new(),
             usage: None,
-            cost_details: BTreeMap::new(),
             prompt_name: None,
             prompt_version: None,
         }
