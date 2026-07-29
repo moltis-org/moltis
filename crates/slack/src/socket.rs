@@ -6,6 +6,10 @@ use {
     tracing::{debug, info, warn},
 };
 
+mod callbacks;
+#[cfg(test)]
+mod tests;
+
 use moltis_channels::{
     config_view::ChannelConfigView,
     gating::{DmPolicy, GroupPolicy, is_allowed},
@@ -21,12 +25,16 @@ use moltis_channels::{
 };
 
 use crate::{
+    callback_worker::{CallbackAdmissionError, CallbackQueue},
     client::validated_slack_client_for_base_url,
     config::SlackAccountConfig,
     markdown::strip_mentions,
     outbound::SlackOutbound,
-    state::{AccountState, AccountStateMap},
+    socket_reconnect::{RECONNECT_INITIAL_BACKOFF, RECONNECT_STABLE_AFTER, backoff_sleep},
+    state::{AccountState, AccountStateMap, StreamRecipient},
 };
+
+use callbacks::{command_events_callback, interaction_events_callback, push_events_callback};
 
 const OTP_CHALLENGE_MSG: &str = "To use this bot, please enter the verification code.\n\nAsk the bot owner for the code; it is visible in the web UI under Channels > Senders.\n\nThe code expires in 5 minutes.";
 
@@ -35,6 +43,7 @@ const OTP_CHALLENGE_MSG: &str = "To use this bot, please enter the verification 
 struct ListenerState {
     account_id: String,
     accounts: AccountStateMap,
+    callback_queue: CallbackQueue,
 }
 
 /// Start Socket Mode for a single account.
@@ -88,7 +97,7 @@ pub async fn start_socket_mode(
             event_sink,
             cancel: cancel.clone(),
             bot_user_id: Some(bot_user_id),
-            pending_threads: std::collections::HashMap::new(),
+            stream_recipients: Default::default(),
             otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(otp_cooldown_secs)),
             dedup: std::sync::Mutex::new(crate::state::EventDedup::default()),
         });
@@ -120,14 +129,6 @@ pub async fn start_socket_mode(
     Ok(())
 }
 
-/// Initial reconnect backoff after an unexpected socket disconnect.
-const RECONNECT_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(1);
-/// Maximum reconnect backoff.
-const RECONNECT_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
-/// A connection that stayed up at least this long is considered healthy, so the
-/// backoff resets to its initial value on the next disconnect.
-const RECONNECT_STABLE_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
-
 /// Run the Socket Mode listener until cancelled, reconnecting on disconnect.
 ///
 /// slack-morphism's `serve()` returns when the socket drops; on its own that
@@ -143,11 +144,13 @@ async fn run_socket_listener(
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut backoff = RECONNECT_INITIAL_BACKOFF;
+    let callback_queue = CallbackQueue::start(cancel.clone());
 
     while !cancel.is_cancelled() {
         let listener_state = ListenerState {
             account_id: account_id.to_string(),
             accounts: accounts.clone(),
+            callback_queue: callback_queue.clone(),
         };
 
         // Callbacks must be function pointers, so per-account data rides on the
@@ -205,52 +208,6 @@ async fn run_socket_listener(
     Ok(())
 }
 
-/// Sleep for the current backoff (with jitter), then double it up to the cap.
-///
-/// Returns `false` if cancellation fired during the sleep (caller should stop).
-async fn backoff_sleep(
-    cancel: &tokio_util::sync::CancellationToken,
-    backoff: &mut std::time::Duration,
-) -> bool {
-    let delay = jittered(*backoff);
-    tokio::select! {
-        () = cancel.cancelled() => return false,
-        () = tokio::time::sleep(delay) => {},
-    }
-    *backoff = next_backoff(*backoff);
-    true
-}
-
-/// Double the backoff, capped at [`RECONNECT_MAX_BACKOFF`].
-fn next_backoff(current: std::time::Duration) -> std::time::Duration {
-    (current * 2).min(RECONNECT_MAX_BACKOFF)
-}
-
-/// Apply +/-25% jitter to a backoff duration to avoid reconnect thundering herds.
-///
-/// Uses the wall-clock nanosecond fraction as a cheap entropy source (no `rand`
-/// dependency); jitter quality is not security-relevant here.
-fn jittered(base: std::time::Duration) -> std::time::Duration {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    // Nanoseconds within the current second map to [0, 1), then to a
-    // symmetric +/-25% factor. Dividing by anything but NANOS_PER_SEC would
-    // bias the jitter to one side.
-    base.mul_f64(jitter_factor(nanos))
-}
-
-/// Map sub-second nanoseconds onto a symmetric +/-25% delay factor.
-///
-/// Split out from [`jittered`] so the distribution can be asserted directly
-/// rather than sampled from the clock.
-fn jitter_factor(nanos: u32) -> f64 {
-    const NANOS_PER_SEC: f64 = 1_000_000_000.0;
-    let unit = f64::from(nanos) / NANOS_PER_SEC;
-    (0.75 + unit * 0.5).clamp(0.75, 1.25)
-}
-
 /// Error handler for Socket Mode.
 fn error_handler(
     err: Box<dyn std::error::Error + Send + Sync>,
@@ -258,63 +215,23 @@ fn error_handler(
     _states: SlackClientEventsUserState,
 ) -> HttpStatusCode {
     warn!("slack socket mode error: {err}");
-    HttpStatusCode::OK
-}
-
-/// Push events callback (messages, app_mention, etc.).
-async fn push_events_callback(
-    event: SlackPushEventCallback,
-    _client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
-    states: SlackClientEventsUserState,
-) -> UserCallbackResult<()> {
-    let guard = states.read().await;
-    let listener_state = match guard.get_user_state::<ListenerState>() {
-        Some(s) => s.clone(),
-        None => return Ok(()),
-    };
-    drop(guard);
-
-    // Slack retries an envelope that is not acknowledged quickly. Drop repeats
-    // so a retry cannot start a second agent turn for one user message.
-    {
-        let accts = listener_state
-            .accounts
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = accts.get(&listener_state.account_id) {
-            let mut dedup = state.dedup.lock().unwrap_or_else(|e| e.into_inner());
-            if !dedup.insert_new(event.event_id.as_ref()) {
-                debug!(
-                    account_id = %listener_state.account_id,
-                    event_id = %event.event_id,
-                    "dropping duplicate slack event (retry)"
-                );
-                return Ok(());
-            }
-        }
+    if err.downcast_ref::<CallbackAdmissionError>().is_some() {
+        HttpStatusCode::SERVICE_UNAVAILABLE
+    } else {
+        HttpStatusCode::OK
     }
-
-    // Process off the callback path: the SDK only acknowledges the envelope
-    // once this callback returns, and handling can involve Web API calls that
-    // would otherwise risk exceeding Slack's acknowledgment deadline and
-    // trigger a retry.
-    tokio::spawn(async move {
-        handle_push_event(event, listener_state).await;
-    });
-
-    Ok(())
 }
 
 /// Handle a push event body. Runs off the Socket Mode acknowledgment path.
-async fn handle_push_event(event: SlackPushEventCallback, listener_state: ListenerState) {
+pub(crate) async fn handle_push_event(
+    event: SlackPushEventCallback,
+    account_id: &str,
+    accounts: &AccountStateMap,
+) {
+    let team_id = event.team_id.to_string();
     match event.event {
         SlackEventCallbackBody::Message(msg_event) => {
-            handle_message_event(
-                &listener_state.account_id,
-                msg_event,
-                &listener_state.accounts,
-            )
-            .await;
+            handle_message_event(account_id, msg_event, Some(team_id), accounts).await;
         },
         SlackEventCallbackBody::AppMention(mention_event) => {
             let channel = mention_event.channel.to_string();
@@ -329,39 +246,42 @@ async fn handle_push_event(event: SlackPushEventCallback, listener_state: Listen
             let message_ts = Some(mention_event.origin.ts.to_string());
 
             handle_inbound(
-                &listener_state.account_id,
+                account_id,
                 &channel,
                 &user,
                 text,
                 thread_ts,
                 message_ts,
+                Some(team_id),
                 None,
                 true, // is_mention
-                &listener_state.accounts,
+                accounts,
             )
             .await;
         },
         SlackEventCallbackBody::ReactionAdded(reaction_event) => {
             handle_reaction_event(
-                &listener_state.account_id,
+                account_id,
                 reaction_event.user.as_ref(),
                 reaction_event.reaction.as_ref(),
                 &reaction_event.item,
                 reaction_event.item_user.as_ref().map(|u| u.to_string()),
+                Some(team_id),
                 true,
-                &listener_state.accounts,
+                accounts,
             )
             .await;
         },
         SlackEventCallbackBody::ReactionRemoved(reaction_event) => {
             handle_reaction_event(
-                &listener_state.account_id,
+                account_id,
                 reaction_event.user.as_ref(),
                 reaction_event.reaction.as_ref(),
                 &reaction_event.item,
                 reaction_event.item_user.as_ref().map(|u| u.to_string()),
+                Some(team_id),
                 false,
-                &listener_state.accounts,
+                accounts,
             )
             .await;
         },
@@ -371,151 +291,11 @@ async fn handle_push_event(event: SlackPushEventCallback, listener_state: Listen
     }
 }
 
-/// Command events callback (slash commands).
-async fn command_events_callback(
-    event: SlackCommandEvent,
-    _client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
-    states: SlackClientEventsUserState,
-) -> UserCallbackResult<SlackCommandEventResponse> {
-    let guard = states.read().await;
-    let listener_state = match guard.get_user_state::<ListenerState>() {
-        Some(s) => s.clone(),
-        None => {
-            return Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_text("Not configured".to_string()),
-            ));
-        },
-    };
-    drop(guard);
-
-    let account_id = &listener_state.account_id;
-    let command_text = event.command.to_string();
-    let text = event.text.unwrap_or_default();
-    let full_command = format!("{command_text} {text}").trim().to_string();
-    let sender_id = event.user_id.to_string();
-
-    let event_sink = {
-        let accts = listener_state
-            .accounts
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
-        accts.get(account_id).and_then(|s| s.event_sink.clone())
-    };
-
-    if let Some(sink) = event_sink {
-        let reply_to = ChannelReplyTarget {
-            ack_message_id: None,
-            channel_type: ChannelType::Slack,
-            account_id: account_id.to_string(),
-            chat_id: event.channel_id.to_string(),
-            message_id: None,
-            thread_id: None,
-        };
-        match sink
-            .dispatch_command(&full_command, reply_to, Some(&sender_id))
-            .await
-        {
-            Ok(response_text) => Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_text(response_text),
-            )),
-            Err(e) => Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_text(format!("Error: {e}")),
-            )),
-        }
-    } else {
-        Ok(SlackCommandEventResponse::new(
-            SlackMessageContent::new().with_text("Channel not configured".to_string()),
-        ))
-    }
-}
-
-/// Interaction events callback (block actions / button clicks).
-async fn interaction_events_callback(
-    event: SlackInteractionEvent,
-    _client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
-    states: SlackClientEventsUserState,
-) -> UserCallbackResult<()> {
-    let guard = states.read().await;
-    let listener_state = match guard.get_user_state::<ListenerState>() {
-        Some(s) => s.clone(),
-        None => return Ok(()),
-    };
-    drop(guard);
-
-    // Interactions are retried like events, and a repeat would run the button's
-    // action twice. Dedup on the trigger id, which is unique per interaction.
-    if let SlackInteractionEvent::BlockActions(ref ba) = event {
-        let trigger = ba.trigger_id.as_ref();
-        let accts = listener_state
-            .accounts
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = accts.get(&listener_state.account_id) {
-            let mut dedup = state.dedup.lock().unwrap_or_else(|e| e.into_inner());
-            if !dedup.insert_new(trigger) {
-                debug!(
-                    account_id = %listener_state.account_id,
-                    "dropping duplicate slack interaction (retry)"
-                );
-                return Ok(());
-            }
-        }
-    }
-
-    // Extract the action_id from block_actions interaction type.
-    let (action_id, channel_id) = match &event {
-        SlackInteractionEvent::BlockActions(ba) => {
-            let action = ba.actions.as_ref().and_then(|a| a.first());
-            let channel = ba.channel.as_ref().map(|c| c.id.to_string());
-            match (action, channel) {
-                (Some(act), Some(ch)) => (act.action_id.to_string(), ch),
-                _ => {
-                    debug!("block_actions missing action or channel");
-                    return Ok(());
-                },
-            }
-        },
-        _ => {
-            debug!("unhandled interaction event type");
-            return Ok(());
-        },
-    };
-
-    let account_id = &listener_state.account_id;
-    let event_sink = {
-        let accts = listener_state
-            .accounts
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
-        accts.get(account_id).and_then(|s| s.event_sink.clone())
-    };
-
-    if let Some(sink) = event_sink {
-        let reply_to = ChannelReplyTarget {
-            ack_message_id: None,
-            channel_type: ChannelType::Slack,
-            account_id: account_id.to_string(),
-            chat_id: channel_id,
-            message_id: None,
-            thread_id: None,
-        };
-        match sink.dispatch_interaction(&action_id, reply_to).await {
-            Ok(_response) => {
-                // Response already sent by the gateway.
-            },
-            Err(e) => {
-                debug!(account_id, action_id, "interaction dispatch failed: {e}");
-            },
-        }
-    }
-
-    Ok(())
-}
-
 /// Handle a Slack message event.
 pub(crate) async fn handle_message_event(
     account_id: &str,
     event: SlackMessageEvent,
+    team_id: Option<String>,
     accounts: &AccountStateMap,
 ) {
     // Skip message subtypes (edits, deletes, bot messages, etc.).
@@ -553,9 +333,7 @@ pub(crate) async fn handle_message_event(
         .unwrap_or("");
 
     let thread_ts = event.origin.thread_ts.as_ref().map(|ts| ts.to_string());
-    // The exact ts of this inbound message (for acknowledgment reactions).
     let message_ts = event.origin.ts.to_string();
-    // Use thread_ts if available, otherwise use the message ts for threading.
     let reply_thread = thread_ts.or_else(|| Some(message_ts.clone()));
 
     // Detect if this is a mention.
@@ -574,6 +352,7 @@ pub(crate) async fn handle_message_event(
         text,
         reply_thread,
         Some(message_ts),
+        team_id,
         event.sender.username.clone(),
         is_mention,
         accounts,
@@ -592,6 +371,7 @@ pub(crate) async fn handle_inbound(
     text: &str,
     thread_ts: Option<String>,
     message_ts: Option<String>,
+    team_id: Option<String>,
     username: Option<String>,
     is_mention: bool,
     accounts: &AccountStateMap,
@@ -609,11 +389,7 @@ pub(crate) async fn handle_inbound(
         }
     };
 
-    // Determine if this is a DM or channel message.
-    // Slack DM channel IDs start with 'D'.
     let is_dm = channel_id.starts_with('D');
-
-    // Access control check.
     let access_granted = check_access(
         is_dm,
         user_id,
@@ -711,12 +487,15 @@ pub(crate) async fn handle_inbound(
         return;
     }
 
-    // Store thread_ts for reply threading.
-    if let Some(ts) = &thread_ts {
-        let thread_key = format!("{channel_id}:{user_id}");
+    let thread_root = thread_ts.or_else(|| message_ts.clone());
+
+    if let (Some(thread_root), Some(team_id)) = (&thread_root, team_id) {
         let mut accts = accounts.write().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accts.get_mut(account_id) {
-            state.pending_threads.insert(thread_key, ts.clone());
+            state.note_stream_recipient(channel_id, thread_root, StreamRecipient {
+                user_id: user_id.to_string(),
+                team_id,
+            });
         }
     }
 
@@ -732,7 +511,7 @@ pub(crate) async fn handle_inbound(
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),
             chat_id: channel_id.to_string(),
-            message_id: thread_ts,
+            message_id: thread_root,
             thread_id: None,
         };
 
@@ -761,6 +540,27 @@ pub(crate) async fn handle_inbound(
     }
 }
 
+pub(crate) fn account_access_allowed(
+    accounts: &AccountStateMap,
+    account_id: &str,
+    user_id: &str,
+    channel_id: &str,
+) -> bool {
+    let accounts = accounts.read().unwrap_or_else(|error| error.into_inner());
+    let Some(state) = accounts.get(account_id) else {
+        return false;
+    };
+    check_access(
+        channel_id.starts_with('D'),
+        user_id,
+        channel_id,
+        &state.config.dm_policy,
+        &state.config.group_policy,
+        &state.config.allowlist,
+        &state.config.channel_allowlist,
+    )
+}
+
 /// Handle a reaction_added or reaction_removed event.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_reaction_event(
@@ -769,6 +569,7 @@ pub(crate) async fn handle_reaction_event(
     emoji: &str,
     item: &SlackReactionsItem,
     item_user: Option<String>,
+    team_id: Option<String>,
     added: bool,
     accounts: &AccountStateMap,
 ) {
@@ -784,15 +585,13 @@ pub(crate) async fn handle_reaction_event(
         },
         _ => return,
     };
-
     dispatch_reaction(
-        account_id, user_id, emoji, channel_id, message_ts, item_user, added, accounts,
+        account_id, user_id, emoji, channel_id, message_ts, item_user, team_id, added, accounts,
     )
     .await;
 }
 
 /// Core reaction handling shared by Socket Mode and the Events API.
-///
 /// Always emits a [`ChannelEvent::ReactionChange`] for observers; additionally
 /// routes the reaction into the agent as a synthetic message when
 /// `reaction_triggers` is enabled and the reaction is eligible.
@@ -804,6 +603,7 @@ pub(crate) async fn dispatch_reaction(
     channel_id: String,
     message_ts: String,
     item_user: Option<String>,
+    team_id: Option<String>,
     added: bool,
     accounts: &AccountStateMap,
 ) {
@@ -886,7 +686,15 @@ pub(crate) async fn dispatch_reaction(
         );
         return;
     }
-
+    if let Some(team_id) = team_id {
+        let mut accts = accounts.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accts.get_mut(account_id) {
+            state.note_stream_recipient(&channel_id, &message_ts, StreamRecipient {
+                user_id: user_id.to_string(),
+                team_id,
+            });
+        }
+    }
     // Thread the synthetic message under the reacted message so the agent sees
     // the original content as thread context (dispatch fetches thread history).
     let reply_to = ChannelReplyTarget {
@@ -1171,251 +979,5 @@ async fn send_otp_status(
             account_id,
             channel_id, "failed to send slack OTP status: {e}"
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn backoff_doubles_and_caps() {
-        use std::time::Duration;
-        assert_eq!(next_backoff(Duration::from_secs(1)), Duration::from_secs(2));
-        assert_eq!(next_backoff(Duration::from_secs(2)), Duration::from_secs(4));
-        // Caps at RECONNECT_MAX_BACKOFF (30s).
-        assert_eq!(next_backoff(Duration::from_secs(20)), RECONNECT_MAX_BACKOFF);
-        assert_eq!(next_backoff(RECONNECT_MAX_BACKOFF), RECONNECT_MAX_BACKOFF);
-    }
-
-    #[test]
-    fn jitter_stays_within_bounds() {
-        use std::time::Duration;
-        let base = Duration::from_secs(10);
-        for _ in 0..200 {
-            let j = jittered(base);
-            // Exactly the documented +/-25%. Looser bounds would also accept a
-            // one-sided distribution, which is the bug this guards against.
-            assert!(j >= base.mul_f64(0.75), "jitter {j:?} below lower bound");
-            assert!(j <= base.mul_f64(1.25), "jitter {j:?} above upper bound");
-        }
-    }
-
-    #[test]
-    fn jitter_is_two_sided() {
-        // The factor must be able to land on both sides of the base delay;
-        // dividing nanoseconds by the wrong constant silently made it
-        // always-negative, which no range assertion alone would catch.
-        assert!(jitter_factor(0) < 1.0, "minimum should shorten the delay");
-        assert!(
-            jitter_factor(999_999_999) > 1.0,
-            "maximum should lengthen the delay"
-        );
-    }
-
-    #[test]
-    fn ack_target_dm_is_acknowledged() {
-        assert_eq!(
-            ack_reaction_target(true, true, false, Some("111.222".into())),
-            Some("111.222".into())
-        );
-    }
-
-    #[test]
-    fn ack_target_mention_is_acknowledged() {
-        assert_eq!(
-            ack_reaction_target(true, false, true, Some("111.222".into())),
-            Some("111.222".into())
-        );
-    }
-
-    #[test]
-    fn ack_target_unaddressed_channel_message_is_not_acknowledged() {
-        assert_eq!(
-            ack_reaction_target(true, false, false, Some("111.222".into())),
-            None
-        );
-    }
-
-    #[test]
-    fn ack_target_disabled_config_never_acknowledges() {
-        assert_eq!(
-            ack_reaction_target(false, true, true, Some("111.222".into())),
-            None
-        );
-    }
-
-    #[test]
-    fn reaction_trigger_requires_enabled_added_and_not_self() {
-        // Disabled → never.
-        assert!(!reaction_should_trigger(false, true, false, true, "x", &[]));
-        // Removal → never.
-        assert!(!reaction_should_trigger(true, false, false, true, "x", &[]));
-        // Bot's own reaction → never.
-        assert!(!reaction_should_trigger(true, true, true, true, "eyes", &[]));
-        // Enabled add by another user with no allowlist → trigger.
-        assert!(reaction_should_trigger(true, true, false, true, "x", &[]));
-    }
-
-    #[test]
-    fn reaction_trigger_respects_emoji_allowlist() {
-        let allow = vec!["white_check_mark".to_string()];
-        assert!(reaction_should_trigger(
-            true,
-            true,
-            false,
-            true,
-            "white_check_mark",
-            &allow
-        ));
-        assert!(!reaction_should_trigger(
-            true, true, false, true, "x", &allow
-        ));
-    }
-
-    #[test]
-    fn dm_open_allows_anyone() {
-        assert!(check_access(
-            true,
-            "U123",
-            "D456",
-            &DmPolicy::Open,
-            &GroupPolicy::Open,
-            &[],
-            &[],
-        ));
-    }
-
-    #[test]
-    fn dm_allowlist_requires_user() {
-        assert!(!check_access(
-            true,
-            "U999",
-            "D456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Open,
-            &["U123".to_string()],
-            &[],
-        ));
-        assert!(check_access(
-            true,
-            "U123",
-            "D456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Open,
-            &["U123".to_string()],
-            &[],
-        ));
-    }
-
-    #[test]
-    fn empty_dm_allowlist_denies_all() {
-        assert!(!check_access(
-            true,
-            "U123",
-            "D456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Open,
-            &[],
-            &[],
-        ));
-    }
-
-    #[test]
-    fn dm_disabled_denies_all() {
-        assert!(!check_access(
-            true,
-            "U123",
-            "D456",
-            &DmPolicy::Disabled,
-            &GroupPolicy::Open,
-            &[],
-            &[],
-        ));
-    }
-
-    #[test]
-    fn channel_open_allows_any() {
-        assert!(check_access(
-            false,
-            "U123",
-            "C456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Open,
-            &[],
-            &[],
-        ));
-    }
-
-    #[test]
-    fn channel_allowlist_requires_channel() {
-        assert!(!check_access(
-            false,
-            "U123",
-            "C999",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Allowlist,
-            &[],
-            &["C456".to_string()],
-        ));
-        assert!(check_access(
-            false,
-            "U123",
-            "C456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Allowlist,
-            &[],
-            &["C456".to_string()],
-        ));
-    }
-
-    #[test]
-    fn empty_channel_allowlist_denies_all() {
-        assert!(!check_access(
-            false,
-            "U123",
-            "C456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Allowlist,
-            &[],
-            &[],
-        ));
-    }
-
-    #[test]
-    fn removing_last_allowlist_entry_denies_access() {
-        let mut allowlist = vec!["U123".to_string()];
-        assert!(check_access(
-            true,
-            "U123",
-            "D456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Open,
-            &allowlist,
-            &[],
-        ));
-        allowlist.clear();
-        assert!(!check_access(
-            true,
-            "U123",
-            "D456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Open,
-            &allowlist,
-            &[],
-        ));
-    }
-
-    #[test]
-    fn channel_disabled_denies_all() {
-        assert!(!check_access(
-            false,
-            "U123",
-            "C456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Disabled,
-            &[],
-            &[],
-        ));
     }
 }

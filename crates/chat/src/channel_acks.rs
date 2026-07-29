@@ -44,10 +44,10 @@ pub(crate) fn merged_ack_keys<'a>(params: impl Iterator<Item = &'a Value>) -> Ve
 
 /// Mark the channel acknowledgment as failed because the reply never reached
 /// the user. Terminal protection means this wins over the run's later Success.
-pub(crate) async fn note_delivery_failed(state: &Arc<dyn ChatRuntime>, session_key: &str) {
+pub(crate) async fn note_delivery_failed(state: &Arc<dyn ChatRuntime>, activity_id: &str) {
     state
         .note_channel_activity(
-            session_key,
+            activity_id,
             moltis_channels::ChannelActivity::Finished(moltis_channels::ChannelAckOutcome::Failure),
         )
         .await;
@@ -56,7 +56,7 @@ pub(crate) async fn note_delivery_failed(state: &Arc<dyn ChatRuntime>, session_k
 /// Finalize the acknowledgment for a completed run.
 pub(crate) async fn note_turn_finished(
     state: &Arc<dyn ChatRuntime>,
-    session_key: &str,
+    activity_id: &str,
     succeeded: bool,
 ) {
     let outcome = if succeeded {
@@ -66,7 +66,7 @@ pub(crate) async fn note_turn_finished(
     };
     state
         .note_channel_activity(
-            session_key,
+            activity_id,
             moltis_channels::ChannelActivity::Finished(outcome),
         )
         .await;

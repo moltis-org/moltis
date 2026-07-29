@@ -19,7 +19,11 @@
 //!
 //! Design ported from openclaw's `status-reactions.ts`.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use {
     moltis_channels::{ChannelAckOutcome, ChannelActivity, ChannelOutbound},
@@ -63,14 +67,20 @@ pub fn ack_key(account_id: &str, chat_id: &str, message_id: &str) -> String {
 /// message that is never claimed by a run cannot grow the map without bound.
 /// Controllers additionally self-expire via [`MAX_LIFETIME`].
 const MAX_PENDING_ACKS: usize = 512;
+/// Threshold for cleaning up turns that have exceeded [`MAX_LIFETIME`]. Healthy
+/// concurrent turns may temporarily exceed it.
+const MAX_ACTIVE_TURNS: usize = 512;
+
+struct ActiveAck {
+    key: String,
+    controller: Arc<ChannelReactionController>,
+}
 
 /// The acknowledgments a currently-executing run owns.
-///
-/// `id` distinguishes successive turns on the same session so a slow terminal
-/// from turn N can never clear turn N+1's state.
 struct ActiveTurn {
-    id: u64,
-    keys: Vec<String>,
+    session_key: String,
+    acknowledgments: Vec<ActiveAck>,
+    activated_at: Instant,
 }
 
 #[derive(Default)]
@@ -78,9 +88,11 @@ struct RegistryInner {
     /// Received messages with a live reaction, not yet claimed by a run.
     pending: HashMap<String, Arc<ChannelReactionController>>,
     /// Insertion order of `pending`, for oldest-first eviction.
-    pending_order: Vec<String>,
-    /// Which acknowledgments the running turn owns, per session.
+    pending_order: VecDeque<String>,
+    /// Controllers owned by a running turn, keyed by the run's identity.
     active: HashMap<String, ActiveTurn>,
+    /// Current activity identity per session, used to settle a displaced turn.
+    active_by_session: HashMap<String, String>,
 }
 
 /// Routes acknowledgment-reaction activity to the right inbound message(s).
@@ -92,10 +104,22 @@ struct RegistryInner {
 /// that merely happens to share the session. In `collect` queue mode a single
 /// run legitimately owns several inbound messages, and every one of them
 /// receives the phase and terminal reactions.
-#[derive(Default)]
 pub struct ReactionRegistry {
     inner: Mutex<RegistryInner>,
-    next_turn_id: std::sync::atomic::AtomicU64,
+    pending_limit: usize,
+    active_limit: usize,
+    active_lifetime: Duration,
+}
+
+impl Default for ReactionRegistry {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(RegistryInner::default()),
+            pending_limit: MAX_PENDING_ACKS,
+            active_limit: MAX_ACTIVE_TURNS,
+            active_lifetime: MAX_LIFETIME,
+        }
+    }
 }
 
 impl ReactionRegistry {
@@ -112,11 +136,12 @@ impl ReactionRegistry {
             if let Some(previous) = inner.pending.insert(key.clone(), controller) {
                 displaced.push(previous);
             } else {
-                inner.pending_order.push(key.clone());
+                inner.pending_order.push_back(key.clone());
             }
-            // Evict oldest entries that no active turn still owns.
-            while inner.pending_order.len() > MAX_PENDING_ACKS {
-                let oldest = inner.pending_order.remove(0);
+            while inner.pending_order.len() > self.pending_limit {
+                let Some(oldest) = inner.pending_order.pop_front() else {
+                    break;
+                };
                 if let Some(evicted) = inner.pending.remove(&oldest) {
                     displaced.push(evicted);
                 }
@@ -130,87 +155,120 @@ impl ReactionRegistry {
         }
     }
 
-    /// Bind the given acknowledgments to this session's now-executing run.
-    ///
-    /// Any previously active turn for the session is dropped from routing (its
-    /// controllers keep their own lifetime cap), so a superseded run cannot
-    /// keep driving reactions.
-    pub async fn activate(&self, session_key: &str, keys: Vec<String>) {
+    /// Transfer the given acknowledgments to this now-executing run.
+    pub async fn activate(&self, activity_id: &str, session_key: &str, keys: Vec<String>) {
         if keys.is_empty() {
             return;
         }
-        let id = self
-            .next_turn_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut inner = self.inner.lock().await;
-        inner
-            .active
-            .insert(session_key.to_string(), ActiveTurn { id, keys });
-    }
-
-    /// Forward an activity to every acknowledgment the session's run owns.
-    ///
-    /// Terminal activities finalize and release those acknowledgments; the
-    /// release is identity-checked against the turn id so a late terminal from
-    /// a superseded run cannot clear the current one.
-    pub async fn note(&self, session_key: &str, activity: ChannelActivity) {
-        let is_terminal = matches!(activity, ChannelActivity::Finished(_));
-        let (turn_id, controllers) = {
-            let inner = self.inner.lock().await;
-            let Some(turn) = inner.active.get(session_key) else {
-                return;
-            };
-            let controllers: Vec<_> = turn
-                .keys
-                .iter()
-                .filter_map(|k| inner.pending.get(k).cloned())
-                .collect();
-            (turn.id, controllers)
-        };
-
-        for controller in &controllers {
-            controller.note(activity.clone()).await;
-        }
-
-        if is_terminal {
+        let displaced = {
             let mut inner = self.inner.lock().await;
-            // Only release if this session's active turn is still ours.
-            let still_ours = inner
-                .active
-                .get(session_key)
-                .is_some_and(|turn| turn.id == turn_id);
-            if still_ours && let Some(turn) = inner.active.remove(session_key) {
-                for key in turn.keys {
-                    inner.pending.remove(&key);
-                    inner.pending_order.retain(|k| k != &key);
+            let acknowledgments = keys
+                .into_iter()
+                .filter_map(|key| {
+                    inner.pending_order.retain(|pending| pending != &key);
+                    inner
+                        .pending
+                        .remove(&key)
+                        .map(|controller| ActiveAck { key, controller })
+                })
+                .collect::<Vec<_>>();
+            if acknowledgments.is_empty() {
+                return;
+            }
+
+            let mut displaced = Vec::new();
+            // This is a cleanup threshold rather than a concurrency cap: live
+            // workers may overlap, so only turns beyond their worker lifetime
+            // are eligible for eviction.
+            if inner.active.len() >= self.active_limit {
+                let now = Instant::now();
+                let stale_ids = inner
+                    .active
+                    .iter()
+                    .filter(|(_, turn)| {
+                        now.duration_since(turn.activated_at) >= self.active_lifetime
+                    })
+                    .map(|(activity_id, _)| activity_id.clone())
+                    .collect::<Vec<_>>();
+                for stale_id in stale_ids {
+                    if let Some(stale) = remove_active(&mut inner, &stale_id) {
+                        displaced.extend(stale.acknowledgments);
+                    }
                 }
             }
+            if let Some(previous_id) = inner
+                .active_by_session
+                .get(session_key)
+                .filter(|previous_id| previous_id.as_str() != activity_id)
+                .cloned()
+                && let Some(previous) = remove_active(&mut inner, &previous_id)
+            {
+                displaced.extend(previous.acknowledgments);
+            }
+            if let Some(previous) = remove_active(&mut inner, activity_id) {
+                displaced.extend(previous.acknowledgments);
+            }
+
+            inner.active.insert(activity_id.to_string(), ActiveTurn {
+                session_key: session_key.to_string(),
+                acknowledgments,
+                activated_at: Instant::now(),
+            });
+            inner
+                .active_by_session
+                .insert(session_key.to_string(), activity_id.to_string());
+            displaced
+        };
+        finish_acks(displaced, ChannelAckOutcome::Cancelled).await;
+    }
+
+    /// Forward an activity to every acknowledgment this exact run owns.
+    ///
+    /// A terminal detaches the turn before any controller I/O, so later activity
+    /// cannot race behind it and a delayed terminal cannot address a newer run.
+    pub async fn note(&self, activity_id: &str, activity: ChannelActivity) {
+        let is_terminal = matches!(activity, ChannelActivity::Finished(_));
+        let controllers = {
+            let mut inner = self.inner.lock().await;
+            if is_terminal {
+                remove_active(&mut inner, activity_id)
+                    .map(|turn| turn.acknowledgments)
+                    .unwrap_or_default()
+            } else {
+                inner
+                    .active
+                    .get(activity_id)
+                    .map(|turn| {
+                        turn.acknowledgments
+                            .iter()
+                            .map(|ack| ActiveAck {
+                                key: ack.key.clone(),
+                                controller: Arc::clone(&ack.controller),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+        };
+
+        for ack in controllers {
+            ack.controller.note(activity.clone()).await;
         }
     }
 
-    /// Finalize whichever turn is active for this session *right now*.
+    /// Finalize the exact active turn identified by `activity_id`.
     ///
     /// Used by abort, where the run future is killed and cannot signal its own
-    /// terminal. Taking the turn under the lock makes this turn-addressed: a
-    /// turn that starts afterwards can never be caught by this call, which a
-    /// session-addressed terminal sent after the fact could.
-    pub async fn finalize_active(&self, session_key: &str, outcome: ChannelAckOutcome) {
-        let controllers = {
+    /// terminal. Taking the turn under the lock ensures a later turn in the
+    /// same session can never be caught by this call.
+    pub async fn finalize_active(&self, activity_id: &str, outcome: ChannelAckOutcome) {
+        let acknowledgments = {
             let mut inner = self.inner.lock().await;
-            let Some(turn) = inner.active.remove(session_key) else {
-                return;
-            };
-            turn.keys
-                .iter()
-                .filter_map(|k| {
-                    inner.pending_order.retain(|pk| pk != k);
-                    inner.pending.remove(k)
-                })
-                .collect::<Vec<_>>()
+            remove_active(&mut inner, activity_id)
+                .map(|turn| turn.acknowledgments)
+                .unwrap_or_default()
         };
-        for controller in controllers {
-            controller.note(ChannelActivity::Finished(outcome)).await;
-        }
+        finish_acks(acknowledgments, outcome).await;
     }
 
     /// Finalize specific acknowledgments directly, for paths where no run ever
@@ -219,21 +277,60 @@ impl ReactionRegistry {
     pub async fn finalize_keys(&self, keys: &[String], outcome: ChannelAckOutcome) {
         let controllers = {
             let mut inner = self.inner.lock().await;
-            // Drop any active-turn ownership of these keys too, so a later
-            // terminal cannot address controllers that are already resolved.
-            inner
-                .active
-                .retain(|_, turn| !turn.keys.iter().any(|tk| keys.contains(tk)));
-            keys.iter()
+            let mut controllers = keys
+                .iter()
                 .filter_map(|k| {
                     inner.pending_order.retain(|pk| pk != k);
                     inner.pending.remove(k)
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            let activity_ids = inner.active.keys().cloned().collect::<Vec<_>>();
+            for activity_id in activity_ids {
+                let Some(mut turn) = remove_active(&mut inner, &activity_id) else {
+                    continue;
+                };
+                let mut kept = Vec::new();
+                for ack in turn.acknowledgments {
+                    if keys.contains(&ack.key) {
+                        controllers.push(ack.controller);
+                    } else {
+                        kept.push(ack);
+                    }
+                }
+                if !kept.is_empty() {
+                    turn.acknowledgments = kept;
+                    inner
+                        .active_by_session
+                        .insert(turn.session_key.clone(), activity_id.clone());
+                    inner.active.insert(activity_id, turn);
+                }
+            }
+            controllers
         };
         for controller in controllers {
             controller.note(ChannelActivity::Finished(outcome)).await;
         }
+    }
+}
+
+fn remove_active(inner: &mut RegistryInner, activity_id: &str) -> Option<ActiveTurn> {
+    let turn = inner.active.remove(activity_id)?;
+    if inner
+        .active_by_session
+        .get(&turn.session_key)
+        .map(String::as_str)
+        == Some(activity_id)
+    {
+        inner.active_by_session.remove(&turn.session_key);
+    }
+    Some(turn)
+}
+
+async fn finish_acks(acknowledgments: Vec<ActiveAck>, outcome: ChannelAckOutcome) {
+    for ack in acknowledgments {
+        ack.controller
+            .note(ChannelActivity::Finished(outcome))
+            .await;
     }
 }
 
@@ -412,7 +509,11 @@ async fn run_worker(
                 return;
             },
             Ok(None) => {
-                // Sender dropped without a terminal — leave the current marker.
+                // The controller owner disappeared without a terminal. Strip
+                // the in-progress marker rather than leaking it indefinitely.
+                if let Some(cur) = current.take() {
+                    remove_reaction(&outbound, &account_id, &chat_id, &message_id, &cur).await;
+                }
                 return;
             },
             Err(_) => {
@@ -644,11 +745,13 @@ mod tests {
         let registry = ReactionRegistry::default();
         let a = park(&registry, "msg-a").await;
         let b = park(&registry, "msg-b").await;
-        registry.activate("sess", vec!["msg-a".into()]).await;
+        registry
+            .activate("activity-a", "sess", vec!["msg-a".into()])
+            .await;
 
         registry
             .note(
-                "sess",
+                "activity-a",
                 ChannelActivity::Finished(ChannelAckOutcome::Success),
             )
             .await;
@@ -669,12 +772,12 @@ mod tests {
         let b = park(&registry, "msg-b").await;
         // One run answers both messages.
         registry
-            .activate("sess", vec!["msg-a".into(), "msg-b".into()])
+            .activate("activity-a", "sess", vec!["msg-a".into(), "msg-b".into()])
             .await;
 
         registry
             .note(
-                "sess",
+                "activity-a",
                 ChannelActivity::Finished(ChannelAckOutcome::Success),
             )
             .await;
@@ -690,20 +793,93 @@ mod tests {
         // Turn 1 activates, is superseded by turn 2, then turn 1's terminal
         // arrives late. It must not release turn 2's acknowledgment.
         let registry = ReactionRegistry::default();
+        let a = park(&registry, "msg-a").await;
+        registry
+            .activate("activity-1", "sess", vec!["msg-a".into()])
+            .await;
         let b = park(&registry, "msg-b").await;
-        registry.activate("sess", vec!["msg-b".into()]).await;
-        registry.activate("sess", vec!["msg-b".into()]).await; // turn 2
+        registry
+            .activate("activity-2", "sess", vec!["msg-b".into()])
+            .await;
 
         registry
             .note(
-                "sess",
+                "activity-1",
+                ChannelActivity::Finished(ChannelAckOutcome::Success),
+            )
+            .await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert_eq!(ops_of(&a), vec!["+👀", "-👀"]);
+        assert_eq!(ops_of(&b), vec!["+👀"], "late terminal touched turn 2");
+
+        registry
+            .note(
+                "activity-2",
                 ChannelActivity::Finished(ChannelAckOutcome::Success),
             )
             .await;
         tokio::time::sleep(Duration::from_millis(60)).await;
 
-        // The still-current turn resolved exactly once.
         assert_eq!(ops_of(&b), vec!["+👀", "+✅", "-👀"]);
+    }
+
+    #[tokio::test]
+    async fn active_cleanup_threshold_does_not_cancel_healthy_live_turns() {
+        let registry = ReactionRegistry {
+            active_limit: 1,
+            ..ReactionRegistry::default()
+        };
+        let a = park(&registry, "msg-a").await;
+        let b = park(&registry, "msg-b").await;
+        registry
+            .activate("activity-a", "sess-a", vec!["msg-a".into()])
+            .await;
+        registry
+            .activate("activity-b", "sess-b", vec!["msg-b".into()])
+            .await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        assert_eq!(ops_of(&a), vec!["+👀"], "healthy turn was evicted");
+        assert_eq!(ops_of(&b), vec!["+👀"]);
+
+        registry
+            .note(
+                "activity-a",
+                ChannelActivity::Finished(ChannelAckOutcome::Success),
+            )
+            .await;
+        registry
+            .note(
+                "activity-b",
+                ChannelActivity::Finished(ChannelAckOutcome::Success),
+            )
+            .await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert_eq!(ops_of(&a), vec!["+👀", "+✅", "-👀"]);
+        assert_eq!(ops_of(&b), vec!["+👀", "+✅", "-👀"]);
+    }
+
+    #[tokio::test]
+    async fn active_cleanup_threshold_cancels_only_expired_turns() {
+        let registry = ReactionRegistry {
+            active_limit: 1,
+            active_lifetime: Duration::ZERO,
+            ..ReactionRegistry::default()
+        };
+        let stale = park(&registry, "msg-stale").await;
+        let current = park(&registry, "msg-current").await;
+        registry
+            .activate("activity-stale", "sess-stale", vec!["msg-stale".into()])
+            .await;
+        registry
+            .activate("activity-current", "sess-current", vec![
+                "msg-current".into(),
+            ])
+            .await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        assert_eq!(ops_of(&stale), vec!["+👀", "-👀"]);
+        assert_eq!(ops_of(&current), vec!["+👀"]);
     }
 
     #[tokio::test]
@@ -739,13 +915,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn activity_for_unknown_session_is_a_noop() {
+    async fn activity_for_unknown_id_is_a_noop() {
         let registry = ReactionRegistry::default();
         let a = park(&registry, "msg-a").await;
         // Never activated — a stray activity must not touch the parked ack.
         registry
             .note(
-                "other-session",
+                "other-activity",
                 ChannelActivity::Finished(ChannelAckOutcome::Success),
             )
             .await;

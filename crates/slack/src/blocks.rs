@@ -38,10 +38,8 @@ pub fn markdown_to_blocks(markdown: &str) -> Option<Vec<Value>> {
     };
 
     for line in markdown.lines() {
-        // Fence handling. A closing fence must be a bare run of at least as
-        // many backticks as the opener; anything else (a longer fence used as
-        // content, or ```rust) is body text. Treating every ```-prefixed line
-        // as a toggle silently truncated code blocks that contained one.
+        // Fence handling. CommonMark allows a bare closing run to be longer
+        // than its opener; a fence with an info string remains body text.
         if let Some(ticks) = opening_fence_len(line) {
             match &code {
                 Some((buf, open_ticks)) => {
@@ -124,8 +122,7 @@ fn opening_fence_len(line: &str) -> Option<usize> {
     (ticks >= 3).then_some(ticks)
 }
 
-/// A fence closes a block only if it is a bare run of at least `open_ticks`
-/// backticks with no trailing content.
+/// A bare backtick run closes a block when it is at least as long as the opener.
 fn is_closing_fence(line: &str, open_ticks: usize) -> bool {
     let trimmed = line.trim();
     trimmed.len() >= open_ticks && trimmed.chars().all(|c| c == '`')
@@ -259,16 +256,12 @@ mod tests {
     }
 
     #[test]
-    fn code_block_containing_a_longer_fence_is_not_truncated() {
-        // A ```` run inside a ``` block is content, not a terminator.
-        let md = "```\nbefore\n````\nafter\n```";
+    fn longer_backtick_run_closes_fence() {
+        let md = "```\nbefore\n````\nafter";
         let blocks = markdown_to_blocks(md).unwrap();
-        let rendered: String = blocks
-            .iter()
-            .filter_map(|b| b["text"]["text"].as_str())
-            .collect();
-        assert!(rendered.contains("before"), "opening content lost");
-        assert!(rendered.contains("after"), "content after inner fence lost");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["text"]["text"], "```\nbefore\n```");
+        assert_eq!(blocks[1]["text"]["text"], "after");
     }
 
     #[test]

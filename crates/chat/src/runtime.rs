@@ -139,12 +139,18 @@ pub trait ChatRuntime: Send + Sync {
     /// Default no-op: runtimes without channel reactions (tests, headless)
     /// ignore it. Emitted from the agent loop (Thinking/Tool) and from the run
     /// completion (Finished).
-    async fn note_channel_activity(&self, _session_key: &str, _activity: ChannelActivity) {}
+    async fn note_channel_activity(&self, _activity_id: &str, _activity: ChannelActivity) {}
 
     /// Bind the given acknowledgment keys to this session's now-executing run,
     /// so activity routes to exactly the inbound message(s) this run handles.
     /// Called once the queue decision is known and the run actually starts.
-    async fn activate_channel_acks(&self, _session_key: &str, _ack_keys: Vec<String>) {}
+    async fn activate_channel_acks(
+        &self,
+        _activity_id: &str,
+        _session_key: &str,
+        _ack_keys: Vec<String>,
+    ) {
+    }
 
     /// Finalize acknowledgment keys directly, for paths where no run executes
     /// (rejected hook, early error) and nothing else will signal a terminal.
@@ -154,7 +160,7 @@ pub trait ChatRuntime: Send + Sync {
     /// terminal. Turn-addressed, so it cannot resolve a turn that starts later.
     async fn finalize_active_channel_acks(
         &self,
-        _session_key: &str,
+        _activity_id: &str,
         _outcome: moltis_channels::ChannelAckOutcome,
     ) {
     }

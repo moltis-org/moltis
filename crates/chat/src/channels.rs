@@ -5,19 +5,19 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use {
     serde::{Deserialize, Serialize},
     serde_json::Value,
+    tokio::task::JoinSet,
     tracing::{debug, info, warn},
 };
 
 use moltis_sessions::store::SessionStore;
 
 use crate::{
-    agent_loop::ChannelReplyTargetKey, compaction_run, error, runtime::ChatRuntime, types::*,
+    agent_loop::ChannelReplyTargetKey, channel_acks::note_delivery_failed, compaction_run, error,
+    runtime::ChatRuntime, types::*,
 };
 
-/// Build the SPA URL for a push notification click-through.
-///
-/// Must match the frontend `sessionPath()` in `router.ts`:
-/// `/chats/${key.replace(/:/g, "/")}`.
+const FINAL_CHANNEL_IO_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[cfg(any(feature = "push-notifications", test))]
 pub(crate) fn push_notification_url(session_key: &str) -> String {
     format!("/chats/{}", session_key.replace(':', "/"))
@@ -29,7 +29,6 @@ pub(crate) async fn send_chat_push_notification(
     session_key: &str,
     text: &str,
 ) {
-    // Create a short summary of the response (first 100 chars)
     let summary = if text.len() > 100 {
         format!("{}…", truncate_at_char_boundary(text, 100))
     } else {
@@ -52,12 +51,39 @@ pub(crate) async fn send_chat_push_notification(
     }
 }
 
-/// Drain any pending channel reply targets for a session and send the
-/// response text back to each originating channel via outbound.
-/// Each delivery runs in its own spawned task so slow network calls
-/// don't block each other or the chat pipeline.
 pub(crate) async fn deliver_channel_replies(
     state: &Arc<dyn ChatRuntime>,
+    activity_id: &str,
+    session_key: &str,
+    text: &str,
+    desired_reply_medium: ReplyMedium,
+    streamed_target_keys: &HashSet<ChannelReplyTargetKey>,
+) {
+    if tokio::time::timeout(
+        FINAL_CHANNEL_IO_TIMEOUT,
+        deliver_channel_replies_inner(
+            state,
+            activity_id,
+            session_key,
+            text,
+            desired_reply_medium,
+            streamed_target_keys,
+        ),
+    )
+    .await
+    .is_err()
+    {
+        warn!(
+            activity_id,
+            session_key, "timed out delivering final channel reply"
+        );
+        note_delivery_failed(state, activity_id).await;
+    }
+}
+
+async fn deliver_channel_replies_inner(
+    state: &Arc<dyn ChatRuntime>,
+    activity_id: &str,
     session_key: &str,
     text: &str,
     desired_reply_medium: ReplyMedium,
@@ -66,8 +92,6 @@ pub(crate) async fn deliver_channel_replies(
     let drained_targets = state.drain_channel_replies(session_key).await;
     let mut targets = Vec::with_capacity(drained_targets.len());
     let mut streamed_targets = Vec::new();
-    // When the reply medium is voice we must still deliver TTS audio even if
-    // the text was already streamed — skip the stream dedupe entirely.
     if desired_reply_medium != ReplyMedium::Voice && !streamed_target_keys.is_empty() {
         for target in drained_targets {
             let key = ChannelReplyTargetKey::from(&target);
@@ -125,7 +149,7 @@ pub(crate) async fn deliver_channel_replies(
                     "channel reply delivery skipped: outbound unavailable"
                 );
             }
-            crate::channel_acks::note_delivery_failed(state, session_key).await;
+            note_delivery_failed(state, activity_id).await;
             return;
         },
     };
@@ -154,6 +178,7 @@ pub(crate) async fn deliver_channel_replies(
     deliver_channel_replies_to_targets(
         outbound,
         targets,
+        activity_id,
         session_key,
         text,
         Arc::clone(state),
@@ -164,8 +189,6 @@ pub(crate) async fn deliver_channel_replies(
     .await;
 }
 
-/// Format buffered status log entries into a Telegram expandable blockquote HTML.
-/// Returns an empty string if there are no entries.
 fn format_logbook_html(entries: &[String]) -> String {
     if entries.is_empty() {
         return String::new();
@@ -193,12 +216,12 @@ async fn send_channel_logbook_follow_up_to_targets(
     }
 
     let html = logbook_html.to_string();
-    let mut tasks = Vec::with_capacity(targets.len());
+    let mut tasks = JoinSet::new();
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let html = html.clone();
         let to = target.outbound_to().into_owned();
-        tasks.push(tokio::spawn(async move {
+        tasks.spawn(async move {
             if let Err(e) = outbound
                 .send_html(&target.account_id, &to, &html, None)
                 .await
@@ -210,11 +233,11 @@ async fn send_channel_logbook_follow_up_to_targets(
                     "failed to send logbook follow-up: {e}"
                 );
             }
-        }));
+        });
     }
 
-    for task in tasks {
-        if let Err(e) = task.await {
+    while let Some(result) = tasks.join_next().await {
+        if let Err(e) = result {
             warn!(error = %e, "channel logbook follow-up task join failed");
         }
     }
@@ -246,16 +269,6 @@ fn format_channel_error_message(error_obj: &Value) -> String {
     format!("⚠️ {title}: {detail}")
 }
 
-/// Format a user-facing notice announcing that a session was compacted.
-///
-/// Shown verbatim to channel users (Telegram, Discord, WhatsApp, etc.) and
-/// kept short so small mobile clients don't wrap the whole thing.
-///
-/// When `include_settings_hint` is false, the "Change chat.compaction.mode…"
-/// footer is omitted so users who have set
-/// `chat.compaction.show_settings_hint = false` don't see the repetitive
-/// hint on every compaction. Mode + token lines are always included.
-/// The LLM retry path never sees this text regardless.
 fn format_channel_compaction_notice(
     outcome: &compaction_run::CompactionOutcome,
     include_settings_hint: bool,
@@ -297,14 +310,6 @@ fn format_channel_compaction_notice(
     }
 }
 
-/// Send a silent "session compacted" notice to pending channel targets
-/// without draining them.
-///
-/// Mirrors [`send_retry_status_to_channels`]: the targets are *peeked*,
-/// not drained, so the in-flight agent run can still deliver its final
-/// reply to them afterward. Uses `send_text_silent` so the channel
-/// integration doesn't count it toward user-visible interactive replies
-/// (no TTS, no delivery receipts beyond the channel's own).
 pub(crate) async fn notify_channels_of_compaction(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
@@ -321,12 +326,12 @@ pub(crate) async fn notify_channels_of_compaction(
     };
 
     let message = format_channel_compaction_notice(outcome, include_settings_hint);
-    let mut tasks = Vec::with_capacity(targets.len());
+    let mut tasks = JoinSet::new();
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let message = message.clone();
         let to = target.outbound_to().into_owned();
-        tasks.push(tokio::spawn(async move {
+        tasks.spawn(async move {
             let reply_to = target.message_id.as_deref();
             if let Err(e) = outbound
                 .send_text_silent(&target.account_id, &to, &message, reply_to)
@@ -339,18 +344,16 @@ pub(crate) async fn notify_channels_of_compaction(
                     "failed to send compaction notice to channel: {e}"
                 );
             }
-        }));
+        });
     }
 
-    for task in tasks {
-        if let Err(e) = task.await {
+    while let Some(result) = tasks.join_next().await {
+        if let Err(e) = result {
             warn!(error = %e, "channel compaction notice task join failed");
         }
     }
 }
 
-/// Send a short retry status update to pending channel targets without draining
-/// them. The final reply (or terminal error) will still use the same targets.
 pub(crate) async fn send_retry_status_to_channels(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
@@ -368,12 +371,12 @@ pub(crate) async fn send_retry_status_to_channels(
     };
 
     let message = format_channel_retry_message(error_obj, retry_after);
-    let mut tasks = Vec::with_capacity(targets.len());
+    let mut tasks = JoinSet::new();
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let message = message.clone();
         let to = target.outbound_to().into_owned();
-        tasks.push(tokio::spawn(async move {
+        tasks.spawn(async move {
             let reply_to = target.message_id.as_deref();
             if let Err(e) = outbound
                 .send_text_silent(&target.account_id, &to, &message, reply_to)
@@ -386,11 +389,11 @@ pub(crate) async fn send_retry_status_to_channels(
                     "failed to send retry status to channel: {e}"
                 );
             }
-        }));
+        });
     }
 
-    for task in tasks {
-        if let Err(e) = task.await {
+    while let Some(result) = tasks.join_next().await {
+        if let Err(e) = result {
             warn!(error = %e, "channel retry status task join failed");
         }
     }
@@ -398,6 +401,22 @@ pub(crate) async fn send_retry_status_to_channels(
 
 /// Drain pending channel targets for a session and send a terminal error message.
 pub(crate) async fn deliver_channel_error(
+    state: &Arc<dyn ChatRuntime>,
+    session_key: &str,
+    error_obj: &Value,
+) {
+    if tokio::time::timeout(
+        FINAL_CHANNEL_IO_TIMEOUT,
+        deliver_channel_error_inner(state, session_key, error_obj),
+    )
+    .await
+    .is_err()
+    {
+        warn!(session_key, "timed out delivering terminal channel error");
+    }
+}
+
+async fn deliver_channel_error_inner(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
     error_obj: &Value,
@@ -415,13 +434,13 @@ pub(crate) async fn deliver_channel_error(
 
     let error_text = format_channel_error_message(error_obj);
     let logbook_html = format_logbook_html(&status_log);
-    let mut tasks = Vec::with_capacity(targets.len());
+    let mut tasks = JoinSet::new();
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let error_text = error_text.clone();
         let logbook_html = logbook_html.clone();
         let to = target.outbound_to().into_owned();
-        tasks.push(tokio::spawn(async move {
+        tasks.spawn(async move {
             let reply_to = target.message_id.as_deref();
             let send_result = if logbook_html.is_empty() {
                 outbound
@@ -446,11 +465,11 @@ pub(crate) async fn deliver_channel_error(
                     "failed to send channel error reply: {e}"
                 );
             }
-        }));
+        });
     }
 
-    for task in tasks {
-        if let Err(e) = task.await {
+    while let Some(result) = tasks.join_next().await {
+        if let Err(e) = result {
             warn!(error = %e, "channel error task join failed");
         }
     }
@@ -459,6 +478,7 @@ pub(crate) async fn deliver_channel_error(
 async fn deliver_channel_replies_to_targets(
     outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
     targets: Vec<moltis_channels::ChannelReplyTarget>,
+    activity_id: &str,
     session_key: &str,
     text: &str,
     state: Arc<dyn ChatRuntime>,
@@ -467,21 +487,21 @@ async fn deliver_channel_replies_to_targets(
     streamed_target_keys: &HashSet<ChannelReplyTargetKey>,
 ) {
     let session_key = session_key.to_string();
+    let activity_id = activity_id.to_string();
     let text = text.to_string();
     let logbook_html = format_logbook_html(&status_log);
-    let mut tasks = Vec::with_capacity(targets.len());
+    let mut tasks = JoinSet::new();
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let state = Arc::clone(&state);
         let session_key = session_key.clone();
+        let activity_id = activity_id.clone();
         let text = text.clone();
         let logbook_html = logbook_html.clone();
-        // Text was already delivered via edit-in-place streaming — skip text
-        // caption/follow-up and only send the TTS voice audio.
         let text_already_streamed =
             streamed_target_keys.contains(&ChannelReplyTargetKey::from(&target));
         let to = target.outbound_to().into_owned();
-        tasks.push(tokio::spawn(async move {
+        tasks.spawn(async move {
             let tts_payload = match desired_reply_medium {
                 ReplyMedium::Voice => build_tts_payload(&state, &session_key, &target, &text).await,
                 ReplyMedium::Text => None,
@@ -493,7 +513,6 @@ async fn deliver_channel_replies_to_targets(
                         let transcript = std::mem::take(&mut payload.text);
 
                         if text_already_streamed {
-                            // Text was already streamed — send voice audio only.
                             if let Err(e) = outbound
                                 .send_media(&target.account_id, &to, &payload, reply_to)
                                 .await
@@ -504,8 +523,8 @@ async fn deliver_channel_replies_to_targets(
                                     thread_id = target.thread_id.as_deref().unwrap_or("-"),
                                     "failed to send channel voice reply: {e}"
                                 );
+                                note_delivery_failed(&state, &activity_id).await;
                             }
-                            // Send logbook as a follow-up if present.
                             if !logbook_html.is_empty()
                                 && let Err(e) = outbound
                                     .send_html(&target.account_id, &to, &logbook_html, None)
@@ -519,9 +538,6 @@ async fn deliver_channel_replies_to_targets(
                                 );
                             }
                         } else {
-                            // Check if transcript fits as Telegram caption (when feature enabled).
-                            // When telegram feature is disabled, this evaluates to false and we
-                            // send voice + follow-up text.
                             #[cfg(feature = "telegram")]
                             let fits_in_caption = transcript.len()
                                 <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT;
@@ -529,7 +545,6 @@ async fn deliver_channel_replies_to_targets(
                             let fits_in_caption = false;
 
                             if fits_in_caption {
-                                // Short transcript fits as a caption on the voice message.
                                 payload.text = transcript;
                                 if let Err(e) = outbound
                                     .send_media(&target.account_id, &to, &payload, reply_to)
@@ -541,8 +556,8 @@ async fn deliver_channel_replies_to_targets(
                                         thread_id = target.thread_id.as_deref().unwrap_or("-"),
                                         "failed to send channel voice reply: {e}"
                                     );
+                                    note_delivery_failed(&state, &activity_id).await;
                                 }
-                                // Send logbook as a follow-up if present.
                                 if !logbook_html.is_empty()
                                     && let Err(e) = outbound
                                         .send_html(&target.account_id, &to, &logbook_html, None)
@@ -556,8 +571,6 @@ async fn deliver_channel_replies_to_targets(
                                     );
                                 }
                             } else {
-                                // Transcript too long for a caption — send voice
-                                // without caption, then the full text as a follow-up.
                                 if let Err(e) = outbound
                                     .send_media(&target.account_id, &to, &payload, reply_to)
                                     .await
@@ -568,6 +581,7 @@ async fn deliver_channel_replies_to_targets(
                                         thread_id = target.thread_id.as_deref().unwrap_or("-"),
                                         "failed to send channel voice reply: {e}"
                                     );
+                                    note_delivery_failed(&state, &activity_id).await;
                                 }
                                 let text_result = if logbook_html.is_empty() {
                                     outbound
@@ -591,50 +605,24 @@ async fn deliver_channel_replies_to_targets(
                                         thread_id = target.thread_id.as_deref().unwrap_or("-"),
                                         "failed to send transcript follow-up: {e}"
                                     );
+                                    note_delivery_failed(&state, &activity_id).await;
                                 }
                             }
                         }
                     },
-                    None if text_already_streamed => {
-                        // TTS disabled/failed but text was already streamed —
-                        // only send logbook follow-up if present.
-                        if !logbook_html.is_empty()
-                            && let Err(e) = outbound
-                                .send_html(&target.account_id, &to, &logbook_html, None)
-                                .await
-                        {
-                            warn!(
-                                account_id = target.account_id,
-                                chat_id = target.chat_id,
-                                thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                "failed to send logbook follow-up: {e}"
-                            );
-                        }
-                    },
                     None => {
-                        let result = if logbook_html.is_empty() {
-                            outbound
-                                .send_text(&target.account_id, &to, &text, reply_to)
-                                .await
-                        } else {
-                            outbound
-                                .send_text_with_suffix(
-                                    &target.account_id,
-                                    &to,
-                                    &text,
-                                    &logbook_html,
-                                    reply_to,
-                                )
-                                .await
-                        };
-                        if let Err(e) = result {
-                            warn!(
-                                account_id = target.account_id,
-                                chat_id = target.chat_id,
-                                thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                "failed to send channel reply: {e}"
-                            );
-                            crate::channel_acks::note_delivery_failed(&state, &session_key).await;
+                        if !deliver_text_fallback(
+                            outbound.as_ref(),
+                            &target,
+                            &to,
+                            &text,
+                            &logbook_html,
+                            reply_to,
+                            text_already_streamed,
+                        )
+                        .await
+                        {
+                            note_delivery_failed(&state, &activity_id).await;
                         }
                     },
                 },
@@ -650,62 +638,82 @@ async fn deliver_channel_replies_to_targets(
                                 thread_id = target.thread_id.as_deref().unwrap_or("-"),
                                 "failed to send channel voice reply: {e}"
                             );
-                        }
-                    },
-                    None if text_already_streamed => {
-                        // TTS disabled/failed but text was already streamed —
-                        // only send logbook follow-up if present.
-                        if !logbook_html.is_empty()
-                            && let Err(e) = outbound
-                                .send_html(&target.account_id, &to, &logbook_html, None)
-                                .await
-                        {
-                            warn!(
-                                account_id = target.account_id,
-                                chat_id = target.chat_id,
-                                thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                "failed to send logbook follow-up: {e}"
-                            );
+                            note_delivery_failed(&state, &activity_id).await;
                         }
                     },
                     None => {
-                        let result = if logbook_html.is_empty() {
-                            outbound
-                                .send_text(&target.account_id, &to, &text, reply_to)
-                                .await
-                        } else {
-                            outbound
-                                .send_text_with_suffix(
-                                    &target.account_id,
-                                    &to,
-                                    &text,
-                                    &logbook_html,
-                                    reply_to,
-                                )
-                                .await
-                        };
-                        if let Err(e) = result {
-                            warn!(
-                                account_id = target.account_id,
-                                chat_id = target.chat_id,
-                                thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                "failed to send channel reply: {e}"
-                            );
-                            crate::channel_acks::note_delivery_failed(&state, &session_key).await;
+                        if !deliver_text_fallback(
+                            outbound.as_ref(),
+                            &target,
+                            &to,
+                            &text,
+                            &logbook_html,
+                            reply_to,
+                            text_already_streamed,
+                        )
+                        .await
+                        {
+                            note_delivery_failed(&state, &activity_id).await;
                         }
                     },
                 },
             }
-        }));
+        });
     }
 
-    for task in tasks {
-        if let Err(e) = task.await {
+    while let Some(result) = tasks.join_next().await {
+        if let Err(e) = result {
             warn!(error = %e, "channel reply task join failed");
             // A panicked task may have sent nothing — do not claim success.
-            crate::channel_acks::note_delivery_failed(&state, &session_key).await;
+            note_delivery_failed(&state, &activity_id).await;
         }
     }
+}
+
+async fn deliver_text_fallback(
+    outbound: &dyn moltis_channels::ChannelOutbound,
+    target: &moltis_channels::ChannelReplyTarget,
+    to: &str,
+    text: &str,
+    logbook_html: &str,
+    reply_to: Option<&str>,
+    text_already_streamed: bool,
+) -> bool {
+    if text_already_streamed {
+        if !logbook_html.is_empty()
+            && let Err(e) = outbound
+                .send_html(&target.account_id, to, logbook_html, None)
+                .await
+        {
+            warn!(
+                account_id = target.account_id,
+                chat_id = target.chat_id,
+                thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                "failed to send logbook follow-up: {e}"
+            );
+        }
+        return true;
+    }
+
+    let result = if logbook_html.is_empty() {
+        outbound
+            .send_text(&target.account_id, to, text, reply_to)
+            .await
+    } else {
+        outbound
+            .send_text_with_suffix(&target.account_id, to, text, logbook_html, reply_to)
+            .await
+    };
+    if let Err(e) = result {
+        warn!(
+            account_id = target.account_id,
+            chat_id = target.chat_id,
+            thread_id = target.thread_id.as_deref().unwrap_or("-"),
+            "failed to send channel reply: {e}"
+        );
+        return false;
+    }
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -733,11 +741,6 @@ struct TtsConvertResponse {
     mime_type: Option<String>,
 }
 
-/// Generate TTS audio bytes for a web UI response.
-///
-/// Uses the session-level TTS override if configured, otherwise the global TTS
-/// config. Returns raw audio bytes (OGG format) on success, `None` if TTS is
-/// disabled or generation fails.
 pub(crate) async fn generate_tts_audio(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
@@ -756,7 +759,6 @@ pub(crate) async fn generate_tts_audio(
         return Err(error::Error::message("TTS is disabled or not configured"));
     }
 
-    // Layer 2: strip markdown/URLs the LLM may have included despite the prompt.
     let text = moltis_voice::tts::sanitize_text_for_tts(text);
     let text = text.trim();
     if text.is_empty() {
@@ -847,6 +849,7 @@ async fn build_tts_payload(
 /// response is delivered, instead of being sent as separate messages.
 pub(crate) async fn send_tool_status_to_channels(
     state: &Arc<dyn ChatRuntime>,
+    activity_id: &str,
     session_key: &str,
     tool_name: &str,
     arguments: &Value,
@@ -859,7 +862,7 @@ pub(crate) async fn send_tool_status_to_channels(
     // Drive the acknowledgment reaction into its "tool" phase (🛠️/🌐/💻/…).
     state
         .note_channel_activity(
-            session_key,
+            activity_id,
             moltis_channels::ChannelActivity::Tool(tool_name.to_string()),
         )
         .await;
@@ -1056,10 +1059,9 @@ fn truncate_url(url: &str) -> String {
     }
 }
 
-/// Send a screenshot to all pending channel targets for a session.
-/// Uses `peek_channel_replies` so targets remain for the final text response.
 pub(crate) async fn send_screenshot_to_channels(
     state: &Arc<dyn ChatRuntime>,
+    activity_id: &str,
     session_key: &str,
     screenshot_data: &str,
     caption: Option<&str>,
@@ -1071,10 +1073,15 @@ pub(crate) async fn send_screenshot_to_channels(
 
     let outbound = match state.channel_outbound() {
         Some(o) => o,
-        None => return,
+        None => {
+            note_delivery_failed(state, activity_id).await;
+            return;
+        },
     };
 
-    dispatch_screenshot_to_targets(outbound, targets, screenshot_data, caption).await;
+    if !dispatch_screenshot_to_targets(outbound, targets, screenshot_data, caption).await {
+        note_delivery_failed(state, activity_id).await;
+    }
 }
 
 fn build_screenshot_reply_payload(
@@ -1108,55 +1115,57 @@ async fn dispatch_screenshot_to_targets(
     targets: Vec<moltis_channels::ChannelReplyTarget>,
     screenshot_data: &str,
     caption: Option<&str>,
-) {
+) -> bool {
     let payload = build_screenshot_reply_payload(screenshot_data, caption);
 
-    let mut tasks = Vec::with_capacity(targets.len());
+    let mut tasks = JoinSet::new();
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let payload = payload.clone();
         let to = target.outbound_to().into_owned();
-        tasks.push(tokio::spawn(async move {
+        tasks.spawn(async move {
+            let reply_to = target.message_id.as_deref();
+            if let Err(e) = outbound
+                .send_media(&target.account_id, &to, &payload, reply_to)
+                .await
             {
-                let reply_to = target.message_id.as_deref();
-                if let Err(e) = outbound
-                    .send_media(&target.account_id, &to, &payload, reply_to)
-                    .await
-                {
-                    warn!(
-                        account_id = target.account_id,
-                        chat_id = target.chat_id,
-                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                        "failed to send screenshot to channel: {e}"
-                    );
-                    // Notify the user of the error
-                    let error_msg = format!("⚠️ Failed to send screenshot: {e}");
-                    let _ = outbound
-                        .send_text(&target.account_id, &to, &error_msg, reply_to)
-                        .await;
-                } else {
-                    debug!(
-                        account_id = target.account_id,
-                        chat_id = target.chat_id,
-                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                        "sent screenshot to channel"
-                    );
-                }
+                warn!(
+                    account_id = target.account_id,
+                    chat_id = target.chat_id,
+                    "failed to send screenshot to channel: {e}"
+                );
+                let error_msg = format!("⚠️ Failed to send screenshot: {e}");
+                let _ = outbound
+                    .send_text(&target.account_id, &to, &error_msg, reply_to)
+                    .await;
+                false
+            } else {
+                debug!(
+                    account_id = target.account_id,
+                    chat_id = target.chat_id,
+                    "sent screenshot to channel"
+                );
+                true
             }
-        }));
+        });
     }
 
-    for task in tasks {
-        if let Err(e) = task.await {
-            warn!(error = %e, "channel reply task join failed");
+    let mut delivered = true;
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(sent) => delivered &= sent,
+            Err(e) => {
+                warn!(error = %e, "channel reply task join failed");
+                delivered = false;
+            },
         }
     }
+    delivered
 }
 
-/// Send a document payload to all pending channel targets for a session.
-/// Uses `peek_channel_replies` so targets remain for the final text response.
 pub(crate) async fn dispatch_document_to_channels(
     state: &Arc<dyn ChatRuntime>,
+    activity_id: &str,
     session_key: &str,
     payload: moltis_common::types::ReplyPayload,
 ) {
@@ -1167,15 +1176,18 @@ pub(crate) async fn dispatch_document_to_channels(
 
     let outbound = match state.channel_outbound() {
         Some(o) => o,
-        None => return,
+        None => {
+            note_delivery_failed(state, activity_id).await;
+            return;
+        },
     };
 
-    let mut tasks = Vec::with_capacity(targets.len());
+    let mut tasks = JoinSet::new();
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let payload = payload.clone();
         let to = target.outbound_to().into_owned();
-        tasks.push(tokio::spawn(async move {
+        tasks.spawn(async move {
             let reply_to = target.message_id.as_deref();
             if let Err(e) = outbound
                 .send_media(&target.account_id, &to, &payload, reply_to)
@@ -1191,6 +1203,7 @@ pub(crate) async fn dispatch_document_to_channels(
                 let _ = outbound
                     .send_text(&target.account_id, &to, &error_msg, reply_to)
                     .await;
+                false
             } else {
                 debug!(
                     account_id = target.account_id,
@@ -1198,14 +1211,23 @@ pub(crate) async fn dispatch_document_to_channels(
                     thread_id = target.thread_id.as_deref().unwrap_or("-"),
                     "sent document to channel"
                 );
+                true
             }
-        }));
+        });
     }
 
-    for task in tasks {
-        if let Err(e) = task.await {
-            warn!(error = %e, "channel document task join failed");
+    let mut delivered = true;
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(sent) => delivered &= sent,
+            Err(e) => {
+                warn!(error = %e, "channel document task join failed");
+                delivered = false;
+            },
         }
+    }
+    if !delivered {
+        note_delivery_failed(state, activity_id).await;
     }
 }
 
@@ -1293,6 +1315,7 @@ pub(crate) async fn document_payload_from_ref(
 /// Uses `peek_channel_replies` so targets remain for the final text response.
 pub(crate) async fn send_location_to_channels(
     state: &Arc<dyn ChatRuntime>,
+    activity_id: &str,
     session_key: &str,
     latitude: f64,
     longitude: f64,
@@ -1305,17 +1328,20 @@ pub(crate) async fn send_location_to_channels(
 
     let outbound = match state.channel_outbound() {
         Some(o) => o,
-        None => return,
+        None => {
+            note_delivery_failed(state, activity_id).await;
+            return;
+        },
     };
 
     let title_owned = title.map(String::from);
 
-    let mut tasks = Vec::with_capacity(targets.len());
+    let mut tasks = JoinSet::new();
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let title_ref = title_owned.clone();
         let to = target.outbound_to().into_owned();
-        tasks.push(tokio::spawn(async move {
+        tasks.spawn(async move {
             let reply_to = target.message_id.as_deref();
             if let Err(e) = outbound
                 .send_location(
@@ -1334,6 +1360,7 @@ pub(crate) async fn send_location_to_channels(
                     thread_id = target.thread_id.as_deref().unwrap_or("-"),
                     "failed to send location to channel: {e}"
                 );
+                false
             } else {
                 debug!(
                     account_id = target.account_id,
@@ -1341,160 +1368,25 @@ pub(crate) async fn send_location_to_channels(
                     thread_id = target.thread_id.as_deref().unwrap_or("-"),
                     "sent location pin to channel"
                 );
+                true
             }
-        }));
+        });
     }
 
-    for task in tasks {
-        if let Err(e) = task.await {
-            warn!(error = %e, "channel location task join failed");
+    let mut delivered = true;
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(sent) => delivered &= sent,
+            Err(e) => {
+                warn!(error = %e, "channel location task join failed");
+                delivered = false;
+            },
         }
+    }
+    if !delivered {
+        note_delivery_failed(state, activity_id).await;
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use {
-        super::*,
-        async_trait::async_trait,
-        moltis_channels::{ChannelReplyTarget, ChannelType},
-        moltis_common::types::ReplyPayload,
-        std::sync::{Arc, Mutex},
-    };
-
-    #[derive(Debug, Clone)]
-    struct SentMedia {
-        account_id: String,
-        to: String,
-        payload: ReplyPayload,
-        reply_to: Option<String>,
-    }
-
-    #[derive(Default)]
-    struct RecordingOutbound {
-        sent_media: Mutex<Vec<SentMedia>>,
-    }
-
-    #[async_trait]
-    impl moltis_channels::ChannelOutbound for RecordingOutbound {
-        async fn send_text(
-            &self,
-            _account_id: &str,
-            _to: &str,
-            _text: &str,
-            _reply_to: Option<&str>,
-        ) -> moltis_channels::Result<()> {
-            Ok(())
-        }
-
-        async fn send_media(
-            &self,
-            account_id: &str,
-            to: &str,
-            payload: &ReplyPayload,
-            reply_to: Option<&str>,
-        ) -> moltis_channels::Result<()> {
-            self.sent_media
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(SentMedia {
-                    account_id: account_id.to_string(),
-                    to: to.to_string(),
-                    payload: payload.clone(),
-                    reply_to: reply_to.map(ToString::to_string),
-                });
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn push_notification_url_uses_chats_prefix_and_replaces_colons() {
-        // Must match frontend sessionPath(): `/chats/${key.replace(/:/g, "/")}`
-        assert_eq!(push_notification_url("session:42"), "/chats/session/42");
-    }
-
-    #[test]
-    fn push_notification_url_handles_nested_session_keys() {
-        assert_eq!(
-            push_notification_url("telegram:bot123:chat456"),
-            "/chats/telegram/bot123/chat456"
-        );
-    }
-
-    #[test]
-    fn push_notification_url_handles_key_without_colons() {
-        assert_eq!(push_notification_url("main"), "/chats/main");
-    }
-
-    #[tokio::test]
-    async fn generated_image_payload_dispatches_to_telegram_as_media() {
-        let outbound = Arc::new(RecordingOutbound::default());
-        let targets = vec![ChannelReplyTarget {
-            ack_message_id: None,
-            channel_type: ChannelType::Telegram,
-            account_id: "telegram-main".into(),
-            chat_id: "-100123".into(),
-            message_id: Some("42".into()),
-            thread_id: Some("7".into()),
-        }];
-
-        dispatch_screenshot_to_targets(
-            outbound.clone(),
-            targets,
-            "data:image/png;base64,cG5n",
-            Some("Generated image: fox"),
-        )
-        .await;
-
-        let sent = outbound
-            .sent_media
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0].account_id, "telegram-main");
-        assert_eq!(sent[0].to, "-100123:7");
-        assert_eq!(sent[0].reply_to.as_deref(), Some("42"));
-        assert_eq!(sent[0].payload.text, "Generated image: fox");
-        let Some(media) = sent[0].payload.media.as_ref() else {
-            panic!("media payload");
-        };
-        assert_eq!(media.mime_type, "image/png");
-        assert_eq!(media.url, "data:image/png;base64,cG5n");
-    }
-
-    #[tokio::test]
-    async fn generated_image_payload_dispatches_to_matrix_as_media() {
-        let outbound = Arc::new(RecordingOutbound::default());
-        let targets = vec![ChannelReplyTarget {
-            ack_message_id: None,
-            channel_type: ChannelType::Matrix,
-            account_id: "matrix-main".into(),
-            chat_id: "!room:example.org".into(),
-            message_id: Some("$event".into()),
-            thread_id: None,
-        }];
-
-        dispatch_screenshot_to_targets(
-            outbound.clone(),
-            targets,
-            "data:image/webp;base64,d2VicA==",
-            Some("Generated image: logo"),
-        )
-        .await;
-
-        let sent = outbound
-            .sent_media
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0].account_id, "matrix-main");
-        assert_eq!(sent[0].to, "!room:example.org");
-        assert_eq!(sent[0].reply_to.as_deref(), Some("$event"));
-        assert_eq!(sent[0].payload.text, "Generated image: logo");
-        let Some(media) = sent[0].payload.media.as_ref() else {
-            panic!("media payload");
-        };
-        assert_eq!(media.mime_type, "image/webp");
-        assert_eq!(media.url, "data:image/webp;base64,d2VicA==");
-    }
-}
+mod tests;

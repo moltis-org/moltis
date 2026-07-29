@@ -106,7 +106,7 @@ export function AddSlackModal(): VNode {
 			title="Connect Slack"
 		>
 			<div className="channel-form">
-				<div className="channel-card">
+				<div className="channel-card" data-testid="slack-setup-guide">
 					<div>
 						<span className="text-xs font-medium text-[var(--text-strong)]">How to set up a Slack bot</span>
 						<div className="text-xs text-[var(--muted)] channel-help">
@@ -122,28 +122,38 @@ export function AddSlackModal(): VNode {
 							and create a new app
 						</div>
 						<div className="text-xs text-[var(--muted)]">
-							2. Under OAuth & Permissions, add bot scopes: <code className="text-[var(--accent)]">chat:write</code>,{" "}
-							<code className="text-[var(--accent)]">channels:history</code>,{" "}
-							<code className="text-[var(--accent)]">im:history</code>,{" "}
+							2. Under OAuth &amp; Permissions, add bot scopes:{" "}
 							<code className="text-[var(--accent)]">app_mentions:read</code>,{" "}
-							<code className="text-[var(--accent)]">reactions:write</code> (acknowledgment reactions),{" "}
-							<code className="text-[var(--accent)]">reactions:read</code> (only for reaction triggers)
+							<code className="text-[var(--accent)]">chat:write</code>,{" "}
+							<code className="text-[var(--accent)]">files:write</code>,{" "}
+							<code className="text-[var(--accent)]">im:history</code>, and{" "}
+							<code className="text-[var(--accent)]">reactions:write</code>
 						</div>
 						<div className="text-xs text-[var(--muted)]">
-							3. Install the app to your workspace and copy the Bot User OAuth Token
+							3. Subscribe to bot events: <code className="text-[var(--accent)]">app_mention</code> and{" "}
+							<code className="text-[var(--accent)]">message.im</code>. For reaction triggers, also add the{" "}
+							<code className="text-[var(--accent)]">reactions:read</code> scope and{" "}
+							<code className="text-[var(--accent)]">reaction_added</code> event
 						</div>
 						<div className="text-xs text-[var(--muted)]">
-							4. For Socket Mode: enable Socket Mode and generate an App-Level Token with{" "}
+							4. For <code className="text-[var(--accent)]">mention_mode = always</code> in public channels, add both{" "}
+							<code className="text-[var(--accent)]">channels:history</code> and{" "}
+							<code className="text-[var(--accent)]">message.channels</code>. For private channels, add{" "}
+							<code className="text-[var(--accent)]">groups:history</code> and{" "}
+							<code className="text-[var(--accent)]">message.groups</code>. For MPIMs, add{" "}
+							<code className="text-[var(--accent)]">mpim:history</code> and{" "}
+							<code className="text-[var(--accent)]">message.mpim</code>. Each scope permits access; its paired event
+							delivers messages
+						</div>
+						<div className="text-xs text-[var(--muted)]">
+							5. Install the app to your workspace and copy the Bot User OAuth Token
+						</div>
+						<div className="text-xs text-[var(--muted)]">
+							6. For Socket Mode: enable Socket Mode and generate an App-Level Token with{" "}
 							<code className="text-[var(--accent)]">connections:write</code> scope
 						</div>
 						<div className="text-xs text-[var(--muted)]">
-							5. Under Event Subscriptions, subscribe to bot events:{" "}
-							<code className="text-[var(--accent)]">message.im</code>,{" "}
-							<code className="text-[var(--accent)]">app_mention</code>, and{" "}
-							<code className="text-[var(--accent)]">reaction_added</code> if you use reaction triggers
-						</div>
-						<div className="text-xs text-[var(--muted)]">
-							6. For Events API, set these Request URLs (replace{" "}
+							7. For Events API, set these Request URLs (replace{" "}
 							<code className="text-[var(--accent)]">&lt;id&gt;</code> with the Account ID below): Event Subscriptions{" "}
 							<code className="text-[var(--accent)]">https://your-host/api/channels/slack/&lt;id&gt;/events</code>,
 							Interactivity{" "}

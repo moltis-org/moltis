@@ -58,28 +58,33 @@ impl ChatRuntime for GatewayChatRuntime {
 
     // ── Channel acknowledgment reactions ────────────────────────────────────
 
-    async fn note_channel_activity(&self, session_key: &str, activity: ChannelActivity) {
+    async fn note_channel_activity(&self, activity_id: &str, activity: ChannelActivity) {
         self.state
             .channel_reaction_controllers
-            .note(session_key, activity)
+            .note(activity_id, activity)
             .await;
     }
 
-    async fn activate_channel_acks(&self, session_key: &str, ack_keys: Vec<String>) {
+    async fn activate_channel_acks(
+        &self,
+        activity_id: &str,
+        session_key: &str,
+        ack_keys: Vec<String>,
+    ) {
         self.state
             .channel_reaction_controllers
-            .activate(session_key, ack_keys)
+            .activate(activity_id, session_key, ack_keys)
             .await;
     }
 
     async fn finalize_active_channel_acks(
         &self,
-        session_key: &str,
+        activity_id: &str,
         outcome: moltis_channels::ChannelAckOutcome,
     ) {
         self.state
             .channel_reaction_controllers
-            .finalize_active(session_key, outcome)
+            .finalize_active(activity_id, outcome)
             .await;
     }
 

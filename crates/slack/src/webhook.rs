@@ -77,7 +77,7 @@ pub async fn register_events_api_account(
             event_sink,
             cancel,
             bot_user_id: Some(bot_user_id),
-            pending_threads: std::collections::HashMap::new(),
+            stream_recipients: Default::default(),
             otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(otp_cooldown_secs)),
             dedup: std::sync::Mutex::new(crate::state::EventDedup::default()),
         });
@@ -250,9 +250,24 @@ pub async fn handle_verified_interaction_webhook(
         .and_then(|c| c.get("id"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let user_id = payload
+        .get("user")
+        .and_then(|user| user.get("id"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
 
-    if action_id.is_empty() || channel_id.is_empty() {
-        debug!(account_id, "interaction missing action_id or channel");
+    if action_id.is_empty() || channel_id.is_empty() || user_id.is_empty() {
+        debug!(
+            account_id,
+            "interaction missing action_id, channel, or user"
+        );
+        return Ok(());
+    }
+
+    if !crate::socket::account_access_allowed(accounts, account_id, user_id, channel_id) {
+        if let Some(response_url) = payload.get("response_url").and_then(|value| value.as_str()) {
+            let _ = crate::outbound::post_response_url(response_url, "Access denied.").await;
+        }
         return Ok(());
     }
 
@@ -267,14 +282,20 @@ pub async fn handle_verified_interaction_webhook(
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),
             chat_id: channel_id.to_string(),
-            message_id: None,
+            message_id: interaction_thread_root(&payload),
             thread_id: None,
         };
-        match sink.dispatch_interaction(action_id, reply_to).await {
-            Ok(_) => {},
-            Err(e) => {
-                debug!(account_id, action_id, "interaction dispatch failed: {e}");
-            },
+        let response = sink
+            .dispatch_interaction(action_id, reply_to)
+            .await
+            .unwrap_or_else(|error| format!("Error: {error}"));
+        if let Some(response_url) = payload.get("response_url").and_then(|value| value.as_str())
+            && let Err(error) = crate::outbound::post_response_url(response_url, &response).await
+        {
+            debug!(
+                account_id,
+                action_id, "interaction response failed: {error}"
+            );
         }
     }
 
@@ -298,11 +319,26 @@ pub async fn handle_verified_command_webhook(
     let text = extract_form_field(body_str, "text").unwrap_or_default();
     let user_id = extract_form_field(body_str, "user_id").unwrap_or_default();
     let channel_id = extract_form_field(body_str, "channel_id").unwrap_or_default();
+    let response_url = extract_form_field(body_str, "response_url");
 
     if command.is_empty() {
         return Err(moltis_channels::Error::invalid_input(
             "missing command field in slash command payload",
         ));
+    }
+
+    if user_id.is_empty() || channel_id.is_empty() {
+        return Err(moltis_channels::Error::invalid_input(
+            "missing user_id or channel_id in slash command payload",
+        ));
+    }
+
+    if !crate::socket::account_access_allowed(accounts, account_id, &user_id, &channel_id) {
+        let response = "Access denied.".to_string();
+        if let Some(response_url) = response_url.as_deref() {
+            let _ = crate::outbound::post_response_url(response_url, &response).await;
+        }
+        return Ok(response);
     }
 
     let full_command = format!("{command} {text}").trim().to_string();
@@ -326,13 +362,19 @@ pub async fn handle_verified_command_webhook(
         } else {
             Some(user_id.as_str())
         };
-        match sink.dispatch_command(&full_command, reply_to, sender).await {
-            Ok(response_text) => Ok(response_text),
-            Err(e) => {
-                debug!(account_id, %full_command, "command dispatch failed: {e}");
-                Ok(format!("Error: {e}"))
-            },
+        let response = sink
+            .dispatch_command(&full_command, reply_to, sender)
+            .await
+            .unwrap_or_else(|error| {
+                debug!(account_id, %full_command, "command dispatch failed: {error}");
+                format!("Error: {error}")
+            });
+        if let Some(response_url) = response_url.as_deref()
+            && let Err(error) = crate::outbound::post_response_url(response_url, &response).await
+        {
+            debug!(account_id, %full_command, "command response failed: {error}");
         }
+        Ok(response)
     } else {
         Ok("Channel not configured".to_string())
     }
@@ -344,6 +386,10 @@ async fn dispatch_event_callback(
     payload: &serde_json::Value,
     accounts: &AccountStateMap,
 ) {
+    let team_id = payload
+        .get("team_id")
+        .and_then(|value| value.as_str())
+        .map(String::from);
     let Some(event) = payload.get("event") else {
         debug!("event_callback missing event field");
         return;
@@ -356,7 +402,8 @@ async fn dispatch_event_callback(
             // Parse as SlackMessageEvent via serde.
             match serde_json::from_value::<SlackMessageEvent>(event.clone()) {
                 Ok(msg_event) => {
-                    crate::socket::handle_message_event(account_id, msg_event, accounts).await;
+                    crate::socket::handle_message_event(account_id, msg_event, team_id, accounts)
+                        .await;
                 },
                 Err(e) => {
                     debug!(account_id, "failed to parse message event: {e}");
@@ -376,7 +423,7 @@ async fn dispatch_event_callback(
 
             if !channel.is_empty() && !user.is_empty() {
                 crate::socket::handle_inbound(
-                    account_id, channel, user, text, thread_ts, message_ts, None,
+                    account_id, channel, user, text, thread_ts, message_ts, team_id, None,
                     true, // is_mention
                     accounts,
                 )
@@ -406,6 +453,7 @@ async fn dispatch_event_callback(
                         item_channel.to_string(),
                         message_ts.to_string(),
                         item_user,
+                        team_id,
                         added,
                         accounts,
                     )
@@ -450,66 +498,25 @@ pub async fn handle_interaction_webhook(
         ));
     }
 
-    // Parse form-encoded body to extract `payload` field.
-    let body_str = std::str::from_utf8(body)
-        .map_err(|e| moltis_channels::Error::invalid_input(format!("invalid utf-8: {e}")))?;
+    handle_verified_interaction_webhook(account_id, body, accounts).await
+}
 
-    let payload_json = extract_form_payload(body_str).ok_or_else(|| {
-        moltis_channels::Error::invalid_input("missing payload field in interaction")
-    })?;
-
-    let payload: serde_json::Value = serde_json::from_str(&payload_json)?;
-
-    // Extract action from block_actions.
-    let interaction_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-    if interaction_type != "block_actions" {
-        debug!(account_id, interaction_type, "unhandled interaction type");
-        return Ok(());
-    }
-
-    let action_id = payload
-        .get("actions")
-        .and_then(|a| a.as_array())
-        .and_then(|a| a.first())
-        .and_then(|a| a.get("action_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let channel_id = payload
-        .get("channel")
-        .and_then(|c| c.get("id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    if action_id.is_empty() || channel_id.is_empty() {
-        debug!(account_id, "interaction missing action_id or channel");
-        return Ok(());
-    }
-
-    let event_sink = {
-        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
-        accts.get(account_id).and_then(|s| s.event_sink.clone())
-    };
-
-    if let Some(sink) = event_sink {
-        let reply_to = ChannelReplyTarget {
-            ack_message_id: None,
-            channel_type: ChannelType::Slack,
-            account_id: account_id.to_string(),
-            chat_id: channel_id.to_string(),
-            message_id: None,
-            thread_id: None,
-        };
-        match sink.dispatch_interaction(action_id, reply_to).await {
-            Ok(_) => {},
-            Err(e) => {
-                debug!(account_id, action_id, "interaction dispatch failed: {e}");
-            },
-        }
-    }
-
-    Ok(())
+fn interaction_thread_root(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("message")
+        .and_then(|message| {
+            message
+                .get("thread_ts")
+                .or_else(|| message.get("ts"))
+                .and_then(|value| value.as_str())
+        })
+        .or_else(|| {
+            payload
+                .get("container")
+                .and_then(|container| container.get("message_ts"))
+                .and_then(|value| value.as_str())
+        })
+        .map(String::from)
 }
 
 /// Extract a named field from a `application/x-www-form-urlencoded` body.
@@ -561,12 +568,14 @@ mod tests {
     /// Mock sink that records the command string passed to `dispatch_command`.
     struct RecordingSink {
         commands: Mutex<Vec<String>>,
+        interactions: Mutex<Vec<(String, ChannelReplyTarget)>>,
     }
 
     impl RecordingSink {
         fn new() -> Self {
             Self {
                 commands: Mutex::new(Vec::new()),
+                interactions: Mutex::new(Vec::new()),
             }
         }
     }
@@ -591,6 +600,18 @@ mod tests {
         ) -> ChannelResult<String> {
             self.commands.lock().unwrap().push(command.to_string());
             Ok("ok".to_string())
+        }
+
+        async fn dispatch_interaction(
+            &self,
+            callback_data: &str,
+            reply_to: ChannelReplyTarget,
+        ) -> ChannelResult<String> {
+            self.interactions
+                .lock()
+                .unwrap()
+                .push((callback_data.to_string(), reply_to));
+            Ok("updated".to_string())
         }
 
         async fn request_disable_account(
@@ -730,7 +751,7 @@ mod tests {
                 event_sink: None,
                 cancel: tokio_util::sync::CancellationToken::new(),
                 bot_user_id: Some("B123".to_string()),
-                pending_threads: std::collections::HashMap::new(),
+                stream_recipients: Default::default(),
                 otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
                 dedup: Mutex::new(crate::state::EventDedup::default()),
             });
@@ -761,7 +782,7 @@ mod tests {
                 event_sink: Some(sink.clone()),
                 cancel: tokio_util::sync::CancellationToken::new(),
                 bot_user_id: Some("B123".to_string()),
-                pending_threads: std::collections::HashMap::new(),
+                stream_recipients: Default::default(),
                 otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
                 dedup: Mutex::new(crate::state::EventDedup::default()),
             });
@@ -797,7 +818,7 @@ mod tests {
                 event_sink: Some(sink.clone()),
                 cancel: tokio_util::sync::CancellationToken::new(),
                 bot_user_id: Some("B123".to_string()),
-                pending_threads: std::collections::HashMap::new(),
+                stream_recipients: Default::default(),
                 otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
                 dedup: Mutex::new(crate::state::EventDedup::default()),
             });
@@ -811,5 +832,162 @@ mod tests {
         let dispatched = sink.commands.lock().unwrap();
         assert_eq!(dispatched.len(), 1);
         assert_eq!(dispatched[0], "/model gpt-4o");
+    }
+
+    #[tokio::test]
+    async fn slash_command_denied_by_channel_policy_is_not_dispatched() {
+        let sink = Arc::new(RecordingSink::new());
+        let accounts: AccountStateMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let config = SlackAccountConfig {
+            group_policy: moltis_channels::gating::GroupPolicy::Disabled,
+            ..Default::default()
+        };
+        {
+            let mut accts = accounts.write().unwrap();
+            accts.insert("acct1".to_string(), AccountState {
+                account_id: "acct1".to_string(),
+                config,
+                message_log: None,
+                event_sink: Some(sink.clone()),
+                cancel: tokio_util::sync::CancellationToken::new(),
+                bot_user_id: Some("B123".to_string()),
+                stream_recipients: Default::default(),
+                otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
+                dedup: Mutex::new(crate::state::EventDedup::default()),
+            });
+        }
+
+        let body = b"command=%2Fnew&text=&user_id=U123&channel_id=C456";
+        let response = handle_verified_command_webhook("acct1", body, &accounts)
+            .await
+            .unwrap();
+        assert_eq!(response, "Access denied.");
+        assert!(sink.commands.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn interaction_preserves_exact_thread_root() {
+        let sink = Arc::new(RecordingSink::new());
+        let accounts: AccountStateMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        {
+            let mut accts = accounts.write().unwrap();
+            accts.insert("acct1".to_string(), AccountState {
+                account_id: "acct1".to_string(),
+                config: SlackAccountConfig::default(),
+                message_log: None,
+                event_sink: Some(sink.clone()),
+                cancel: tokio_util::sync::CancellationToken::new(),
+                bot_user_id: Some("B123".to_string()),
+                stream_recipients: Default::default(),
+                otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
+                dedup: Mutex::new(crate::state::EventDedup::default()),
+            });
+        }
+        let payload = serde_json::json!({
+            "type": "block_actions",
+            "user": { "id": "U123" },
+            "channel": { "id": "C456" },
+            "message": { "ts": "200.2", "thread_ts": "100.1" },
+            "actions": [{ "action_id": "model_switch:gpt" }],
+        });
+        let body = format!("payload={payload}");
+
+        handle_verified_interaction_webhook("acct1", body.as_bytes(), &accounts)
+            .await
+            .unwrap();
+
+        let interactions = sink.interactions.lock().unwrap();
+        assert_eq!(interactions.len(), 1);
+        assert_eq!(interactions[0].0, "model_switch:gpt");
+        assert_eq!(interactions[0].1.message_id.as_deref(), Some("100.1"));
+    }
+
+    #[tokio::test]
+    async fn reaction_trigger_registers_native_stream_recipient_for_exact_root() {
+        let sink = Arc::new(RecordingSink::new());
+        let accounts: AccountStateMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let config = SlackAccountConfig {
+            reaction_triggers: true,
+            ..Default::default()
+        };
+        accounts
+            .write()
+            .unwrap()
+            .insert("acct1".to_string(), AccountState {
+                account_id: "acct1".to_string(),
+                config,
+                message_log: None,
+                event_sink: Some(sink),
+                cancel: tokio_util::sync::CancellationToken::new(),
+                bot_user_id: Some("B123".to_string()),
+                stream_recipients: Default::default(),
+                otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
+                dedup: Mutex::new(crate::state::EventDedup::default()),
+            });
+        let payload = serde_json::json!({
+            "type": "event_callback",
+            "team_id": "T123",
+            "event": {
+                "type": "reaction_added",
+                "user": "U456",
+                "reaction": "white_check_mark",
+                "item_user": "B123",
+                "item": {
+                    "type": "message",
+                    "channel": "C789",
+                    "ts": "100.200"
+                }
+            }
+        });
+
+        handle_verified_webhook("acct1", payload.to_string().as_bytes(), &accounts)
+            .await
+            .unwrap();
+
+        let accts = accounts.read().unwrap();
+        let recipient = accts["acct1"].stream_recipient("C789", "100.200").unwrap();
+        assert_eq!(recipient.user_id, "U456");
+        assert_eq!(recipient.team_id, "T123");
+    }
+
+    #[tokio::test]
+    async fn interaction_denied_by_channel_policy_is_not_dispatched() {
+        let sink = Arc::new(RecordingSink::new());
+        let accounts: AccountStateMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let config = SlackAccountConfig {
+            group_policy: moltis_channels::gating::GroupPolicy::Disabled,
+            ..Default::default()
+        };
+        {
+            let mut accts = accounts.write().unwrap();
+            accts.insert("acct1".to_string(), AccountState {
+                account_id: "acct1".to_string(),
+                config,
+                message_log: None,
+                event_sink: Some(sink.clone()),
+                cancel: tokio_util::sync::CancellationToken::new(),
+                bot_user_id: Some("B123".to_string()),
+                stream_recipients: Default::default(),
+                otp: Mutex::new(moltis_channels::otp::OtpState::new(300)),
+                dedup: Mutex::new(crate::state::EventDedup::default()),
+            });
+        }
+        let payload = serde_json::json!({
+            "type": "block_actions",
+            "user": { "id": "U123" },
+            "channel": { "id": "C456" },
+            "message": { "ts": "100.1" },
+            "actions": [{ "action_id": "model_switch:gpt" }],
+        });
+        let body = format!("payload={payload}");
+
+        handle_verified_interaction_webhook("acct1", body.as_bytes(), &accounts)
+            .await
+            .unwrap();
+        assert!(sink.interactions.lock().unwrap().is_empty());
     }
 }
