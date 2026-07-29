@@ -472,7 +472,7 @@ courier-deploy:
 courier-run *ARGS:
     cargo run -p moltis-courier -- {{ARGS}}
 
-# Serve the website locally with SSR partial injection (default port 4000).
+# Serve the website locally with SSR partial injection (default 127.0.0.1:4000).
 website-dev:
     node website/scripts/build-changelog.mjs
     node website/scripts/dev-server.mjs

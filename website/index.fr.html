@@ -108,9 +108,7 @@
 </head>
 <body class="bg-white dark:bg-gray-950 text-gray-900 dark:text-white min-h-screen relative transition-colors duration-300 overflow-x-hidden w-full">
     <!-- Toast notification -->
-    <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm font-medium rounded-lg shadow-lg opacity-0 pointer-events-none transition-opacity duration-300 z-50">
-        Commande Fly copiée
-    </div>
+    <div id="toast" role="status" aria-live="polite" class="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm font-medium rounded-lg shadow-lg opacity-0 pointer-events-none transition-opacity duration-300 z-50"></div>
 
     <!-- Background gradient blobs -->
     <div class="absolute inset-0 overflow-hidden pointer-events-none">
@@ -195,8 +193,12 @@
                             <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">1</span>
                             <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Installer</h3>
                         </div>
-                        <div class="rounded-md bg-gray-900 dark:bg-gray-800 p-3 font-mono text-[11px] text-gray-300 leading-relaxed overflow-x-auto">
-                            <span class="text-gray-500">$</span> curl -fsSL moltis.org/install.sh | sh
+                        <div class="flex items-center gap-2 rounded-md bg-gray-900 dark:bg-gray-800 p-2 pl-3 font-mono text-[11px] text-gray-300 leading-relaxed">
+                            <code class="min-w-0 flex-1 overflow-x-auto whitespace-nowrap hide-scrollbar"><span class="text-gray-500">$</span> curl -fsSL moltis.org/install.sh | sh</code>
+                            <button type="button" data-copy-text="curl -fsSL moltis.org/install.sh | sh" data-copy-message="Commande copiée" aria-label="Copier la commande" title="Copier la commande" class="shrink-0 rounded p-1.5 text-gray-500 hover:bg-gray-700 hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-400 transition-colors">
+                                <svg data-copy-icon width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                <svg data-copy-check class="hidden text-green-400" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+                            </button>
                         </div>
                     </div>
 
@@ -456,13 +458,25 @@
                         <button data-tab="others" class="shrink-0 px-3 py-1 text-xs font-medium rounded-md transition-colors">Autres</button>
                     </div>
                     <div class="p-4 font-mono text-xs sm:text-sm leading-relaxed overflow-x-auto">
-                        <div id="tab-curl" class="install-content">
-                            <p class="text-gray-500 dark:text-gray-500">$ <span class="text-gray-700 dark:text-gray-300">curl -fsSL https://www.moltis.org/install.sh | sh</span></p>
+                        <div id="tab-curl" class="install-content flex items-center gap-3">
+                            <p class="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-gray-500 dark:text-gray-500 hide-scrollbar">$ <span class="text-gray-700 dark:text-gray-300">curl -fsSL https://www.moltis.org/install.sh | sh</span></p>
+                            <button type="button" data-copy-text="curl -fsSL https://www.moltis.org/install.sh | sh" data-copy-message="Commande copiée" aria-label="Copier la commande" title="Copier la commande" class="shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-gray-200 hover:text-orange-600 dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400 transition-colors">
+                                <svg data-copy-icon width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                <svg data-copy-check class="hidden text-green-500" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+                            </button>
                         </div>
-                        <div id="tab-brew" class="install-content hidden">
-                            <p class="text-gray-500 dark:text-gray-500">$ <span class="text-gray-700 dark:text-gray-300">brew install moltis-org/tap/moltis</span></p>
+                        <div id="tab-brew" class="install-content hidden flex items-center gap-3">
+                            <p class="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-gray-500 dark:text-gray-500 hide-scrollbar">$ <span class="text-gray-700 dark:text-gray-300">brew install moltis-org/tap/moltis</span></p>
+                            <button type="button" data-copy-text="brew install moltis-org/tap/moltis" data-copy-message="Commande copiée" aria-label="Copier la commande" title="Copier la commande" class="shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-gray-200 hover:text-orange-600 dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400 transition-colors">
+                                <svg data-copy-icon width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                <svg data-copy-check class="hidden text-green-500" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+                            </button>
                         </div>
-                        <div id="tab-docker" class="install-content hidden">
+                        <div id="tab-docker" class="install-content hidden relative pr-8">
+                            <button type="button" data-copy-text="docker run -d \&#10;    --name moltis -p 13131:13131 -p 1455:1455 \&#10;    -v moltis-config:/home/moltis/.config/moltis \&#10;    -v moltis-data:/home/moltis/.moltis \&#10;    -v /var/run/docker.sock:/var/run/docker.sock \&#10;    ghcr.io/moltis-org/moltis:latest" data-copy-message="Commande copiée" aria-label="Copier la commande" title="Copier la commande" class="absolute right-0 top-0 rounded-md p-1.5 text-gray-400 hover:bg-gray-200 hover:text-orange-600 dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400 transition-colors">
+                                <svg data-copy-icon width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                <svg data-copy-check class="hidden text-green-500" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+                            </button>
                             <p class="text-gray-500 dark:text-gray-500 mb-1"># Multi-arch: amd64/arm64</p>
                             <p class="text-gray-500 dark:text-gray-500 mb-1">$ <span class="text-gray-700 dark:text-gray-300">docker run -d \</span></p>
                             <p class="text-gray-500 dark:text-gray-500 mb-1">    <span class="text-gray-700 dark:text-gray-300">--name moltis -p 13131:13131 -p 1455:1455 \</span></p>
@@ -472,7 +486,11 @@
                             <p class="text-gray-500 dark:text-gray-500 mb-3">    <span class="text-gray-700 dark:text-gray-300">ghcr.io/moltis-org/moltis:latest</span></p>
                             <p class="text-gray-500 dark:text-gray-500"># Open <span class="text-gray-700 dark:text-gray-300">http://localhost:13131</span> and complete the setup</p>
                         </div>
-                        <div id="tab-source" class="install-content hidden">
+                        <div id="tab-source" class="install-content hidden relative pr-8">
+                            <button type="button" data-copy-text="cargo install moltis --git https://github.com/moltis-org/moltis" data-copy-message="Commande copiée" aria-label="Copier la commande" title="Copier la commande" class="absolute right-0 top-0 rounded-md p-1.5 text-gray-400 hover:bg-gray-200 hover:text-orange-600 dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400 transition-colors">
+                                <svg data-copy-icon width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                <svg data-copy-check class="hidden text-green-500" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+                            </button>
                             <p class="text-gray-500 dark:text-gray-500 mb-1"># Build from source</p>
                             <p class="text-gray-500 dark:text-gray-500">$ <span class="text-gray-700 dark:text-gray-300">cargo install moltis --git https://github.com/moltis-org/moltis</span></p>
                         </div>
@@ -1233,7 +1251,6 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- ============================================================ -->
     <!-- Community feedback -->
     <!-- ============================================================ -->
     <div class="relative z-10 max-w-3xl mx-auto px-4 py-12">
@@ -1246,6 +1263,7 @@
         </blockquote>
     </div>
 
+    <!-- ============================================================ -->
     <!-- Footer (always visible) -->
     <!-- ============================================================ -->
     <footer class="relative z-10 text-center px-4 pb-8 pt-4">
@@ -1271,6 +1289,7 @@
         </p>
     </footer>
 
+    <script src="clipboard.js"></script>
     <script>
         // ============================================================
         // Langage switcher
@@ -1440,7 +1459,6 @@
         // Fly.io command with random app name
         // ============================================================
         var flyCmd = document.getElementById('fly-command');
-        var toast = document.getElementById('toast');
         var flyName = 'moltis-' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 8);
         var flyText = 'curl -o fly.toml https://raw.githubusercontent.com/moltis-org/moltis/main/fly.toml && flyctl launch --name ' + flyName;
         var flyCodeEl = document.getElementById('fly-code');
@@ -1449,14 +1467,9 @@
         if (flyLogsEl) flyLogsEl.textContent = '# To get your setup code: flyctl logs -a ' + flyName + ' | grep "setup code"';
         if (flyCmd) {
             flyCmd.addEventListener('click', function() {
-                navigator.clipboard.writeText(flyText).then(function() {
-                    toast.classList.remove('opacity-0', 'pointer-events-none');
-                    toast.classList.add('opacity-100');
-                    setTimeout(function() {
-                        toast.classList.remove('opacity-100');
-                        toast.classList.add('opacity-0', 'pointer-events-none');
-                    }, 2000);
-                });
+                window.moltisClipboard.copyText(flyText).then(function() {
+                    window.moltisClipboard.showToast('Commande Fly copiée');
+                }).catch(function() {});
             });
         }
         // Scroll-reveal for pill groups
