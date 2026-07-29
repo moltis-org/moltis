@@ -134,6 +134,10 @@ async fn read_output_limited(
     }
 
     let mut output = String::from_utf8_lossy(&retained).into_owned();
+    if output.len() > max_output_bytes {
+        output.truncate(output.floor_char_boundary(max_output_bytes));
+        truncated = true;
+    }
     if truncated {
         output.push_str("\n... [output truncated]");
     }

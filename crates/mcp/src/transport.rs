@@ -73,10 +73,11 @@ impl PendingRequestGuard {
     }
 
     async fn cancel(&mut self) {
-        let Some(id_key) = self.id_key.take() else {
+        let Some(id_key) = self.id_key.as_ref() else {
             return;
         };
-        self.pending.lock().await.remove(&id_key);
+        self.pending.lock().await.remove(id_key);
+        self.id_key = None;
         tokio::spawn(send_cancellation_notification(
             self.request_id.clone(),
             Arc::clone(&self.stdin),
@@ -460,6 +461,47 @@ mod tests {
                 if content.contains("notifications/cancelled") {
                     break;
                 }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        transport.kill().await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_timeout_cleanup_keeps_guard_armed() {
+        let args = vec!["-c".to_string(), "while read line; do :; done".to_string()];
+        let transport = StdioTransport::spawn_with_timeout(
+            "sh",
+            &args,
+            &HashMap::new(),
+            Duration::from_millis(50),
+        )
+        .await
+        .unwrap();
+        let request_transport = Arc::clone(&transport);
+        let request =
+            tokio::spawn(async move { request_transport.request("tools/call", None).await });
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if !transport.pending.lock().await.is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let pending_guard = transport.pending.lock().await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        request.abort();
+        let _ = request.await;
+        drop(pending_guard);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !transport.pending.lock().await.is_empty() {
                 tokio::task::yield_now().await;
             }
         })

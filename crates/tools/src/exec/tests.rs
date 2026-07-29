@@ -27,6 +27,16 @@ async fn limited_output_handles_multibyte_boundary() {
     assert!(!output.contains('л'));
 }
 
+#[tokio::test]
+async fn limited_output_caps_lossy_utf8_expansion() {
+    const LIMIT: usize = 10;
+    const MARKER: &str = "\n... [output truncated]";
+    let input = [0xff_u8; 100];
+    let output = read_output_limited(input.as_slice(), LIMIT).await.unwrap();
+    assert!(output.ends_with(MARKER));
+    assert!(output.len() <= LIMIT + MARKER.len());
+}
+
 #[async_trait]
 impl ApprovalBroadcaster for TestBroadcaster {
     async fn broadcast_request(
