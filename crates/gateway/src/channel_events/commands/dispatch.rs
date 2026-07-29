@@ -5,7 +5,7 @@ use moltis_channels::{ChannelReplyTarget, Error as ChannelError, Result as Chann
 use crate::state::GatewayState;
 
 use super::{
-    super::{is_sender_authorized, resolve_channel_session},
+    super::{is_sender_authorized, operator_denied_message, resolve_channel_session},
     control_handlers, quick_actions, session_handlers,
 };
 
@@ -90,9 +90,10 @@ pub(in crate::channel_events) async fn dispatch_command(
         moltis_channels::commands::CommandPrivilege::Operator
     ) && !is_sender_authorized(state, &reply_to.account_id, sender_id).await
     {
-        return Err(ChannelError::invalid_input(
-            "This command is restricted to this bot's operators.",
-        ));
+        return Err(ChannelError::invalid_input(operator_denied_message(
+            &format!("/{cmd}"),
+            sender_id,
+        )));
     }
 
     match cmd {

@@ -49,7 +49,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
                     .send_text(
                         &reply_to.account_id,
                         &reply_to.outbound_to(),
-                        SHELL_DENIED_MESSAGE,
+                        &operator_denied_message("/sh", meta.sender_id.as_deref()),
                         reply_to.message_id.as_deref(),
                     )
                     .await

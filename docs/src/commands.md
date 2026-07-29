@@ -13,9 +13,9 @@ Type `/` in the chat input to see the autocomplete popup.
 | `/new` | Start a new session |
 | `/clear` | Clear session history |
 | `/compact` | Summarize conversation to save tokens |
-| `/context` | Show session context and project info |
-| `/sessions` | List and switch sessions (channels only) |
-| `/attach` | Attach an existing session to this channel (channels only) |
+| `/context` | Show session context and project info — **operators only** |
+| `/sessions` | List and switch sessions (channels only) — **operators only** |
+| `/attach` | Attach an existing session to this channel (channels only) — **operators only** |
 | `/fork [label]` | Fork the current session into a new branch |
 
 ### /fork
@@ -35,20 +35,27 @@ Available in web UI, all channels, and via the `sessions.fork` RPC. See
 
 | Command | Description |
 |---------|-------------|
-| `/agent [N]` | Switch session agent |
+| `/agent [N]` | Switch session agent — **operators only** |
 | `/mode [N\|name\|none]` | Switch session mode |
 | `/model [N]` | Switch provider/model |
-| `/sandbox [on\|off\|image N]` | Toggle sandbox and choose image |
+| `/sandbox [on\|off\|image N]` | Toggle sandbox and choose image — **operators only** |
 | `/sh [on\|off]` | Enter command mode (passthrough to shell) — **operators only** |
 | `/stop` | Abort the current running agent |
-| `/peek` | Show current thinking/tool status |
-| `/update [version]` | Update moltis (operators only) |
+| `/peek` | Show current thinking/tool status — **operators only** |
+| `/update [version]` | Update moltis — **operators only** |
 
-```admonish warning title="Shell access is restricted on channels"
-Channel slash commands other than `/help` require the sender to be an
-**operator** of the channel account. Non-operators can still chat normally. Shared-room agent turns use a
-small safe tool allowlist for every sender, including operators; explicit `/sh`
-remains separately authorized. See
+```admonish warning title="Some commands are restricted on channels"
+Commands scoped to the current conversation — `/help`, `/new`, `/clear`,
+`/compact`, `/title`, `/fork`, `/stop`, `/model`, `/mode`, `/fast` — are open to
+any sender who clears the channel's access gate.
+
+Commands that reach the host, act on the owner's behalf, or read state from
+outside the current chat require the sender to be an **operator** of the channel
+account. An empty `operators` list means nobody, so these are disabled until you
+configure it. Non-operators can still chat normally.
+
+Shared-room agent turns use a small safe tool allowlist for every sender,
+including operators; explicit `/sh` remains separately authorized. See
 [Channels → Operators](channels.md#operators-privileged-senders).
 ```
 
@@ -56,12 +63,12 @@ remains separately authorized. See
 
 | Command | Description |
 |---------|-------------|
-| `/btw <question>` | Quick side question (no tools, not persisted) |
+| `/btw <question>` | Quick side question (no tools, not persisted) — **operators only** |
 | `/fast [on\|off\|status]` | Toggle fast/priority mode |
-| `/insights [days]` | Show usage analytics (tokens, providers) |
-| `/steer <text>` | Inject guidance into the current agent run |
-| `/queue <message>` | Queue a message for the next agent turn |
-| `/rollback [N\|diff N]` | List or restore file checkpoints |
+| `/insights [days]` | Show usage analytics (tokens, providers) — **operators only** |
+| `/steer <text>` | Inject guidance into the current agent run — **operators only** |
+| `/queue <message>` | Queue a message for the next agent turn — **operators only** |
+| `/rollback [N\|diff N]` | List or restore file checkpoints — **operators only** |
 
 ### /btw
 
@@ -151,12 +158,12 @@ system.
 
 | Command | Description |
 |---------|-------------|
-| `/approvals` | List pending exec approvals |
-| `/approve [N]` | Approve a pending exec request |
-| `/deny [N]` | Deny a pending exec request |
+| `/approvals` | List pending exec approvals — **operators only** |
+| `/approve [N]` | Approve a pending exec request — **operators only** |
+| `/deny [N]` | Deny a pending exec request — **operators only** |
 
 ## Help
 
 | Command | Description |
 |---------|-------------|
-| `/help` | Show available commands (handled locally by each channel) |
+| `/help` | Show available commands, marking which need an operator |

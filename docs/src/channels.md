@@ -236,9 +236,34 @@ allowlist = ["owner-id"]        # who may DM the bot
 operators = ["owner-id"]        # who may run /sh and host-reaching tools
 ```
 
-Operators may use channel slash commands, including `/sh`, `/approve`,
-`/deny`, and `/update`. Everyone else can chat normally but cannot run channel
-commands.
+```admonish warning title="Upgrading: privileged commands are off until you set `operators`"
+Earlier versions treated the DM `allowlist` as the privileged list, so anyone
+allowed to DM the bot could run `/sh`, `/approve`, and `/update`. That fallback
+is gone: **an empty `operators` list means nobody**, including you.
+
+After upgrading, add your own exact platform sender ID to `operators` for each
+account, or those commands will refuse everyone. If you do not know your ID,
+run `/sh` — the refusal message tells you what yours is on that channel.
+```
+
+A command is operator-only when the worst case reaches beyond the current
+chat. Everything scoped to the conversation you are already in stays open to
+any sender who clears the access gate:
+
+| | Commands |
+|---|---|
+| **Anyone who may chat** | `/help`, `/new`, `/clear`, `/compact`, `/title`, `/fork`, `/stop`, `/model`, `/mode`, `/fast` |
+| **Operators only** | `/sh`, `/update`, `/approve`, `/deny`, `/approvals`, `/sandbox`, `/attach`, `/sessions`, `/context`, `/insights`, `/peek`, `/btw`, `/rollback`, `/agent`, `/steer`, `/queue` |
+
+The public set can only disrupt the room's own conversation — something any
+member can already do by talking. The operator set runs host commands (`/sh`,
+`/update`), acts on the owner's behalf (`/approve` and `/deny` resolve the
+*owner's* pending exec requests, which is code execution by proxy), weakens
+isolation (`/sandbox` can turn the sandbox off), or reads state from outside
+this chat (`/attach`, `/sessions`, `/context`, `/insights`, `/peek`, `/btw`).
+
+New commands default to operator-only, so adding one is safe until it is
+deliberately reviewed.
 
 Untrusted turns use a positive tool allowlist containing only `calc`,
 `web_search`, and `web_fetch`. Filesystem tools, arbitrary-path media tools,

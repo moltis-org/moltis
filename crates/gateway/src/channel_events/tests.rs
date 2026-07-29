@@ -466,3 +466,35 @@ fn channel_session_defaults_use_chat_id_for_dm_commands() {
     assert_eq!(defaults.model.as_deref(), Some("dm-model"));
     assert_eq!(defaults.agent_id.as_deref(), Some("dm-agent"));
 }
+
+#[test]
+fn operator_denial_tells_the_owner_how_to_unlock_the_command() {
+    let message = operator_denied_message("/sh", Some("400347514466992128"));
+
+    assert!(message.starts_with("/sh is restricted to this bot's operators."));
+    assert!(
+        message.contains("Settings → Channels"),
+        "must point at the web UI: {message}"
+    );
+    assert!(
+        message.contains("operators"),
+        "must name the config field: {message}"
+    );
+    // Operator entries are exact platform IDs, so echoing the sender's own ID
+    // back saves an owner from having to hunt for it.
+    assert!(
+        message.contains("Your sender ID here is: 400347514466992128"),
+        "must echo the sender id: {message}"
+    );
+}
+
+#[test]
+fn operator_denial_omits_an_absent_or_blank_sender_id() {
+    for sender_id in [None, Some(""), Some("   ")] {
+        let message = operator_denied_message("/update", sender_id);
+        assert!(
+            !message.contains("Your sender ID"),
+            "unattributed senders have no id to show: {message}"
+        );
+    }
+}

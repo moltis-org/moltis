@@ -47,10 +47,34 @@ pub enum CommandPrivilege {
 impl CommandDef {
     /// Commands default to operator-only. Adding a new command therefore fails
     /// closed until it is deliberately reviewed and listed as public here.
+    ///
+    /// A command is public only when the worst a hostile sender can do with it
+    /// is disrupt the conversation in the room they are already in — something
+    /// any member can do by talking. Anything that reaches the host, acts on
+    /// the owner's behalf, or reads state from outside this room is operator
+    /// only:
+    ///
+    /// - `sh` runs host commands; `update` replaces the running binary.
+    /// - `approve`/`deny` act on the *owner's* pending exec requests, so a
+    ///   guest approving one is arbitrary code execution by proxy. `approvals`
+    ///   lists the command lines awaiting approval.
+    /// - `sandbox` can turn the sandbox off, moving execution onto the host.
+    /// - `attach` pulls an existing session into this chat, and
+    ///   `sessions`/`context`/`insights`/`peek`/`btw` read session, prompt, or
+    ///   cross-session state the room's participants are not entitled to.
+    /// - `rollback` restores a checkpoint; `agent` swaps the system prompt and
+    ///   tool posture; `steer`/`queue` inject into a run someone else started.
     #[must_use]
     pub fn privilege(self) -> CommandPrivilege {
         match self.name {
-            "help" => CommandPrivilege::Public,
+            // Help lists the commands and marks which need an operator.
+            "help"
+            // Scoped to this chat's own session: start it over, clear it,
+            // summarize it, retitle it, branch it, or abort its current run.
+            | "new" | "clear" | "compact" | "title" | "fork" | "stop"
+            // Which model/mode answers in this chat. Reversible, and bounded by
+            // the account's own provider configuration.
+            | "model" | "mode" | "fast" => CommandPrivilege::Public,
             _ => CommandPrivilege::Operator,
         }
     }
@@ -335,10 +359,17 @@ mod tests {
         assert_eq!(names.len(), deduped.len(), "duplicate command names found");
     }
 
+    /// The public set is small and enumerated here on purpose. Adding a command
+    /// to it is a security decision, so it must be made in both places or this
+    /// fails — a new command is never public by accident.
     #[test]
-    fn channel_commands_fail_closed_to_operator_only() {
+    fn only_reviewed_commands_are_public() {
+        const PUBLIC: &[&str] = &[
+            "help", "new", "clear", "compact", "title", "fork", "stop", "model", "mode", "fast",
+        ];
+
         for command in all_commands() {
-            let expected = if command.name == "help" {
+            let expected = if PUBLIC.contains(&command.name) {
                 CommandPrivilege::Public
             } else {
                 CommandPrivilege::Operator
@@ -348,6 +379,41 @@ mod tests {
                 expected,
                 "unexpected privilege for /{}",
                 command.name
+            );
+        }
+    }
+
+    /// The commands that reach the host, act for the owner, or read state from
+    /// outside the current chat must never become public.
+    #[test]
+    fn host_and_owner_scoped_commands_stay_operator_only() {
+        for name in [
+            "sh",
+            "update",
+            "approve",
+            "deny",
+            "approvals",
+            "sandbox",
+            "attach",
+            "sessions",
+            "context",
+            "insights",
+            "peek",
+            "btw",
+            "rollback",
+            "agent",
+            "steer",
+            "queue",
+        ] {
+            let command = all_commands()
+                .iter()
+                .find(|candidate| candidate.name == name)
+                .copied()
+                .unwrap_or_else(|| panic!("/{name} is missing from the command registry"));
+            assert_eq!(
+                command.privilege(),
+                CommandPrivilege::Operator,
+                "/{name} must stay operator-only"
             );
         }
     }

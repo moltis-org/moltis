@@ -14,8 +14,8 @@ use crate::{
 
 use super::{
     super::{
-        ApprovalListResponse, SHELL_DENIED_MESSAGE, format_pending_approvals_list,
-        is_sender_authorized, parse_numbered_selection,
+        ApprovalListResponse, format_pending_approvals_list, is_sender_authorized,
+        operator_denied_message, parse_numbered_selection,
     },
     formatting::{format_model_list, unique_providers},
 };
@@ -70,9 +70,10 @@ pub(in crate::channel_events) async fn handle_approve_deny(
     args: &str,
 ) -> ChannelResult<String> {
     if !is_sender_authorized(state, &reply_to.account_id, sender_id).await {
-        return Err(ChannelError::invalid_input(
-            "You are not authorized to manage approvals. Only this bot's operators can use /approve and /deny.",
-        ));
+        return Err(ChannelError::invalid_input(operator_denied_message(
+            "Managing exec approvals",
+            sender_id,
+        )));
     }
     if args.is_empty() {
         return Err(ChannelError::invalid_input(format!(
@@ -635,7 +636,10 @@ pub(in crate::channel_events) async fn handle_sh(
     // operators may touch it, including the read-only `status` form, which
     // would otherwise tell an unprivileged user whether the shell is live.
     if !is_sender_authorized(state, &reply_to.account_id, sender_id).await {
-        return Err(ChannelError::invalid_input(SHELL_DENIED_MESSAGE));
+        return Err(ChannelError::invalid_input(operator_denied_message(
+            "Shell access",
+            sender_id,
+        )));
     }
 
     let route = if let Some(ref router) = state.sandbox_router {
@@ -707,9 +711,9 @@ pub(in crate::channel_events) async fn handle_update(
 ) -> ChannelResult<String> {
     // Operator-only: same check as approve/deny.
     if !is_sender_authorized(state, &reply_to.account_id, sender_id).await {
-        return Err(ChannelError::invalid_input(
-            "You are not authorized to update moltis. Only this bot's operators can use /update.",
-        ));
+        return Err(ChannelError::invalid_input(operator_denied_message(
+            "/update", sender_id,
+        )));
     }
 
     let requested_version = if args.is_empty() {

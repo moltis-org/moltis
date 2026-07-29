@@ -103,9 +103,31 @@ fn parse_numbered_selection(arg: &str, command_name: &str) -> ChannelResult<usiz
         .map_err(|_| ChannelError::invalid_input(format!("usage: /{command_name} [number]")))
 }
 
-/// Denial shown when a non-operator tries to reach the shell.
-const SHELL_DENIED_MESSAGE: &str = "Shell access is restricted to this bot's operators. Ask the owner to add you under \
-     Settings → Channels → Operators in the moltis web UI.";
+/// Denial shown when a non-operator attempts a privileged action.
+///
+/// `action` names what was refused, e.g. `"/sh"` or `"Shell access"`.
+///
+/// The sender's own platform ID is echoed back because `operators` entries must
+/// be exact platform IDs — an owner who has not set the list yet is locked out
+/// of their own bot and would otherwise have to go and find their ID by hand.
+/// It is the sender's own already-public identifier on that platform, so this
+/// discloses nothing they could not read off their own profile.
+pub(in crate::channel_events) fn operator_denied_message(
+    action: &str,
+    sender_id: Option<&str>,
+) -> String {
+    let mut message = format!(
+        "{action} is restricted to this bot's operators.\n\n\
+         If you own this moltis instance, add yourself under \
+         Settings → Channels → (your account) → Edit → Operators in the web UI, \
+         or set `operators` for the account in moltis.toml. Entries must be exact \
+         platform sender IDs."
+    );
+    if let Some(sender_id) = sender_id.map(str::trim).filter(|id| !id.is_empty()) {
+        message.push_str(&format!("\n\nYour sender ID here is: {sender_id}"));
+    }
+    message
+}
 
 /// Resolve a channel sender's privilege level for an account.
 ///
