@@ -11,7 +11,10 @@ use serde_json::Value;
 use crate::runtime::ChatRuntime;
 
 /// Params key carrying the acknowledgment identities a call is responsible for.
-pub(crate) const ACK_KEYS_PARAM: &str = "_ack_keys";
+///
+/// Exported so the channel dispatch layer sets the same key this module reads,
+/// instead of both sides hardcoding the string.
+pub const ACK_KEYS_PARAM: &str = "_ack_keys";
 
 /// Read the acknowledgment identities from `chat.send` params.
 pub(crate) fn ack_keys_from_params(params: &Value) -> Vec<String> {

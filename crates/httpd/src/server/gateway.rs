@@ -24,11 +24,6 @@ use super::{
     PreparedGateway, RouteEnhancer, builder::finalize_gateway_app, runtime::FinalizeGatewayArgs,
 };
 
-#[cfg(feature = "slack")]
-fn slack_json_response(status: StatusCode, body: serde_json::Value) -> axum::response::Response {
-    (status, Json(body)).into_response()
-}
-
 #[cfg(feature = "tailscale")]
 use super::TailscaleOpts;
 
@@ -383,217 +378,49 @@ pub async fn prepare_gateway(
     }
     #[cfg(feature = "slack")]
     {
-        let slack_callback_dispatcher = super::slack_callbacks::SlackCallbackDispatcher::start(
-            Arc::clone(&slack_webhook_plugin),
-        );
-        let slack_events_plugin = Arc::clone(&slack_webhook_plugin);
-        let state_for_slack_events = Arc::clone(&state);
-        let dispatcher_for_slack_events = Arc::clone(&slack_callback_dispatcher);
-        app = app.route(
-            "/api/channels/slack/{account_id}/events",
-            axum::routing::post(
-                move |axum::extract::Path(account_id): axum::extract::Path<String>,
-                      headers: axum::http::HeaderMap,
-                      body: axum::body::Bytes| {
-                    let plugin = Arc::clone(&slack_events_plugin);
-                    let gw_state = Arc::clone(&state_for_slack_events);
-                    let dispatcher = Arc::clone(&dispatcher_for_slack_events);
-                    async move {
-                        let verifier = {
-                            let p = plugin.read().await;
-                            p.channel_webhook_verifier(&account_id)
-                        };
-                        let Some(verifier) = verifier else {
-                            return slack_json_response(
-                                StatusCode::NOT_FOUND,
-                                serde_json::json!({ "ok": false, "error": "unknown Slack account" }),
-                            );
-                        };
-                        match moltis_gateway::channel_webhook_middleware::verify_channel_webhook(
-                            verifier.as_ref(),
-                            &gw_state.channel_webhook_rate_limiter,
-                            &account_id,
-                            "events",
-                            &headers,
-                            &body,
-                        ) {
-                            Err(rejection) => {
-                                crate::channel_webhook_middleware::rejection_into_response(
-                                    rejection,
-                                )
-                            },
-                            Ok(verified) => {
-                                let payload: serde_json::Value =
-                                    match serde_json::from_slice(&verified.body) {
-                                        Ok(payload) => payload,
-                                        Err(error) => {
-                                            return slack_json_response(
-                                                StatusCode::BAD_REQUEST,
-                                                serde_json::json!({ "ok": false, "error": error.to_string() }),
-                                            );
-                                        },
-                                    };
-                                if payload.get("type").and_then(|value| value.as_str())
-                                    == Some("url_verification")
-                                {
-                                    return match payload
-                                        .get("challenge")
-                                        .and_then(|value| value.as_str())
-                                    {
-                                        Some(challenge) => slack_json_response(
-                                            StatusCode::OK,
-                                            serde_json::json!({ "challenge": challenge }),
-                                        ),
-                                        None => slack_json_response(
-                                            StatusCode::BAD_REQUEST,
-                                            serde_json::json!({ "ok": false, "error": "missing Slack challenge" }),
-                                        ),
-                                    };
-                                }
-                                match dispatcher.admit(
-                                    &gw_state.channel_webhook_dedup,
-                                    account_id,
-                                    verified.idempotency_key.as_deref(),
-                                    super::slack_callbacks::SlackCallbackKind::Event,
-                                    verified.body,
-                                ) {
-                                    moltis_gateway::channel_webhook_dedup::ChannelWebhookAdmission::Duplicate => slack_json_response(
-                                        StatusCode::OK,
-                                        serde_json::json!({ "ok": true, "deduplicated": true }),
-                                    ),
-                                    moltis_gateway::channel_webhook_dedup::ChannelWebhookAdmission::Admitted => slack_json_response(
-                                        StatusCode::OK,
-                                        serde_json::json!({ "ok": true }),
-                                    ),
-                                    moltis_gateway::channel_webhook_dedup::ChannelWebhookAdmission::Rejected => slack_json_response(
-                                        StatusCode::SERVICE_UNAVAILABLE,
-                                        serde_json::json!({ "ok": false, "error": "Slack callback queue unavailable" }),
-                                    ),
-                                }
-                            },
-                        }
-                    }
-                },
+        use super::slack_callbacks::{
+            SlackCallbackDispatcher, SlackCallbackKind, handle_slack_callback,
+        };
+
+        // One dispatcher (bounded queue + fair worker pool) shared by all three
+        // endpoints, so a burst on one cannot starve the others.
+        let dispatcher = SlackCallbackDispatcher::start(Arc::clone(&slack_webhook_plugin));
+        for (path, kind) in [
+            (
+                "/api/channels/slack/{account_id}/events",
+                SlackCallbackKind::Event,
             ),
-        );
-        let slack_interact_plugin = Arc::clone(&slack_webhook_plugin);
-        let state_for_slack_interact = Arc::clone(&state);
-        let dispatcher_for_slack_interact = Arc::clone(&slack_callback_dispatcher);
-        app = app.route(
-            "/api/channels/slack/{account_id}/interactions",
-            axum::routing::post(
-                move |axum::extract::Path(account_id): axum::extract::Path<String>,
-                      headers: axum::http::HeaderMap,
-                      body: axum::body::Bytes| {
-                    let plugin = Arc::clone(&slack_interact_plugin);
-                    let gw_state = Arc::clone(&state_for_slack_interact);
-                    let dispatcher = Arc::clone(&dispatcher_for_slack_interact);
-                    async move {
-                        let verifier = {
-                            let p = plugin.read().await;
-                            p.channel_webhook_verifier(&account_id)
-                        };
-                        let Some(verifier) = verifier else {
-                            return slack_json_response(
-                                StatusCode::NOT_FOUND,
-                                serde_json::json!({ "ok": false, "error": "unknown Slack account" }),
-                            );
-                        };
-                        match moltis_gateway::channel_webhook_middleware::verify_channel_webhook(
-                            verifier.as_ref(),
-                            &gw_state.channel_webhook_rate_limiter,
-                            &account_id,
-                            "interactions",
-                            &headers,
-                            &body,
-                        ) {
-                            Err(rejection) => {
-                                crate::channel_webhook_middleware::rejection_into_response(
-                                    rejection,
-                                )
-                            },
-                            Ok(verified) => match dispatcher.admit(
-                                &gw_state.channel_webhook_dedup,
-                                account_id,
-                                verified.idempotency_key.as_deref(),
-                                super::slack_callbacks::SlackCallbackKind::Interaction,
-                                verified.body,
-                            ) {
-                                moltis_gateway::channel_webhook_dedup::ChannelWebhookAdmission::Duplicate => slack_json_response(
-                                    StatusCode::OK,
-                                    serde_json::json!({ "ok": true, "deduplicated": true }),
-                                ),
-                                moltis_gateway::channel_webhook_dedup::ChannelWebhookAdmission::Admitted => slack_json_response(
-                                    StatusCode::OK,
-                                    serde_json::json!({ "ok": true }),
-                                ),
-                                moltis_gateway::channel_webhook_dedup::ChannelWebhookAdmission::Rejected => slack_json_response(
-                                    StatusCode::SERVICE_UNAVAILABLE,
-                                    serde_json::json!({ "ok": false, "error": "Slack callback queue unavailable" }),
-                                ),
-                            },
-                        }
-                    }
-                },
+            (
+                "/api/channels/slack/{account_id}/interactions",
+                SlackCallbackKind::Interaction,
             ),
-        );
-        let slack_cmd_plugin = Arc::clone(&slack_webhook_plugin);
-        let state_for_slack_cmd = Arc::clone(&state);
-        let dispatcher_for_slack_cmd = Arc::clone(&slack_callback_dispatcher);
-        app = app.route(
-            "/api/channels/slack/{account_id}/commands",
-            axum::routing::post(
-                move |axum::extract::Path(account_id): axum::extract::Path<String>,
-                      headers: axum::http::HeaderMap,
-                      body: axum::body::Bytes| {
-                    let plugin = Arc::clone(&slack_cmd_plugin);
-                    let gw_state = Arc::clone(&state_for_slack_cmd);
-                    let dispatcher = Arc::clone(&dispatcher_for_slack_cmd);
-                    async move {
-                        let verifier = {
-                            let p = plugin.read().await;
-                            p.channel_webhook_verifier(&account_id)
-                        };
-                        let Some(verifier) = verifier else {
-                            return slack_json_response(
-                                StatusCode::NOT_FOUND,
-                                serde_json::json!({ "ok": false, "error": "unknown Slack account" }),
-                            );
-                        };
-                        match moltis_gateway::channel_webhook_middleware::verify_channel_webhook(
-                            verifier.as_ref(),
-                            &gw_state.channel_webhook_rate_limiter,
-                            &account_id,
-                            "commands",
-                            &headers,
-                            &body,
-                        ) {
-                            Err(rejection) => {
-                                crate::channel_webhook_middleware::rejection_into_response(
-                                    rejection,
-                                )
-                            },
-                            Ok(verified) => match dispatcher.admit(
-                                &gw_state.channel_webhook_dedup,
-                                account_id,
-                                verified.idempotency_key.as_deref(),
-                                super::slack_callbacks::SlackCallbackKind::Command,
-                                verified.body,
-                            ) {
-                                moltis_gateway::channel_webhook_dedup::ChannelWebhookAdmission::Duplicate
-                                | moltis_gateway::channel_webhook_dedup::ChannelWebhookAdmission::Admitted => {
-                                    StatusCode::OK.into_response()
-                                },
-                                moltis_gateway::channel_webhook_dedup::ChannelWebhookAdmission::Rejected => slack_json_response(
-                                    StatusCode::SERVICE_UNAVAILABLE,
-                                    serde_json::json!({ "ok": false, "error": "Slack callback queue unavailable" }),
-                                ),
-                            },
-                        }
-                    }
-                },
+            (
+                "/api/channels/slack/{account_id}/commands",
+                SlackCallbackKind::Command,
             ),
-        );
+        ] {
+            let plugin = Arc::clone(&slack_webhook_plugin);
+            let gateway_state = Arc::clone(&state);
+            let dispatcher = Arc::clone(&dispatcher);
+            app = app.route(
+                path,
+                axum::routing::post(
+                    move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                          headers: axum::http::HeaderMap,
+                          body: axum::body::Bytes| {
+                        handle_slack_callback(
+                            Arc::clone(&plugin),
+                            Arc::clone(&dispatcher),
+                            Arc::clone(&gateway_state),
+                            kind,
+                            account_id,
+                            headers,
+                            body,
+                        )
+                    },
+                ),
+            );
+        }
     }
     #[cfg(feature = "telephony")]
     {

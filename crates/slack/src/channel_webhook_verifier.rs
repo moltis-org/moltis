@@ -31,31 +31,38 @@ impl SlackChannelWebhookVerifier {
     }
 }
 
-fn decode_form_value(value: &str) -> Option<String> {
-    let mut decoded = Vec::with_capacity(value.len());
-    let mut bytes = value.bytes();
-    while let Some(byte) = bytes.next() {
-        match byte {
-            b'%' => {
-                let pair = [bytes.next()?, bytes.next()?];
-                let hex = std::str::from_utf8(&pair).ok()?;
-                decoded.push(u8::from_str_radix(hex, 16).ok()?);
-            },
-            b'+' => decoded.push(b' '),
-            other => decoded.push(other),
-        }
-    }
-    String::from_utf8(decoded).ok()
-}
-
+/// Read one field out of an `application/x-www-form-urlencoded` body.
+///
+/// Slack posts slash commands and interactions as form bodies, so `+` means
+/// space and values are percent-encoded — decoding is delegated to
+/// `form_urlencoded` rather than hand-rolled.
 fn form_value(body: &[u8], name: &str) -> Option<String> {
-    let body = std::str::from_utf8(body).ok()?;
-    body.split('&').find_map(|pair| {
-        let (key, value) = pair.split_once('=')?;
-        (key == name).then(|| decode_form_value(value)).flatten()
-    })
+    form_urlencoded::parse(body)
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.into_owned())
 }
 
+/// Whether a decoded value is usable as a Slack trigger id.
+///
+/// `form_urlencoded` decodes leniently, so a body that did not decode cleanly
+/// still yields a value: a malformed escape like `%GG` survives verbatim, and
+/// invalid UTF-8 becomes U+FFFD. Real trigger ids are dot-separated
+/// alphanumerics (`13345224609.738474920.8088930838d88f008e0`) and contain
+/// neither, so their presence means the value is decode garbage. Admitting
+/// garbage as a dedupe key would let unrelated callbacks collide on it and be
+/// dropped as duplicates; rejecting it only means this callback is never
+/// deduplicated, which is the safe direction.
+fn is_trigger_id(value: &str) -> bool {
+    !value.is_empty() && !value.contains(['%', char::REPLACEMENT_CHARACTER])
+}
+
+/// Derive a dedupe key for a Slack callback.
+///
+/// Each endpoint carries its own unique id, in decreasing order of specificity:
+/// Events API envelopes have `event_id` (JSON), slash commands have a top-level
+/// `trigger_id` (form), and interactions nest `trigger_id` inside the JSON
+/// `payload` field (form). Returning `None` means the callback cannot be
+/// deduplicated and will be admitted on every delivery.
 fn idempotency_key(body: &[u8]) -> Option<String> {
     if let Some(event_id) = serde_json::from_slice::<serde_json::Value>(body)
         .ok()
@@ -64,14 +71,14 @@ fn idempotency_key(body: &[u8]) -> Option<String> {
         return Some(event_id);
     }
 
-    if let Some(trigger_id) = form_value(body, "trigger_id").filter(|value| !value.is_empty()) {
+    if let Some(trigger_id) = form_value(body, "trigger_id").filter(|value| is_trigger_id(value)) {
         return Some(trigger_id);
     }
 
     form_value(body, "payload")
         .and_then(|payload| serde_json::from_str::<serde_json::Value>(&payload).ok())
         .and_then(|value| value["trigger_id"].as_str().map(ToOwned::to_owned))
-        .filter(|value| !value.is_empty())
+        .filter(|value| is_trigger_id(value))
 }
 
 impl ChannelWebhookVerifier for SlackChannelWebhookVerifier {
@@ -269,6 +276,17 @@ mod tests {
 
         let envelope = verifier.verify(&headers, body).unwrap();
         assert!(envelope.idempotency_key.is_none());
+    }
+
+    #[test]
+    fn form_values_decode_plus_as_space_and_percent_escapes() {
+        // Slack posts commands as application/x-www-form-urlencoded, where a
+        // space is `+` — not `%20`. Treating `+` literally would corrupt every
+        // multi-word slash command argument.
+        let body = b"command=%2Fmoltis&text=hello+world%21&trigger_id=1.2.abc";
+        assert_eq!(form_value(body, "command").as_deref(), Some("/moltis"));
+        assert_eq!(form_value(body, "text").as_deref(), Some("hello world!"));
+        assert_eq!(form_value(body, "missing"), None);
     }
 
     #[test]

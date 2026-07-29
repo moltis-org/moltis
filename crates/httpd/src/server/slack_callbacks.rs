@@ -6,9 +6,16 @@ use std::{
 };
 
 use {
+    axum::{
+        http::StatusCode,
+        response::{IntoResponse, Json, Response},
+    },
     bytes::Bytes,
     futures::FutureExt,
-    moltis_gateway::channel_webhook_dedup::{ChannelWebhookAdmission, ChannelWebhookDedupeStore},
+    moltis_gateway::{
+        channel_webhook_dedup::{ChannelWebhookAdmission, ChannelWebhookDedupeStore},
+        state::GatewayState,
+    },
     tokio::{
         sync::{OwnedSemaphorePermit, Semaphore, mpsc},
         task::JoinSet,
@@ -19,6 +26,11 @@ const CALLBACK_QUEUE_CAPACITY: usize = 256;
 const CALLBACK_WORKER_LIMIT: usize = 16;
 const CALLBACK_ACCOUNT_CAPACITY: usize = CALLBACK_QUEUE_CAPACITY / CALLBACK_WORKER_LIMIT;
 
+/// Slack callback endpoints served under `/api/channels/slack/{account_id}/`.
+///
+/// All three share the same admission pipeline (verify → rate limit → dedupe →
+/// bounded queue) and differ only in how they acknowledge, so the variant is
+/// what parameterizes [`handle_slack_callback`].
 #[derive(Clone, Copy)]
 pub(super) enum SlackCallbackKind {
     Event,
@@ -34,6 +46,127 @@ impl SlackCallbackKind {
             Self::Command => "commands",
         }
     }
+
+    /// Acknowledge an admission decision.
+    ///
+    /// Slash commands render their response body in the Slack client, so an
+    /// accepted (or deduped) command answers with a bare 200 rather than JSON
+    /// the user would see. Events and interactions are machine-read, so they
+    /// report the decision as JSON.
+    fn ack_response(self, admission: ChannelWebhookAdmission) -> Response {
+        match (self, admission) {
+            (
+                Self::Command,
+                ChannelWebhookAdmission::Admitted | ChannelWebhookAdmission::Duplicate,
+            ) => StatusCode::OK.into_response(),
+            (_, ChannelWebhookAdmission::Admitted) => {
+                slack_json_response(StatusCode::OK, serde_json::json!({ "ok": true }))
+            },
+            (_, ChannelWebhookAdmission::Duplicate) => slack_json_response(
+                StatusCode::OK,
+                serde_json::json!({ "ok": true, "deduplicated": true }),
+            ),
+            (_, ChannelWebhookAdmission::Rejected) => slack_json_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                serde_json::json!({ "ok": false, "error": "Slack callback queue unavailable" }),
+            ),
+        }
+    }
+}
+
+fn slack_json_response(status: StatusCode, body: serde_json::Value) -> Response {
+    (status, Json(body)).into_response()
+}
+
+/// Verify a Slack callback and hand it to the bounded queue.
+///
+/// Slack expects an acknowledgement within three seconds, so processing never
+/// happens inline: the request is verified (HMAC, timestamp, rate limit),
+/// deduplicated, queued, and acknowledged, and the queue's workers run the
+/// actual ingest afterwards. A queue that cannot accept the callback answers
+/// 503 so Slack retries rather than dropping the event silently.
+pub(super) async fn handle_slack_callback(
+    plugin: Arc<tokio::sync::RwLock<moltis_slack::SlackPlugin>>,
+    dispatcher: Arc<SlackCallbackDispatcher>,
+    gateway_state: Arc<GatewayState>,
+    kind: SlackCallbackKind,
+    account_id: String,
+    headers: axum::http::HeaderMap,
+    body: Bytes,
+) -> Response {
+    use moltis_channels::ChannelPlugin;
+
+    let verifier = {
+        let plugin = plugin.read().await;
+        plugin.channel_webhook_verifier(&account_id)
+    };
+    let Some(verifier) = verifier else {
+        return slack_json_response(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({ "ok": false, "error": "unknown Slack account" }),
+        );
+    };
+
+    let verified = match moltis_gateway::channel_webhook_middleware::verify_channel_webhook(
+        verifier.as_ref(),
+        &gateway_state.channel_webhook_rate_limiter,
+        &account_id,
+        kind.endpoint(),
+        &headers,
+        &body,
+    ) {
+        Ok(verified) => verified,
+        Err(rejection) => {
+            return crate::channel_webhook_middleware::rejection_into_response(rejection);
+        },
+    };
+
+    if matches!(kind, SlackCallbackKind::Event)
+        && let Some(response) = event_preflight(&verified.body)
+    {
+        return response;
+    }
+
+    kind.ack_response(dispatcher.admit(
+        &gateway_state.channel_webhook_dedup,
+        account_id,
+        verified.idempotency_key.as_deref(),
+        kind,
+        verified.body,
+    ))
+}
+
+/// Handle the two events-endpoint cases that must answer synchronously instead
+/// of being queued: Slack's one-time `url_verification` handshake, which has to
+/// echo the challenge back in the response body, and a malformed payload, which
+/// is rejected rather than queued for a worker that could only discard it.
+///
+/// Returns `None` when the body is a normal event envelope.
+fn event_preflight(body: &[u8]) -> Option<Response> {
+    let payload: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(payload) => payload,
+        Err(error) => {
+            return Some(slack_json_response(
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({ "ok": false, "error": error.to_string() }),
+            ));
+        },
+    };
+    if payload.get("type").and_then(serde_json::Value::as_str) != Some("url_verification") {
+        return None;
+    }
+    Some(
+        match payload.get("challenge").and_then(serde_json::Value::as_str) {
+            Some(challenge) => slack_json_response(
+                StatusCode::OK,
+                serde_json::json!({ "challenge": challenge }),
+            ),
+            None => slack_json_response(
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({ "ok": false, "error": "missing Slack challenge" }),
+            ),
+        },
+    )
 }
 
 struct SlackCallbackJob {
@@ -438,6 +571,85 @@ mod tests {
             SlackCallbackKind::Event,
             Bytes::from_static(b"callback"),
         )
+    }
+
+    /// Status of a preflight that must answer synchronously rather than queue.
+    fn preflight_status(body: &[u8]) -> Option<StatusCode> {
+        event_preflight(body).map(|response| response.status())
+    }
+
+    #[test]
+    fn url_verification_echoes_the_challenge_before_queueing() {
+        assert_eq!(
+            preflight_status(br#"{"type":"url_verification","challenge":"abc123"}"#),
+            Some(StatusCode::OK)
+        );
+    }
+
+    #[test]
+    fn url_verification_without_a_challenge_is_rejected() {
+        assert_eq!(
+            preflight_status(br#"{"type":"url_verification"}"#),
+            Some(StatusCode::BAD_REQUEST)
+        );
+    }
+
+    #[test]
+    fn malformed_event_body_is_rejected_instead_of_queued() {
+        assert_eq!(preflight_status(b"not json"), Some(StatusCode::BAD_REQUEST));
+    }
+
+    #[test]
+    fn a_normal_event_envelope_falls_through_to_the_queue() {
+        assert!(
+            event_preflight(br#"{"type":"event_callback","event":{"type":"message"}}"#).is_none()
+        );
+    }
+
+    #[test]
+    fn slash_commands_acknowledge_with_an_empty_body() {
+        // A JSON body here would be rendered to the user in the Slack client.
+        for admission in [
+            ChannelWebhookAdmission::Admitted,
+            ChannelWebhookAdmission::Duplicate,
+        ] {
+            let response = SlackCallbackKind::Command.ack_response(admission);
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(
+                response
+                    .headers()
+                    .get(axum::http::header::CONTENT_TYPE)
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn machine_read_endpoints_acknowledge_with_json() {
+        for kind in [SlackCallbackKind::Event, SlackCallbackKind::Interaction] {
+            let response = kind.ack_response(ChannelWebhookAdmission::Admitted);
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers().get(axum::http::header::CONTENT_TYPE),
+                Some(&axum::http::HeaderValue::from_static("application/json"))
+            );
+        }
+    }
+
+    #[test]
+    fn a_saturated_queue_asks_slack_to_retry_on_every_endpoint() {
+        // 503 (not 200) so Slack redelivers instead of dropping the callback.
+        for kind in [
+            SlackCallbackKind::Event,
+            SlackCallbackKind::Interaction,
+            SlackCallbackKind::Command,
+        ] {
+            assert_eq!(
+                kind.ack_response(ChannelWebhookAdmission::Rejected)
+                    .status(),
+                StatusCode::SERVICE_UNAVAILABLE
+            );
+        }
     }
 
     fn prior_worker_index(account_id: &str) -> usize {

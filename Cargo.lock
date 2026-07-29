@@ -8327,6 +8327,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
+ "form_urlencoded",
  "hmac 0.12.1",
  "http 1.4.2",
  "moltis-channels",

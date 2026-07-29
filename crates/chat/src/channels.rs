@@ -1,9 +1,12 @@
-//! Channel delivery, TTS, push notifications, tool status, screenshots, documents, and location.
+//! Channel delivery, push notifications, tool status, screenshots, documents,
+//! and location.
+//!
+//! TTS synthesis lives in [`tts`]; everything here is about getting a finished
+//! reply out to the channel targets a session accumulated during its run.
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use {
-    serde::{Deserialize, Serialize},
     serde_json::Value,
     tokio::task::JoinSet,
     tracing::{debug, info, warn},
@@ -12,12 +15,24 @@ use {
 use moltis_sessions::store::SessionStore;
 
 use crate::{
-    agent_loop::ChannelReplyTargetKey, channel_acks::note_delivery_failed, compaction_run, error,
-    runtime::ChatRuntime, types::*,
+    agent_loop::ChannelReplyTargetKey, channel_acks::note_delivery_failed,
+    channels::tts::build_tts_payload, compaction_run, runtime::ChatRuntime, types::*,
 };
 
+pub(crate) use crate::channels::tts::generate_tts_audio;
+
+/// Cap on the final, irreversible channel I/O (last reply or terminal error).
+///
+/// The run has already committed its terminal by the time these are sent, so a
+/// channel API that never answers must not hold the run's task — and its
+/// session permit — open indefinitely. Overrunning it is reported as a delivery
+/// failure so the acknowledgment reaction shows ❌ rather than ✅.
 const FINAL_CHANNEL_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Build the SPA URL for a push notification click-through.
+///
+/// Must match the frontend `sessionPath()` in `router.ts`:
+/// `/chats/${key.replace(/:/g, "/")}`.
 #[cfg(any(feature = "push-notifications", test))]
 pub(crate) fn push_notification_url(session_key: &str) -> String {
     format!("/chats/{}", session_key.replace(':', "/"))
@@ -29,6 +44,7 @@ pub(crate) async fn send_chat_push_notification(
     session_key: &str,
     text: &str,
 ) {
+    // Create a short summary of the response (first 100 chars).
     let summary = if text.len() > 100 {
         format!("{}…", truncate_at_char_boundary(text, 100))
     } else {
@@ -51,6 +67,14 @@ pub(crate) async fn send_chat_push_notification(
     }
 }
 
+/// Drain any pending channel reply targets for a session and send the
+/// response text back to each originating channel via outbound.
+///
+/// Each delivery runs in its own spawned task so slow network calls don't block
+/// each other or the chat pipeline. The whole fan-out is bounded by
+/// [`FINAL_CHANNEL_IO_TIMEOUT`]; overrunning it (or any individual send
+/// failing) marks the turn's acknowledgment as a delivery failure, since the
+/// user never received the reply.
 pub(crate) async fn deliver_channel_replies(
     state: &Arc<dyn ChatRuntime>,
     activity_id: &str,
@@ -92,6 +116,8 @@ async fn deliver_channel_replies_inner(
     let drained_targets = state.drain_channel_replies(session_key).await;
     let mut targets = Vec::with_capacity(drained_targets.len());
     let mut streamed_targets = Vec::new();
+    // When the reply medium is voice we must still deliver TTS audio even if
+    // the text was already streamed — skip the stream dedupe entirely.
     if desired_reply_medium != ReplyMedium::Voice && !streamed_target_keys.is_empty() {
         for target in drained_targets {
             let key = ChannelReplyTargetKey::from(&target);
@@ -189,6 +215,8 @@ async fn deliver_channel_replies_inner(
     .await;
 }
 
+/// Format buffered status log entries into a Telegram expandable blockquote HTML.
+/// Returns an empty string if there are no entries.
 fn format_logbook_html(entries: &[String]) -> String {
     if entries.is_empty() {
         return String::new();
@@ -269,6 +297,16 @@ fn format_channel_error_message(error_obj: &Value) -> String {
     format!("⚠️ {title}: {detail}")
 }
 
+/// Format a user-facing notice announcing that a session was compacted.
+///
+/// Shown verbatim to channel users (Telegram, Discord, WhatsApp, etc.) and
+/// kept short so small mobile clients don't wrap the whole thing.
+///
+/// When `include_settings_hint` is false, the "Change chat.compaction.mode…"
+/// footer is omitted so users who have set
+/// `chat.compaction.show_settings_hint = false` don't see the repetitive
+/// hint on every compaction. Mode + token lines are always included.
+/// The LLM retry path never sees this text regardless.
 fn format_channel_compaction_notice(
     outcome: &compaction_run::CompactionOutcome,
     include_settings_hint: bool,
@@ -310,6 +348,14 @@ fn format_channel_compaction_notice(
     }
 }
 
+/// Send a silent "session compacted" notice to pending channel targets
+/// without draining them.
+///
+/// Mirrors [`send_retry_status_to_channels`]: the targets are *peeked*,
+/// not drained, so the in-flight agent run can still deliver its final
+/// reply to them afterward. Uses `send_text_silent` so the channel
+/// integration doesn't count it toward user-visible interactive replies
+/// (no TTS, no delivery receipts beyond the channel's own).
 pub(crate) async fn notify_channels_of_compaction(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
@@ -354,6 +400,8 @@ pub(crate) async fn notify_channels_of_compaction(
     }
 }
 
+/// Send a short retry status update to pending channel targets without draining
+/// them. The final reply (or terminal error) will still use the same targets.
 pub(crate) async fn send_retry_status_to_channels(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
@@ -502,162 +550,19 @@ async fn deliver_channel_replies_to_targets(
             streamed_target_keys.contains(&ChannelReplyTargetKey::from(&target));
         let to = target.outbound_to().into_owned();
         tasks.spawn(async move {
-            let tts_payload = match desired_reply_medium {
-                ReplyMedium::Voice => build_tts_payload(&state, &session_key, &target, &text).await,
-                ReplyMedium::Text => None,
-            };
-            let reply_to = target.message_id.as_deref();
-            match target.channel_type {
-                moltis_channels::ChannelType::Telegram => match tts_payload {
-                    Some(mut payload) => {
-                        let transcript = std::mem::take(&mut payload.text);
-
-                        if text_already_streamed {
-                            if let Err(e) = outbound
-                                .send_media(&target.account_id, &to, &payload, reply_to)
-                                .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send channel voice reply: {e}"
-                                );
-                                note_delivery_failed(&state, &activity_id).await;
-                            }
-                            if !logbook_html.is_empty()
-                                && let Err(e) = outbound
-                                    .send_html(&target.account_id, &to, &logbook_html, None)
-                                    .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send logbook follow-up: {e}"
-                                );
-                            }
-                        } else {
-                            #[cfg(feature = "telegram")]
-                            let fits_in_caption = transcript.len()
-                                <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT;
-                            #[cfg(not(feature = "telegram"))]
-                            let fits_in_caption = false;
-
-                            if fits_in_caption {
-                                payload.text = transcript;
-                                if let Err(e) = outbound
-                                    .send_media(&target.account_id, &to, &payload, reply_to)
-                                    .await
-                                {
-                                    warn!(
-                                        account_id = target.account_id,
-                                        chat_id = target.chat_id,
-                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                        "failed to send channel voice reply: {e}"
-                                    );
-                                    note_delivery_failed(&state, &activity_id).await;
-                                }
-                                if !logbook_html.is_empty()
-                                    && let Err(e) = outbound
-                                        .send_html(&target.account_id, &to, &logbook_html, None)
-                                        .await
-                                {
-                                    warn!(
-                                        account_id = target.account_id,
-                                        chat_id = target.chat_id,
-                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                        "failed to send logbook follow-up: {e}"
-                                    );
-                                }
-                            } else {
-                                if let Err(e) = outbound
-                                    .send_media(&target.account_id, &to, &payload, reply_to)
-                                    .await
-                                {
-                                    warn!(
-                                        account_id = target.account_id,
-                                        chat_id = target.chat_id,
-                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                        "failed to send channel voice reply: {e}"
-                                    );
-                                    note_delivery_failed(&state, &activity_id).await;
-                                }
-                                let text_result = if logbook_html.is_empty() {
-                                    outbound
-                                        .send_text(&target.account_id, &to, &transcript, None)
-                                        .await
-                                } else {
-                                    outbound
-                                        .send_text_with_suffix(
-                                            &target.account_id,
-                                            &to,
-                                            &transcript,
-                                            &logbook_html,
-                                            None,
-                                        )
-                                        .await
-                                };
-                                if let Err(e) = text_result {
-                                    warn!(
-                                        account_id = target.account_id,
-                                        chat_id = target.chat_id,
-                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                        "failed to send transcript follow-up: {e}"
-                                    );
-                                    note_delivery_failed(&state, &activity_id).await;
-                                }
-                            }
-                        }
-                    },
-                    None => {
-                        if !deliver_text_fallback(
-                            outbound.as_ref(),
-                            &target,
-                            &to,
-                            &text,
-                            &logbook_html,
-                            reply_to,
-                            text_already_streamed,
-                        )
-                        .await
-                        {
-                            note_delivery_failed(&state, &activity_id).await;
-                        }
-                    },
-                },
-                _ => match tts_payload {
-                    Some(payload) => {
-                        if let Err(e) = outbound
-                            .send_media(&target.account_id, &to, &payload, reply_to)
-                            .await
-                        {
-                            warn!(
-                                account_id = target.account_id,
-                                chat_id = target.chat_id,
-                                thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                "failed to send channel voice reply: {e}"
-                            );
-                            note_delivery_failed(&state, &activity_id).await;
-                        }
-                    },
-                    None => {
-                        if !deliver_text_fallback(
-                            outbound.as_ref(),
-                            &target,
-                            &to,
-                            &text,
-                            &logbook_html,
-                            reply_to,
-                            text_already_streamed,
-                        )
-                        .await
-                        {
-                            note_delivery_failed(&state, &activity_id).await;
-                        }
-                    },
-                },
-            }
+            deliver_reply_to_target(
+                outbound.as_ref(),
+                &state,
+                &activity_id,
+                &session_key,
+                &target,
+                &to,
+                &text,
+                &logbook_html,
+                desired_reply_medium,
+                text_already_streamed,
+            )
+            .await;
         });
     }
 
@@ -670,6 +575,157 @@ async fn deliver_channel_replies_to_targets(
     }
 }
 
+/// Deliver the final reply to one channel target.
+///
+/// A voice reply becomes a TTS media message; if TTS is unavailable, or the
+/// medium is text, the reply falls back to plain text. Telegram is special-cased
+/// because it can carry the transcript as a caption on the voice note, which
+/// saves a second message when the transcript is short enough.
+#[allow(clippy::too_many_arguments)]
+async fn deliver_reply_to_target(
+    outbound: &dyn moltis_channels::ChannelOutbound,
+    state: &Arc<dyn ChatRuntime>,
+    activity_id: &str,
+    session_key: &str,
+    target: &moltis_channels::ChannelReplyTarget,
+    to: &str,
+    text: &str,
+    logbook_html: &str,
+    desired_reply_medium: ReplyMedium,
+    text_already_streamed: bool,
+) {
+    let tts_payload = match desired_reply_medium {
+        ReplyMedium::Voice => build_tts_payload(state, session_key, target, text).await,
+        ReplyMedium::Text => None,
+    };
+    let reply_to = target.message_id.as_deref();
+
+    // TTS disabled or failed — deliver the text instead.
+    let Some(mut payload) = tts_payload else {
+        if !deliver_text_fallback(
+            outbound,
+            target,
+            to,
+            text,
+            logbook_html,
+            reply_to,
+            text_already_streamed,
+        )
+        .await
+        {
+            note_delivery_failed(state, activity_id).await;
+        }
+        return;
+    };
+
+    if target.channel_type != moltis_channels::ChannelType::Telegram {
+        send_voice_reply(outbound, state, activity_id, target, to, &payload, reply_to).await;
+        return;
+    }
+
+    // Telegram can attach the transcript as a caption, so take it off the
+    // payload and decide below whether it goes on the voice note or follows it.
+    let transcript = std::mem::take(&mut payload.text);
+
+    // Text was already delivered via edit-in-place streaming — skip the
+    // caption/follow-up and only send the TTS voice audio.
+    if text_already_streamed {
+        send_voice_reply(outbound, state, activity_id, target, to, &payload, reply_to).await;
+        send_logbook_follow_up(outbound, target, to, logbook_html).await;
+        return;
+    }
+
+    // Check if the transcript fits as a Telegram caption (when the feature is
+    // enabled). With the telegram feature off this is always false, so the
+    // voice note is followed by the text as a separate message.
+    #[cfg(feature = "telegram")]
+    let fits_in_caption = transcript.len() <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT;
+    #[cfg(not(feature = "telegram"))]
+    let fits_in_caption = false;
+
+    // Short transcript fits as a caption on the voice message.
+    if fits_in_caption {
+        payload.text = transcript;
+        send_voice_reply(outbound, state, activity_id, target, to, &payload, reply_to).await;
+        send_logbook_follow_up(outbound, target, to, logbook_html).await;
+        return;
+    }
+
+    // Transcript too long for a caption — send voice without a caption, then
+    // the full text as a follow-up.
+    send_voice_reply(outbound, state, activity_id, target, to, &payload, reply_to).await;
+    let text_result = if logbook_html.is_empty() {
+        outbound
+            .send_text(&target.account_id, to, &transcript, None)
+            .await
+    } else {
+        outbound
+            .send_text_with_suffix(&target.account_id, to, &transcript, logbook_html, None)
+            .await
+    };
+    if let Err(e) = text_result {
+        warn!(
+            account_id = target.account_id,
+            chat_id = target.chat_id,
+            thread_id = target.thread_id.as_deref().unwrap_or("-"),
+            "failed to send transcript follow-up: {e}"
+        );
+        note_delivery_failed(state, activity_id).await;
+    }
+}
+
+/// Send a TTS voice message, reporting a delivery failure if it does not land.
+async fn send_voice_reply(
+    outbound: &dyn moltis_channels::ChannelOutbound,
+    state: &Arc<dyn ChatRuntime>,
+    activity_id: &str,
+    target: &moltis_channels::ChannelReplyTarget,
+    to: &str,
+    payload: &moltis_common::types::ReplyPayload,
+    reply_to: Option<&str>,
+) {
+    if let Err(e) = outbound
+        .send_media(&target.account_id, to, payload, reply_to)
+        .await
+    {
+        warn!(
+            account_id = target.account_id,
+            chat_id = target.chat_id,
+            thread_id = target.thread_id.as_deref().unwrap_or("-"),
+            "failed to send channel voice reply: {e}"
+        );
+        note_delivery_failed(state, activity_id).await;
+    }
+}
+
+/// Send the buffered status logbook as a separate follow-up message.
+///
+/// Best-effort: the reply itself already reached the user, so a lost logbook is
+/// not a delivery failure and must not turn the acknowledgment into ❌.
+async fn send_logbook_follow_up(
+    outbound: &dyn moltis_channels::ChannelOutbound,
+    target: &moltis_channels::ChannelReplyTarget,
+    to: &str,
+    logbook_html: &str,
+) {
+    if logbook_html.is_empty() {
+        return;
+    }
+    if let Err(e) = outbound
+        .send_html(&target.account_id, to, logbook_html, None)
+        .await
+    {
+        warn!(
+            account_id = target.account_id,
+            chat_id = target.chat_id,
+            thread_id = target.thread_id.as_deref().unwrap_or("-"),
+            "failed to send logbook follow-up: {e}"
+        );
+    }
+}
+
+/// Deliver the reply as plain text, or just the logbook when the text was
+/// already streamed in place. Returns whether the user received the reply.
 async fn deliver_text_fallback(
     outbound: &dyn moltis_channels::ChannelOutbound,
     target: &moltis_channels::ChannelReplyTarget,
@@ -680,18 +736,7 @@ async fn deliver_text_fallback(
     text_already_streamed: bool,
 ) -> bool {
     if text_already_streamed {
-        if !logbook_html.is_empty()
-            && let Err(e) = outbound
-                .send_html(&target.account_id, to, logbook_html, None)
-                .await
-        {
-            warn!(
-                account_id = target.account_id,
-                chat_id = target.chat_id,
-                thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                "failed to send logbook follow-up: {e}"
-            );
-        }
+        send_logbook_follow_up(outbound, target, to, logbook_html).await;
         return true;
     }
 
@@ -714,134 +759,6 @@ async fn deliver_text_fallback(
         return false;
     }
     true
-}
-
-#[derive(Debug, Deserialize)]
-struct TtsStatusResponse {
-    enabled: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct TtsConvertRequest<'a> {
-    text: &'a str,
-    format: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    provider: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "voiceId")]
-    voice_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    model: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TtsConvertResponse {
-    audio: String,
-    #[serde(default)]
-    mime_type: Option<String>,
-}
-
-pub(crate) async fn generate_tts_audio(
-    state: &Arc<dyn ChatRuntime>,
-    session_key: &str,
-    text: &str,
-) -> error::Result<Vec<u8>> {
-    use base64::Engine;
-
-    let tts_status = state
-        .tts_service()
-        .status()
-        .await
-        .map_err(error::Error::message)?;
-    let status: TtsStatusResponse = serde_json::from_value(tts_status)
-        .map_err(|_| error::Error::message("invalid tts.status response"))?;
-    if !status.enabled {
-        return Err(error::Error::message("TTS is disabled or not configured"));
-    }
-
-    let text = moltis_voice::tts::sanitize_text_for_tts(text);
-    let text = text.trim();
-    if text.is_empty() {
-        return Err(error::Error::message("response has no speakable text"));
-    }
-
-    let (_, session_override) = state.tts_overrides(session_key, "").await;
-
-    let request = TtsConvertRequest {
-        text,
-        format: "ogg",
-        provider: session_override.as_ref().and_then(|o| o.provider.clone()),
-        voice_id: session_override.as_ref().and_then(|o| o.voice_id.clone()),
-        model: session_override.as_ref().and_then(|o| o.model.clone()),
-    };
-
-    let request_value = serde_json::to_value(request)
-        .map_err(|_| error::Error::message("failed to build tts.convert request"))?;
-    let tts_result = state
-        .tts_service()
-        .convert(request_value)
-        .await
-        .map_err(error::Error::message)?;
-
-    let response: TtsConvertResponse = serde_json::from_value(tts_result)
-        .map_err(|_| error::Error::message("invalid tts.convert response"))?;
-    base64::engine::general_purpose::STANDARD
-        .decode(&response.audio)
-        .map_err(|_| error::Error::message("invalid base64 audio returned by TTS provider"))
-}
-
-async fn build_tts_payload(
-    state: &Arc<dyn ChatRuntime>,
-    session_key: &str,
-    target: &moltis_channels::ChannelReplyTarget,
-    text: &str,
-) -> Option<moltis_common::types::ReplyPayload> {
-    use moltis_common::types::{MediaAttachment, ReplyPayload};
-
-    let tts_status = state.tts_service().status().await.ok()?;
-    let status: TtsStatusResponse = serde_json::from_value(tts_status).ok()?;
-    if !status.enabled {
-        return None;
-    }
-
-    // Strip markdown/URLs the LLM may have included — use sanitized text
-    // only for TTS conversion, but keep the original for the caption.
-    let sanitized = moltis_voice::tts::sanitize_text_for_tts(text);
-
-    let channel_key = format!("{}:{}", target.channel_type.as_str(), target.account_id);
-    let (channel_override, session_override) = state.tts_overrides(session_key, &channel_key).await;
-    let resolved = channel_override.or(session_override);
-
-    let request = TtsConvertRequest {
-        text: &sanitized,
-        format: "ogg",
-        provider: resolved.as_ref().and_then(|o| o.provider.clone()),
-        voice_id: resolved.as_ref().and_then(|o| o.voice_id.clone()),
-        model: resolved.as_ref().and_then(|o| o.model.clone()),
-    };
-
-    let tts_result = state
-        .tts_service()
-        .convert(serde_json::to_value(request).ok()?)
-        .await
-        .ok()?;
-
-    let response: TtsConvertResponse = serde_json::from_value(tts_result).ok()?;
-
-    let mime_type = response
-        .mime_type
-        .unwrap_or_else(|| "audio/ogg".to_string());
-
-    Some(ReplyPayload {
-        text: text.to_string(),
-        media: Some(MediaAttachment {
-            url: format!("data:{mime_type};base64,{}", response.audio),
-            mime_type,
-            filename: None,
-        }),
-        reply_to_id: None,
-        silent: false,
-    })
 }
 
 /// Buffer a tool execution status into the channel status log for a session.
@@ -1059,6 +976,8 @@ fn truncate_url(url: &str) -> String {
     }
 }
 
+/// Send a screenshot to all pending channel targets for a session.
+/// Uses `peek_channel_replies` so targets remain for the final text response.
 pub(crate) async fn send_screenshot_to_channels(
     state: &Arc<dyn ChatRuntime>,
     activity_id: &str,
@@ -1134,6 +1053,8 @@ async fn dispatch_screenshot_to_targets(
                     chat_id = target.chat_id,
                     "failed to send screenshot to channel: {e}"
                 );
+                // Always tell the user something went wrong — a silently
+                // missing screenshot looks like the tool did nothing.
                 let error_msg = format!("⚠️ Failed to send screenshot: {e}");
                 let _ = outbound
                     .send_text(&target.account_id, &to, &error_msg, reply_to)
@@ -1163,6 +1084,8 @@ async fn dispatch_screenshot_to_targets(
     delivered
 }
 
+/// Send a document payload to all pending channel targets for a session.
+/// Uses `peek_channel_replies` so targets remain for the final text response.
 pub(crate) async fn dispatch_document_to_channels(
     state: &Arc<dyn ChatRuntime>,
     activity_id: &str,
@@ -1387,6 +1310,8 @@ pub(crate) async fn send_location_to_channels(
         note_delivery_failed(state, activity_id).await;
     }
 }
+
+pub(crate) mod tts;
 
 #[cfg(test)]
 mod tests;

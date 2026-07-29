@@ -146,7 +146,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         // reaction follows the message itself — through queueing and replay —
         // rather than whatever else shares the session.
         if let Some(ref key) = ack_key {
-            params["_ack_keys"] = serde_json::json!([key]);
+            params[moltis_chat::channel_acks::ACK_KEYS_PARAM] = serde_json::json!([key]);
         }
 
         // Attach thread context if available.

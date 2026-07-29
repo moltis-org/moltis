@@ -97,41 +97,46 @@ async fn prepare_collected(
     queued: Vec<QueuedMessage>,
 ) -> (Option<Value>, Vec<String>) {
     let multimodal = queued.iter().any(|m| m.params.get("content").is_some());
-    if multimodal {
-        let blocks = merge_content_blocks(&queued);
-        if blocks.is_empty() {
-            abandon(state, &queued).await;
-            return (None, Vec::new());
-        }
-        let Some(last) = queued.last() else {
-            abandon(state, &queued).await;
-            return (None, Vec::new());
-        };
-        info!(session = %session_key, count = queued.len(), "replaying collected messages (multimodal)");
-        let mut merged = last.params.clone();
-        merged["content"] = Value::Array(blocks);
-        if let Some(obj) = merged.as_object_mut() {
-            obj.remove("text");
-            obj.remove("message");
-        }
-        merged["_queued_replay"] = Value::Bool(true);
-        merged[crate::channel_acks::ACK_KEYS_PARAM] = serde_json::json!(
-            crate::channel_acks::merged_ack_keys(queued.iter().map(|m| &m.params))
-        );
-        let keys = crate::channel_acks::ack_keys_from_params(&merged);
-        return (Some(merged), keys);
-    }
-    let Some(mut merged) = merge_collected_text(&queued) else {
+    let merged = if multimodal {
+        merge_collected_content(&queued)
+    } else {
+        merge_collected_text(&queued)
+    };
+    let Some(mut merged) = merged else {
         abandon(state, &queued).await;
         return (None, Vec::new());
     };
-    info!(session = %session_key, count = queued.len(), "replaying collected messages");
-    merged["_queued_replay"] = Value::Bool(true);
-    merged[crate::channel_acks::ACK_KEYS_PARAM] = serde_json::json!(
-        crate::channel_acks::merged_ack_keys(queued.iter().map(|m| &m.params))
+    info!(
+        session = %session_key,
+        count = queued.len(),
+        multimodal,
+        "replaying collected messages"
     );
-    let keys = crate::channel_acks::ack_keys_from_params(&merged);
+
+    merged["_queued_replay"] = Value::Bool(true);
+    // One run now answers every collected message, so it owns all of their
+    // acknowledgments and each inbound message gets the terminal reaction.
+    let keys = crate::channel_acks::merged_ack_keys(queued.iter().map(|m| &m.params));
+    merged[crate::channel_acks::ACK_KEYS_PARAM] = serde_json::json!(keys);
     (Some(merged), keys)
+}
+
+/// Merge queued messages into a single multimodal `content` array, keeping the
+/// last message's other params (model, session, channel target) as the base.
+fn merge_collected_content(queued: &[QueuedMessage]) -> Option<Value> {
+    let blocks = merge_content_blocks(queued);
+    if blocks.is_empty() {
+        return None;
+    }
+    let mut merged = queued.last()?.params.clone();
+    merged["content"] = Value::Array(blocks);
+    if let Some(object) = merged.as_object_mut() {
+        // The text is now carried as a content block; leaving either alias in
+        // place would send it twice.
+        object.remove("text");
+        object.remove("message");
+    }
+    Some(merged)
 }
 
 fn message_text(params: &Value) -> Option<&str> {

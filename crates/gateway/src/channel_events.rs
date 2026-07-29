@@ -334,15 +334,17 @@ fn start_channel_typing_loop(
     Some(done_tx)
 }
 
-/// Emoji shortcodes for acknowledgment reactions (Slack-style names). Only
-/// channels that populate [`ChannelReplyTarget::ack_message_id`] receive these;
-/// today that is Slack, whose Web API expects shortcodes (not raw glyphs).
 /// Create and register a per-turn acknowledgment reaction controller, keyed by
-/// session key. The controller immediately adds 👀 to the exact inbound message
-/// and is later driven through phase emojis and finalized by the agent run.
+/// the inbound message's own ack key. The controller immediately adds 👀 to that
+/// exact message and is later driven through phase emojis and finalized by
+/// whichever agent run claims it.
 ///
 /// No-op unless the channel populated `ack_message_id` (bot directly addressed
-/// and reactions enabled) and an outbound implementation is available.
+/// and reactions enabled) and an outbound implementation is available. Today
+/// that is Slack; other channels leave `ack_message_id` unset and get no
+/// reactions.
+///
+/// Returns the ack key so the caller can carry it into `chat.send`.
 async fn register_channel_reaction_controller(
     state: &Arc<GatewayState>,
     reply_to: &ChannelReplyTarget,

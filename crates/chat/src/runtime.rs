@@ -152,9 +152,7 @@ pub trait ChatRuntime: Send + Sync {
     ) {
     }
 
-    /// Finalize acknowledgment keys directly, for paths where no run executes
-    /// (rejected hook, early error) and nothing else will signal a terminal.
-    /// Finalize whichever turn is currently active for this session.
+    /// Finalize the turn identified by `activity_id`.
     ///
     /// For abort, where the run future is killed and cannot emit its own
     /// terminal. Turn-addressed, so it cannot resolve a turn that starts later.
@@ -165,6 +163,8 @@ pub trait ChatRuntime: Send + Sync {
     ) {
     }
 
+    /// Finalize acknowledgment keys directly, for paths where no run executes
+    /// (rejected hook, early error) and nothing else will signal a terminal.
     async fn finalize_channel_acks(
         &self,
         _ack_keys: Vec<String>,

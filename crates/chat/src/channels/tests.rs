@@ -90,6 +90,7 @@ fn telegram_target() -> ChannelReplyTarget {
 
 #[test]
 fn push_notification_url_uses_chats_prefix_and_replaces_colons() {
+    // Must match frontend sessionPath(): `/chats/${key.replace(/:/g, "/")}`
     assert_eq!(push_notification_url("session:42"), "/chats/session/42");
 }
 
