@@ -192,59 +192,102 @@ fn proven_direct_chat_is_not_shared() {
     assert!(!is_shared_channel_target(&target));
 }
 
-/// Guests must lose the tools that reach the host or the owner's private
-/// state, while keeping the informational ones.
 #[test]
-fn guest_tool_policy_allows_only_reviewed_informational_tools() {
-    let policy = moltis_tools::policy::ToolPolicy {
-        allow: moltis_channels::operators::DEFAULT_UNTRUSTED_ALLOWED_TOOLS
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect(),
-        deny: Vec::new(),
+fn only_operator_direct_turns_are_trusted() {
+    let direct = ChannelReplyTarget {
+        channel_type: ChannelType::Telegram,
+        account_id: "bot".into(),
+        chat_id: "123".into(),
+        message_id: None,
+        thread_id: None,
+        ack_message_id: None,
+    };
+    let shared = ChannelReplyTarget {
+        chat_id: "-123".into(),
+        ..direct.clone()
     };
 
-    for denied in [
-        "exec",
-        "process",
-        "Read",
-        "Write",
-        "Edit",
-        "MultiEdit",
-        "Glob",
-        "Grep",
-        "browser",
-        "memory_save",
-        "memory_search",
-        "sessions_list",
-        "sessions_send",
-        "spawn_agent",
-        "cron",
-        "webhook",
-        "write_skill_files",
-        "codebase_search",
-        "home_assistant",
-        "send_message",
-        "voice_call",
-        "get_user_location",
-        // Escalation: would let a guest add themselves to the operator list.
-        "update_channel_settings",
-        // Both the MCP management tools and the mcp__server__tool namespace.
-        "mcp_add",
-        "mcp__github__create_pull_request",
-        "send_image",
-        "send_document",
-    ] {
+    assert!(is_trusted_channel_turn(
+        ChannelSenderRole::Operator,
+        &direct
+    ));
+    assert!(!is_trusted_channel_turn(ChannelSenderRole::Guest, &direct));
+    assert!(!is_trusted_channel_turn(
+        ChannelSenderRole::Operator,
+        &shared
+    ));
+}
+
+#[test]
+fn command_authorization_matches_privilege_and_conversation_scope() {
+    let direct = ChannelReplyTarget {
+        channel_type: ChannelType::Telegram,
+        account_id: "bot".into(),
+        chat_id: "123".into(),
+        message_id: None,
+        thread_id: None,
+        ack_message_id: None,
+    };
+    let shared = ChannelReplyTarget {
+        chat_id: "-123".into(),
+        ..direct.clone()
+    };
+
+    for command in moltis_channels::commands::all_commands() {
+        let privilege = command.privilege();
+        assert_eq!(
+            is_channel_command_authorized(privilege, ChannelSenderRole::Guest, &direct),
+            matches!(
+                privilege,
+                moltis_channels::commands::CommandPrivilege::Public
+            ),
+            "guest direct-chat authorization drifted for /{}",
+            command.name
+        );
+        assert_eq!(
+            is_channel_command_authorized(privilege, ChannelSenderRole::Operator, &shared),
+            matches!(
+                privilege,
+                moltis_channels::commands::CommandPrivilege::Public
+            ),
+            "operator shared-chat authorization drifted for /{}",
+            command.name
+        );
         assert!(
-            !policy.is_allowed(denied),
-            "{denied} must be denied to guests"
+            is_channel_command_authorized(privilege, ChannelSenderRole::Operator, &direct),
+            "operator direct-chat authorization drifted for /{}",
+            command.name
         );
     }
+}
 
-    for allowed in ["web_search", "web_fetch", "calc"] {
+#[test]
+fn untrusted_channel_context_denies_every_tool_and_private_context() {
+    let mut params = serde_json::json!({
+        "_tool_policy": {"allow": ["*"]},
+        "_private_context": true,
+    });
+
+    apply_untrusted_channel_context(&mut params);
+
+    assert_eq!(params["_tool_audience"], "public");
+    assert_eq!(params["_tool_policy"]["deny"], serde_json::json!(["*"]));
+    assert_eq!(params["_private_context"], false);
+}
+
+#[test]
+fn public_audience_tools_require_explicit_registration() {
+    const REGISTRATION: &str = include_str!("../server/prepare_core/post_state.rs");
+
+    assert_eq!(
+        REGISTRATION.matches("register_public(").count(),
+        3,
+        "only reviewed tools should enter the public audience"
+    );
+    for tool in ["CalcTool", "WebSearchTool", "WebFetchTool"] {
         assert!(
-            policy.is_allowed(allowed),
-            "{allowed} should stay available to guests"
+            REGISTRATION.contains(tool),
+            "{tool} must have an explicit public registration"
         );
     }
 }
@@ -471,7 +514,8 @@ fn channel_session_defaults_use_chat_id_for_dm_commands() {
 fn operator_denial_tells_the_owner_how_to_unlock_the_command() {
     let message = operator_denied_message("/sh", Some("400347514466992128"));
 
-    assert!(message.starts_with("/sh is restricted to this bot's operators."));
+    assert!(message.starts_with("/sh is restricted to this bot's operators in direct chats."));
+    assert!(message.contains("Shared chats"));
     assert!(
         message.contains("Settings → Channels"),
         "must point at the web UI: {message}"

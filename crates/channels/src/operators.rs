@@ -4,15 +4,16 @@
 //! bot at all". That is deliberately permissive: in a guild or group chat every
 //! member who passes the group policy can talk to the bot.
 //!
-//! Operator resolution answers a narrower question: "may this sender run
-//! privileged actions" — `/sh`, shell command mode, and tools that reach the
-//! host (`exec`, file writes, …). It is **fail-closed**: when nothing is
-//! configured, nobody is an operator.
+//! Operator resolution answers a narrower question: "is this sender eligible
+//! for privileged actions". The gateway additionally requires a proven direct
+//! conversation before exposing `/sh`, shell command mode, or tools that reach
+//! the host (`exec`, file writes, …). Resolution is **fail-closed**: when
+//! nothing is configured, nobody is an operator.
 
 /// Privilege level of a channel sender for a single inbound message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ChannelSenderRole {
-    /// Explicitly trusted: may use `/sh`, command mode, and privileged tools.
+    /// Explicitly trusted; privileged access still requires a direct chat.
     Operator,
     /// Everyone else, including anonymous/unattributed senders.
     #[default]
@@ -26,14 +27,6 @@ impl ChannelSenderRole {
         matches!(self, Self::Operator)
     }
 }
-
-/// Tools available to untrusted channel turns by default.
-///
-/// This is deliberately a positive allowlist. A denylist silently becomes
-/// unsafe whenever a tool is renamed or a new host-reaching tool is added.
-/// Arbitrary-path media tools are excluded because they can exfiltrate local
-/// files even when filesystem and shell tools are unavailable.
-pub const DEFAULT_UNTRUSTED_ALLOWED_TOOLS: &[&str] = &["calc", "web_search", "web_fetch"];
 
 /// Check whether a sender matches an entry in a privilege list.
 ///
@@ -182,36 +175,5 @@ mod tests {
             resolve_sender_role(Some("anyone"), &list(&["*"])),
             ChannelSenderRole::Guest
         );
-    }
-
-    #[test]
-    fn untrusted_allowlist_excludes_privileged_tools() {
-        for excluded in [
-            "exec",
-            "process",
-            "Read",
-            "Write",
-            "send_document",
-            "send_image",
-            "memory_search",
-            "sessions_list",
-            "mcp__github__create_pull_request",
-            "update_channel_settings",
-        ] {
-            assert!(
-                !DEFAULT_UNTRUSTED_ALLOWED_TOOLS.contains(&excluded),
-                "{excluded} must not be available to untrusted turns"
-            );
-        }
-    }
-
-    #[test]
-    fn untrusted_allowlist_keeps_informational_tools() {
-        for allowed in ["web_search", "web_fetch", "calc"] {
-            assert!(
-                DEFAULT_UNTRUSTED_ALLOWED_TOOLS.contains(&allowed),
-                "{allowed} should stay available to untrusted turns"
-            );
-        }
     }
 }

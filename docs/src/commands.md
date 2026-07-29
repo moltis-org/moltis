@@ -12,10 +12,11 @@ Type `/` in the chat input to see the autocomplete popup.
 |---------|-------------|
 | `/new` | Start a new session |
 | `/clear` | Clear session history |
-| `/compact` | Summarize conversation to save tokens |
-| `/context` | Show session context and project info — **operators only** |
-| `/sessions` | List and switch sessions (channels only) — **operators only** |
-| `/attach` | Attach an existing session to this channel (channels only) — **operators only** |
+| `/compact` | Summarize conversation to save tokens — **operator DMs only on channels** |
+| `/title` | Generate a title from session history — **operator DMs only on channels** |
+| `/context` | Show session context and project info — **operator DMs only on channels** |
+| `/sessions` | List and switch sessions (channels only) — **operator DMs only** |
+| `/attach` | Attach an existing session to this channel (channels only) — **operator DMs only** |
 | `/fork [label]` | Fork the current session into a new branch |
 
 ### /fork
@@ -35,27 +36,28 @@ Available in web UI, all channels, and via the `sessions.fork` RPC. See
 
 | Command | Description |
 |---------|-------------|
-| `/agent [N]` | Switch session agent — **operators only** |
+| `/agent [N]` | Switch session agent — **operator DMs only on channels** |
 | `/mode [N\|name\|none]` | Switch session mode |
 | `/model [N]` | Switch provider/model |
-| `/sandbox [on\|off\|image N]` | Toggle sandbox and choose image — **operators only** |
-| `/sh [on\|off]` | Enter command mode (passthrough to shell) — **operators only** |
+| `/sandbox [on\|off\|image N]` | Toggle sandbox and choose image — **operator DMs only on channels** |
+| `/sh [on\|off]` | Enter command mode (passthrough to shell) — **operator DMs only on channels** |
 | `/stop` | Abort the current running agent |
-| `/peek` | Show current thinking/tool status — **operators only** |
-| `/update [version]` | Update moltis — **operators only** |
+| `/peek` | Show current thinking/tool status — **operator DMs only on channels** |
+| `/update [version]` | Update moltis — **operator DMs only on channels** |
 
 ```admonish warning title="Some commands are restricted on channels"
 Commands scoped to the current conversation — `/help`, `/new`, `/clear`,
-`/compact`, `/title`, `/fork`, `/stop`, `/model`, `/mode`, `/fast` — are open to
-any sender who clears the channel's access gate.
+`/fork`, `/stop`, `/model`, `/mode`, `/fast` — are open to any sender who clears
+the channel's access gate.
 
-Commands that reach the host, act on the owner's behalf, or read state from
-outside the current chat require the sender to be an **operator** of the channel
-account. An empty `operators` list means nobody, so these are disabled until you
-configure it. Non-operators can still chat normally.
+Commands that reach the host, act on the owner's behalf, or read or rewrite
+private state require the sender to be an **operator in a proven direct chat**.
+This includes `/compact` and `/title`, which process session history. An empty
+`operators` list means nobody, so these are disabled until you configure it.
+Non-operators can still chat normally.
 
-Shared-room agent turns use a small safe tool allowlist for every sender,
-including operators; explicit `/sh` remains separately authorized. See
+Shared-room, unknown-topology, and guest turns receive no tools or owner-private
+context. `/sh` and other privileged commands are also denied there. See
 [Channels → Operators](channels.md#operators-privileged-senders).
 ```
 
@@ -63,12 +65,12 @@ including operators; explicit `/sh` remains separately authorized. See
 
 | Command | Description |
 |---------|-------------|
-| `/btw <question>` | Quick side question (no tools, not persisted) — **operators only** |
+| `/btw <question>` | Quick side question (no tools, not persisted) — **operator DMs only on channels** |
 | `/fast [on\|off\|status]` | Toggle fast/priority mode |
-| `/insights [days]` | Show usage analytics (tokens, providers) — **operators only** |
-| `/steer <text>` | Inject guidance into the current agent run — **operators only** |
-| `/queue <message>` | Queue a message for the next agent turn — **operators only** |
-| `/rollback [N\|diff N]` | List or restore file checkpoints — **operators only** |
+| `/insights [days]` | Show usage analytics (tokens, providers) — **operator DMs only on channels** |
+| `/steer <text>` | Inject guidance into the current agent run — **operator DMs only on channels** |
+| `/queue <message>` | Queue a message for the next agent turn — **operator DMs only on channels** |
+| `/rollback [N\|diff N]` | List or restore file checkpoints — **operator DMs only on channels** |
 
 ### /btw
 
@@ -158,9 +160,9 @@ system.
 
 | Command | Description |
 |---------|-------------|
-| `/approvals` | List pending exec approvals — **operators only** |
-| `/approve [N]` | Approve a pending exec request — **operators only** |
-| `/deny [N]` | Deny a pending exec request — **operators only** |
+| `/approvals` | List pending exec approvals — **operator DMs only on channels** |
+| `/approve [N]` | Approve a pending exec request — **operator DMs only on channels** |
+| `/deny [N]` | Deny a pending exec request — **operator DMs only on channels** |
 
 ## Help
 

@@ -82,6 +82,7 @@ impl ChatService for LiveChatService {
         self.apply_channel_bound_public_context(&mut params, &session_key)
             .await?;
         let request_tool_policy = tool_policy::parse_request_tool_policy(&params)?;
+        let request_tool_audience = tool_policy::parse_request_tool_audience(&params)?;
         let private_context = tool_policy::allows_private_context(&params);
         if !private_context {
             public_context::mark_public_channel(&mut params);
@@ -193,6 +194,7 @@ impl ChatService for LiveChatService {
         let tool_registry = tool_policy::resolve_request_tool_registry(
             &self.tool_registry,
             request_tool_policy.as_ref(),
+            request_tool_audience,
         )
         .await;
         let hook_registry = self.hook_registry.clone();

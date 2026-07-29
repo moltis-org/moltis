@@ -19,7 +19,10 @@ pub(super) fn allows_external_agent_request(params: &Value, channel_bound: bool)
         .and_then(Value::as_bool)
         == Some(true);
 
-    private_context && params.get("_tool_policy").is_none() && (!channel_bound || native_channel)
+    private_context
+        && params.get("_tool_policy").is_none()
+        && params.get("_tool_audience").is_none()
+        && (!channel_bound || native_channel)
 }
 
 #[cfg(test)]
@@ -48,6 +51,10 @@ mod tests {
         ));
         assert!(!allows_external_agent_request(
             &serde_json::json!({"_tool_policy": {"allow": ["calc"]}}),
+            false
+        ));
+        assert!(!allows_external_agent_request(
+            &serde_json::json!({"_tool_audience": "public"}),
             false
         ));
     }

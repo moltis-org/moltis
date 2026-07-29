@@ -588,8 +588,7 @@ pub(in crate::channel_events) async fn handle_queue(
     });
     // Queued channel messages can execute after authorization changes. Keep
     // them on the untrusted context regardless of the operator's current role.
-    params["_tool_policy"] = super::super::untrusted_tool_policy();
-    params["_private_context"] = serde_json::json!(false);
+    super::super::apply_untrusted_channel_context(&mut params);
 
     match chat.send(params).await {
         Ok(res) => {

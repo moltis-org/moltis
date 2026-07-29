@@ -41,18 +41,19 @@ pub struct CommandDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandPrivilege {
     Public,
-    Operator,
+    OperatorDirect,
 }
 
 impl CommandDef {
-    /// Commands default to operator-only. Adding a new command therefore fails
-    /// closed until it is deliberately reviewed and listed as public here.
+    /// Commands default to operator direct-chat only. Adding a new command
+    /// therefore fails closed until it is deliberately reviewed and listed as
+    /// public here.
     ///
     /// A command is public only when the worst a hostile sender can do with it
     /// is disrupt the conversation in the room they are already in — something
     /// any member can do by talking. Anything that reaches the host, acts on
     /// the owner's behalf, or reads state from outside this room is operator
-    /// only:
+    /// direct-chat only:
     ///
     /// - `sh` runs host commands; `update` replaces the running binary.
     /// - `approve`/`deny` act on the *owner's* pending exec requests, so a
@@ -70,12 +71,12 @@ impl CommandDef {
             // Help lists the commands and marks which need an operator.
             "help"
             // Scoped to this chat's own session: start it over, clear it,
-            // summarize it, retitle it, branch it, or abort its current run.
-            | "new" | "clear" | "compact" | "title" | "fork" | "stop"
+            // branch it, or abort its current run.
+            | "new" | "clear" | "fork" | "stop"
             // Which model/mode answers in this chat. Reversible, and bounded by
             // the account's own provider configuration.
             | "model" | "mode" | "fast" => CommandPrivilege::Public,
-            _ => CommandPrivilege::Operator,
+            _ => CommandPrivilege::OperatorDirect,
         }
     }
 }
@@ -333,8 +334,8 @@ pub fn help_text() -> String {
     let mut lines = Vec::with_capacity(all_commands().len() + 1);
     lines.push("Available commands:".to_string());
     for cmd in all_commands() {
-        let operator = matches!(cmd.privilege(), CommandPrivilege::Operator)
-            .then_some(" (operator only)")
+        let operator = matches!(cmd.privilege(), CommandPrivilege::OperatorDirect)
+            .then_some(" (operator DM only)")
             .unwrap_or_default();
         lines.push(format!("/{} — {}{operator}", cmd.name, cmd.description));
     }
@@ -365,14 +366,14 @@ mod tests {
     #[test]
     fn only_reviewed_commands_are_public() {
         const PUBLIC: &[&str] = &[
-            "help", "new", "clear", "compact", "title", "fork", "stop", "model", "mode", "fast",
+            "help", "new", "clear", "fork", "stop", "model", "mode", "fast",
         ];
 
         for command in all_commands() {
             let expected = if PUBLIC.contains(&command.name) {
                 CommandPrivilege::Public
             } else {
-                CommandPrivilege::Operator
+                CommandPrivilege::OperatorDirect
             };
             assert_eq!(
                 command.privilege(),
@@ -404,6 +405,8 @@ mod tests {
             "agent",
             "steer",
             "queue",
+            "compact",
+            "title",
         ] {
             let command = all_commands()
                 .iter()
@@ -412,8 +415,8 @@ mod tests {
                 .unwrap_or_else(|| panic!("/{name} is missing from the command registry"));
             assert_eq!(
                 command.privilege(),
-                CommandPrivilege::Operator,
-                "/{name} must stay operator-only"
+                CommandPrivilege::OperatorDirect,
+                "/{name} must stay restricted to operator direct chats"
             );
         }
     }

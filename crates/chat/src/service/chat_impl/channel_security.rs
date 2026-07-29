@@ -3,22 +3,8 @@ use serde_json::Value;
 use super::*;
 
 fn apply_public_context_ceiling(params: &mut Value) -> Result<(), String> {
-    let requested_policy = tool_policy::parse_request_tool_policy(params)?;
-    let allowed: Vec<&str> = moltis_channels::operators::DEFAULT_UNTRUSTED_ALLOWED_TOOLS
-        .iter()
-        .copied()
-        .filter(|name| {
-            requested_policy
-                .as_ref()
-                .is_none_or(|policy| policy.is_allowed(name))
-        })
-        .collect();
-    params["_tool_policy"] = if allowed.is_empty() {
-        serde_json::json!({ "deny": ["*"] })
-    } else {
-        serde_json::json!({ "allow": allowed })
-    };
-    params["_private_context"] = Value::Bool(false);
+    tool_policy::parse_request_tool_policy(params)?;
+    tool_policy::apply_untrusted_request_context(params);
     params["channel"] = serde_json::json!({ "sender_id": "web" });
     Ok(())
 }
@@ -104,21 +90,20 @@ mod tests {
 
         assert_eq!(params["_private_context"], false);
         assert_eq!(params["channel"]["sender_id"], "web");
-        assert_eq!(
-            params["_tool_policy"]["allow"],
-            serde_json::json!(["calc", "web_search", "web_fetch"])
-        );
+        assert_eq!(params["_tool_audience"], "public");
+        assert_eq!(params["_tool_policy"]["deny"], serde_json::json!(["*"]));
     }
 
     #[test]
-    fn public_ceiling_preserves_stricter_request_policy() {
+    fn public_ceiling_cannot_be_widened_by_request_policy() {
         let mut params = serde_json::json!({
             "_tool_policy": {"allow": ["calc"]},
         });
 
         assert!(apply_public_context_ceiling(&mut params).is_ok());
 
-        assert_eq!(params["_tool_policy"]["allow"], serde_json::json!(["calc"]));
+        assert_eq!(params["_tool_audience"], "public");
+        assert_eq!(params["_tool_policy"]["deny"], serde_json::json!(["*"]));
 
         let mut deny_all = serde_json::json!({
             "_tool_policy": {"deny": ["*"]},

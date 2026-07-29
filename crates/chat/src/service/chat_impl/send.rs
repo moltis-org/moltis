@@ -124,6 +124,7 @@ impl LiveChatService {
         // Request-scoped restrictions must be resolved after channel binding
         // so web and native channel turns share the same execution boundary.
         let request_tool_policy = tool_policy::parse_request_tool_policy(&params)?;
+        let request_tool_audience = tool_policy::parse_request_tool_audience(&params)?;
         let private_context = tool_policy::allows_private_context(&params);
         if !private_context {
             public_context::mark_public_channel(&mut params);
@@ -131,6 +132,7 @@ impl LiveChatService {
         let request_tool_registry = tool_policy::resolve_request_tool_registry(
             &self.tool_registry,
             request_tool_policy.as_ref(),
+            request_tool_audience,
         )
         .await;
 
@@ -239,13 +241,9 @@ impl LiveChatService {
                             .into(),
                     );
                 }
-                if params.get("channel").is_some() && private_context {
-                    // Authorization can change before replay. Delayed channel
-                    // turns always execute under the public context ceiling.
-                    params["_tool_policy"] = serde_json::json!({
-                        "allow": moltis_channels::operators::DEFAULT_UNTRUSTED_ALLOWED_TOOLS,
-                    });
-                    params["_private_context"] = serde_json::json!(false);
+                // Authorization can change before replay. Delayed channel
+                // turns always execute with no tools or private context.
+                if tool_policy::downgrade_queued_channel_request(&mut params, private_context) {
                     public_context::mark_public_channel(&mut params);
                 }
                 let queue_mode = message_queue_mode;

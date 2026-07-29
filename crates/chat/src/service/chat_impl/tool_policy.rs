@@ -1,10 +1,10 @@
 //! Request-scoped tool restriction for `chat.send` / `chat.send_sync`.
 //!
-//! Callers that cannot trust the requester — the channel gateway for
-//! non-operator senders, webhooks — pass a `_tool_policy` parameter. It is a
-//! restriction only: it filters the shared registry for that one run and
-//! composes with the configured policy layers applied later in
-//! `apply_runtime_tool_filters`, which can remove more but never add back.
+//! Callers that cannot trust the requester — the channel gateway and webhooks
+//! — pass `_tool_audience = "public"`. The registry filters by host-owned tool
+//! metadata before applying an optional `_tool_policy` name filter. Both are
+//! restrictions only and compose with configured policy layers applied later
+//! in `apply_runtime_tool_filters`, which can remove more but never add back.
 //!
 //! Both send paths must apply it. `send()` (async, used by every channel turn)
 //! previously ignored the parameter while `send_sync()` honoured it, which
@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use {serde_json::Value, tokio::sync::RwLock};
 
-use moltis_agents::tool_registry::ToolRegistry;
+use moltis_agents::tool_registry::{ToolAudience, ToolRegistry};
 
 use moltis_tools::policy::ToolPolicy;
 
@@ -34,26 +34,65 @@ pub(crate) fn parse_request_tool_policy(params: &Value) -> Result<Option<ToolPol
         .map_err(|e| format!("invalid '_tool_policy' parameter: {e}"))
 }
 
-/// Resolve the tool registry for one run, applying the request policy when the
-/// caller supplied one.
+/// Parse the host-owned audience ceiling for this request.
+///
+/// Trusted requests omit the marker. Callers may only opt into the more
+/// restrictive public audience; any other value is rejected rather than
+/// risking a fail-open interpretation.
+pub(crate) fn parse_request_tool_audience(params: &Value) -> Result<ToolAudience, String> {
+    match params.get("_tool_audience") {
+        None => Ok(ToolAudience::Trusted),
+        Some(Value::String(value)) if value == "public" => Ok(ToolAudience::Public),
+        Some(_) => Err("invalid '_tool_audience' parameter: expected 'public'".to_string()),
+    }
+}
+
+/// Apply the fail-closed context used for delayed or channel-bound requests
+/// that cannot retain caller authorization.
+pub(crate) fn apply_untrusted_request_context(params: &mut Value) {
+    params["_tool_audience"] = Value::String("public".to_string());
+    params["_tool_policy"] = serde_json::json!({ "deny": ["*"] });
+    params["_private_context"] = Value::Bool(false);
+}
+
+/// Downgrade a privileged channel turn before delayed replay, when its sender's
+/// authorization may no longer be valid.
+#[must_use]
+pub(crate) fn downgrade_queued_channel_request(params: &mut Value, private_context: bool) -> bool {
+    if !private_context || !params.get("channel").is_some_and(Value::is_object) {
+        return false;
+    }
+    apply_untrusted_request_context(params);
+    true
+}
+
+/// Resolve the tool registry for one run, applying its audience ceiling and
+/// optional name policy.
 ///
 /// Without a policy this hands back the shared registry unchanged (no clone of
 /// the tool set, no behaviour change for trusted callers such as the web UI).
 pub(crate) async fn resolve_request_tool_registry(
     base: &Arc<RwLock<ToolRegistry>>,
     policy: Option<&ToolPolicy>,
+    audience: ToolAudience,
 ) -> Arc<RwLock<ToolRegistry>> {
-    let Some(policy) = policy else {
+    if policy.is_none() && audience == ToolAudience::Trusted {
         return Arc::clone(base);
-    };
+    }
     let registry = base.read().await;
-    Arc::new(RwLock::new(
-        registry.clone_allowed_by(|name| policy.is_allowed(name)),
-    ))
+    let audience_registry = registry.clone_for_audience(audience);
+    let filtered = match policy {
+        Some(policy) => audience_registry.clone_allowed_by(|name| policy.is_allowed(name)),
+        None => audience_registry,
+    };
+    Arc::new(RwLock::new(filtered))
 }
 
 /// Whether this request may receive owner-private prompt and memory context.
 pub(crate) fn allows_private_context(params: &Value) -> bool {
+    if params.get("_tool_audience").and_then(Value::as_str) == Some("public") {
+        return false;
+    }
     match params.get("_private_context") {
         None => true,
         Some(Value::Bool(value)) => *value,
@@ -61,7 +100,15 @@ pub(crate) fn allows_private_context(params: &Value) -> bool {
     }
 }
 
-fn request_security_context(params: &Value) -> (Option<Value>, bool, Option<Value>, Option<Value>) {
+fn request_security_context(
+    params: &Value,
+) -> (
+    Option<Value>,
+    Option<Value>,
+    bool,
+    Option<Value>,
+    Option<Value>,
+) {
     let reply_scope = params.get("_channel_reply_target").map(|target| {
         serde_json::json!({
             "channel_type": target.get("channel_type"),
@@ -72,6 +119,7 @@ fn request_security_context(params: &Value) -> (Option<Value>, bool, Option<Valu
         })
     });
     (
+        params.get("_tool_audience").cloned(),
         params.get("_tool_policy").cloned(),
         allows_private_context(params),
         params
@@ -176,6 +224,22 @@ mod tests {
     }
 
     #[test]
+    fn audience_defaults_to_trusted_and_only_accepts_public_restriction() {
+        assert_eq!(
+            parse_request_tool_audience(&serde_json::json!({})),
+            Ok(ToolAudience::Trusted)
+        );
+        assert_eq!(
+            parse_request_tool_audience(&serde_json::json!({"_tool_audience": "public"})),
+            Ok(ToolAudience::Public)
+        );
+        assert!(
+            parse_request_tool_audience(&serde_json::json!({"_tool_audience": "trusted"})).is_err()
+        );
+        assert!(parse_request_tool_audience(&serde_json::json!({"_tool_audience": true})).is_err());
+    }
+
+    #[test]
     fn private_context_defaults_on_and_can_be_disabled() {
         assert!(allows_private_context(&serde_json::json!({})));
         assert!(!allows_private_context(
@@ -187,12 +251,47 @@ mod tests {
         assert!(!allows_private_context(
             &serde_json::json!({"_private_context": null})
         ));
+        assert!(!allows_private_context(
+            &serde_json::json!({"_tool_audience": "public", "_private_context": true})
+        ));
+    }
+
+    #[test]
+    fn untrusted_request_context_denies_all_tools() {
+        let mut params = serde_json::json!({
+            "_tool_policy": {"allow": ["*"]},
+            "_private_context": true,
+        });
+
+        apply_untrusted_request_context(&mut params);
+
+        assert_eq!(params["_tool_audience"], "public");
+        assert_eq!(params["_tool_policy"]["deny"], serde_json::json!(["*"]));
+        assert_eq!(params["_private_context"], false);
+    }
+
+    #[test]
+    fn queued_channel_downgrade_removes_tools_and_private_context() {
+        let mut params = serde_json::json!({
+            "channel": {"sender_id": "owner"},
+            "_private_context": true,
+        });
+
+        assert!(downgrade_queued_channel_request(&mut params, true));
+        assert_eq!(params["_tool_audience"], "public");
+        assert_eq!(params["_tool_policy"]["deny"], serde_json::json!(["*"]));
+        assert_eq!(params["_private_context"], false);
+
+        assert!(!downgrade_queued_channel_request(
+            &mut serde_json::json!({}),
+            true
+        ));
     }
 
     #[tokio::test]
     async fn no_policy_returns_the_shared_registry() {
         let base = registry_with(&["exec", "web_search"]);
-        let resolved = resolve_request_tool_registry(&base, None).await;
+        let resolved = resolve_request_tool_registry(&base, None, ToolAudience::Trusted).await;
         assert!(
             Arc::ptr_eq(&base, &resolved),
             "trusted callers must keep the shared registry"
@@ -212,7 +311,7 @@ mod tests {
     /// deleting the test — every run started from a send path must receive the
     /// registry returned by `resolve_request_tool_registry`.
     #[test]
-    fn both_send_paths_apply_the_request_tool_policy() {
+    fn both_send_paths_apply_request_tool_security() {
         const SEND_ASYNC: &str = include_str!("send.rs");
         const SEND_SYNC: &str = include_str!("../chat_impl.rs");
 
@@ -225,6 +324,10 @@ mod tests {
                 "{path} must resolve the request-scoped tool registry"
             );
             assert!(
+                src.contains("parse_request_tool_audience"),
+                "{path} must parse the request tool audience"
+            );
+            assert!(
                 !src.contains("Arc::clone(&self.tool_registry)"),
                 "{path} passes the unfiltered shared registry to a run — a caller's \
                  `_tool_policy` restriction would be silently ignored. Use the registry \
@@ -233,12 +336,13 @@ mod tests {
         }
     }
 
-    /// The gateway skips the untrusted tool ceiling for a turn it recognizes as
-    /// an explicit `/sh`, on the promise that the chat layer will then run it
-    /// through the deterministic shell path instead of the agent loop. If the
-    /// two disagree, forms only the gateway recognizes — `/sh@bot ls`, `/SH ls`
-    /// — arrive here as ordinary prose *and* keep the unrestricted registry and
-    /// private context, which is the opposite of what the ceiling exists for.
+    /// The gateway skips the untrusted tool ceiling for an operator direct-chat
+    /// turn it recognizes as an explicit `/sh`, on the promise that the chat
+    /// layer will then run it through the deterministic shell path instead of
+    /// the agent loop. If the two disagree, forms only the gateway recognizes —
+    /// `/sh@bot ls`, `/SH ls` — arrive here as ordinary prose *and* keep the
+    /// unrestricted registry and private context, which is the opposite of what
+    /// the ceiling exists for.
     ///
     /// Keep one predicate. Do not reintroduce a local variant.
     #[test]
@@ -273,6 +377,12 @@ mod tests {
             params["_tool_policy"] = policy;
         }
         QueuedMessage { params }
+    }
+
+    fn public_queued(text: &str, policy: Option<Value>) -> QueuedMessage {
+        let mut message = queued(text, policy);
+        message.params["_tool_audience"] = serde_json::json!("public");
+        message
     }
 
     fn guest_policy() -> Value {
@@ -369,6 +479,16 @@ mod tests {
     }
 
     #[test]
+    fn public_and_trusted_audiences_split_apart() {
+        let (group, rest) = split_by_request_security_context(vec![
+            public_queued("public", Some(guest_policy())),
+            queued("trusted", Some(guest_policy())),
+        ]);
+        assert_eq!(texts(&group), ["public"]);
+        assert_eq!(texts(&rest), ["trusted"]);
+    }
+
+    #[test]
     fn different_thread_roots_split_apart() {
         let mut first = queued("a", Some(guest_policy()));
         first.params["_channel_reply_target"] = serde_json::json!({
@@ -405,7 +525,8 @@ mod tests {
             deny: vec!["exec".into(), "memory_*".into()],
         };
 
-        let resolved = resolve_request_tool_registry(&base, Some(&policy)).await;
+        let resolved =
+            resolve_request_tool_registry(&base, Some(&policy), ToolAudience::Trusted).await;
         let names = resolved.read().await.list_names();
 
         assert!(!names.iter().any(|n| n == "exec"));
@@ -414,5 +535,55 @@ mod tests {
 
         // The shared registry must be untouched — the filter is per-run.
         assert_eq!(base.read().await.list_names().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn public_audience_cannot_be_widened_by_name_policy() {
+        let mut registry = ToolRegistry::new();
+        registry.register_public(Box::new(StubTool("calc")));
+        registry.register(Box::new(StubTool("future_tool")));
+        registry.register_mcp(Box::new(StubTool("mcp__example__read")), "example".into());
+        let base = Arc::new(RwLock::new(registry));
+        let permissive = ToolPolicy {
+            allow: vec!["*".into()],
+            deny: Vec::new(),
+        };
+
+        let resolved =
+            resolve_request_tool_registry(&base, Some(&permissive), ToolAudience::Public).await;
+        assert_eq!(resolved.read().await.list_names(), vec!["calc"]);
+    }
+
+    #[tokio::test]
+    async fn deny_all_public_request_has_no_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register_public(Box::new(StubTool("calc")));
+        registry.register(Box::new(StubTool("exec")));
+        let base = Arc::new(RwLock::new(registry));
+        let deny_all = ToolPolicy {
+            allow: Vec::new(),
+            deny: vec!["*".into()],
+        };
+
+        let resolved =
+            resolve_request_tool_registry(&base, Some(&deny_all), ToolAudience::Public).await;
+        assert!(resolved.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn narrow_public_request_keeps_only_named_public_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register_public(Box::new(StubTool("calc")));
+        registry.register_public(Box::new(StubTool("web_search")));
+        registry.register(Box::new(StubTool("exec")));
+        let base = Arc::new(RwLock::new(registry));
+        let calc_only = ToolPolicy {
+            allow: vec!["calc".into()],
+            deny: Vec::new(),
+        };
+
+        let resolved =
+            resolve_request_tool_registry(&base, Some(&calc_only), ToolAudience::Public).await;
+        assert_eq!(resolved.read().await.list_names(), vec!["calc"]);
     }
 }

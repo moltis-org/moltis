@@ -127,18 +127,19 @@ UI: Settings > Channels > Pending Senders
 Being allowed to message the bot is **not** permission to run commands on the
 host. Shell access is gated separately by each account's `operators` list:
 
-| | Guest (default) | Operator |
-|---|---|---|
-| Chat with the agent | yes | yes |
-| Channel slash commands | no | yes |
-| `/sh`, shell command mode | no | yes |
-| Private direct-message agent tools | no | yes |
-| Shared-room agent tools beyond `calc`, `web_search`, `web_fetch` | no | no |
-| Owner memory, profile, project context in shared/untrusted turns | no | no |
+| | Guest | Operator in proven DM | Operator in shared/unknown chat |
+|---|---|---|---|
+| Chat with the agent | yes | yes | yes |
+| Room-local slash commands | yes | yes | yes |
+| Privileged slash commands | no | yes | no |
+| `/sh`, shell command mode | no | yes | no |
+| Agent tools and external agents | no | yes | no |
+| Owner memory, profile, project context | no | yes | no |
 
 Denial is enforced before command dispatch, before shell command-mode rewrite,
-and through a positive per-request tool allowlist. Untrusted turns also omit
-private prompt and memory context.
+and with a deny-all request policy. Host-owned tool audience metadata provides
+an additional ceiling, and name-based configuration cannot widen the deny-all
+channel policy. Untrusted turns also omit private prompt and memory context.
 
 With no `operators` list, **no one** has privileged channel access. Configure it under
 **Settings → Channels → Edit → Operators**, or see
@@ -146,10 +147,15 @@ With no `operators` list, **no one** has privileged channel access. Configure it
 
 ```admonish danger title="Public channels"
 On a public Discord guild or any shared group chat, every member may clear the
-access gate. Normal agent turns therefore stay restricted even when an operator
-sends the current message; use explicit operator commands for privileged work.
-Adapters that cannot prove a chat is direct also treat it as shared.
+access gate. Every turn therefore runs without tools or owner-private context,
+even when an operator sends it. `/sh` and privileged commands are also denied;
+move privileged work to an operator DM or the authenticated web UI. Adapters
+that cannot prove a chat is direct treat it as shared.
 ```
+
+Discord, Microsoft Teams, and Matrix currently fall into that conservative
+category even for actual DMs. Their normal chat remains available, but tools,
+private context, `/sh`, location updates, and privileged commands are denied.
 
 ### Channel Isolation
 

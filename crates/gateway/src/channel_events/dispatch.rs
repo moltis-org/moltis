@@ -31,14 +31,13 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         // `/sh <cmd>` is deliberately not a registered channel command — it
         // falls through to the agent, which force-executes it. Stop it here
         // for guests, before it reaches the runner.
-        if !sender_role.is_operator()
-            && moltis_agents::runner::explicit_shell_command(text).is_some()
-        {
+        let trusted_channel_turn = is_trusted_channel_turn(sender_role, &reply_to);
+        if !trusted_channel_turn && moltis_agents::runner::explicit_shell_command(text).is_some() {
             warn!(
                 account_id = %reply_to.account_id,
                 chat_id = %reply_to.chat_id,
                 sender_id = ?meta.sender_id,
-                "denied /sh from non-operator channel sender"
+                "denied /sh outside an operator direct chat"
             );
             if let Some(done_tx) = typing_done {
                 let _ = done_tx.send(());
@@ -59,13 +58,12 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             return;
         }
 
-        let effective_text = if sender_role.is_operator()
-            && state.is_channel_command_mode_enabled(&session_key).await
-        {
-            rewrite_for_shell_mode(text).unwrap_or_else(|| text.to_string())
-        } else {
-            text.to_string()
-        };
+        let effective_text =
+            if trusted_channel_turn && state.is_channel_command_mode_enabled(&session_key).await {
+                rewrite_for_shell_mode(text).unwrap_or_else(|| text.to_string())
+            } else {
+                text.to_string()
+            };
 
         // Broadcast a "chat" event so the web UI shows the user message
         // in real-time (like typing from the UI).
@@ -179,14 +177,12 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             "_native_channel_request": true,
         });
 
-        // Normal shared-room turns are untrusted even when the current sender
-        // is an operator: their history also contains guest-authored prompts.
-        // Explicit `/sh` is deterministic and separately authorized above.
+        // Only an operator in a proven direct chat receives tools and private
+        // context. Explicit `/sh` was rejected above for every other origin.
         let explicit_shell =
             moltis_agents::runner::explicit_shell_command(&effective_text).is_some();
-        if !explicit_shell && (!sender_role.is_operator() || is_shared_channel_target(&reply_to)) {
-            params["_tool_policy"] = untrusted_tool_policy();
-            params["_private_context"] = serde_json::json!(false);
+        if !explicit_shell && !trusted_channel_turn {
+            apply_untrusted_channel_context(&mut params);
         }
 
         // Attach thread context if available.

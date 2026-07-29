@@ -5,7 +5,10 @@ use moltis_channels::{ChannelReplyTarget, Error as ChannelError, Result as Chann
 use crate::state::GatewayState;
 
 use super::{
-    super::{is_sender_authorized, operator_denied_message, resolve_channel_session},
+    super::{
+        is_channel_command_authorized, operator_denied_message, resolve_channel_session,
+        resolve_sender_role,
+    },
     control_handlers, quick_actions, session_handlers,
 };
 
@@ -85,11 +88,8 @@ pub(in crate::channel_events) async fn dispatch_command(
         .find(|definition| definition.name == cmd)
         .map(|definition| definition.privilege())
         .ok_or_else(|| ChannelError::invalid_input(format!("unknown command: /{cmd}")))?;
-    if matches!(
-        privilege,
-        moltis_channels::commands::CommandPrivilege::Operator
-    ) && !is_sender_authorized(state, &reply_to.account_id, sender_id).await
-    {
+    let sender_role = resolve_sender_role(state, &reply_to.account_id, sender_id).await;
+    if !is_channel_command_authorized(privilege, sender_role, &reply_to) {
         return Err(ChannelError::invalid_input(operator_denied_message(
             &format!("/{cmd}"),
             sender_id,

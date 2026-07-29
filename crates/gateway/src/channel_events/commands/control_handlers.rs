@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     super::{
-        ApprovalListResponse, format_pending_approvals_list, is_sender_authorized,
+        ApprovalListResponse, format_pending_approvals_list, is_sender_authorized_for_target,
         operator_denied_message, parse_numbered_selection,
     },
     formatting::{format_model_list, unique_providers},
@@ -69,7 +69,7 @@ pub(in crate::channel_events) async fn handle_approve_deny(
     cmd: &str,
     args: &str,
 ) -> ChannelResult<String> {
-    if !is_sender_authorized(state, &reply_to.account_id, sender_id).await {
+    if !is_sender_authorized_for_target(state, reply_to, sender_id).await {
         return Err(ChannelError::invalid_input(operator_denied_message(
             "Managing exec approvals",
             sender_id,
@@ -632,10 +632,9 @@ pub(in crate::channel_events) async fn handle_sh(
     args: &str,
 ) -> ChannelResult<String> {
     // `/sh` toggles a mode that turns every later message in this chat into a
-    // shell command — for everyone in the chat, not just the sender. Only
-    // operators may touch it, including the read-only `status` form, which
-    // would otherwise tell an unprivileged user whether the shell is live.
-    if !is_sender_authorized(state, &reply_to.account_id, sender_id).await {
+    // shell command. Only operators in proven direct chats may touch it,
+    // including the read-only `status` form.
+    if !is_sender_authorized_for_target(state, reply_to, sender_id).await {
         return Err(ChannelError::invalid_input(operator_denied_message(
             "Shell access",
             sender_id,
@@ -709,8 +708,8 @@ pub(in crate::channel_events) async fn handle_update(
     sender_id: Option<&str>,
     args: &str,
 ) -> ChannelResult<String> {
-    // Operator-only: same check as approve/deny.
-    if !is_sender_authorized(state, &reply_to.account_id, sender_id).await {
+    // Operator direct-chat only: same check as approve/deny.
+    if !is_sender_authorized_for_target(state, reply_to, sender_id).await {
         return Err(ChannelError::invalid_input(operator_denied_message(
             "/update", sender_id,
         )));

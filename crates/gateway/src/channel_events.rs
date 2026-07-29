@@ -117,8 +117,9 @@ pub(in crate::channel_events) fn operator_denied_message(
     sender_id: Option<&str>,
 ) -> String {
     let mut message = format!(
-        "{action} is restricted to this bot's operators.\n\n\
-         If you own this moltis instance, add yourself under \
+        "{action} is restricted to this bot's operators in direct chats. \
+         Shared chats and chats that cannot be verified as direct are denied.\n\n\
+         Open a direct chat first. If you own this moltis instance and are still denied, add yourself under \
          Settings → Channels → (your account) → Edit → Operators in the web UI, \
          or set `operators` for the account in moltis.toml. Entries must be exact \
          platform sender IDs."
@@ -153,15 +154,15 @@ async fn resolve_sender_role(
     moltis_channels::operators::resolve_sender_role(sender_id, config.operators())
 }
 
-/// Tool policy applied to untrusted channel turns.
+/// Apply the fail-closed context used for every untrusted channel turn.
 ///
-/// Passed to `chat.send` as `_tool_policy`, which filters the tool registry
-/// for that run. It stacks with the configured policy layers — denials there
-/// still apply — so this can only ever remove tools, never add them.
-fn untrusted_tool_policy() -> serde_json::Value {
-    serde_json::json!({
-        "allow": moltis_channels::operators::DEFAULT_UNTRUSTED_ALLOWED_TOOLS,
-    })
+/// The audience ceiling excludes trusted tools, while the deny-all name policy
+/// also removes explicitly public tools. Configured policies may narrow this
+/// context further but cannot widen it.
+fn apply_untrusted_channel_context(params: &mut serde_json::Value) {
+    params["_tool_audience"] = serde_json::json!("public");
+    params["_tool_policy"] = serde_json::json!({ "deny": ["*"] });
+    params["_private_context"] = serde_json::json!(false);
 }
 
 /// Unknown chat kinds are treated as shared. Only channel types that can prove
@@ -170,15 +171,31 @@ fn is_shared_channel_target(reply_to: &ChannelReplyTarget) -> bool {
     reply_to.channel_type.is_shared_chat(&reply_to.chat_id)
 }
 
-/// Whether `sender_id` may run privileged channel commands.
-async fn is_sender_authorized(
+fn is_trusted_channel_turn(role: ChannelSenderRole, reply_to: &ChannelReplyTarget) -> bool {
+    role.is_operator() && !is_shared_channel_target(reply_to)
+}
+
+fn is_channel_command_authorized(
+    privilege: moltis_channels::commands::CommandPrivilege,
+    role: ChannelSenderRole,
+    reply_to: &ChannelReplyTarget,
+) -> bool {
+    match privilege {
+        moltis_channels::commands::CommandPrivilege::Public => true,
+        moltis_channels::commands::CommandPrivilege::OperatorDirect => {
+            is_trusted_channel_turn(role, reply_to)
+        },
+    }
+}
+
+/// Whether `sender_id` may run privileged actions from this conversation.
+async fn is_sender_authorized_for_target(
     state: &Arc<GatewayState>,
-    account_id: &str,
+    reply_to: &ChannelReplyTarget,
     sender_id: Option<&str>,
 ) -> bool {
-    resolve_sender_role(state, account_id, sender_id)
-        .await
-        .is_operator()
+    let role = resolve_sender_role(state, &reply_to.account_id, sender_id).await;
+    is_trusted_channel_turn(role, reply_to)
 }
 
 fn is_attachable_session(entry: &SessionEntry) -> bool {

@@ -231,9 +231,9 @@ Passing the access gate lets someone *talk* to the bot. It does not let them
 run commands on your machine. That is a separate list:
 
 ```toml
-[channels.discord.my-bot]
+[channels.telegram.my-bot]
 allowlist = ["owner-id"]        # who may DM the bot
-operators = ["owner-id"]        # who may run /sh and host-reaching tools
+operators = ["owner-id"]        # who may use privileged access in proven DMs
 ```
 
 ```admonish warning title="Upgrading: privileged commands are off until you set `operators`"
@@ -246,36 +246,45 @@ account, or those commands will refuse everyone. If you do not know your ID,
 run `/sh` — the refusal message tells you what yours is on that channel.
 ```
 
-A command is operator-only when the worst case reaches beyond the current
-chat. Everything scoped to the conversation you are already in stays open to
-any sender who clears the access gate:
+A command requires an operator DM when the worst case reaches beyond the
+current chat. Everything scoped to the conversation you are already in stays
+open to any sender who clears the access gate:
 
 | | Commands |
 |---|---|
-| **Anyone who may chat** | `/help`, `/new`, `/clear`, `/compact`, `/title`, `/fork`, `/stop`, `/model`, `/mode`, `/fast` |
-| **Operators only** | `/sh`, `/update`, `/approve`, `/deny`, `/approvals`, `/sandbox`, `/attach`, `/sessions`, `/context`, `/insights`, `/peek`, `/btw`, `/rollback`, `/agent`, `/steer`, `/queue` |
+| **Anyone who may chat** | `/help`, `/new`, `/clear`, `/fork`, `/stop`, `/model`, `/mode`, `/fast` |
+| **Operators in proven direct chats only** | `/sh`, `/update`, `/approve`, `/deny`, `/approvals`, `/sandbox`, `/attach`, `/sessions`, `/context`, `/insights`, `/peek`, `/btw`, `/rollback`, `/agent`, `/steer`, `/queue`, `/compact`, `/title` |
 
 The public set can only disrupt the room's own conversation — something any
 member can already do by talking. The operator set runs host commands (`/sh`,
 `/update`), acts on the owner's behalf (`/approve` and `/deny` resolve the
 *owner's* pending exec requests, which is code execution by proxy), weakens
-isolation (`/sandbox` can turn the sandbox off), or reads state from outside
-this chat (`/attach`, `/sessions`, `/context`, `/insights`, `/peek`, `/btw`).
+isolation (`/sandbox` can turn the sandbox off), or reads or rewrites private
+state (`/attach`, `/sessions`, `/context`, `/insights`, `/peek`, `/btw`,
+`/compact`, `/title`).
 
-New commands default to operator-only, so adding one is safe until it is
-deliberately reviewed.
+New commands default to operator direct-chat only, so adding one is safe until
+it is deliberately reviewed.
 
-Untrusted turns use a positive tool allowlist containing only `calc`,
-`web_search`, and `web_fetch`. Filesystem tools, arbitrary-path media tools,
-memory, sessions, MCP integrations, settings, messaging, persistence, and any
-newly added tool are unavailable unless explicitly reviewed for this list.
+Guest, shared-room, and unknown-topology channel turns receive no tools. The
+gateway applies both the registry's public audience ceiling and a deny-all name
+policy, so account, group, and per-sender tool policies cannot restore even a
+tool reviewed for other untrusted origins.
 
 Every normal turn in a shared room is untrusted, including turns sent by an
 operator, because the shared history contains messages from other people.
-Operators can still use explicitly authorized deterministic commands such as
-`/sh`. In an operator's conversation that the adapter can prove is direct,
-normal agent turns may use the full configured tool set. Unknown chat kinds
-fail closed as shared.
+`/sh`, shell command mode, and every privileged command are denied there. In an
+operator's conversation that the adapter can prove is direct, normal agent
+turns may use the full configured tool set. Unknown chat kinds fail closed as
+shared.
+
+```admonish note title="Conservative DM detection"
+Discord, Microsoft Teams, and Matrix chat IDs do not encode whether the
+conversation is direct, and that topology is not yet carried into the gateway.
+Those integrations currently fail closed as shared even for actual DMs, so use
+the authenticated web UI or a supported proven-direct channel for privileged
+work. Normal tool-free chat still works.
+```
 
 Untrusted turns also omit owner-private prompt context: user profile, project
 context, long-term memory, skills, and automatic memory extraction.
@@ -326,10 +335,10 @@ separately.
 ```
 
 Untrusted tool restrictions stack with the per-channel tool policy
-(`channels.<type>.<account>.tools.groups.<chat_type>`), so you can tighten them
-further — but note that policy denials always win, so it cannot be used to hand
-a turn a tool outside the safe allowlist. Grant command privileges by adding the sender to
-`operators`.
+(`channels.<type>.<account>.tools.groups.<chat_type>`). Those policies can
+further restrict an operator DM, but cannot enable tools for a guest, shared
+room, or unknown chat. Grant eligibility for privileged access by adding the
+sender to `operators`; the sender must still use a proven direct chat.
 
 ### OTP Self-Approval
 
