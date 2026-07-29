@@ -14,10 +14,17 @@ pub(crate) const STORAGE_VERSION: &str = "v1";
 const MIGRATED_DIR: &str = ".migrated";
 const MIGRATION_LOCK: &str = ".migration.lock";
 const ENCODED_COMPONENT_BYTES: usize = 120;
+const LOWER_HEX: &[u8; 16] = b"0123456789abcdef";
 
 #[must_use]
 pub(crate) fn encode_key(key: &str) -> String {
-    format!("k{}", hex::encode(key.as_bytes()))
+    let mut encoded = String::with_capacity(key.len().saturating_mul(2).saturating_add(1));
+    encoded.push('k');
+    for byte in key.bytes() {
+        encoded.push(char::from(LOWER_HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(LOWER_HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 pub(crate) fn decode_key_path(path: &Path) -> Option<String> {
