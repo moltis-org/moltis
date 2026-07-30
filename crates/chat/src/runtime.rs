@@ -140,6 +140,14 @@ pub trait ChatRuntime: Send + Sync {
 
     // ── Push notifications ───────────────────────────────────────────────
 
+    /// Human-readable label for a session, used to title push notifications.
+    ///
+    /// Returns `None` when the session has no label yet (auto-titling may not
+    /// have run) or when no metadata store is wired up.
+    async fn session_label(&self, _session_key: &str) -> Option<String> {
+        None
+    }
+
     /// Send a push notification to all subscribed devices.
     /// Returns the number of devices notified, or an error.
     async fn send_push_notification(
@@ -149,6 +157,20 @@ pub trait ChatRuntime: Send + Sync {
         url: Option<&str>,
         session_key: Option<&str>,
     ) -> crate::error::Result<usize>;
+
+    /// Send an ordered notification. External runtimes that do not implement
+    /// ordering retain their existing delivery behavior by default.
+    async fn send_ordered_push_notification(
+        &self,
+        title: &str,
+        body: &str,
+        url: Option<&str>,
+        session_key: Option<&str>,
+        _order: u64,
+    ) -> crate::error::Result<usize> {
+        self.send_push_notification(title, body, url, session_key)
+            .await
+    }
 
     // ── Local LLM ────────────────────────────────────────────────────────
 

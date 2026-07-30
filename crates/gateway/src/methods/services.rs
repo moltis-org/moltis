@@ -511,6 +511,7 @@ mod instrumentation;
 mod modes;
 mod sessions;
 mod system;
+#[cfg(feature = "voice")]
 mod voice_personas;
 mod voicecall;
 
@@ -524,6 +525,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
     admin::register(reg);
     feedback::register(reg);
     instrumentation::register(reg);
+    #[cfg(feature = "voice")]
     voice_personas::register(reg);
     voicecall::register(reg);
 }

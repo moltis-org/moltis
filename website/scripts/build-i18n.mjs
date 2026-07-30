@@ -40,6 +40,8 @@ const LANGUAGES = {
       [">Compare<", ">对比<"],
       // Toast
       ["Fly command copied", "Fly 命令已复制"],
+      ["Copy command", "复制命令"],
+      ["Command copied", "命令已复制"],
       // Home page
       ["Full OpenClaw import — switch in one click", "完整 OpenClaw 导入 — 一键切换"],
       [">New<", ">新<"],
@@ -207,6 +209,8 @@ const LANGUAGES = {
       [">Security<", ">Sécurité<"],
       [">Compare<", ">Comparer<"],
       ["Fly command copied", "Commande Fly copiée"],
+      ["Copy command", "Copier la commande"],
+      ["Command copied", "Commande copiée"],
       ["Full OpenClaw import — switch in one click", "Import complet d'OpenClaw — basculez en un clic"],
       [">New<", ">Nouveau<"],
       ["A secure persistent personal agent server", "Un serveur d'agent personnel sécurisé et persistant"],
@@ -393,6 +397,8 @@ const LANGUAGES = {
       [">Security<", ">Seguridad<"],
       [">Compare<", ">Comparar<"],
       ["Fly command copied", "Comando Fly copiado"],
+      ["Copy command", "Copiar comando"],
+      ["Command copied", "Comando copiado"],
       ["Full OpenClaw import — switch in one click", "Importación completa de OpenClaw — cambia en un clic"],
       [">New<", ">Nuevo<"],
       ["A secure persistent personal agent server", "Un claw nativo en Rust en el que puedes confiar"],
@@ -544,6 +550,8 @@ const LANGUAGES = {
       [">Security<", ">Sicherheit<"],
       [">Compare<", ">Vergleich<"],
       ["Fly command copied", "Fly-Befehl kopiert"],
+      ["Copy command", "Befehl kopieren"],
+      ["Command copied", "Befehl kopiert"],
       ["Full OpenClaw import — switch in one click", "Vollständiger OpenClaw-Import — mit einem Klick wechseln"],
       [">New<", ">Neu<"],
       ["A secure persistent personal agent server", "Ein vertrauenswürdiger Rust-nativer Claw"],
@@ -696,6 +704,8 @@ LANGUAGES.it = {
     [">Security<", ">Sicurezza<"],
     [">Compare<", ">Confronto<"],
     ["Fly command copied", "Comando Fly copiato"],
+    ["Copy command", "Copia comando"],
+    ["Command copied", "Comando copiato"],
     ["Full OpenClaw import — switch in one click", "Import completo da OpenClaw — passa con un clic"],
     [">New<", ">Novita<"],
     ["A secure persistent personal agent server", "Un claw nativo Rust di cui ti puoi fidare"],
@@ -813,6 +823,8 @@ LANGUAGES.pt = {
   strings: [
     [">Home<", ">Início<"], [">Install<", ">Instalar<"], [">Features<", ">Recursos<"], [">Security<", ">Segurança<"], [">Compare<", ">Comparar<"],
     ["Fly command copied", "Comando Fly copiado"],
+    ["Copy command", "Copiar comando"],
+    ["Command copied", "Comando copiado"],
     ["Full OpenClaw import — switch in one click", "Importação completa do OpenClaw — troque em um clique"],
     [">New<", ">Novo<"],
     ["A secure persistent personal agent server", "Um claw nativo em Rust em que você pode confiar"],
@@ -929,6 +941,8 @@ LANGUAGES.ja = {
   strings: [
     [">Home<", ">ホーム<"], [">Install<", ">インストール<"], [">Features<", ">機能<"], [">Security<", ">セキュリティ<"], [">Compare<", ">比較<"],
     ["Fly command copied", "Flyコマンドをコピーしました"],
+    ["Copy command", "コマンドをコピー"],
+    ["Command copied", "コマンドをコピーしました"],
     ["Full OpenClaw import — switch in one click", "OpenClawの完全インポート — ワンクリックで切り替え"],
     [">New<", ">新着<"],
     ["A secure persistent personal agent server", "信頼できるRustネイティブclaw"],
@@ -1045,6 +1059,8 @@ LANGUAGES.ko = {
   strings: [
     [">Home<", ">홈<"], [">Install<", ">설치<"], [">Features<", ">기능<"], [">Security<", ">보안<"], [">Compare<", ">비교<"],
     ["Fly command copied", "Fly 명령어가 복사되었습니다"],
+    ["Copy command", "명령어 복사"],
+    ["Command copied", "명령어가 복사되었습니다"],
     ["Full OpenClaw import — switch in one click", "OpenClaw 전체 가져오기 — 한 번의 클릭으로 전환"],
     [">New<", ">신규<"],
     ["A secure persistent personal agent server", "신뢰할 수 있는 Rust 네이티브 claw"],
@@ -1161,6 +1177,8 @@ LANGUAGES.ru = {
   strings: [
     [">Home<", ">Главная<"], [">Install<", ">Установка<"], [">Features<", ">Возможности<"], [">Security<", ">Безопасность<"], [">Compare<", ">Сравнение<"],
     ["Fly command copied", "Команда Fly скопирована"],
+    ["Copy command", "Копировать команду"],
+    ["Command copied", "Команда скопирована"],
     ["Full OpenClaw import — switch in one click", "Полный импорт OpenClaw — переключение в один клик"],
     [">New<", ">Новое<"],
     ["A secure persistent personal agent server", "Надёжный Rust-нативный claw"],
@@ -1283,6 +1301,8 @@ LANGUAGES["zh-TW"] = {
     [">Compare<", ">比較<"],
     // Toast
     ["Fly command copied", "Fly 指令已複製"],
+    ["Copy command", "複製指令"],
+    ["Command copied", "指令已複製"],
     // Accessibility / controls
     ["title=\"Toggle theme\"", "title=\"切換佈景主題\""],
     ["var titles = { light: 'Theme: Light', system: 'Theme: System', dark: 'Theme: Dark' };", "var titles = { light: '佈景主題：亮色', system: '佈景主題：依照系統', dark: '佈景主題：深色' };"],

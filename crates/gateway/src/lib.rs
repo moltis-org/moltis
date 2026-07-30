@@ -65,7 +65,9 @@ pub mod updater;
 #[cfg(feature = "vault")]
 pub mod vault_lifecycle;
 pub mod voice;
+#[cfg(feature = "voice")]
 pub mod voice_agent_tools;
+#[cfg(feature = "voice")]
 pub mod voice_persona;
 pub mod webhooks;
 

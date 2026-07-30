@@ -1,4 +1,6 @@
-//! Channel delivery, TTS, push notifications, tool status, screenshots, documents, and location.
+//! Channel delivery, TTS, tool status, screenshots, documents, and location.
+//!
+//! Web push notifications live in [`crate::channel_push`].
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
@@ -11,44 +13,6 @@ use {
 use moltis_sessions::store::SessionStore;
 
 use crate::{agent_loop::ChannelReplyTargetKey, error, runtime::ChatRuntime, types::*};
-
-/// Build the SPA URL for a push notification click-through.
-///
-/// Must match the frontend `sessionPath()` in `router.ts`:
-/// `/chats/${key.replace(/:/g, "/")}`.
-#[cfg(any(feature = "push-notifications", test))]
-pub(crate) fn push_notification_url(session_key: &str) -> String {
-    format!("/chats/{}", session_key.replace(':', "/"))
-}
-
-#[cfg(feature = "push-notifications")]
-pub(crate) async fn send_chat_push_notification(
-    state: &Arc<dyn ChatRuntime>,
-    session_key: &str,
-    text: &str,
-) {
-    // Create a short summary of the response (first 100 chars)
-    let summary = if text.len() > 100 {
-        format!("{}…", truncate_at_char_boundary(text, 100))
-    } else {
-        text.to_string()
-    };
-
-    let title = "Message received";
-    let url = push_notification_url(session_key);
-
-    match state
-        .send_push_notification(title, &summary, Some(&url), Some(session_key))
-        .await
-    {
-        Ok(sent) => {
-            tracing::info!(sent, "push notification sent");
-        },
-        Err(e) => {
-            tracing::warn!("failed to send push notification: {e}");
-        },
-    }
-}
 
 /// Drain any pending channel reply targets for a session and send the
 /// response text back to each originating channel via outbound.
@@ -1079,25 +1043,6 @@ mod tests {
                 });
             Ok(())
         }
-    }
-
-    #[test]
-    fn push_notification_url_uses_chats_prefix_and_replaces_colons() {
-        // Must match frontend sessionPath(): `/chats/${key.replace(/:/g, "/")}`
-        assert_eq!(push_notification_url("session:42"), "/chats/session/42");
-    }
-
-    #[test]
-    fn push_notification_url_handles_nested_session_keys() {
-        assert_eq!(
-            push_notification_url("telegram:bot123:chat456"),
-            "/chats/telegram/bot123/chat456"
-        );
-    }
-
-    #[test]
-    fn push_notification_url_handles_key_without_colons() {
-        assert_eq!(push_notification_url("main"), "/chats/main");
     }
 
     #[tokio::test]

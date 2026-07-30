@@ -57,7 +57,7 @@ use crate::{
 };
 
 #[cfg(feature = "push-notifications")]
-use crate::channels::send_chat_push_notification;
+use crate::channel_push::send_chat_push_notification;
 
 pub(crate) async fn run_with_tools(
     persona: PromptPersona,
@@ -1210,11 +1210,22 @@ pub(crate) async fn run_with_tools(
             broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
 
             if !is_silent {
-                // Send push notification when chat response completes
                 #[cfg(feature = "push-notifications")]
                 {
                     tracing::info!("push: checking push notification (agent mode)");
-                    send_chat_push_notification(state, session_key, &display_text).await;
+                    let push_state = Arc::clone(state);
+                    let push_session_key = session_key.to_string();
+                    let push_text = display_text.clone();
+                    let push_order = crate::channel_push::next_push_notification_order();
+                    tokio::spawn(async move {
+                        send_chat_push_notification(
+                            &push_state,
+                            &push_session_key,
+                            &push_text,
+                            push_order,
+                        )
+                        .await;
+                    });
                 }
                 deliver_channel_replies(
                     state,

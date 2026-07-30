@@ -296,6 +296,7 @@ hostname    = "0.4"
 http        = "1"
 hyper       = { features = ["client", "http1", "http2", "server"], version = "1" }
 hyper-util  = { features = ["client-legacy", "http1", "http2", "server-auto", "service", "tokio"], version = "0.1" }
+isahc       = "1.8"
 ngrok       = "0.18"
 tower       = "0.5"
 tower-http  = "0.6"

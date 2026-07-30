@@ -1,6 +1,8 @@
 mod agent_loop;
 mod channel_compaction;
 mod channel_feedback;
+#[cfg(any(feature = "push-notifications", test))]
+mod channel_push;
 mod channel_reply_delivery;
 mod channels;
 mod compaction;

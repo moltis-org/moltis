@@ -49,7 +49,9 @@ pub struct LiveSessionService {
     pub(super) store: Arc<SessionStore>,
     pub(super) metadata: Arc<SqliteSessionMetadata>,
     pub(super) agent_persona_store: Option<Arc<AgentPersonaStore>>,
+    #[cfg(feature = "voice")]
     pub(super) voice_persona_store: Option<Arc<crate::voice_persona::VoicePersonaStore>>,
+    #[cfg(feature = "voice")]
     pub(super) tts_service: Option<Arc<dyn TtsService>>,
     pub(super) share_store: Option<Arc<ShareStore>>,
     pub(super) sandbox_router: Option<Arc<SandboxRouter>>,
@@ -67,7 +69,9 @@ impl LiveSessionService {
             store,
             metadata,
             agent_persona_store: None,
+            #[cfg(feature = "voice")]
             voice_persona_store: None,
+            #[cfg(feature = "voice")]
             tts_service: None,
             share_store: None,
             sandbox_router: None,
@@ -122,6 +126,7 @@ impl LiveSessionService {
         self
     }
 
+    #[cfg(feature = "voice")]
     pub fn with_voice_persona_store(
         mut self,
         store: Arc<crate::voice_persona::VoicePersonaStore>,
@@ -130,6 +135,7 @@ impl LiveSessionService {
         self
     }
 
+    #[cfg(feature = "voice")]
     pub fn with_tts_service(mut self, tts: Arc<dyn TtsService>) -> Self {
         self.tts_service = Some(tts);
         self
@@ -267,8 +273,14 @@ impl LiveSessionService {
 
 #[async_trait]
 impl SessionService for LiveSessionService {
+    #[cfg(feature = "voice")]
     async fn voice_generate(&self, params: Value) -> ServiceResult {
         self.voice_generate_impl(params).await
+    }
+
+    #[cfg(not(feature = "voice"))]
+    async fn voice_generate(&self, _params: Value) -> ServiceResult {
+        Err("session voice generation is not configured".into())
     }
 
     async fn share_create(&self, params: Value) -> ServiceResult {

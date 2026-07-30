@@ -42,7 +42,7 @@ use crate::{
 };
 
 #[cfg(feature = "push-notifications")]
-use crate::channels::send_chat_push_notification;
+use crate::channel_push::send_chat_push_notification;
 
 const STREAM_RETRYABLE_SERVER_PATTERNS: &[&str] = &[
     "http 500",
@@ -538,7 +538,20 @@ pub(crate) async fn run_streaming(
                             #[cfg(feature = "push-notifications")]
                             {
                                 tracing::info!("push: checking push notification");
-                                send_chat_push_notification(state, session_key, &accumulated).await;
+                                let push_state = Arc::clone(state);
+                                let push_session_key = session_key.to_string();
+                                let push_text = accumulated.clone();
+                                let push_order =
+                                    crate::channel_push::next_push_notification_order();
+                                tokio::spawn(async move {
+                                    send_chat_push_notification(
+                                        &push_state,
+                                        &push_session_key,
+                                        &push_text,
+                                        push_order,
+                                    )
+                                    .await;
+                                });
                             }
                             deliver_channel_replies(
                                 state,

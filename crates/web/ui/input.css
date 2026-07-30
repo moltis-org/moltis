@@ -1302,6 +1302,13 @@
   .chat-session-name {
     font-size: 0.75rem;
     color: var(--muted);
+    /* Truncate rather than overflow the toolbar: an overflowing name renders
+       under the neighbouring combo boxes, which are positioned and therefore
+       swallow clicks meant for the name. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
   .chat-session-rename-input {
     font-size: 0.75rem;

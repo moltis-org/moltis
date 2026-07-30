@@ -54,7 +54,7 @@ tailscale          = ["moltis-httpd/tailscale"]
 tls                = ["moltis-httpd/tls"]
 trusted-network    = ["moltis-httpd/trusted-network"]
 vault              = ["moltis-httpd/vault"]
-voice              = []
+voice              = ["moltis-gateway/voice"]
 web-ui             = ["moltis-httpd/web-ui"]
 
 [lints]
