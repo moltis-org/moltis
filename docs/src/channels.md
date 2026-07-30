@@ -246,6 +246,14 @@ account, or those commands will refuse everyone. If you do not know your ID,
 run `/sh` — the refusal message tells you what yours is on that channel.
 ```
 
+```admonish warning title="Upgrading: shared chats start from an empty history once"
+An untrusted turn only sees history from runs that were themselves untrusted, and
+messages written before this change carry no such marker. The first turn after
+upgrading in a group chat, guild, or channel-bound session therefore starts with
+no prior context. This happens once per session; everything written from then on
+accumulates normally.
+```
+
 A command requires an operator DM when the worst case reaches beyond the
 current chat. Everything scoped to the conversation you are already in stays
 open to any sender who clears the access gate:
@@ -283,10 +291,46 @@ conversation is direct, and that topology is not yet carried into the gateway.
 Those integrations currently fail closed as shared even for actual DMs, so use
 the authenticated web UI or a supported proven-direct channel for privileged
 work. Normal tool-free chat still works.
+
+Phone calls are also treated as shared, for a different reason: the only
+identifier a call carries is the caller number, and caller ID is trivially
+spoofable. There is nothing there to authenticate an operator against, so
+telephony never grants privileged access no matter what `operators` contains.
+
+Chat kinds are matched as an **allowlist of shapes known to be one-to-one**
+(Telegram positive chat IDs, Slack `D…` conversations, WhatsApp
+`@s.whatsapp.net` and `@lid` JIDs, Signal non-`group:` identifiers, Nostr DMs).
+An ID whose form is not recognised is shared.
 ```
 
 Untrusted turns also omit owner-private prompt context: user profile, project
 context, long-term memory, skills, and automatic memory extraction.
+
+### Channel-bound sessions
+
+A session is *bound* to a chat when the chat created it, or when an operator ran
+`/attach` to move an existing session into that chat. Binding is what makes the
+chat's replies land in the right place — and it also means the session's history
+contains messages the bot did not author.
+
+Every request into a bound session that does not come from the channel gateway
+is therefore treated as untrusted, whoever made it: web UI turns, cron jobs,
+webhooks, and the `sessions_send` tool all run with no tools and no private
+context. The downgrade is logged (`session is bound to a channel; running this
+turn without tools or private context`), because otherwise an affected cron job
+simply answers as though it had no tools.
+
+```admonish tip title="Getting a session back"
+If you attached a working session to a chat and now want it back, open it in the
+web UI and press **Release channel** in the session header (or call
+`sessions.patch` with `channelBinding: null`). Messages from that chat return to
+the chat's own session, and the released session regains tools, memory, and
+project context.
+
+A chat's *own* session cannot be released — its history is the room's history,
+and the next inbound message would re-create the binding. Attach a different
+session to that chat instead.
+```
 
 ### Granting operator
 

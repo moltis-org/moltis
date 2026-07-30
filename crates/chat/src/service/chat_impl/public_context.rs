@@ -11,8 +11,33 @@ pub(crate) fn mark_public_channel(params: &mut Value) {
     }
 }
 
+/// Tool call ids requested by an assistant message, if any.
+fn requested_tool_call_ids(message: &Value) -> Vec<&str> {
+    message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .map(|calls| {
+            calls
+                .iter()
+                .filter_map(|call| call.get("id").and_then(Value::as_str))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Keep only history belonging to runs that were themselves public.
+///
+/// Runs are the unit of visibility: a message is kept when its `run_id` matches
+/// a run whose user message was marked `channel.private_context = false`.
+/// Messages with no `run_id` are never public.
+///
+/// A second pass then drops any assistant message whose requested tool calls
+/// did not survive. Providers reject a `tool_calls` entry with no matching
+/// result, so a filter that can orphan one turns a privacy decision into a
+/// hard request failure. This keeps the output valid by construction rather
+/// than relying on every persistence site remembering to stamp a `run_id`.
 pub(crate) fn filter_public_history(history: Vec<Value>) -> Vec<Value> {
-    let public_run_ids: HashSet<String> = history
+    let public_run_ids: HashSet<&str> = history
         .iter()
         .filter(|message| {
             message
@@ -22,17 +47,31 @@ pub(crate) fn filter_public_history(history: Vec<Value>) -> Vec<Value> {
                 == Some(false)
         })
         .filter_map(|message| message.get("run_id").and_then(Value::as_str))
-        .map(str::to_string)
         .collect();
 
-    history
-        .into_iter()
+    let public: Vec<&Value> = history
+        .iter()
         .filter(|message| {
             message
                 .get("run_id")
                 .and_then(Value::as_str)
                 .is_some_and(|run_id| public_run_ids.contains(run_id))
         })
+        .collect();
+
+    let answered: HashSet<&str> = public
+        .iter()
+        .filter_map(|message| message.get("tool_call_id").and_then(Value::as_str))
+        .collect();
+
+    public
+        .iter()
+        .filter(|message| {
+            requested_tool_call_ids(message)
+                .iter()
+                .all(|id| answered.contains(id))
+        })
+        .map(|message| (*message).clone())
         .collect()
 }
 
@@ -80,6 +119,110 @@ mod tests {
             filtered
                 .iter()
                 .all(|message| message["run_id"] == "public-run")
+        );
+    }
+
+    #[test]
+    fn keeps_a_tool_call_whose_result_is_in_the_same_run() {
+        let history = vec![
+            serde_json::json!({
+                "role": "user",
+                "content": "search",
+                "run_id": "public-run",
+                "channel": {"sender_id": "guest", "private_context": false},
+            }),
+            serde_json::json!({
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "web_search", "arguments": "{}"},
+                }],
+                "run_id": "public-run",
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call-1",
+                "tool_name": "web_search",
+                "run_id": "public-run",
+            }),
+        ];
+
+        assert_eq!(filter_public_history(history).len(), 3);
+    }
+
+    /// A tool result persisted without a `run_id` is dropped by the run filter.
+    /// The assistant message that requested it must go too — a `tool_calls`
+    /// entry with no matching result is rejected by most providers, so leaving
+    /// it behind would turn a filtered turn into a failed request.
+    #[test]
+    fn drops_a_tool_call_whose_result_did_not_survive() {
+        let history = vec![
+            serde_json::json!({
+                "role": "user",
+                "content": "search",
+                "run_id": "public-run",
+                "channel": {"sender_id": "guest", "private_context": false},
+            }),
+            serde_json::json!({
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "web_search", "arguments": "{}"},
+                }],
+                "run_id": "public-run",
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call-1",
+                "tool_name": "web_search",
+            }),
+            serde_json::json!({
+                "role": "assistant",
+                "content": "here you go",
+                "run_id": "public-run",
+            }),
+        ];
+
+        let filtered = filter_public_history(history);
+        assert_eq!(filtered.len(), 2, "{filtered:?}");
+        assert!(
+            filtered
+                .iter()
+                .all(|message| message.get("tool_calls").is_none()),
+            "an unanswered tool call must not survive: {filtered:?}"
+        );
+    }
+
+    /// Partially answered calls are just as invalid as fully unanswered ones.
+    #[test]
+    fn drops_a_multi_call_message_when_any_result_is_missing() {
+        let history = vec![
+            serde_json::json!({
+                "role": "user",
+                "content": "two things",
+                "run_id": "public-run",
+                "channel": {"sender_id": "guest", "private_context": false},
+            }),
+            serde_json::json!({
+                "role": "assistant",
+                "tool_calls": [{"id": "call-1"}, {"id": "call-2"}],
+                "run_id": "public-run",
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call-1",
+                "run_id": "public-run",
+            }),
+        ];
+
+        let filtered = filter_public_history(history);
+        assert!(
+            filtered
+                .iter()
+                .all(|message| message.get("tool_calls").is_none()),
+            "{filtered:?}"
         );
     }
 }

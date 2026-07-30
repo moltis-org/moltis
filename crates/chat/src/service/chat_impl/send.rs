@@ -316,46 +316,11 @@ impl LiveChatService {
                 .touch(&session_key, history.len() as u32)
                 .await;
 
-            // If this is a web UI message on a channel-bound session, attach the
-            // channel reply target so /sh output can be delivered back to the channel.
-            let is_web_message = conn_id.is_some()
-                && params.get("_session_key").is_none()
-                && params.get("channel").is_none();
-
-            if is_web_message
-                && let Some(entry) = self.session_metadata.get(&session_key).await
-                && let Some(ref binding_json) = entry.channel_binding
-                && let Ok(target) =
-                    serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding_json)
-            {
-                let is_active = self
-                    .session_metadata
-                    .get_active_session(
-                        target.channel_type.as_str(),
-                        &target.account_id,
-                        &target.chat_id,
-                        target.thread_id.as_deref(),
-                    )
-                    .await
-                    .map(|k| k == session_key)
-                    .unwrap_or(true);
-
-                if is_active {
-                    match serde_json::to_value(&target) {
-                        Ok(target_val) => {
-                            params["_channel_reply_target"] = target_val;
-                        },
-                        Err(e) => {
-                            warn!(
-                                session = %session_key,
-                                error = %e,
-                                "failed to serialize channel reply target for /sh"
-                            );
-                        },
-                    }
-                }
-            }
-
+            // `/sh` reaching this point can only be a native channel turn the
+            // gateway authorized, so its reply target is already in `params`.
+            // Web turns on a channel-bound session were rejected above, and
+            // `apply_channel_bound_public_context` is what derives a target from
+            // the session's binding for every other request.
             let deferred_channel_target =
                 params
                     .get("_channel_reply_target")

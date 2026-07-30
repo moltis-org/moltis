@@ -12,20 +12,17 @@ use crate::{
 
 // ── /btw — ephemeral side question ──────────────────────────────────────────
 
+/// `/btw` reads recent session history, so it is `OperatorDirect` in the command
+/// registry — `dispatch_command` has already rejected guests and shared chats
+/// before this runs. No local scope check is needed here.
 pub(in crate::channel_events) async fn handle_btw(
     state: &Arc<GatewayState>,
     session_key: &str,
-    reply_to: &ChannelReplyTarget,
     args: &str,
 ) -> ChannelResult<String> {
     if args.is_empty() {
         return Err(ChannelError::invalid_input(
             "usage: /btw <question>\nAsk a quick side question without tools or persisting to history.",
-        ));
-    }
-    if super::super::is_shared_channel_target(reply_to) {
-        return Err(ChannelError::invalid_input(
-            "/btw is unavailable in shared chats because it reads recent session history.",
         ));
     }
 

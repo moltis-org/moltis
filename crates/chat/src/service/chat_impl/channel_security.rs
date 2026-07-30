@@ -13,6 +13,15 @@ impl LiveChatService {
     /// Apply the public-channel ceiling to web/API turns whose session can
     /// deliver its response to a channel. Native channel requests already
     /// carry a `channel` object and are authorized by the gateway.
+    ///
+    /// This applies to *every* non-native caller, including cron jobs, webhooks,
+    /// and the `sessions_send` tool — a channel-bound session's history contains
+    /// messages the bot did not author, so a turn over it cannot be trusted with
+    /// tools or owner-private context no matter who scheduled it. The downgrade
+    /// is logged because it is otherwise invisible: an affected cron job simply
+    /// answers as if it had no tools. Clear the binding
+    /// (`sessions.patch { channelBinding: null }`) to restore a session that was
+    /// attached to a channel and no longer needs to be.
     pub(super) async fn apply_channel_bound_public_context(
         &self,
         params: &mut Value,
@@ -33,6 +42,11 @@ impl LiveChatService {
         };
 
         apply_public_context_ceiling(params)?;
+        tracing::info!(
+            session = session_key,
+            "session is bound to a channel; running this turn without tools or \
+             private context. Clear the binding to restore full access."
+        );
 
         match serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding_json) {
             Ok(target) => {

@@ -126,13 +126,11 @@ pub(crate) async fn run_with_tools(
             registry_guard.clone_without(&[])
         }
     };
-    let allowed_tool_names: HashSet<String> = filtered_registry.list_names().into_iter().collect();
-    let memory_tools_allowed = allowed_tool_names
-        .iter()
-        .any(|name| name.starts_with("memory_"));
+    // Agent-scoped memory tools are owner-private, so a public turn never gets
+    // them. `install_agent_scoped_memory_tools` only re-registers names it just
+    // unregistered, so it cannot reintroduce a tool the filters above removed.
     if private_context
         && tools_enabled
-        && memory_tools_allowed
         && let Some(manager) = state.memory_manager()
     {
         install_agent_scoped_memory_tools(
@@ -143,8 +141,6 @@ pub(crate) async fn run_with_tools(
             persona.config.memory.style,
             persona.config.memory.agent_write_mode,
         );
-        filtered_registry =
-            filtered_registry.clone_allowed_by(|name| allowed_tool_names.contains(name));
     }
     if tools_enabled
         && matches!(

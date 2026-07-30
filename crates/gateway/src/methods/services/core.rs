@@ -1,12 +1,10 @@
 use super::*;
 
-fn strip_internal_channel_fields(params: &mut serde_json::Value) {
-    if let Some(params) = params.as_object_mut() {
-        params.remove("channel");
-        params.remove("_channel_reply_target");
-        params.remove("_native_channel_request");
-    }
-}
+/// Strip gateway-owned routing and trust markers from RPC-supplied params.
+///
+/// The list is owned by `moltis-chat` (the crate that reads these) so it cannot
+/// drift from what the chat service treats as a gateway assertion.
+use moltis_chat::request_params::strip_gateway_owned_params as strip_internal_channel_fields;
 
 pub(super) fn register(reg: &mut MethodRegistry) {
     // Config
@@ -1321,7 +1319,10 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_internal_channel_fields;
+    use {
+        super::strip_internal_channel_fields,
+        moltis_chat::request_params::GATEWAY_OWNED_REQUEST_PARAMS,
+    };
 
     #[test]
     fn rpc_chat_params_cannot_inject_internal_channel_routing() {
@@ -1335,9 +1336,26 @@ mod tests {
 
         strip_internal_channel_fields(&mut params);
 
-        assert!(params.get("channel").is_none());
-        assert!(params.get("_channel_reply_target").is_none());
-        assert!(params.get("_native_channel_request").is_none());
+        for name in GATEWAY_OWNED_REQUEST_PARAMS {
+            assert!(params.get(name).is_none(), "{name} survived stripping");
+        }
         assert_eq!(params["_tool_policy"]["allow"][0], "calc");
+    }
+
+    /// Stripping only helps on the paths that call it. Both chat send methods
+    /// forward caller-supplied JSON straight to the service, so both must strip
+    /// first — a new send-shaped RPC that forgets is a forged-routing hole.
+    #[test]
+    fn both_chat_send_registrations_strip_gateway_owned_params() {
+        const SELF: &str = include_str!("core.rs");
+
+        let strip_calls = SELF
+            .matches("strip_internal_channel_fields(&mut params)")
+            .count();
+        assert!(
+            strip_calls >= 2,
+            "expected `chat.send` and `chat.send_sync` to both strip \
+             gateway-owned params, found {strip_calls} call site(s)"
+        );
     }
 }

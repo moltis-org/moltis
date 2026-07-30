@@ -9,10 +9,12 @@ import { onEvent } from "../events";
 import * as gon from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
 import {
+	channelBindingLabel,
 	clearActiveSession,
 	clearSessionHistoryCache,
 	fetchSessions,
 	isArchivableSession,
+	isChannelUnbindableSession,
 	removeSessionFromClientState,
 	setSessionActiveRunId,
 	setSessionReplying,
@@ -160,6 +162,8 @@ export function SessionHeader({
 	const canRename = !(isMain || isCron);
 	const canStop = !isCron && replying;
 	const canArchive = !!session && isArchivableSession(session.toMeta());
+	const canUnbindChannel = !!session && isChannelUnbindableSession(session.toMeta());
+	const boundChannelLabel = session ? channelBindingLabel(session.toMeta()) : "";
 	const showArchivedSessions = sessionStore.showArchivedSessions.value;
 	const currentAgentId = session?.agent_id || defaultAgentId || "main";
 	const currentNodeId = session?.node_id || "";
@@ -396,6 +400,35 @@ export function SessionHeader({
 		});
 	}, [canArchive, currentKey, onBeforeArchive, session, showArchivedSessions]);
 
+	// A session attached to a chat runs every turn as an untrusted public turn:
+	// no tools, no memory, no project context, because the chat's history holds
+	// other people's messages. Releasing it is the only way back, so the control
+	// says what it restores rather than just "Unbind".
+	//
+	// No confirmation: this is reversible with `/attach` from the chat, and the
+	// shared confirm dialog labels its action button "Delete", which reads far
+	// more destructive than what happens.
+	const [unbinding, setUnbinding] = useState(false);
+	const onUnbindChannel = useCallback(() => {
+		if (!(session && canUnbindChannel)) return;
+		setUnbinding(true);
+		sendRpc("sessions.patch", { key: currentKey, channelBinding: null })
+			.then((res) => {
+				if (!res?.ok) {
+					showToast((res?.error as { message?: string })?.message || "Failed to release channel", "error");
+					return;
+				}
+				showToast(
+					boundChannelLabel
+						? `Released from ${boundChannelLabel}. Tools and private context are available here again.`
+						: "Released from its channel. Tools and private context are available here again.",
+					"success",
+				);
+				fetchSessions();
+			})
+			.finally(() => setUnbinding(false));
+	}, [boundChannelLabel, canUnbindChannel, currentKey, session]);
+
 	const onAgentChange = useCallback(
 		(nextAgentId: string) => {
 			if (!nextAgentId || nextAgentId === currentAgentId || switchingAgent) {
@@ -579,6 +612,21 @@ export function SessionHeader({
 						title={session?.archived ? "Unarchive session" : "Archive session"}
 					>
 						{session?.archived ? "Unarchive" : "Archive"}
+					</button>
+				)}
+				{canUnbindChannel && (
+					<button
+						className={actionButtonClass}
+						onClick={onUnbindChannel}
+						disabled={unbinding}
+						data-testid="session-unbind-channel"
+						title={
+							boundChannelLabel
+								? `Attached to ${boundChannelLabel}. Runs without tools or private context until released.`
+								: "Attached to a channel. Runs without tools or private context until released."
+						}
+					>
+						{unbinding ? "Releasing…" : "Release channel"}
 					</button>
 				)}
 				{showFork && !isCron && (

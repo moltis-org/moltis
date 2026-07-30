@@ -157,6 +157,16 @@ Discord, Microsoft Teams, and Matrix currently fall into that conservative
 category even for actual DMs. Their normal chat remains available, but tools,
 private context, `/sh`, location updates, and privileged commands are denied.
 
+Telephony is in that category permanently: a call's only identifier is the
+caller number, and caller ID is spoofable, so it can never authenticate an
+operator. Adding a phone number to `operators` grants nothing.
+
+Sessions bound to a chat — including a working session an operator moved there
+with `/attach` — are untrusted for *every* non-gateway caller, so cron jobs,
+webhooks, and `sessions_send` also run tool-free against them. Release the
+binding to restore full access; see
+[Channels → Channel-bound sessions](./channels.md#channel-bound-sessions).
+
 ### Channel Isolation
 
 Channels run in isolated sessions by default. A malicious message from one

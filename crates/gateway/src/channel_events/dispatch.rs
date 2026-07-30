@@ -178,10 +178,12 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         });
 
         // Only an operator in a proven direct chat receives tools and private
-        // context. Explicit `/sh` was rejected above for every other origin.
-        let explicit_shell =
-            moltis_agents::runner::explicit_shell_command(&effective_text).is_some();
-        if !explicit_shell && !trusted_channel_turn {
+        // context. This is the single condition on purpose: an earlier version
+        // also skipped the ceiling for anything that parsed as `/sh`, on the
+        // assumption that the guard above had already rejected every untrusted
+        // `/sh`. That made the ceiling depend on a rejection 60 lines away, so
+        // narrowing that guard would have silently opened this one.
+        if !trusted_channel_turn {
             apply_untrusted_channel_context(&mut params);
         }
 

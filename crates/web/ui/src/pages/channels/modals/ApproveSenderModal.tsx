@@ -24,18 +24,21 @@ import {
 
 type ApprovalRole = "guest" | "operator";
 
+// The prop is `value`, not `role`: a prop literally named `role` is read as the
+// ARIA role attribute by the a11y lint, and "guest"/"operator" are not roles in
+// that sense.
 function RoleOption(props: {
-	role: ApprovalRole;
+	value: ApprovalRole;
 	selected: ApprovalRole;
 	title: string;
 	detail: string;
 	onSelect: (role: ApprovalRole) => void;
 }): VNode {
-	const isSelected = props.selected === props.role;
+	const isSelected = props.selected === props.value;
 	return (
 		<label
 			className={`backend-card ${isSelected ? "selected" : ""} block cursor-pointer p-3`}
-			data-testid={`approve-role-${props.role}`}
+			data-testid={`approve-role-${props.value}`}
 			data-selected={isSelected ? "true" : "false"}
 		>
 			<div className="flex items-start gap-2">
@@ -44,7 +47,7 @@ function RoleOption(props: {
 					name="approve-role"
 					className="mt-1"
 					checked={isSelected}
-					onChange={() => props.onSelect(props.role)}
+					onChange={() => props.onSelect(props.value)}
 				/>
 				<div className="min-w-0">
 					<div className="text-sm font-medium text-[var(--text)]">{props.title}</div>
@@ -122,7 +125,7 @@ export function ApproveSenderModal(): VNode | null {
 				</div>
 
 				<RoleOption
-					role="guest"
+					value="guest"
 					selected={role.value}
 					title="Guest"
 					detail="Can chat with the bot. No access to this machine."
@@ -131,7 +134,7 @@ export function ApproveSenderModal(): VNode | null {
 					}}
 				/>
 				<RoleOption
-					role="operator"
+					value="operator"
 					selected={role.value}
 					title="Operator"
 					detail="Can run /sh and other commands on this machine, and read this instance's sessions and memory. This is equivalent to giving someone your terminal — grant it to yourself, or to someone you trust with the host."

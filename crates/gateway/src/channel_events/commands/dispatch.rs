@@ -161,7 +161,7 @@ pub(in crate::channel_events) async fn dispatch_command(
         "rollback" => quick_actions::handle_rollback(state, &session_key, args).await,
 
         // Quick actions
-        "btw" => quick_actions::handle_btw(state, &session_key, &reply_to, args).await,
+        "btw" => quick_actions::handle_btw(state, &session_key, args).await,
         "fast" => quick_actions::handle_fast(state, session_metadata, &session_key, args).await,
         "insights" => quick_actions::handle_insights(state, args).await,
         "steer" => quick_actions::handle_steer(state, &session_key, args).await,

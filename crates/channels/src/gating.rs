@@ -23,7 +23,7 @@ pub fn is_allowed(peer_id: &str, allowlist: &[String]) -> bool {
 /// Simple glob matching supporting `*` as a wildcard for any sequence of chars.
 ///
 /// Both arguments must already be lowercased by the caller.
-pub(crate) fn glob_match_lower(pattern: &str, text: &str) -> bool {
+fn glob_match_lower(pattern: &str, text: &str) -> bool {
     let parts: Vec<&str> = pattern.split('*').collect();
     if parts.len() == 1 {
         return pattern == text;

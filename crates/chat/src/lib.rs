@@ -13,6 +13,7 @@ mod types;
 
 pub mod chat_error;
 pub mod error;
+pub mod request_params;
 pub mod runtime;
 
 pub use {
