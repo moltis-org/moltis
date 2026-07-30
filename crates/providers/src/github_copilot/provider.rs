@@ -534,7 +534,7 @@ async fn collect_streamed_completion(
     if !status.is_success() {
         let retry_after_ms = super::super::retry_after_ms_from_headers(http_resp.headers());
         let body_text = http_resp.text().await.unwrap_or_default();
-        warn!(status = %status, body = %body_text, "github-copilot enterprise API error");
+        warn!(status = %status, body_bytes = body_text.len(), "github-copilot enterprise API error");
         anyhow::bail!(
             "{}",
             super::super::with_retry_after_marker(
@@ -673,7 +673,7 @@ async fn collect_streamed_responses_completion(
     if !status.is_success() {
         let retry_after_ms = super::super::retry_after_ms_from_headers(http_resp.headers());
         let body_text = http_resp.text().await.unwrap_or_default();
-        warn!(status = %status, body = %body_text, "github-copilot enterprise responses API error");
+        warn!(status = %status, body_bytes = body_text.len(), "github-copilot enterprise responses API error");
         anyhow::bail!(
             "{}",
             super::super::with_retry_after_marker(
@@ -913,7 +913,7 @@ impl LlmProvider for GitHubCopilotProvider {
                 return self.complete_responses(messages, tools).await;
             }
 
-            warn!(status = %status, body = %body_text, "github-copilot API error");
+            warn!(status = %status, body_bytes = body_text.len(), "github-copilot API error");
             anyhow::bail!(
                 "{}",
                 super::super::with_retry_after_marker(
@@ -924,7 +924,10 @@ impl LlmProvider for GitHubCopilotProvider {
         }
 
         let resp = http_resp.json::<serde_json::Value>().await?;
-        trace!(response = %resp, "github-copilot raw response");
+        trace!(
+            response_bytes = serde_json::to_vec(&resp).map_or(0, |value| value.len()),
+            "github-copilot response received"
+        );
 
         let message = &resp["choices"][0]["message"];
 
@@ -1041,7 +1044,7 @@ impl GitHubCopilotProvider {
                 )
                 .await;
             }
-            warn!(status = %status, body = %body_text, "github-copilot responses API error");
+            warn!(status = %status, body_bytes = body_text.len(), "github-copilot responses API error");
             anyhow::bail!(
                 "{}",
                 super::super::with_retry_after_marker(
@@ -1052,7 +1055,10 @@ impl GitHubCopilotProvider {
         }
 
         let resp = http_resp.json::<serde_json::Value>().await?;
-        trace!(response = %resp, "github-copilot responses raw response");
+        trace!(
+            response_bytes = serde_json::to_vec(&resp).map_or(0, |value| value.len()),
+            "github-copilot responses response received"
+        );
 
         Ok(parse_responses_completion(&resp))
     }

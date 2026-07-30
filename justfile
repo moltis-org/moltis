@@ -445,7 +445,7 @@ ios-graphql:
     ./scripts/generate-ios-graphql.sh
 
 # Build iOS app (generic iOS destination, no signing).
-ios-build: ios-graphql ios-generate
+ios-build: ios-generate ios-graphql
     xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build
 
 # Lint iOS app sources with SwiftLint.
@@ -453,7 +453,7 @@ ios-lint:
     cd apps/ios && swiftlint
 
 # Open iOS project in Xcode (regenerates GraphQL types and project first).
-ios-open: ios-graphql ios-generate
+ios-open: ios-generate ios-graphql
     open apps/ios/Moltis.xcodeproj
 
 # Build the APNS push relay.
@@ -472,7 +472,7 @@ courier-deploy:
 courier-run *ARGS:
     cargo run -p moltis-courier -- {{ARGS}}
 
-# Serve the website locally with SSR partial injection (default port 4000).
+# Serve the website locally with SSR partial injection (default 127.0.0.1:4000).
 website-dev:
     node website/scripts/build-changelog.mjs
     node website/scripts/dev-server.mjs

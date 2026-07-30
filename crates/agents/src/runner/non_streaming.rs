@@ -253,7 +253,11 @@ pub async fn run_agent_loop_with_context_and_limits(
             messages_count = messages.len(),
             "calling LLM"
         );
-        trace!(iteration = iterations, messages = ?messages, "LLM request messages");
+        trace!(
+            iteration = iterations,
+            messages_count = messages.len(),
+            "LLM request prepared"
+        );
 
         // Dispatch BeforeLLMCall hook — may block the LLM call.
         if let Some(ref hooks) = hook_registry {
@@ -340,7 +344,11 @@ pub async fn run_agent_loop_with_context_and_limits(
             "LLM response received"
         );
         if let Some(ref text) = response.text {
-            trace!(iteration = iterations, text = %text, "LLM response text");
+            trace!(
+                iteration = iterations,
+                text_bytes = text.len(),
+                "LLM response text available"
+            );
         }
 
         // Fallback: parse tool calls from model text if the provider returned
@@ -405,7 +413,10 @@ pub async fn run_agent_loop_with_context_and_limits(
             && let Some(command) = explicit_shell_command.as_ref()
             && tools.get("exec").is_some()
         {
-            info!(command = %command, "forcing exec tool call from explicit /sh command");
+            info!(
+                command_bytes = command.len(),
+                "forcing exec tool call from explicit /sh command"
+            );
             // Preserve the model's planning/reasoning text on the assistant
             // tool-call message. Some providers (e.g. Moonshot thinking mode)
             // require this history field for follow-up tool turns.
@@ -444,7 +455,7 @@ pub async fn run_agent_loop_with_context_and_limits(
             info!(
                 iteration = iterations,
                 tool_name = %tc.name,
-                arguments = %tc.arguments,
+                argument_bytes = serde_json::to_vec(&tc.arguments).map_or(0, |value| value.len()),
                 "LLM requested tool call"
             );
         }
@@ -768,7 +779,7 @@ pub async fn run_agent_loop_with_context_and_limits(
         {
             if success {
                 info!(tool = %tc.name, id = %tc.id, "tool execution succeeded");
-                trace!(tool = %tc.name, result = %result, "tool result");
+                trace!(tool = %tc.name, "tool result available");
             } else if rejected {
                 warn!(
                     tool = %tc.name,
@@ -776,7 +787,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                     "tool call rejected before execution by pre-dispatch validation"
                 );
             } else {
-                warn!(tool = %tc.name, id = %tc.id, error = %error.as_deref().unwrap_or(""), "tool execution failed");
+                warn!(tool = %tc.name, id = %tc.id, has_error = error.is_some(), "tool execution failed");
             }
 
             // Record outcome in the loop detector. Use explicit success/failure
@@ -855,7 +866,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                 result_len = tool_result_str.len(),
                 "appending tool result to messages"
             );
-            trace!(tool = %tc.name, content = %tool_result_str, "tool result message content");
+            trace!(tool = %tc.name, content_bytes = tool_result_str.len(), "tool result message prepared");
 
             messages.push(ChatMessage::tool(&tc.id, &tool_result_str));
         }

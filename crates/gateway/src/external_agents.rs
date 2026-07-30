@@ -2,9 +2,9 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
-    time::SystemTime,
 };
 
+mod helpers;
 mod permissions;
 mod security;
 
@@ -35,7 +35,10 @@ use moltis_tools::approval::ApprovalManager;
 
 use crate::{broadcast::BroadcastOpts, state::GatewayState};
 
-use self::permissions::GatewayAcpPermissionHandler;
+use self::{
+    helpers::{message_content_text, now_ms},
+    permissions::GatewayAcpPermissionHandler,
+};
 
 pub struct GatewayExternalAgentService {
     registry: ExternalAgentRegistry,
@@ -546,6 +549,7 @@ impl ExternalAgentChatService {
             },
         };
         let mut assistant_text = String::new();
+        let mut thinking_text = String::new();
         let mut token_usage = None;
         let mut external_error = None;
         while let Some(event) = events.next().await {
@@ -567,6 +571,7 @@ impl ExternalAgentChatService {
                     .await;
                 },
                 ExternalAgentEvent::ThinkingDelta(delta) => {
+                    thinking_text.push_str(&delta);
                     crate::broadcast::broadcast(
                         &self.state,
                         "chat",
@@ -574,7 +579,7 @@ impl ExternalAgentChatService {
                             "runId": run_id,
                             "sessionKey": session_key,
                             "state": "thinking_text",
-                            "text": delta,
+                            "text": thinking_text,
                             "seq": seq,
                         }),
                         BroadcastOpts::default(),
@@ -654,7 +659,14 @@ impl ExternalAgentChatService {
             BroadcastOpts::default(),
         )
         .await;
-        Ok(serde_json::json!({ "ok": true, "runId": run_id }))
+        Ok(serde_json::json!({
+            "ok": true,
+            "runId": run_id,
+            "text": assistant_text,
+            "inputTokens": token_usage.as_ref().map(|usage| usage.input_tokens).unwrap_or(0),
+            "outputTokens": token_usage.as_ref().map(|usage| usage.output_tokens).unwrap_or(0),
+            "durationMs": duration_ms,
+        }))
     }
 }
 
@@ -668,7 +680,10 @@ impl ChatService for ExternalAgentChatService {
     }
 
     async fn send_sync(&self, params: Value) -> ServiceResult {
-        self.send(params).await
+        if let Some(result) = self.maybe_send_external(&params).await {
+            return result;
+        }
+        self.inner.send_sync(params).await
     }
 
     async fn abort(&self, params: Value) -> ServiceResult {
@@ -891,30 +906,6 @@ fn session_key_param(params: &Value) -> Option<String> {
         .or_else(|| params.get("_session_key"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
-}
-
-fn message_content_text(content: &MessageContent) -> String {
-    match content {
-        MessageContent::Text(text) => text.clone(),
-        MessageContent::Multimodal(blocks) => blocks
-            .iter()
-            .filter_map(|block| match block {
-                moltis_sessions::ContentBlock::Text { text } => Some(text.as_str()),
-                moltis_sessions::ContentBlock::ImageUrl { .. } => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-    }
-}
-
-fn now_ms() -> u64 {
-    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(duration) => duration.as_millis() as u64,
-        Err(error) => {
-            warn!(%error, "system clock is before UNIX_EPOCH");
-            0
-        },
-    }
 }
 
 #[cfg(test)]

@@ -360,6 +360,7 @@ fn test_runtime_context_injected_when_provided() {
             channel_chat_type: None,
             channel_sender_id: None,
             data_dir: Some("/home/moltis/.moltis".into()),
+            working_dir: Some("/workspace/project".into()),
             docs_path: None,
             config_template_path: None,
             sudo_non_interactive: Some(true),
@@ -412,6 +413,7 @@ fn test_runtime_context_injected_when_provided() {
     assert!(prompt.contains("provider=openai"));
     assert!(prompt.contains("model=gpt-5"));
     assert!(prompt.contains("data_dir=/home/moltis/.moltis"));
+    assert!(prompt.contains("working_dir=/workspace/project"));
     assert!(prompt.contains("sudo_non_interactive=true"));
     assert!(prompt.contains("sudo_status=passwordless"));
     assert!(prompt.contains("timezone=Europe/Paris"));

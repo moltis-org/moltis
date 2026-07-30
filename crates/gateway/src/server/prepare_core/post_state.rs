@@ -7,11 +7,12 @@ use {
     secrecy::Secret,
     tracing::{debug, info, warn},
 };
-
 mod credential_env;
 mod webhook_security;
 
-use credential_env::{CredentialEnvVarProvider, ensure_sandbox_api_key};
+use credential_env::{
+    CredentialEnvVarProvider, ensure_sandbox_api_key, gateway_credentials_allowed,
+};
 
 use {
     moltis_providers::{PendingDiscoveries, ProviderRegistry},
@@ -53,6 +54,7 @@ use crate::server::helpers::fs_tools_host_warning_message;
 use crate::server::helpers::start_skill_hot_reload_watcher;
 
 pub(super) struct PostStateInputs {
+    pub profile: crate::server::CoreStartupProfile,
     pub bind: String,
     pub port: u16,
     pub config: moltis_config::MoltisConfig,
@@ -243,6 +245,7 @@ pub(super) async fn complete_startup(
     inputs: PostStateInputs,
 ) -> anyhow::Result<PreparedGatewayCore> {
     let PostStateInputs {
+        profile,
         bind,
         port,
         config,
@@ -406,7 +409,7 @@ pub(super) async fn complete_startup(
         vault.clone(),
     );
 
-    {
+    if !profile.is_headless() {
         let (webhook_tx, webhook_rx) = tokio::sync::mpsc::channel::<i64>(256);
         let webhook_store: Arc<dyn moltis_webhooks::store::WebhookStore> = {
             let inner: Arc<dyn moltis_webhooks::store::WebhookStore> = Arc::new(
@@ -485,7 +488,9 @@ pub(super) async fn complete_startup(
             .or_else(|| config.providers.get("local-llm"))
             .and_then(|e| e.idle_timeout_secs);
         svc.populate_lifecycle(global_timeout).await;
-        svc.lifecycle().spawn_idle_checker();
+        if !profile.is_headless() {
+            svc.lifecycle().spawn_idle_checker();
+        }
     }
 
     provider_setup_service.set_broadcaster(Arc::new(crate::provider_setup::GatewayBroadcaster {
@@ -559,7 +564,7 @@ pub(super) async fn complete_startup(
             .get("local")
             .or_else(|| config.providers.get("local-llm"))
             .and_then(|e| e.idle_timeout_secs);
-        tokio::spawn(async move {
+        let discovery = async move {
             let startup_discovery_started = std::time::Instant::now();
             let prefetched = match tokio::task::spawn_blocking(move || {
                 ProviderRegistry::collect_discoveries(startup_discovery_pending)
@@ -635,7 +640,12 @@ pub(super) async fn complete_startup(
                 BroadcastOpts::default(),
             )
             .await;
-        });
+        };
+        if profile.is_headless() {
+            discovery.await;
+        } else {
+            tokio::spawn(discovery);
+        }
     }
 
     {
@@ -646,17 +656,15 @@ pub(super) async fn complete_startup(
     #[cfg(feature = "graphql")]
     state.set_graphql_enabled(config.graphql.enabled);
 
-    {
+    let live_chat = {
         let broadcaster: Arc<dyn moltis_tools::exec::ApprovalBroadcaster> =
             Arc::new(GatewayApprovalBroadcaster::new(Arc::clone(&state)));
         // Build gateway URL for sandbox-to-gateway communication.
         // Only inject when the sandbox network policy allows host access
         // (Trusted or Bypass). With NetworkPolicy::Blocked the container
         // has --network=none and host.docker.internal won't resolve.
-        let sandbox_network_allows_host = !matches!(
-            sandbox_router.config().network,
-            moltis_tools::sandbox::NetworkPolicy::Blocked
-        );
+        let sandbox_network_allows_host =
+            gateway_credentials_allowed(profile, &sandbox_router.config().network);
         let sandbox_gateway_url = if sandbox_network_allows_host {
             let scheme = if tls_enabled_for_gateway {
                 "https"
@@ -908,6 +916,8 @@ pub(super) async fn complete_startup(
         {
             #[cfg(feature = "firecrawl")]
             let t = t.with_firecrawl(&config.tools.web.firecrawl);
+            #[cfg(feature = "trusted-network")]
+            let t = super::apply_web_fetch_network_policy(t, profile, sandbox_router.config());
             tool_registry.register_public(Box::new(t));
         }
         #[cfg(feature = "firecrawl")]
@@ -1166,15 +1176,18 @@ pub(super) async fn complete_startup(
         tool_registry.register(Box::new(moltis_tools::task_list::TaskListTool::new(
             &data_dir,
         )));
-        let mut speak_tool =
-            crate::voice_agent_tools::SpeakTool::new(Arc::clone(&state.services.tts));
-        if let Some(ref vps) = state.services.voice_persona_store {
-            speak_tool = speak_tool.with_voice_persona_store(Arc::clone(vps));
+        #[cfg(feature = "voice")]
+        {
+            let mut speak_tool =
+                crate::voice_agent_tools::SpeakTool::new(Arc::clone(&state.services.tts));
+            if let Some(ref vps) = state.services.voice_persona_store {
+                speak_tool = speak_tool.with_voice_persona_store(Arc::clone(vps));
+            }
+            tool_registry.register(Box::new(speak_tool));
+            tool_registry.register(Box::new(crate::voice_agent_tools::TranscribeTool::new(
+                Arc::clone(&state.services.stt),
+            )));
         }
-        tool_registry.register(Box::new(speak_tool));
-        tool_registry.register(Box::new(crate::voice_agent_tools::TranscribeTool::new(
-            Arc::clone(&state.services.stt),
-        )));
 
         {
             use moltis_skills::{discover::FsSkillDiscoverer, usage::SkillUsageStore};
@@ -1348,8 +1361,9 @@ pub(super) async fn complete_startup(
         }
 
         let live_chat = Arc::new(chat_service);
+        let inner_chat: Arc<dyn moltis_service_traits::ChatService> = live_chat.clone();
         let chat_with_external_agents = Arc::new(ExternalAgentChatService::new(
-            live_chat,
+            inner_chat,
             external_agent_service,
             Arc::clone(&state),
             Arc::clone(&session_store),
@@ -1360,15 +1374,22 @@ pub(super) async fn complete_startup(
         live_mcp
             .set_tool_registry(Arc::clone(&shared_tool_registry))
             .await;
+        if profile.is_headless() {
+            let started = live_mcp.manager().start_enabled().await;
+            if !started.is_empty() {
+                info!(servers = ?started, "headless MCP servers started");
+            }
+        }
         crate::mcp_service::sync_mcp_tools(live_mcp.manager(), &shared_tool_registry).await;
 
         let schemas = shared_tool_registry.read().await.list_schemas();
         let tool_names: Vec<&str> = schemas.iter().filter_map(|s| s["name"].as_str()).collect();
         info!(tools = ?tool_names, "agent tools registered");
-    }
+        live_chat
+    };
 
     #[cfg(feature = "file-watcher")]
-    {
+    if !profile.is_headless() {
         let watcher_state = Arc::clone(&state);
         tokio::spawn(async move {
             let (mut watcher, mut rx) = match start_skill_hot_reload_watcher().await {
@@ -1422,7 +1443,9 @@ pub(super) async fn complete_startup(
     let methods = Arc::new(MethodRegistry::new());
 
     #[cfg(feature = "push-notifications")]
-    let push_service: Option<Arc<crate::push::PushService>> = {
+    let push_service: Option<Arc<crate::push::PushService>> = if profile.is_headless() {
+        None
+    } else {
         match crate::push::PushService::new(&data_dir).await {
             Ok(svc) => {
                 info!("push notification service initialized");
@@ -1440,6 +1463,8 @@ pub(super) async fn complete_startup(
 
     Ok(PreparedGatewayCore {
         state: Arc::clone(&state),
+        live_chat,
+        mcp_manager: Arc::clone(live_mcp.manager()),
         methods: Arc::clone(&methods),
         webauthn_registry,
         #[cfg(feature = "msteams")]

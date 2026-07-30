@@ -373,6 +373,12 @@ pub async fn service_worker_handler() -> impl IntoResponse {
     serve_asset("sw.js", "no-cache")
 }
 
+/// Offline fallback page: `/offline.html` — precached by the service worker and
+/// served for navigations that fail while the device has no connection.
+pub async fn offline_handler() -> impl IntoResponse {
+    serve_asset("offline.html", "no-cache")
+}
+
 fn serve_asset(path: &str, cache_control: &'static str) -> axum::response::Response {
     match read_asset(path) {
         Some(body) => {

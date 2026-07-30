@@ -329,7 +329,7 @@ pub(crate) async fn run_explicit_shell_command(
     state: &Arc<dyn ChatRuntime>,
     run_id: &str,
     tool_registry: &Arc<RwLock<ToolRegistry>>,
-    session_store: &Arc<SessionStore>,
+    session_store: Option<&Arc<SessionStore>>,
     terminal_runs: &Arc<RwLock<HashSet<String>>>,
     session_key: &str,
     command: &str,
@@ -337,6 +337,7 @@ pub(crate) async fn run_explicit_shell_command(
     accept_language: Option<String>,
     conn_id: Option<String>,
     client_seq: Option<u64>,
+    working_dir: Option<String>,
 ) -> AssistantTurnOutput {
     let started = Instant::now();
     let tool_call_id = format!("sh_{}", uuid::Uuid::new_v4().simple());
@@ -369,6 +370,9 @@ pub(crate) async fn run_explicit_shell_command(
     }
     if let Some(cid) = conn_id.as_deref() {
         exec_params["_conn_id"] = serde_json::json!(cid);
+    }
+    if let Some(directory) = working_dir {
+        exec_params["_working_dir"] = serde_json::json!(directory);
     }
 
     let exec_tool = {
@@ -411,15 +415,17 @@ pub(crate) async fn run_explicit_shell_command(
                 None,
                 run_id,
             );
-            persist_tool_history_pair(
-                session_store,
-                session_key,
-                assistant_tool_call_msg,
-                tool_result_msg,
-                "failed to persist direct /sh assistant tool call",
-                "failed to persist direct /sh tool result",
-            )
-            .await;
+            if let Some(session_store) = session_store {
+                persist_tool_history_pair(
+                    session_store,
+                    session_key,
+                    assistant_tool_call_msg,
+                    tool_result_msg,
+                    "failed to persist direct /sh assistant tool call",
+                    "failed to persist direct /sh tool result",
+                )
+                .await;
+            }
 
             broadcast(
                 state,
@@ -465,15 +471,17 @@ pub(crate) async fn run_explicit_shell_command(
                 Some(error_text.clone()),
                 run_id,
             );
-            persist_tool_history_pair(
-                session_store,
-                session_key,
-                assistant_tool_call_msg,
-                tool_result_msg,
-                "failed to persist direct /sh assistant tool call",
-                "failed to persist direct /sh tool error",
-            )
-            .await;
+            if let Some(session_store) = session_store {
+                persist_tool_history_pair(
+                    session_store,
+                    session_key,
+                    assistant_tool_call_msg,
+                    tool_result_msg,
+                    "failed to persist direct /sh assistant tool call",
+                    "failed to persist direct /sh tool error",
+                )
+                .await;
+            }
 
             broadcast(
                 state,

@@ -25,6 +25,14 @@ pub(crate) trait ReplaySink: Send + Sync {
     async fn replay(&self, params: serde_json::Value) -> Result<serde_json::Value, String>;
 }
 
+fn replay_schedules_drain(result: &serde_json::Value) -> bool {
+    result
+        .get("runId")
+        .and_then(serde_json::Value::as_str)
+        .is_some()
+        || result.get("queued").and_then(serde_json::Value::as_bool) == Some(true)
+}
+
 #[async_trait::async_trait]
 impl ReplaySink for Arc<dyn moltis_service_traits::ChatService> {
     async fn replay(&self, params: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -46,96 +54,100 @@ pub(crate) async fn drain_queued_messages(
     mode: MessageQueueMode,
     sink: &dyn ReplaySink,
 ) {
-    let queued = queue.write().await.remove(session_key).unwrap_or_default();
-    if queued.is_empty() {
-        return;
-    }
+    loop {
+        let queued = queue.write().await.remove(session_key).unwrap_or_default();
+        if queued.is_empty() {
+            return;
+        }
 
-    let (group, rest) = match mode {
-        MessageQueueMode::Followup => {
-            let mut group = queued;
-            let rest = group.split_off(1.min(group.len()));
-            (group, rest)
-        },
-        // Merge only messages that share an authorization context.
-        MessageQueueMode::Collect => split_by_request_security_context(queued),
-    };
+        let (group, rest) = match mode {
+            MessageQueueMode::Followup => {
+                let mut group = queued;
+                let rest = group.split_off(1.min(group.len()));
+                (group, rest)
+            },
+            // Merge only messages that share an authorization context.
+            MessageQueueMode::Collect => split_by_request_security_context(queued),
+        };
 
-    let Some(first) = group.first() else {
-        return;
-    };
-    let collect_as_text = matches!(mode, MessageQueueMode::Collect)
-        && group.iter().all(|message| {
-            message
-                .params
-                .get("text")
-                .and_then(|value| value.as_str())
-                .is_some()
-                && message.params.get("content").is_none()
-                && message.params.get("_audio_filename").is_none()
-                && message.params.get("_document_files").is_none()
-        });
+        let Some(first) = group.first() else {
+            return;
+        };
+        let collect_as_text = matches!(mode, MessageQueueMode::Collect)
+            && group.iter().all(|message| {
+                message
+                    .params
+                    .get("text")
+                    .and_then(|value| value.as_str())
+                    .is_some()
+                    && message.params.get("content").is_none()
+                    && message.params.get("_audio_filename").is_none()
+                    && message.params.get("_document_files").is_none()
+            });
 
-    let mut replay = if collect_as_text {
-        group
-            .last()
-            .map(|message| message.params.clone())
-            .unwrap_or_else(|| first.params.clone())
-    } else {
-        first.params.clone()
-    };
+        let mut replay = if collect_as_text {
+            group
+                .last()
+                .map(|message| message.params.clone())
+                .unwrap_or_else(|| first.params.clone())
+        } else {
+            first.params.clone()
+        };
 
-    let mut remaining = if collect_as_text {
-        rest
-    } else {
-        group.iter().skip(1).cloned().chain(rest).collect()
-    };
-    if !remaining.is_empty() {
-        requeue(queue, session_key, std::mem::take(&mut remaining)).await;
-    }
+        let remaining = if collect_as_text {
+            rest
+        } else {
+            group.iter().skip(1).cloned().chain(rest).collect()
+        };
+        if !remaining.is_empty() {
+            requeue(queue, session_key, remaining).await;
+        }
 
-    replay["_queued_replay"] = json!(true);
-    match mode {
-        MessageQueueMode::Followup => {
-            info!(session = %session_key, "replaying queued message (followup)");
-        },
-        MessageQueueMode::Collect => {
-            if !collect_as_text {
+        replay["_queued_replay"] = json!(true);
+        match mode {
+            MessageQueueMode::Followup => {
+                info!(session = %session_key, "replaying queued message (followup)");
+            },
+            MessageQueueMode::Collect if !collect_as_text => {
                 info!(session = %session_key, "replaying queued non-text message individually");
-                if let Err(e) = sink.replay(replay).await {
-                    warn!(session = %session_key, error = %e, "failed to replay queued message");
-                }
-                return;
-            }
-            let combined: Vec<&str> = group
-                .iter()
-                .filter_map(|message| message.params.get("text").and_then(|value| value.as_str()))
-                .collect();
-            info!(
-                session = %session_key,
-                count = combined.len(),
-                "replaying collected messages"
-            );
-            replay["text"] = json!(combined.join("\n\n"));
-        },
-    }
+            },
+            MessageQueueMode::Collect => {
+                let combined: Vec<&str> = group
+                    .iter()
+                    .filter_map(|message| {
+                        message.params.get("text").and_then(|value| value.as_str())
+                    })
+                    .collect();
+                info!(
+                    session = %session_key,
+                    count = combined.len(),
+                    "replaying collected messages"
+                );
+                replay["text"] = json!(combined.join("\n\n"));
+            },
+        }
 
-    if let Err(e) = sink.replay(replay).await {
-        warn!(session = %session_key, error = %e, "failed to replay queued messages");
+        match sink.replay(replay).await {
+            Ok(result) if replay_schedules_drain(&result) => return,
+            Ok(_) => {
+                warn!(session = %session_key, "queued replay did not start a run; continuing with remaining queue");
+            },
+            Err(e) => {
+                warn!(session = %session_key, error = %e, "failed to replay queued messages; continuing with remaining queue");
+            },
+        }
     }
 }
 
 async fn requeue(
     queue: &Arc<RwLock<HashMap<String, Vec<QueuedMessage>>>>,
     session_key: &str,
-    rest: Vec<QueuedMessage>,
+    mut rest: Vec<QueuedMessage>,
 ) {
-    queue
-        .write()
-        .await
-        .entry(session_key.to_string())
-        .or_default()
-        .extend(rest);
+    let mut queue = queue.write().await;
+    let queued = queue.entry(session_key.to_string()).or_default();
+    rest.append(queued);
+    *queued = rest;
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -152,7 +164,23 @@ mod tests {
     impl ReplaySink for RecordingSink {
         async fn replay(&self, params: Value) -> Result<Value, String> {
             self.0.lock().await.push(params);
-            Ok(Value::Null)
+            Ok(json!({"runId": "test-run"}))
+        }
+    }
+
+    #[derive(Default)]
+    struct FailFirstSink(Mutex<Vec<Value>>);
+
+    #[async_trait::async_trait]
+    impl ReplaySink for FailFirstSink {
+        async fn replay(&self, params: Value) -> Result<Value, String> {
+            let mut calls = self.0.lock().await;
+            calls.push(params);
+            if calls.len() == 1 {
+                Err("first replay rejected".to_string())
+            } else {
+                Ok(json!({"runId": "test-run"}))
+            }
         }
     }
 
@@ -237,6 +265,26 @@ mod tests {
             "the replayed turn keeps the guest restriction"
         );
         assert_eq!(remaining(&queue).await, ["operator: hi"]);
+    }
+
+    #[tokio::test]
+    async fn failed_replay_continues_with_the_next_security_group() {
+        let queue = queue_with(vec![
+            queued("guest", Some(guest_policy())),
+            queued("operator", None),
+        ]);
+        let sink = FailFirstSink::default();
+
+        drain_queued_messages(&queue, "s", MessageQueueMode::Collect, &sink).await;
+
+        let sent = sink.0.lock().await;
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0]["text"], "guest");
+        assert_eq!(sent[0]["_tool_policy"], guest_policy());
+        assert_eq!(sent[1]["text"], "operator");
+        assert!(sent[1].get("_tool_policy").is_none());
+        drop(sent);
+        assert!(remaining(&queue).await.is_empty());
     }
 
     #[tokio::test]

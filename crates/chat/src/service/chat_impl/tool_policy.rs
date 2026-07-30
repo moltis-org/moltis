@@ -300,40 +300,36 @@ mod tests {
 
     /// Regression guard for the bug this module was extracted to fix.
     ///
-    /// `send_sync` honoured `_tool_policy` while `send` (the async path every
-    /// channel turn uses) ignored it and ran the agent with the shared
-    /// registry, so the guest restriction was a no-op on exactly the untrusted
-    /// path it exists for. A behavioural test would need a live provider and
-    /// database, so assert the structural invariant instead: neither send path
-    /// may hand a run the unfiltered `self.tool_registry`.
+    /// `send_sync` once honoured `_tool_policy` while `send` ignored it and ran
+    /// the agent with the shared registry, so the guest restriction was a no-op
+    /// on exactly the untrusted path it exists for. Both trait methods now route
+    /// through `send_impl`; keep request security in that shared path.
     ///
     /// If you are refactoring and this fails, keep the invariant rather than
     /// deleting the test — every run started from a send path must receive the
     /// registry returned by `resolve_request_tool_registry`.
     #[test]
     fn both_send_paths_apply_request_tool_security() {
-        const SEND_ASYNC: &str = include_str!("send.rs");
-        const SEND_SYNC: &str = include_str!("../chat_impl.rs");
+        const SEND_IMPL: &str = include_str!("send.rs");
+        const CHAT_IMPL: &str = include_str!("../chat_impl.rs");
 
-        for (path, src) in [
-            ("chat_impl/send.rs", SEND_ASYNC),
-            ("chat_impl.rs", SEND_SYNC),
-        ] {
-            assert!(
-                src.contains("resolve_request_tool_registry"),
-                "{path} must resolve the request-scoped tool registry"
-            );
-            assert!(
-                src.contains("parse_request_tool_audience"),
-                "{path} must parse the request tool audience"
-            );
-            assert!(
-                !src.contains("Arc::clone(&self.tool_registry)"),
-                "{path} passes the unfiltered shared registry to a run — a caller's \
-                 `_tool_policy` restriction would be silently ignored. Use the registry \
-                 from resolve_request_tool_registry instead."
-            );
-        }
+        assert!(
+            CHAT_IMPL.matches("self.send_impl(").count() >= 2,
+            "both ChatService send methods must delegate to send_impl"
+        );
+        assert!(
+            SEND_IMPL.contains("resolve_request_tool_registry"),
+            "send_impl must resolve the request-scoped tool registry"
+        );
+        assert!(
+            SEND_IMPL.contains("parse_request_tool_audience"),
+            "send_impl must parse the request tool audience"
+        );
+        assert!(
+            !SEND_IMPL.contains("Arc::clone(&self.tool_registry)"),
+            "send_impl passes the unfiltered shared registry to a run; use the registry \
+             from resolve_request_tool_registry instead"
+        );
     }
 
     /// The gateway skips the untrusted tool ceiling for an operator direct-chat

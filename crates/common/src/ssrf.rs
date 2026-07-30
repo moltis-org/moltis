@@ -6,13 +6,22 @@ use crate::{Error, Result};
 
 #[must_use]
 fn is_private_ipv4(v4: &std::net::Ipv4Addr) -> bool {
-    v4.is_loopback()
+    let [a, b, c, d] = v4.octets();
+    a == 0
+        || v4.is_loopback()
         || v4.is_private()
         || v4.is_link_local()
         || v4.is_broadcast()
         || v4.is_unspecified()
-        || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
-        || (v4.octets()[0] == 192 && v4.octets()[1] == 0 && v4.octets()[2] == 0)
+        || v4.is_multicast()
+        || (a == 100 && (64..=127).contains(&b))
+        || (a == 192 && b == 0 && c == 0 && !matches!(d, 9 | 10))
+        || (a == 192 && b == 0 && c == 2)
+        || (a == 198 && matches!(b, 18 | 19))
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 192 && b == 88 && c == 99)
+        || (a == 203 && b == 0 && c == 113)
+        || a >= 240
 }
 
 /// Check if an IP is covered by an SSRF allowlist entry.
@@ -21,18 +30,46 @@ pub fn is_ssrf_allowed(ip: &IpAddr, allowlist: &[ipnet::IpNet]) -> bool {
     allowlist.iter().any(|net| net.contains(ip))
 }
 
-/// Check if an IP address is private, loopback, link-local, or otherwise
-/// unsuitable for outbound fetches.
+/// Check if an IP address is non-global and therefore unsuitable for
+/// attacker-controlled outbound requests.
 #[must_use]
 pub fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_private_ipv4(v4),
         IpAddr::V6(v6) => {
+            let segments = v6.segments();
+            let site_local = (segments[0] & 0xffc0) == 0xfec0;
+            let documentation_3fff = segments[0] == 0x3fff && (segments[1] & 0xf000) == 0;
+            let documentation_2001 = segments[0] == 0x2001 && segments[1] == 0x0db8;
+            let discard_only = segments[..4] == [0x0100, 0, 0, 0];
+            let dummy_prefix = segments[..4] == [0x0100, 0, 0, 1];
+            let local_translation =
+                segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 1;
+            let ipv4_compatible = segments[..6] == [0, 0, 0, 0, 0, 0];
+            let bits = u128::from_be_bytes(v6.octets());
+            let ietf_protocol_exception = bits == 0x2001_0001_0000_0000_0000_0000_0000_0001
+                || bits == 0x2001_0001_0000_0000_0000_0000_0000_0002
+                || (segments[0] == 0x2001 && segments[1] == 3)
+                || (segments[0] == 0x2001 && segments[1] == 4 && segments[2] == 0x0112)
+                || (segments[0] == 0x2001 && (0x20..=0x3f).contains(&segments[1]));
+            let ietf_protocol_assignment =
+                segments[0] == 0x2001 && segments[1] < 0x0200 && !ietf_protocol_exception;
             v6.is_loopback()
                 || v6.is_unspecified()
-                || (v6.segments()[0] & 0xFE00) == 0xFC00
-                || (v6.segments()[0] & 0xFFC0) == 0xFE80
-                || v6.to_ipv4_mapped().is_some_and(|v4| is_private_ipv4(&v4))
+                || v6.is_multicast()
+                || v6.to_ipv4_mapped().is_some()
+                || (segments[0] & 0xfe00) == 0xfc00
+                || (segments[0] & 0xffc0) == 0xfe80
+                || site_local
+                || documentation_3fff
+                || documentation_2001
+                || discard_only
+                || dummy_prefix
+                || local_translation
+                || ipv4_compatible
+                || ietf_protocol_assignment
+                || segments[0] == 0x2002
+                || segments[0] == 0x5f00
         },
     }
 }
@@ -45,7 +82,7 @@ fn validate_ssrf_ips(host: &str, ips: &[IpAddr], allowlist: &[ipnet::IpNet]) -> 
     for ip in ips {
         if is_private_ip(ip) && !is_ssrf_allowed(ip, allowlist) {
             return Err(Error::message(format!(
-                "SSRF blocked: {host} resolves to private IP {ip}"
+                "SSRF blocked: {host} resolves to non-global IP {ip}"
             )));
         }
     }
@@ -53,8 +90,7 @@ fn validate_ssrf_ips(host: &str, ips: &[IpAddr], allowlist: &[ipnet::IpNet]) -> 
     Ok(())
 }
 
-/// Resolve the URL host and reject private/loopback/link-local IPs unless
-/// explicitly allowlisted.
+/// Resolve the URL host and reject non-global IPs unless explicitly allowlisted.
 pub async fn ssrf_check(url: &Url, allowlist: &[ipnet::IpNet]) -> Result<()> {
     let host = url
         .host_str()
@@ -84,6 +120,7 @@ mod tests {
     #[test]
     fn private_ip_v4_rules() {
         for addr in [
+            "0.1.2.3",
             "127.0.0.1",
             "192.168.1.1",
             "10.0.0.1",
@@ -92,13 +129,29 @@ mod tests {
             "0.0.0.0",
             "100.64.0.1",
             "192.0.0.1",
+            "192.0.2.1",
+            "198.18.0.1",
+            "198.51.100.1",
+            "192.88.99.2",
+            "203.0.113.1",
+            "224.0.0.1",
+            "233.252.0.1",
+            "240.0.0.1",
+            "255.255.255.255",
         ] {
             let ip =
                 IpAddr::from_str(addr).unwrap_or_else(|error| panic!("valid test ip: {error}"));
             assert!(is_private_ip(&ip), "{addr} should be private");
         }
 
-        for addr in ["8.8.8.8", "1.1.1.1"] {
+        for addr in [
+            "8.8.8.8",
+            "1.1.1.1",
+            "93.184.216.34",
+            "192.0.0.9",
+            "192.0.0.10",
+            "192.31.196.1",
+        ] {
             let ip =
                 IpAddr::from_str(addr).unwrap_or_else(|error| panic!("valid test ip: {error}"));
             assert!(!is_private_ip(&ip), "{addr} should be public");
@@ -112,6 +165,19 @@ mod tests {
             "::",
             "fd00::1",
             "fe80::1",
+            "fec0::1",
+            "ff02::1",
+            "ff0e::1",
+            "2001:2::1",
+            "2001:db8::1",
+            "100:0:0:1::1",
+            "3fff::1",
+            "64:ff9b:1::1",
+            "::192.0.2.1",
+            "::ffff:8.8.8.8",
+            "2001::1",
+            "2002::1",
+            "5f00::1",
             "::ffff:127.0.0.1",
             "::ffff:10.0.0.1",
             "::ffff:192.168.1.1",
@@ -121,13 +187,21 @@ mod tests {
             assert!(is_private_ip(&ip), "{addr} should be private");
         }
 
-        let public = IpAddr::from_str("2607:f8b0:4004:800::200e")
-            .unwrap_or_else(|error| panic!("valid test ip: {error}"));
-        assert!(!is_private_ip(&public));
-
-        let mapped_public = IpAddr::from_str("::ffff:8.8.8.8")
-            .unwrap_or_else(|error| panic!("valid test ip: {error}"));
-        assert!(!is_private_ip(&mapped_public));
+        for addr in [
+            "2607:f8b0:4004:800::200e",
+            "2606:4700:4700::1111",
+            "64:ff9b::808:808",
+            "2001:1::1",
+            "2001:1::2",
+            "2001:3::1",
+            "2001:4:112::1",
+            "2001:20::1",
+            "2001:30::1",
+        ] {
+            let public =
+                IpAddr::from_str(addr).unwrap_or_else(|error| panic!("valid test ip: {error}"));
+            assert!(!is_private_ip(&public), "{addr} should be global");
+        }
     }
 
     #[test]

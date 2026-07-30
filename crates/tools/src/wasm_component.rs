@@ -298,10 +298,10 @@ mod tests {
         super::{HttpError, HttpHostImpl, HttpRequest, PureToolValue, marshal_tool_result},
         std::{
             collections::HashMap,
-            io::{Read, Write},
+            io::{ErrorKind, Read, Write},
             net::TcpListener,
             thread::{self, JoinHandle},
-            time::Duration,
+            time::{Duration, Instant},
         },
     };
 
@@ -338,19 +338,33 @@ mod tests {
     fn spawn_http_server(body: &'static [u8], delay: Option<Duration>) -> (String, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
         let handle = thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut request_buffer = [0_u8; 2048];
-                let _ = stream.read(&mut request_buffer);
-                if let Some(wait) = delay {
-                    thread::sleep(wait);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(5)))
+                            .unwrap();
+                        let mut request_buffer = [0_u8; 2048];
+                        let _ = stream.read(&mut request_buffer);
+                        if let Some(wait) = delay {
+                            thread::sleep(wait);
+                        }
+                        let headers = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = stream.write_all(headers.as_bytes());
+                        let _ = stream.write_all(body);
+                        return;
+                    },
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    },
+                    Err(_) => return,
                 }
-                let headers = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = stream.write_all(headers.as_bytes());
-                let _ = stream.write_all(body);
             }
         });
         (format!("http://{addr}/"), handle)
