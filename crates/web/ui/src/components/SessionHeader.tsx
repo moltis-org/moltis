@@ -18,6 +18,7 @@ import {
 	setSessionReplying,
 	switchSession,
 } from "../sessions";
+import { saveSessionAsMarkdown } from "../sessions/session-markdown";
 import { sessionStore } from "../stores/session-store";
 import { ComboSelect, confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui";
 
@@ -52,6 +53,7 @@ export interface SessionHeaderProps {
 	showSelectors?: boolean;
 	showName?: boolean;
 	showShare?: boolean;
+	showSaveMarkdown?: boolean;
 	showFork?: boolean;
 	showStop?: boolean;
 	showClear?: boolean;
@@ -118,6 +120,7 @@ export function SessionHeader({
 	showSelectors = true,
 	showName = true,
 	showShare = true,
+	showSaveMarkdown = false,
 	showFork = true,
 	showStop = true,
 	showClear = true,
@@ -141,6 +144,7 @@ export function SessionHeader({
 
 	const [renaming, setRenaming] = useState(false);
 	const [clearing, setClearing] = useState(false);
+	const [savingMarkdown, setSavingMarkdown] = useState(false);
 	const [stopping, setStopping] = useState(false);
 	const [switchingAgent, setSwitchingAgent] = useState(false);
 	const [agentOptions, setAgentOptions] = useState<AgentOption[]>(initialAgentOptions);
@@ -374,6 +378,18 @@ export function SessionHeader({
 		});
 	}, [onBeforeShare, shareSnapshot]);
 
+	const onSaveMarkdown = useCallback(() => {
+		if (savingMarkdown) return;
+		setSavingMarkdown(true);
+		saveSessionAsMarkdown(currentKey, fullName)
+			.then(() => showToast("Session saved as Markdown", "success"))
+			.catch((error: unknown) => {
+				const message = error instanceof Error ? error.message : "Failed to save session as Markdown";
+				showToast(message, "error");
+			})
+			.finally(() => setSavingMarkdown(false));
+	}, [currentKey, fullName, savingMarkdown]);
+
 	const onArchive = useCallback(() => {
 		if (!(session && canArchive)) return;
 		if (typeof onBeforeArchive === "function") {
@@ -599,6 +615,20 @@ export function SessionHeader({
 					>
 						<span className="icon icon-sm icon-share shrink-0" />
 						Share
+					</button>
+				)}
+				{showSaveMarkdown && (
+					<button
+						type="button"
+						className={`${actionButtonClass} inline-flex items-center gap-1.5`}
+						onClick={onSaveMarkdown}
+						title="Save as Markdown"
+						aria-label="Save as Markdown"
+						aria-busy={savingMarkdown}
+						disabled={savingMarkdown}
+					>
+						<span className="icon icon-sm icon-document shrink-0" />
+						<span className="hidden md:inline">Save .md</span>
 					</button>
 				)}
 				{showDelete && !isMain && (
