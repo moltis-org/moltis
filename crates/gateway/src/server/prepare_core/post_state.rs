@@ -1,13 +1,10 @@
 use {
     super::feedback::install_feedback,
+    secrecy::Secret,
     std::{
         path::PathBuf,
         sync::{Arc, atomic::Ordering},
     },
-};
-
-use {
-    secrecy::Secret,
     tracing::{debug, info, warn},
 };
 
