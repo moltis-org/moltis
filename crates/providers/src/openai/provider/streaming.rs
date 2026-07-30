@@ -53,7 +53,7 @@ impl OpenAiProvider {
                 tools_count = tools.len(),
                 "openai stream_responses_sse request"
             );
-            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai responses stream request body");
+            trace!(body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()), "openai responses stream request body prepared");
 
             let url = self.responses_sse_url();
             let resp = match self
@@ -195,7 +195,7 @@ impl OpenAiProvider {
                 reasoning_effort = ?self.reasoning_effort,
                 "openai stream_with_tools request (sse)"
             );
-            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai stream request body (sse)");
+            trace!(body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()), "openai stream request body prepared");
 
             let resp = match self.send_chat_completions_request(&body).await {
                 Ok(r) => {

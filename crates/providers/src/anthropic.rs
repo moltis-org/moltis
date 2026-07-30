@@ -141,7 +141,10 @@ impl AnthropicProvider {
         }
 
         debug!(model = %self.model, "anthropic probe request");
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "anthropic probe request body");
+        trace!(
+            body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()),
+            "anthropic probe request body prepared"
+        );
 
         let http_resp = self
             .client
@@ -157,7 +160,7 @@ impl AnthropicProvider {
         if !status.is_success() {
             let retry_after_ms = retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
-            warn!(status = %status, body = %body_text, "anthropic probe API error");
+            warn!(status = %status, body_bytes = body_text.len(), "anthropic probe API error");
             anyhow::bail!(
                 "{}",
                 with_retry_after_marker(
@@ -779,7 +782,10 @@ impl LlmProvider for AnthropicProvider {
             reasoning_effort = ?self.reasoning_effort,
             "anthropic complete request"
         );
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "anthropic request body");
+        trace!(
+            body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()),
+            "anthropic request body prepared"
+        );
 
         let http_resp = self
             .client
@@ -795,7 +801,7 @@ impl LlmProvider for AnthropicProvider {
         if !status.is_success() {
             let retry_after_ms = retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
-            warn!(status = %status, body = %body_text, "anthropic API error");
+            warn!(status = %status, body_bytes = body_text.len(), "anthropic API error");
             anyhow::bail!(
                 "{}",
                 with_retry_after_marker(
@@ -806,7 +812,10 @@ impl LlmProvider for AnthropicProvider {
         }
 
         let resp = http_resp.json::<serde_json::Value>().await?;
-        trace!(response = %resp, "anthropic raw response");
+        trace!(
+            response_bytes = serde_json::to_vec(&resp).map_or(0, |value| value.len()),
+            "anthropic response received"
+        );
 
         let content = resp["content"].as_array().cloned().unwrap_or_default();
 
@@ -927,7 +936,7 @@ impl LlmProvider for AnthropicProvider {
                 reasoning_effort = ?self.reasoning_effort,
                 "anthropic stream_with_tools request"
             );
-            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "anthropic stream request body");
+            trace!(body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()), "anthropic stream request body prepared");
 
             let resp = match self
                 .client

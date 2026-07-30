@@ -487,8 +487,8 @@ jobs:
       - name: Export GraphQL schema and generate project
         run: |
           cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls
-          ./scripts/generate-ios-graphql.sh
           ./scripts/generate-ios-project.sh
+          ./scripts/generate-ios-graphql.sh
 
       - name: Build iOS app
         run: |

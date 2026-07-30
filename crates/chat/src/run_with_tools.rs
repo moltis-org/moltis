@@ -618,9 +618,12 @@ pub(crate) async fn run_with_tools(
                                         warn!("failed to save screenshot media: {e}");
                                     }
                                 });
-                                let sanitized = SessionStore::key_to_filename(&sk_media);
-                                r["screenshot"] =
-                                    Value::String(format!("media/{sanitized}/{tool_call_id}.png"));
+                                if let Ok(media_ref) = SessionStore::media_reference(
+                                    &sk_media,
+                                    &format!("{tool_call_id}.png"),
+                                ) {
+                                    r["screenshot"] = Value::String(media_ref);
+                                }
                             }
                             // If screenshot is still a data URI (decode failed), strip it.
                             let strip_screenshot = r
@@ -1114,7 +1117,7 @@ pub(crate) async fn run_with_tools(
                 run_id,
                 iterations,
                 tool_calls = tool_calls_made,
-                response = %display_text,
+                response_bytes = display_text.len(),
                 silent = is_silent,
                 "agent run complete"
             );

@@ -262,6 +262,7 @@ mod tests {
             "_session_key": "abc123",
             "_accept_language": "en",
             "_conn_id": "conn-42",
+            "_working_dir": "/workspace/project",
             "encoding": "utf-8"
         });
 
@@ -282,6 +283,7 @@ mod tests {
         assert!(!map.contains_key("_session_key"));
         assert!(!map.contains_key("_accept_language"));
         assert!(!map.contains_key("_conn_id"));
+        assert!(!map.contains_key("_working_dir"));
     }
 
     #[tokio::test]

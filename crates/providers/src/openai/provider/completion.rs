@@ -71,7 +71,10 @@ impl OpenAiProvider {
 
         let url = self.chat_completions_url();
         debug!(model = %self.model, url = %url, "openai probe request");
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai probe request body");
+        trace!(
+            body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()),
+            "openai probe request body prepared"
+        );
 
         let http_resp = self.send_chat_completions_request(&body).await?;
 
@@ -85,7 +88,7 @@ impl OpenAiProvider {
                     model = %self.model,
                     provider = %self.provider_name,
                     url = %url,
-                    body = %body_text,
+                    body_bytes = body_text.len(),
                     "openai probe API error"
                 );
             } else {
@@ -173,7 +176,10 @@ impl OpenAiProvider {
         self.apply_reasoning_effort_responses(&mut body);
 
         debug!(model = %self.model, "openai responses probe request");
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai responses probe request body");
+        trace!(
+            body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()),
+            "openai responses probe request body prepared"
+        );
 
         let url = self.responses_sse_url();
         let http_resp = self
@@ -193,7 +199,7 @@ impl OpenAiProvider {
                 status = %status,
                 model = %self.model,
                 provider = %self.provider_name,
-                body = %body_text,
+                body_bytes = body_text.len(),
                 "openai responses probe API error"
             );
             anyhow::bail!(
@@ -335,7 +341,10 @@ impl OpenAiProvider {
             reasoning_effort = ?self.reasoning_effort,
             "openai complete request"
         );
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai request body");
+        trace!(
+            body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()),
+            "openai request body prepared"
+        );
 
         let http_resp = self.send_chat_completions_request(&body).await?;
 
@@ -348,7 +357,7 @@ impl OpenAiProvider {
                     status = %status,
                     model = %self.model,
                     provider = %self.provider_name,
-                    body = %body_text,
+                    body_bytes = body_text.len(),
                     "openai API error"
                 );
             } else {
@@ -369,7 +378,10 @@ impl OpenAiProvider {
         }
 
         let resp = http_resp.json::<serde_json::Value>().await?;
-        trace!(response = %resp, "openai raw response");
+        trace!(
+            response_bytes = serde_json::to_vec(&resp).map_or(0, |value| value.len()),
+            "openai response received"
+        );
 
         let message = &resp["choices"][0]["message"];
 
@@ -423,7 +435,10 @@ impl OpenAiProvider {
             tools_count = tools.len(),
             "openai complete_responses request"
         );
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai responses request body");
+        trace!(
+            body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()),
+            "openai responses request body prepared"
+        );
 
         let url = self.responses_sse_url();
         let http_resp = self

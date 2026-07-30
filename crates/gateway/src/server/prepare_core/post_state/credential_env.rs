@@ -8,6 +8,15 @@ use {
 
 use crate::auth;
 
+use crate::server::CoreStartupProfile;
+
+pub(super) fn gateway_credentials_allowed(
+    profile: CoreStartupProfile,
+    network: &moltis_tools::sandbox::NetworkPolicy,
+) -> bool {
+    !profile.is_headless() && *network != moltis_tools::sandbox::NetworkPolicy::Blocked
+}
+
 pub(super) struct CredentialEnvVarProvider {
     pub(super) store: Arc<auth::CredentialStore>,
     pub(super) gateway_url: Option<String>,
@@ -66,5 +75,22 @@ pub(super) async fn ensure_sandbox_api_key(store: &auth::CredentialStore) -> Opt
             warn!(error = %e, "failed to create sandbox API key");
             None
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn headless_profiles_never_create_gateway_credentials() {
+        assert!(!gateway_credentials_allowed(
+            CoreStartupProfile::Headless,
+            &moltis_tools::sandbox::NetworkPolicy::Trusted,
+        ));
+        assert!(!gateway_credentials_allowed(
+            CoreStartupProfile::Headless,
+            &moltis_tools::sandbox::NetworkPolicy::Bypass,
+        ));
     }
 }

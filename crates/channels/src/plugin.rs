@@ -624,6 +624,24 @@ pub trait ChannelOutbound: Send + Sync {
         payload: &ReplyPayload,
         reply_to: Option<&str>,
     ) -> Result<()>;
+
+    /// Send media and report the ids of the messages it produced.
+    ///
+    /// Voice replies are often the primary assistant answer a channel user will
+    /// react to, so they need the same trace attribution as text replies.
+    /// Channels that cannot report ids inherit this fallback and lose feedback
+    /// attribution rather than losing the reply.
+    async fn send_media_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        payload: &ReplyPayload,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_media(account_id, to, payload, reply_to).await?;
+        Ok(Vec::new())
+    }
+
     /// Send text and report the ids of the messages it produced.
     ///
     /// Feedback attribution needs the id of the message the user will react

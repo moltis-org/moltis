@@ -238,7 +238,10 @@ impl LlmProvider for KimiCodeProvider {
             tools_count = tools.len(),
             "kimi-code complete request"
         );
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "kimi-code request body");
+        trace!(
+            body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()),
+            "kimi-code request body prepared"
+        );
 
         let mut request = self
             .client
@@ -254,7 +257,7 @@ impl LlmProvider for KimiCodeProvider {
         if !status.is_success() {
             let retry_after_ms = super::retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
-            warn!(status = %status, body = %body_text, "kimi-code API error");
+            warn!(status = %status, body_bytes = body_text.len(), "kimi-code API error");
             let hint = build_access_denied_hint(status, &body_text);
             if let Some(hint) = hint {
                 anyhow::bail!(
@@ -275,7 +278,10 @@ impl LlmProvider for KimiCodeProvider {
         }
 
         let resp = http_resp.json::<serde_json::Value>().await?;
-        trace!(response = %resp, "kimi-code raw response");
+        trace!(
+            response_bytes = serde_json::to_vec(&resp).map_or(0, |value| value.len()),
+            "kimi-code response received"
+        );
 
         let message = &resp["choices"][0]["message"];
 
@@ -334,7 +340,7 @@ impl LlmProvider for KimiCodeProvider {
                 tools_count = tools.len(),
                 "kimi-code stream_with_tools request"
             );
-            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "kimi-code stream request body");
+            trace!(body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()), "kimi-code stream request body prepared");
 
             let mut request = self
                 .client

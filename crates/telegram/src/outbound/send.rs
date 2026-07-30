@@ -378,6 +378,16 @@ impl ChannelOutbound for TelegramOutbound {
         super::media::send_media_impl(self, account_id, to, payload, reply_to).await
     }
 
+    async fn send_media_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        payload: &ReplyPayload,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        super::media::send_media_reporting_ids_impl(self, account_id, to, payload, reply_to).await
+    }
+
     async fn send_location(
         &self,
         account_id: &str,

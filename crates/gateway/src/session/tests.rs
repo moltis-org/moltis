@@ -660,7 +660,7 @@ mod tests {
                 &serde_json::json!({
                     "role": "assistant",
                     "content": "hi there",
-                    "audio": existing_path,
+                    "audio": existing_path.clone(),
                     "tts_provider": "openai",
                     "run_id": "run-abc",
                 }),
@@ -681,7 +681,7 @@ mod tests {
             .expect("voice generate");
 
         assert_eq!(result["reused"], true);
-        assert_eq!(result["audio"].as_str(), Some("media/main/voice-msg-1.ogg"));
+        assert_eq!(result["audio"].as_str(), Some(existing_path.as_str()));
         assert_eq!(result["ttsProvider"].as_str(), Some("openai"));
         assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 0);
     }
@@ -731,7 +731,10 @@ mod tests {
 
         assert_eq!(result["reused"], false);
         let audio_path = result["audio"].as_str().unwrap_or_default().to_string();
-        assert_eq!(audio_path, "media/main/voice-msg-1.mp3");
+        assert_eq!(
+            audio_path,
+            SessionStore::media_reference("main", "voice-msg-1.mp3").expect("media reference")
+        );
         assert_eq!(result["ttsProvider"].as_str(), Some("openai"));
         assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 1);
         let convert_params = mock_tts
@@ -800,7 +803,10 @@ mod tests {
 
         assert_eq!(result["reused"], false);
         let audio_path = result["audio"].as_str().unwrap_or_default().to_string();
-        assert_eq!(audio_path, "media/main/voice-msg-1.ogg");
+        assert_eq!(
+            audio_path,
+            SessionStore::media_reference("main", "voice-msg-1.ogg").expect("media reference")
+        );
         assert_eq!(result["ttsProvider"].as_str(), Some("elevenlabs"));
         let convert_params = mock_tts
             .last_convert_params
@@ -873,7 +879,7 @@ mod tests {
                 &serde_json::json!({
                     "role": "assistant",
                     "content": "assistant answer",
-                    "audio": existing_path,
+                    "audio": existing_path.clone(),
                     "run_id": "run-target",
                 }),
             )
@@ -896,7 +902,7 @@ mod tests {
 
         assert_eq!(result["reused"], true);
         assert_eq!(result["messageIndex"], 2);
-        assert_eq!(result["audio"].as_str(), Some("media/main/voice-msg-2.ogg"));
+        assert_eq!(result["audio"].as_str(), Some(existing_path.as_str()));
         assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 0);
     }
 

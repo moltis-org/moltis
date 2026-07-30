@@ -119,6 +119,42 @@ pub(crate) async fn deliver_text_reply(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn deliver_media_reply(
+    outbound: &Arc<dyn moltis_channels::plugin::ChannelOutbound>,
+    feedback: Option<&moltis_channels::FeedbackService>,
+    target: &moltis_channels::ChannelReplyTarget,
+    to: &str,
+    payload: &moltis_common::types::ReplyPayload,
+    reply_to: Option<&str>,
+    session_key: &str,
+    trace_correlation_key: &str,
+) {
+    match outbound
+        .send_media_reporting_ids(&target.account_id, to, payload, reply_to)
+        .await
+    {
+        Ok(message_ids) => {
+            crate::channel_feedback::record_reply_trace(
+                feedback,
+                target,
+                &message_ids,
+                session_key,
+                trace_correlation_key,
+            )
+            .await;
+        },
+        Err(e) => {
+            warn!(
+                account_id = target.account_id,
+                chat_id = target.chat_id,
+                thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                "failed to send channel voice reply: {e}"
+            );
+        },
+    }
+}
+
 pub(crate) async fn deliver_channel_replies_to_targets(
     outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
     targets: Vec<moltis_channels::ChannelReplyTarget>,
@@ -163,17 +199,17 @@ pub(crate) async fn deliver_channel_replies_to_targets(
 
                         if text_already_streamed {
                             // Text was already streamed — send voice audio only.
-                            if let Err(e) = outbound
-                                .send_media(&target.account_id, &to, &payload, reply_to)
-                                .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send channel voice reply: {e}"
-                                );
-                            }
+                            deliver_media_reply(
+                                &outbound,
+                                feedback.as_deref(),
+                                &target,
+                                &to,
+                                &payload,
+                                reply_to,
+                                &session_key,
+                                &trace_correlation_key,
+                            )
+                            .await;
                             // The answer went out some other way, so the logbook is the
                             // only text message of this turn.
                             deliver_logbook_follow_up(
@@ -199,17 +235,17 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             if fits_in_caption {
                                 // Short transcript fits as a caption on the voice message.
                                 payload.text = transcript;
-                                if let Err(e) = outbound
-                                    .send_media(&target.account_id, &to, &payload, reply_to)
-                                    .await
-                                {
-                                    warn!(
-                                        account_id = target.account_id,
-                                        chat_id = target.chat_id,
-                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                        "failed to send channel voice reply: {e}"
-                                    );
-                                }
+                                deliver_media_reply(
+                                    &outbound,
+                                    feedback.as_deref(),
+                                    &target,
+                                    &to,
+                                    &payload,
+                                    reply_to,
+                                    &session_key,
+                                    &trace_correlation_key,
+                                )
+                                .await;
                                 // The answer went out some other way, so the logbook is the
                                 // only text message of this turn.
                                 deliver_logbook_follow_up(
@@ -225,17 +261,17 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             } else {
                                 // Transcript too long for a caption — send voice
                                 // without caption, then the full text as a follow-up.
-                                if let Err(e) = outbound
-                                    .send_media(&target.account_id, &to, &payload, reply_to)
-                                    .await
-                                {
-                                    warn!(
-                                        account_id = target.account_id,
-                                        chat_id = target.chat_id,
-                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                        "failed to send channel voice reply: {e}"
-                                    );
-                                }
+                                deliver_media_reply(
+                                    &outbound,
+                                    feedback.as_deref(),
+                                    &target,
+                                    &to,
+                                    &payload,
+                                    reply_to,
+                                    &session_key,
+                                    &trace_correlation_key,
+                                )
+                                .await;
                                 // The transcript follow-up is the readable form
                                 // of this turn's answer, so it is as much a
                                 // reaction target as a plain text reply and
@@ -286,17 +322,17 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                 },
                 _ => match tts_payload {
                     Some(payload) => {
-                        if let Err(e) = outbound
-                            .send_media(&target.account_id, &to, &payload, reply_to)
-                            .await
-                        {
-                            warn!(
-                                account_id = target.account_id,
-                                chat_id = target.chat_id,
-                                thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                "failed to send channel voice reply: {e}"
-                            );
-                        }
+                        deliver_media_reply(
+                            &outbound,
+                            feedback.as_deref(),
+                            &target,
+                            &to,
+                            &payload,
+                            reply_to,
+                            &session_key,
+                            &trace_correlation_key,
+                        )
+                        .await;
                     },
                     None if text_already_streamed => {
                         // The answer went out some other way, so the logbook is the
@@ -378,7 +414,25 @@ mod tests {
             _payload: &ReplyPayload,
             _reply_to: Option<&str>,
         ) -> moltis_channels::Result<()> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("send_media");
             Ok(())
+        }
+
+        async fn send_media_reporting_ids(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _payload: &ReplyPayload,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<Vec<String>> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push("send_media_reporting_ids");
+            Ok(vec!["media-1".into()])
         }
 
         async fn send_text_reporting_ids(
@@ -524,13 +578,44 @@ mod tests {
             .next()
             .unwrap_or_default()
             .to_string();
-        for forbidden in [".send_text(", ".send_text_with_suffix(", ".send_html("] {
+        for forbidden in [
+            ".send_text(",
+            ".send_text_with_suffix(",
+            ".send_html(",
+            ".send_media(",
+        ] {
             assert!(
                 !body.contains(forbidden),
                 "delivery code calls {forbidden} — use the *_reporting_ids variant \
                  so the reply keeps its trace link"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_media_reply_uses_the_id_reporting_media_send() {
+        let recorder = Arc::new(ReportingOutbound::default());
+        let outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound> = recorder.clone();
+
+        deliver_media_reply(
+            &outbound,
+            None,
+            &reply_target(),
+            "chan",
+            &ReplyPayload {
+                text: "voice transcript".into(),
+                media: None,
+                reply_to_id: None,
+                silent: false,
+            },
+            None,
+            "session",
+            "run",
+        )
+        .await;
+
+        let calls = recorder.calls.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(*calls, vec!["send_media_reporting_ids"]);
     }
 
     #[tokio::test]
