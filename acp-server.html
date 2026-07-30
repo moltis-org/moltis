@@ -1,0 +1,326 @@
+<!DOCTYPE html><html lang="en" data-theme="light" data-theme-choice="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Documentation for Moltis, a secure persistent personal agent server."><meta name="theme-color" content="#f7f7f5"><title>Moltis as an ACP Agent - Moltis Docs</title><script>
+      const storedTheme = localStorage.getItem('moltis-docs-theme') || 'auto'
+      const media = window.matchMedia('(prefers-color-scheme: dark)')
+      const resolvedTheme = storedTheme === 'auto' ? (media.matches ? 'dark' : 'light') : storedTheme
+      document.documentElement.dataset.theme = resolvedTheme
+      document.documentElement.dataset.themeChoice = storedTheme
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolvedTheme === 'dark' ? '#111214' : '#f7f7f5')
+    </script><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:opsz,wght@14..32,400;500;600;700;800;900&display=swap" rel="stylesheet"><link rel="stylesheet" href="/_astro/Docs.CAMaEg-2.css"></head><body><div class="site-shell"><header class="topbar"><button class="nav-toggle" type="button" aria-label="Open navigation" aria-expanded="false"><span></span><span></span><span></span></button><a class="brand" href="/index.html" aria-label="Moltis documentation home"><img class="brand-mark" src="/moltis-icon.svg" alt="" width="30" height="30" aria-hidden="true"><span>Moltis</span></a><nav class="topnav" aria-label="Primary"><a href="/quickstart.html">Quickstart</a><a href="/providers.html">Providers</a><a href="/security.html">Security</a><a href="https://github.com/moltis-org/moltis">GitHub</a></nav><div class="theme-toggle" role="group" aria-label="Theme"><button type="button" data-theme-option="auto" aria-label="Use system theme">A</button><button type="button" data-theme-option="light" aria-label="Use light theme"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"></path></svg></button><button type="button" data-theme-option="dark" aria-label="Use dark theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A7.5 7.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"></path></svg></button></div></header><div class="mobile-scrim"></div><aside class="sidebar" aria-label="Documentation navigation"><div class="sidebar-search"><label class="search-label" for="docs-search">Search docs</label><input id="docs-search" type="search" placeholder="Search pages..." autocomplete="off"><div id="search-results" class="search-results" hidden></div></div><section class="sidebar-section"><h2>Start</h2><ol><li class="depth-0"><a href="/index.html">Introduction</a></li></ol></section><section class="sidebar-section"><h2>Getting Started</h2><ol><li class="depth-0"><a href="/quickstart.html">Quickstart</a></li><li class="depth-0"><a href="/installation.html">Installation</a></li><li class="depth-0"><a href="/comparison.html">Comparison</a></li><li class="depth-0"><a href="/configuration.html">Configuration</a></li><li class="depth-1"><a href="/upstream-proxy.html">Upstream Proxy</a></li><li class="depth-1"><a href="/configuration-reference.html">Configuration Reference</a></li><li class="depth-0"><a href="/local-validation.html">Local Validation</a></li><li class="depth-0"><a href="/e2e-testing.html">End-to-End Testing</a></li></ol></section><section class="sidebar-section"><h2>Features</h2><ol><li class="depth-0"><a href="/providers.html">LLM Providers</a></li><li class="depth-1"><a href="/choosing-a-provider.html">Choosing a Provider</a></li><li class="depth-1"><a href="/anthropic-oauth.html">Anthropic OAuth (FAQ)</a></li><li class="depth-0"><a href="/mcp.html">MCP Servers</a></li><li class="depth-0"><a href="/external-agents.html">External Agents</a></li><li class="depth-1"><a class="active" href="/acp-server.html">Moltis as an ACP Agent</a></li><li class="depth-0"><a href="/memory.html">Memory</a></li><li class="depth-1"><a href="/memory-surfaces.html">Memory Surfaces</a></li><li class="depth-1"><a href="/memory-comparison.html">Moltis vs OpenClaw</a></li><li class="depth-0"><a href="/hooks.html">Hooks</a></li><li class="depth-0"><a href="/local-llm.html">Local LLMs</a></li><li class="depth-0"><a href="/sandbox.html">Sandbox</a></li><li class="depth-1"><a href="/trusted-network.html">Trusted Network</a></li><li class="depth-0"><a href="/voice.html">Voice</a></li><li class="depth-0"><a href="/remote-access.html">Remote Access</a></li><li class="depth-0"><a href="/channels.html">Channels</a></li><li class="depth-1"><a href="/telegram.html">Telegram</a></li><li class="depth-1"><a href="/teams.html">Microsoft Teams</a></li><li class="depth-1"><a href="/discord.html">Discord</a></li><li class="depth-1"><a href="/slack.html">Slack</a></li><li class="depth-1"><a href="/matrix.html">Matrix</a></li><li class="depth-1"><a href="/whatsapp.html">WhatsApp</a></li><li class="depth-1"><a href="/nostr.html">Nostr</a></li><li class="depth-1"><a href="/signal.html">Signal</a></li><li class="depth-1"><a href="/channels/telephony.html">Telephony (Phone Calls)</a></li><li class="depth-0"><a href="/browser-automation.html">Browser Automation</a></li><li class="depth-0"><a href="/caldav.html">CalDAV (Calendars)</a></li><li class="depth-0"><a href="/graphql.html">GraphQL API</a></li><li class="depth-0"><a href="/session-state.html">Session State</a></li><li class="depth-0"><a href="/commands.html">Slash Commands</a></li><li class="depth-0"><a href="/modes.html">Modes</a></li><li class="depth-0"><a href="/session-branching.html">Session Branching</a></li><li class="depth-0"><a href="/checkpoints.html">Checkpoints</a></li><li class="depth-0"><a href="/compaction.html">Compaction</a></li><li class="depth-0"><a href="/tools-fs.html">Filesystem Tools</a></li><li class="depth-0"><a href="/scheduling.html">Scheduling (Cron Jobs)</a></li><li class="depth-0"><a href="/webhooks.html">Webhooks</a></li><li class="depth-0"><a href="/skill-tools.html">Skill Self-Extension</a></li><li class="depth-0"><a href="/mobile-pwa.html">Mobile PWA</a></li><li class="depth-0"><a href="/native-swift-embedding.html">Native Swift Embedding (POC)</a></li><li class="depth-0"><a href="/macos-app-ffi-bridge.html">macOS App FFI Bridge (WIP)</a></li><li class="depth-0"><a href="/openclaw-import.html">OpenClaw Import</a></li><li class="depth-0"><a href="/nodes.html">Multi-Node</a></li><li class="depth-0"><a href="/service.html">Service Management</a></li></ol></section><section class="sidebar-section"><h2>Security</h2><ol><li class="depth-0"><a href="/authentication.html">Authentication</a></li><li class="depth-0"><a href="/vault.html">Encryption at Rest (Vault)</a></li><li class="depth-0"><a href="/security.html">Security Architecture</a></li><li class="depth-0"><a href="/skills-security.html">Third-Party Skills Security</a></li><li class="depth-0"><a href="/release-verification.html">Release Verification</a></li></ol></section><section class="sidebar-section"><h2>Deployment</h2><ol><li class="depth-0"><a href="/docker.html">Docker</a></li><li class="depth-0"><a href="/cloud-deploy.html">Cloud Deploy</a></li><li class="depth-0"><a href="/sandbox-remote.html">Remote Sandboxes</a></li><li class="depth-0"><a href="/deploy-vps.html">VPS Deployment</a></li></ol></section><section class="sidebar-section"><h2>Architecture</h2><ol><li class="depth-0"><a href="/system-prompt.html">System Prompt</a></li><li class="depth-0"><a href="/frontend.html">Frontend</a></li><li class="depth-0"><a href="/streaming.html">Streaming</a></li><li class="depth-0"><a href="/sqlite-migration.html">SQLite Migrations</a></li><li class="depth-0"><a href="/metrics-and-tracing.html">Metrics &amp; Tracing</a></li><li class="depth-0"><a href="/tool-registry.html">Tool Registry</a></li><li class="depth-0"><a href="/tool-policy.html">Tool Policy</a></li><li class="depth-0"><a href="/agent-presets.html">Agent Presets</a></li><li class="depth-0"><a href="/session-tools.html">Session Tools</a></li></ol></section><section class="sidebar-section"><h2>Reference</h2><ol><li class="depth-0"><a href="/changelog.html">Changelog</a></li></ol></section></aside><main class="page-grid"><article class="content-card"><div class="eyebrow">Features</div><h1 id="moltis-as-an-acp-agent">Moltis as an ACP Agent</h1>
+<p>Moltis has long been an ACP <em>client</em>: it spawns and drives external agents such
+as <code>codex-acp</code>, <code>claude-agent-acp</code>, and Cursor’s <code>agent acp</code>. See
+<a href="/external-agents.html">External Agents</a> for that direction.</p>
+<p><code>moltis acp</code> is the inverse. It lets any ACP <em>client</em> — <a href="https://zed.dev">Zed</a>,
+Block’s <code>buzz-acp</code>, or a bespoke harness — drive Moltis the same way it would
+drive any other agent, while Moltis’s own stack (sessions, memory, tool policy,
+sandboxing, providers) stays behind the protocol.</p>
+<h2 id="usage">Usage</h2>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="bash" data-code="moltis acp"><code><span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">moltis</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> acp</span></span></code></pre>
+<p>The command speaks JSON-RPC over stdin/stdout and serves exactly one client per
+process, matching how every ACP harness spawns agents.</p>
+<p>A prompt runs a real Moltis turn — the same path the Web UI takes, with your
+configured providers, tools, memory, and session history — and streams the reply
+back as <code>session/update</code> notifications while it runs.</p>
+<h3 id="no-server-required">No server required</h3>
+<p><code>moltis acp</code> boots the Moltis stack inside the spawned process and binds no
+socket, so you do not start <code>moltis serve</code> first and it will not take a port.</p>
+<p>Startup uses a headless profile. Providers, tools, memory, sessions, and
+configured MCP servers are ready before the protocol starts, while channel
+accounts and server-only background workers are not started.</p>
+<p>Headless startup does not create or inject a gateway API key. There is no
+gateway listener for sandboxed tools to call in this mode.</p>
+<p>If sandbox networking is set to <code>trusted</code>, HTTP tools fail closed in ACP mode.
+The trusted-domain approval proxy is not started because ACP has no domain
+approval UI and the headless process does not bind listener ports.</p>
+<p>It does open the databases under the data directory, which is what lets an ACP
+session show up in the Web UI’s session list. A gateway running at the same time
+shares that state rather than being talked to over a socket.</p>
+<h3 id="checking-a-client-without-a-model">Checking a client without a model</h3>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="bash" data-code="moltis acp --echo"><code><span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">moltis</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> acp</span><span style="color:#2B5581;--shiki-dark:#79B8FF"> --echo</span></span></code></pre>
+<p><code>--echo</code> serves a built-in agent that echoes the prompt back, without loading
+providers, databases, or tools. Use it to verify a client’s handshake in
+isolation — if <code>--echo</code> works and a real run does not, the problem is your
+Moltis configuration rather than the client.</p>
+<h2 id="why-this-is-a-surface-not-a-channel">Why this is a surface, not a channel</h2>
+<p>ACP sits beside the Web UI and GraphQL rather than alongside Telegram or Nostr.
+A channel exists to manage <em>external correspondents</em> — allowlists, sender
+identities, OTP flows, per-account settings. An ACP client is the trusted local
+parent process that spawned Moltis: there is no sender to gate and no account to
+configure, so none of the channel contract applies. Do not expose the stdio
+stream to an untrusted process. The controller can ask Moltis to use configured
+tools and can provide stdio MCP servers, which is equivalent to granting that
+controller the current user’s privileges.</p>
+<h3 id="stdout-is-the-wire">stdout is the wire</h3>
+<p>Anything written to stdout that is not protocol framing corrupts the stream and
+the client disconnects with a parse error. <code>moltis acp</code> therefore redirects all
+logging to <strong>stderr</strong> for the lifetime of the process, including at
+<code>--log-level trace</code>. If you add output to any code path this command reaches,
+send it to stderr.</p>
+<h3 id="plugging-into-a-client">Plugging into a client</h3>
+<p>Any harness that spawns an ACP agent binary can point at Moltis. For example,
+<code>buzz-acp</code> spawns <code>$BUZZ_ACP_AGENT_COMMAND</code>:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="bash" data-code="BUZZ_ACP_AGENT_COMMAND=moltis BUZZ_ACP_AGENT_ARGS=&#x22;acp&#x22; buzz-acp"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">BUZZ_ACP_AGENT_COMMAND</span><span style="color:#D32F2F;--shiki-dark:#F97583">=</span><span style="color:#2B5581;--shiki-dark:#9ECBFF">moltis</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> BUZZ_ACP_AGENT_ARGS</span><span style="color:#D32F2F;--shiki-dark:#F97583">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"acp"</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> buzz-acp</span></span></code></pre>
+<p>Buzz is one client among several here, not a dependency — Moltis’s Nostr channel
+integration is a separate, unrelated feature.</p>
+<h2 id="sessions">Sessions</h2>
+<p>ACP sessions map onto Moltis session keys in a dedicated <code>acp:</code> namespace, so a
+<code>moltis acp</code> run cannot collide with a Web UI or channel session. The ACP
+<code>SessionId</code> <em>is</em> the Moltis session key, which means a client can hand an id
+straight back to <code>session/load</code> to resume a conversation.</p>
+<p>The namespace is enforced, not merely conventional: <code>session/load</code> rejects any
+id outside <code>acp:</code> with <code>invalid_params</code> before the backend is consulted, so a
+client cannot name a Web UI or channel session and drive it. <code>session/new</code>
+likewise refuses to return a key a backend minted outside the namespace.</p>
+<p>The absolute <code>cwd</code> supplied by the ACP client becomes the session’s Moltis
+project and the working directory used by filesystem and execution tools. The
+directory must exist. Loading an existing session rebinds it to the <code>cwd</code> in
+that load request.</p>
+<h3 id="client-provided-mcp-servers">Client-provided MCP servers</h3>
+<p><code>session/new</code> and <code>session/load</code> accept stdio MCP servers. They are scoped to
+that ACP session: their tools are added only to that session and they are shut
+down when the client disconnects or replaces the session setup. HTTP and SSE
+MCP transports are not advertised or accepted.</p>
+<p>Each MCP command must be an absolute path. This makes executable selection
+deterministic; it is not a sandbox. The command runs in the session <code>cwd</code> with
+only the environment variables explicitly supplied in the ACP request and does
+not inherit the Moltis process environment. Server names and environment
+variable names must be unique within the request. Internally, client MCP tools
+receive a session-specific namespace so they cannot override configured tools
+or impersonate an MCP server allowed by an agent preset.</p>
+<h2 id="resource-limits">Resource limits</h2>
+<p>The stdio surface rejects JSON-RPC frames over 4 MiB, prompts over 1 MiB or 256
+blocks, and MCP setup data over 1 MiB. One connection may retain up to 64
+sessions and run up to four session operations concurrently. History replay and
+turn updates each have an 8 MiB output budget; persisted history reads stop at
+that limit before parsing or allocating the remainder of the session file.
+These limits bound accidental or malicious memory use and prevent one
+controller from starting an unlimited number of simultaneous provider calls.</p>
+<p>Protocol payload bodies are never written to Moltis logs, including at trace
+level. MCP response bodies and child-process stderr are likewise omitted because
+they may contain prompts, tool results, or credentials. In ACP mode, payload-
+processing tracing targets are hard-filtered from both stderr and the in-memory
+gateway log buffer, so a more-specific <code>RUST_LOG</code> directive cannot re-enable
+them.</p>
+<h2 id="protocol-support">Protocol support</h2>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Method</th><th>Status</th></tr></thead><tbody><tr><td><code>initialize</code></td><td>Supported; negotiates the version and advertises capabilities</td></tr><tr><td><code>authenticate</code></td><td>No-op — the client is a trusted local parent process</td></tr><tr><td><code>session/new</code></td><td>Supported; returns a namespaced Moltis session key</td></tr><tr><td><code>session/prompt</code></td><td>Supported; streams <code>session/update</code> notifications, then returns a stop reason</td></tr><tr><td><code>session/cancel</code></td><td>Supported; aborts the in-flight turn, resolving <code>prompt</code> with <code>cancelled</code></td></tr><tr><td><code>session/load</code></td><td>Supported when the backend can resume; rejects ids outside the <code>acp:</code> namespace, then replays history before responding</td></tr><tr><td><code>fs/*</code>, <code>terminal/*</code></td><td>Not requested from the client</td></tr><tr><td><code>session/request_permission</code></td><td>Not yet routed through Moltis’s tool gate</td></tr></tbody></table>
+<p>Unknown session ids are rejected with <code>invalid_params</code>.</p>
+<p>Only text and resource-link prompt blocks are accepted. Image, audio, and
+embedded-resource blocks are rejected because those capabilities are not
+advertised.</p>
+<h3 id="what-a-turn-streams">What a turn streams</h3>
+<p>Moltis broadcasts a run’s progress as the same events the Web UI renders. They
+map onto <code>session/update</code> like this:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Moltis</th><th>ACP</th></tr></thead><tbody><tr><td>reply tokens</td><td><code>agent_message_chunk</code></td></tr><tr><td>reasoning</td><td><code>agent_thought_chunk</code> (sent incrementally)</td></tr><tr><td>tool call started</td><td><code>tool_call</code> with status <code>in_progress</code></td></tr><tr><td>tool call finished</td><td><code>tool_call_update</code> with status <code>completed</code> or <code>failed</code></td></tr></tbody></table>
+<p>Tool updates include capped raw arguments and output or error content. When a
+turn finishes, Moltis reconciles streamed reply chunks with the authoritative
+final message and emits any missing suffix before returning <code>end_turn</code>.</p>
+<p>Web-UI affordances without an ACP equivalent — queueing, iteration counters,
+voice-pending markers — are dropped rather than shown, so the client’s
+transcript is what the agent actually said.</p>
+<blockquote>
+<p><strong>Tool calls are reported, not gated.</strong> A client sees tools as they run but
+cannot veto them: <code>session/request_permission</code> is not yet wired to Moltis’s
+tool policy, so tool approval remains governed by your Moltis configuration,
+not by the ACP client. If you need a client to approve individual tool use,
+that is not available yet.</p>
+</blockquote>
+<h2 id="architecture-notes">Architecture notes</h2>
+<p>The protocol crate declares its traits with <code>#[async_trait(?Send)]</code>, so the
+handler is pinned to the thread running a <code>tokio::task::LocalSet</code>, while
+Moltis’s services are <code>Send + Sync</code>. The <code>AcpBackend</code> trait in <code>crates/acp</code> is
+where the two meet: implementations are <code>Send + Sync</code> and never learn a
+<code>LocalSet</code> exists, and streaming flows back through a plain channel that the
+protocol layer drains while the turn runs.</p><nav class="pager" aria-label="Page navigation"><a class="pager-link" href="/external-agents.html"><span>Previous</span>External Agents</a><a class="pager-link next" href="/memory.html"><span>Next</span>Memory</a></nav></article><aside class="toc-panel" aria-label="On this page"><div class="toc-title">On this page</div><nav id="page-toc"></nav></aside></main></div><script>(function(){const searchPages = [{"title":"Introduction","slug":"index","sourcePath":"index.md","url":"/index.html","section":"Start","depth":0},{"title":"Quickstart","slug":"quickstart","sourcePath":"quickstart.md","url":"/quickstart.html","section":"Getting Started","depth":0},{"title":"Installation","slug":"installation","sourcePath":"installation.md","url":"/installation.html","section":"Getting Started","depth":0},{"title":"Comparison","slug":"comparison","sourcePath":"comparison.md","url":"/comparison.html","section":"Getting Started","depth":0},{"title":"Configuration","slug":"configuration","sourcePath":"configuration.md","url":"/configuration.html","section":"Getting Started","depth":0},{"title":"Upstream Proxy","slug":"upstream-proxy","sourcePath":"upstream-proxy.md","url":"/upstream-proxy.html","section":"Getting Started","depth":1},{"title":"Configuration Reference","slug":"configuration-reference","sourcePath":"configuration-reference.md","url":"/configuration-reference.html","section":"Getting Started","depth":1},{"title":"Local Validation","slug":"local-validation","sourcePath":"local-validation.md","url":"/local-validation.html","section":"Getting Started","depth":0},{"title":"End-to-End Testing","slug":"e2e-testing","sourcePath":"e2e-testing.md","url":"/e2e-testing.html","section":"Getting Started","depth":0},{"title":"LLM Providers","slug":"providers","sourcePath":"providers.md","url":"/providers.html","section":"Features","depth":0},{"title":"Choosing a Provider","slug":"choosing-a-provider","sourcePath":"choosing-a-provider.md","url":"/choosing-a-provider.html","section":"Features","depth":1},{"title":"Anthropic OAuth (FAQ)","slug":"anthropic-oauth","sourcePath":"anthropic-oauth.md","url":"/anthropic-oauth.html","section":"Features","depth":1},{"title":"MCP Servers","slug":"mcp","sourcePath":"mcp.md","url":"/mcp.html","section":"Features","depth":0},{"title":"External Agents","slug":"external-agents","sourcePath":"external-agents.md","url":"/external-agents.html","section":"Features","depth":0},{"title":"Moltis as an ACP Agent","slug":"acp-server","sourcePath":"acp-server.md","url":"/acp-server.html","section":"Features","depth":1},{"title":"Memory","slug":"memory","sourcePath":"memory.md","url":"/memory.html","section":"Features","depth":0},{"title":"Memory Surfaces","slug":"memory-surfaces","sourcePath":"memory-surfaces.md","url":"/memory-surfaces.html","section":"Features","depth":1},{"title":"Moltis vs OpenClaw","slug":"memory-comparison","sourcePath":"memory-comparison.md","url":"/memory-comparison.html","section":"Features","depth":1},{"title":"Hooks","slug":"hooks","sourcePath":"hooks.md","url":"/hooks.html","section":"Features","depth":0},{"title":"Local LLMs","slug":"local-llm","sourcePath":"local-llm.md","url":"/local-llm.html","section":"Features","depth":0},{"title":"Sandbox","slug":"sandbox","sourcePath":"sandbox.md","url":"/sandbox.html","section":"Features","depth":0},{"title":"Trusted Network","slug":"trusted-network","sourcePath":"trusted-network.md","url":"/trusted-network.html","section":"Features","depth":1},{"title":"Voice","slug":"voice","sourcePath":"voice.md","url":"/voice.html","section":"Features","depth":0},{"title":"Remote Access","slug":"remote-access","sourcePath":"remote-access.md","url":"/remote-access.html","section":"Features","depth":0},{"title":"Channels","slug":"channels","sourcePath":"channels.md","url":"/channels.html","section":"Features","depth":0},{"title":"Telegram","slug":"telegram","sourcePath":"telegram.md","url":"/telegram.html","section":"Features","depth":1},{"title":"Microsoft Teams","slug":"teams","sourcePath":"teams.md","url":"/teams.html","section":"Features","depth":1},{"title":"Discord","slug":"discord","sourcePath":"discord.md","url":"/discord.html","section":"Features","depth":1},{"title":"Slack","slug":"slack","sourcePath":"slack.md","url":"/slack.html","section":"Features","depth":1},{"title":"Matrix","slug":"matrix","sourcePath":"matrix.md","url":"/matrix.html","section":"Features","depth":1},{"title":"WhatsApp","slug":"whatsapp","sourcePath":"whatsapp.md","url":"/whatsapp.html","section":"Features","depth":1},{"title":"Nostr","slug":"nostr","sourcePath":"nostr.md","url":"/nostr.html","section":"Features","depth":1},{"title":"Signal","slug":"signal","sourcePath":"signal.md","url":"/signal.html","section":"Features","depth":1},{"title":"Telephony (Phone Calls)","slug":"channels/telephony","sourcePath":"channels/telephony.md","url":"/channels/telephony.html","section":"Features","depth":1},{"title":"Browser Automation","slug":"browser-automation","sourcePath":"browser-automation.md","url":"/browser-automation.html","section":"Features","depth":0},{"title":"CalDAV (Calendars)","slug":"caldav","sourcePath":"caldav.md","url":"/caldav.html","section":"Features","depth":0},{"title":"GraphQL API","slug":"graphql","sourcePath":"graphql.md","url":"/graphql.html","section":"Features","depth":0},{"title":"Session State","slug":"session-state","sourcePath":"session-state.md","url":"/session-state.html","section":"Features","depth":0},{"title":"Slash Commands","slug":"commands","sourcePath":"commands.md","url":"/commands.html","section":"Features","depth":0},{"title":"Modes","slug":"modes","sourcePath":"modes.md","url":"/modes.html","section":"Features","depth":0},{"title":"Session Branching","slug":"session-branching","sourcePath":"session-branching.md","url":"/session-branching.html","section":"Features","depth":0},{"title":"Checkpoints","slug":"checkpoints","sourcePath":"checkpoints.md","url":"/checkpoints.html","section":"Features","depth":0},{"title":"Compaction","slug":"compaction","sourcePath":"compaction.md","url":"/compaction.html","section":"Features","depth":0},{"title":"Filesystem Tools","slug":"tools-fs","sourcePath":"tools-fs.md","url":"/tools-fs.html","section":"Features","depth":0},{"title":"Scheduling (Cron Jobs)","slug":"scheduling","sourcePath":"scheduling.md","url":"/scheduling.html","section":"Features","depth":0},{"title":"Webhooks","slug":"webhooks","sourcePath":"webhooks.md","url":"/webhooks.html","section":"Features","depth":0},{"title":"Skill Self-Extension","slug":"skill-tools","sourcePath":"skill-tools.md","url":"/skill-tools.html","section":"Features","depth":0},{"title":"Mobile PWA","slug":"mobile-pwa","sourcePath":"mobile-pwa.md","url":"/mobile-pwa.html","section":"Features","depth":0},{"title":"Native Swift Embedding (POC)","slug":"native-swift-embedding","sourcePath":"native-swift-embedding.md","url":"/native-swift-embedding.html","section":"Features","depth":0},{"title":"macOS App FFI Bridge (WIP)","slug":"macos-app-ffi-bridge","sourcePath":"macos-app-ffi-bridge.md","url":"/macos-app-ffi-bridge.html","section":"Features","depth":0},{"title":"OpenClaw Import","slug":"openclaw-import","sourcePath":"openclaw-import.md","url":"/openclaw-import.html","section":"Features","depth":0},{"title":"Multi-Node","slug":"nodes","sourcePath":"nodes.md","url":"/nodes.html","section":"Features","depth":0},{"title":"Service Management","slug":"service","sourcePath":"service.md","url":"/service.html","section":"Features","depth":0},{"title":"Authentication","slug":"authentication","sourcePath":"authentication.md","url":"/authentication.html","section":"Security","depth":0},{"title":"Encryption at Rest (Vault)","slug":"vault","sourcePath":"vault.md","url":"/vault.html","section":"Security","depth":0},{"title":"Security Architecture","slug":"security","sourcePath":"security.md","url":"/security.html","section":"Security","depth":0},{"title":"Third-Party Skills Security","slug":"skills-security","sourcePath":"skills-security.md","url":"/skills-security.html","section":"Security","depth":0},{"title":"Release Verification","slug":"release-verification","sourcePath":"release-verification.md","url":"/release-verification.html","section":"Security","depth":0},{"title":"Docker","slug":"docker","sourcePath":"docker.md","url":"/docker.html","section":"Deployment","depth":0},{"title":"Cloud Deploy","slug":"cloud-deploy","sourcePath":"cloud-deploy.md","url":"/cloud-deploy.html","section":"Deployment","depth":0},{"title":"Remote Sandboxes","slug":"sandbox-remote","sourcePath":"sandbox-remote.md","url":"/sandbox-remote.html","section":"Deployment","depth":0},{"title":"VPS Deployment","slug":"deploy-vps","sourcePath":"deploy-vps.md","url":"/deploy-vps.html","section":"Deployment","depth":0},{"title":"System Prompt","slug":"system-prompt","sourcePath":"system-prompt.md","url":"/system-prompt.html","section":"Architecture","depth":0},{"title":"Frontend","slug":"frontend","sourcePath":"frontend.md","url":"/frontend.html","section":"Architecture","depth":0},{"title":"Streaming","slug":"streaming","sourcePath":"streaming.md","url":"/streaming.html","section":"Architecture","depth":0},{"title":"SQLite Migrations","slug":"sqlite-migration","sourcePath":"sqlite-migration.md","url":"/sqlite-migration.html","section":"Architecture","depth":0},{"title":"Metrics & Tracing","slug":"metrics-and-tracing","sourcePath":"metrics-and-tracing.md","url":"/metrics-and-tracing.html","section":"Architecture","depth":0},{"title":"Tool Registry","slug":"tool-registry","sourcePath":"tool-registry.md","url":"/tool-registry.html","section":"Architecture","depth":0},{"title":"Tool Policy","slug":"tool-policy","sourcePath":"tool-policy.md","url":"/tool-policy.html","section":"Architecture","depth":0},{"title":"Agent Presets","slug":"agent-presets","sourcePath":"agent-presets.md","url":"/agent-presets.html","section":"Architecture","depth":0},{"title":"Session Tools","slug":"session-tools","sourcePath":"session-tools.md","url":"/session-tools.html","section":"Architecture","depth":0},{"title":"Changelog","slug":"changelog","sourcePath":"changelog.md","url":"/changelog.html","section":"Reference","depth":0}];
+
+    const navToggle = document.querySelector('.nav-toggle')
+    const scrim = document.querySelector('.mobile-scrim')
+    const sidebar = document.querySelector('.sidebar')
+    const activeSidebarLink = sidebar?.querySelector('a.active')
+    const themeButtons = Array.from(document.querySelectorAll('[data-theme-option]'))
+    const themeMedia = window.matchMedia('(prefers-color-scheme: dark)')
+
+    function applyTheme(choice) {
+      const resolved = choice === 'auto' ? (themeMedia.matches ? 'dark' : 'light') : choice
+      document.documentElement.dataset.theme = resolved
+      document.documentElement.dataset.themeChoice = choice
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolved === 'dark' ? '#111214' : '#f7f7f5')
+      themeButtons.forEach((button) => {
+        const active = button.dataset.themeOption === choice
+        button.classList.toggle('active', active)
+        button.setAttribute('aria-pressed', String(active))
+      })
+    }
+
+    const storedTheme = localStorage.getItem('moltis-docs-theme') || 'auto'
+    applyTheme(storedTheme)
+    themeButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const choice = button.dataset.themeOption || 'auto'
+        localStorage.setItem('moltis-docs-theme', choice)
+        applyTheme(choice)
+      })
+    })
+    themeMedia.addEventListener('change', () => {
+      if ((localStorage.getItem('moltis-docs-theme') || 'auto') === 'auto') {
+        applyTheme('auto')
+      }
+    })
+
+    function closeNav() {
+      document.body.classList.remove('nav-open')
+      navToggle?.setAttribute('aria-expanded', 'false')
+    }
+
+    navToggle?.addEventListener('click', () => {
+      const open = document.body.classList.toggle('nav-open')
+      navToggle.setAttribute('aria-expanded', String(open))
+    })
+    scrim?.addEventListener('click', closeNav)
+    sidebar?.querySelectorAll('a').forEach((link) => link.addEventListener('click', closeNav))
+    if (sidebar && activeSidebarLink) {
+      const linkTop = activeSidebarLink.offsetTop
+      const targetTop = linkTop - sidebar.clientHeight / 2 + activeSidebarLink.clientHeight / 2
+      sidebar.scrollTop = Math.max(0, targetTop)
+    }
+
+    const toc = document.getElementById('page-toc')
+    const tocPanel = document.querySelector('.toc-panel')
+    const headings = Array.from(document.querySelectorAll('.content-card h2, .content-card h3'))
+    if (toc && headings.length > 1) {
+      headings.forEach((heading) => {
+        const link = document.createElement('a')
+        link.href = `#${heading.id}`
+        link.textContent = heading.textContent || ''
+        link.className = heading.tagName === 'H3' ? 'toc-h3' : 'toc-h2'
+        toc.appendChild(link)
+      })
+    } else {
+      tocPanel?.classList.add('empty')
+    }
+
+    document.querySelectorAll('pre[data-code]').forEach((pre) => {
+      const button = document.createElement('button')
+      button.className = 'copy-code'
+      button.type = 'button'
+      button.textContent = 'Copy'
+      pre.appendChild(button)
+      button.addEventListener('click', async () => {
+        const code = pre.dataset.code || ''
+        let copied = false
+
+        try {
+          if (navigator.clipboard) {
+            await navigator.clipboard.writeText(code)
+            copied = true
+          }
+        } catch {
+          copied = false
+        }
+
+        if (!copied) {
+          const textarea = document.createElement('textarea')
+          textarea.value = code
+          textarea.setAttribute('readonly', '')
+          textarea.style.position = 'fixed'
+          textarea.style.left = '-9999px'
+          document.body.appendChild(textarea)
+          textarea.select()
+          copied = document.execCommand('copy')
+          textarea.remove()
+        }
+
+        button.textContent = copied ? 'Copied' : 'Failed'
+        window.setTimeout(() => { button.textContent = 'Copy' }, 1200)
+      })
+    })
+
+    const search = document.getElementById('docs-search')
+    const results = document.getElementById('search-results')
+    search?.addEventListener('input', () => {
+      const query = search.value.trim().toLowerCase()
+      if (!query || !results) {
+        results.hidden = true
+        return
+      }
+      const matches = searchPages
+        .filter((page) => `${page.title} ${page.section}`.toLowerCase().includes(query))
+        .slice(0, 8)
+
+      results.replaceChildren()
+      matches.forEach((page) => {
+        const link = document.createElement('a')
+        const section = document.createElement('span')
+        link.href = page.url
+        section.textContent = page.section
+        link.appendChild(section)
+        link.appendChild(document.createTextNode(page.title))
+        results.appendChild(link)
+      })
+      results.hidden = matches.length === 0
+    })
+  })();</script></body></html>
