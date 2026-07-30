@@ -74,8 +74,9 @@ impl ChannelWebhookRateLimiter {
         bucket.tokens = (bucket.tokens + elapsed * rate_per_sec).min(capacity);
         bucket.last_refill = now;
 
-        // Try to consume one token.
-        if bucket.tokens >= 1.0 {
+        // Try to consume one token, then release the entry guard before
+        // eviction iterates over the map.
+        let result = if bucket.tokens >= 1.0 {
             bucket.tokens -= 1.0;
             Ok(())
         } else {
@@ -85,7 +86,10 @@ impl ChannelWebhookRateLimiter {
             Err(ChannelWebhookRejection::RateLimited {
                 retry_after: Duration::from_secs_f64(wait_secs),
             })
-        }
+        };
+        drop(entry);
+        self.evict_if_full();
+        result
     }
 
     /// Remove stale buckets that haven't been used recently.
@@ -259,5 +263,20 @@ mod tests {
                 .check("slack", "acct1", "interactions", &policy)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn check_evicts_buckets_over_the_limit() {
+        let limiter = ChannelWebhookRateLimiter {
+            buckets: DashMap::new(),
+            max_buckets: 2,
+        };
+        let policy = default_policy();
+
+        limiter.check("slack", "acct1", "events", &policy).ok();
+        limiter.check("slack", "acct2", "events", &policy).ok();
+        limiter.check("slack", "acct3", "events", &policy).ok();
+
+        assert!(limiter.bucket_count() <= limiter.max_buckets);
     }
 }

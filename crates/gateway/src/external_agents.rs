@@ -537,6 +537,7 @@ impl ExternalAgentChatService {
             },
         };
         let mut assistant_text = String::new();
+        let mut thinking_text = String::new();
         let mut token_usage = None;
         let mut external_error = None;
         while let Some(event) = events.next().await {
@@ -558,6 +559,7 @@ impl ExternalAgentChatService {
                     .await;
                 },
                 ExternalAgentEvent::ThinkingDelta(delta) => {
+                    thinking_text.push_str(&delta);
                     crate::broadcast::broadcast(
                         &self.state,
                         "chat",
@@ -565,7 +567,7 @@ impl ExternalAgentChatService {
                             "runId": run_id,
                             "sessionKey": session_key,
                             "state": "thinking_text",
-                            "text": delta,
+                            "text": thinking_text,
                             "seq": seq,
                         }),
                         BroadcastOpts::default(),
@@ -645,7 +647,14 @@ impl ExternalAgentChatService {
             BroadcastOpts::default(),
         )
         .await;
-        Ok(serde_json::json!({ "ok": true, "runId": run_id }))
+        Ok(serde_json::json!({
+            "ok": true,
+            "runId": run_id,
+            "text": assistant_text,
+            "inputTokens": token_usage.as_ref().map(|usage| usage.input_tokens).unwrap_or(0),
+            "outputTokens": token_usage.as_ref().map(|usage| usage.output_tokens).unwrap_or(0),
+            "durationMs": duration_ms,
+        }))
     }
 }
 
@@ -659,7 +668,10 @@ impl ChatService for ExternalAgentChatService {
     }
 
     async fn send_sync(&self, params: Value) -> ServiceResult {
-        self.send(params).await
+        if let Some(result) = self.maybe_send_external(&params).await {
+            return result;
+        }
+        self.inner.send_sync(params).await
     }
 
     async fn abort(&self, params: Value) -> ServiceResult {

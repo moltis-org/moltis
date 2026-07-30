@@ -27,6 +27,7 @@ use {
 use {
     moltis_agents::tool_registry::ToolRegistry,
     moltis_providers::ProviderRegistry,
+    moltis_service_traits::ServiceError,
     moltis_sessions::{
         PersistedMessage,
         message::{PersistedFunction, PersistedToolCall},
@@ -340,6 +341,8 @@ pub struct LiveChatService {
     pub(in crate::service) active_event_forwarders: Arc<RwLock<HashMap<String, EventForwarder>>>,
     pub(in crate::service) terminal_runs: Arc<RwLock<HashSet<String>>>,
     pub(in crate::service) tool_registry: Arc<RwLock<ToolRegistry>>,
+    pub(in crate::service) session_tool_overlays:
+        Arc<RwLock<HashMap<String, Arc<RwLock<ToolRegistry>>>>>,
     pub(in crate::service) session_store: Arc<SessionStore>,
     pub(in crate::service) session_metadata: Arc<SqliteSessionMetadata>,
     pub(in crate::service) session_state_store: Option<Arc<SessionStateStore>>,
@@ -369,6 +372,40 @@ pub struct LiveChatService {
 }
 
 impl LiveChatService {
+    pub(in crate::service) async fn load_turn_history(
+        &self,
+        session_key: &str,
+        limits: Option<(usize, usize)>,
+    ) -> Result<Vec<Value>, ServiceError> {
+        let Some((max_messages, max_bytes)) = limits else {
+            return Ok(self
+                .session_store
+                .read(session_key)
+                .await
+                .unwrap_or_default());
+        };
+        self.session_store
+            .read_bounded(session_key, max_messages, max_bytes)
+            .await
+            .map_err(|error| {
+                ServiceError::message(format!("failed to read session history: {error}"))
+            })
+    }
+
+    /// Reads persisted history with strict pre-allocation bounds for non-UI
+    /// protocol surfaces such as ACP session replay.
+    pub async fn read_session_history_bounded(
+        &self,
+        session_key: &str,
+        max_messages: usize,
+        max_bytes: usize,
+    ) -> anyhow::Result<Vec<Value>> {
+        self.session_store
+            .read_bounded(session_key, max_messages, max_bytes)
+            .await
+            .map_err(Into::into)
+    }
+
     pub fn new(
         providers: Arc<RwLock<ProviderRegistry>>,
         model_store: Arc<RwLock<DisabledModelsStore>>,
@@ -385,6 +422,7 @@ impl LiveChatService {
             active_event_forwarders: Arc::new(RwLock::new(HashMap::new())),
             terminal_runs: Arc::new(RwLock::new(HashSet::new())),
             tool_registry: Arc::new(RwLock::new(ToolRegistry::new())),
+            session_tool_overlays: Arc::new(RwLock::new(HashMap::new())),
             session_store,
             session_metadata,
             session_state_store: None,
@@ -414,6 +452,32 @@ impl LiveChatService {
     pub fn with_tools(mut self, registry: Arc<RwLock<ToolRegistry>>) -> Self {
         self.tool_registry = registry;
         self
+    }
+
+    pub async fn set_session_tool_overlay(
+        &self,
+        session_key: &str,
+        registry: Arc<RwLock<ToolRegistry>>,
+    ) {
+        self.session_tool_overlays
+            .write()
+            .await
+            .insert(session_key.to_string(), registry);
+    }
+
+    pub async fn remove_session_tool_overlay(&self, session_key: &str) {
+        self.session_tool_overlays.write().await.remove(session_key);
+    }
+
+    pub async fn bind_session_project(&self, session_key: &str, project_id: &str) {
+        let _ = self.session_metadata.upsert(session_key, None).await;
+        self.session_metadata
+            .set_project_id(session_key, Some(project_id.to_string()))
+            .await;
+    }
+
+    pub async fn session_exists(&self, session_key: &str) -> bool {
+        self.session_metadata.get(session_key).await.is_some()
     }
 
     pub fn with_session_state_store(mut self, store: Arc<SessionStateStore>) -> Self {
@@ -812,7 +876,7 @@ impl LiveChatService {
         &self,
         session_key: &str,
         conn_id: Option<&str>,
-    ) -> Option<String> {
+    ) -> (Option<String>, Option<PathBuf>) {
         let (project_context, working_dir) =
             self.resolve_project_context(session_key, conn_id).await;
         let command_context = moltis_common::context_command::run_context_command(
@@ -820,7 +884,10 @@ impl LiveChatService {
             working_dir.as_deref(),
         )
         .await;
-        merge_context_sections(project_context, command_context)
+        (
+            merge_context_sections(project_context, command_context),
+            working_dir,
+        )
     }
 }
 

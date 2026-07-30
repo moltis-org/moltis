@@ -378,10 +378,11 @@ async fn run_supervisor<J, F, Fut>(
                 idle.push_back(index);
             },
             result = pool.join_next(), if !pool.is_empty() => {
-                if let Some(Err(error)) = result {
-                    error!("channel callback worker failed: {error}");
+                match result {
+                    Some(Ok(())) => error!("channel callback worker stopped unexpectedly"),
+                    Some(Err(error)) => error!("channel callback worker failed: {error}"),
+                    None => {},
                 }
-                error!("channel callback worker stopped unexpectedly");
                 return;
             },
         }

@@ -655,11 +655,8 @@ pub(crate) async fn run_with_tools(
                             if let Some(bytes) = decoded_screenshot {
                                 let filename = format!("{tool_call_id}.png");
                                 match store_media.save_media(&sk_media, &filename, &bytes).await {
-                                    Ok(_) => {
-                                        let sanitized = SessionStore::key_to_filename(&sk_media);
-                                        r["screenshot"] = Value::String(format!(
-                                            "media/{sanitized}/{tool_call_id}.png"
-                                        ));
+                                    Ok(media_ref) => {
+                                        r["screenshot"] = Value::String(media_ref);
                                     },
                                     Err(e) => {
                                         warn!("failed to save screenshot media: {e}");
@@ -1155,7 +1152,7 @@ pub(crate) async fn run_with_tools(
                 run_id,
                 iterations,
                 tool_calls = tool_calls_made,
-                response = %display_text,
+                response_bytes = display_text.len(),
                 silent = is_silent,
                 "agent run complete"
             );

@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use {
     serde_json::Value,
-    tokio::sync::RwLock,
+    tokio::sync::{OwnedSemaphorePermit, RwLock},
     tracing::{info, warn},
 };
 
@@ -12,10 +12,37 @@ use moltis_config::MessageQueueMode;
 
 use crate::{
     runtime::ChatRuntime,
-    service::types::{QueuedMessage, SessionMessageQueue},
+    service::{
+        LiveChatService,
+        types::{QueuedMessage, SessionMessageQueue},
+    },
 };
 
 type MessageQueues = Arc<RwLock<HashMap<String, SessionMessageQueue>>>;
+
+impl LiveChatService {
+    pub(super) async fn finish_unstarted_turn(
+        &self,
+        activity_id: &str,
+        session_key: &str,
+        permit: OwnedSemaphorePermit,
+        queued_replay: bool,
+    ) {
+        self.state
+            .finalize_active_channel_acks(activity_id, moltis_channels::ChannelAckOutcome::Failure)
+            .await;
+        drop(permit);
+        if !queued_replay {
+            drain_and_replay(
+                &self.message_queue,
+                session_key,
+                self.config.chat.message_queue_mode,
+                &self.state,
+            )
+            .await;
+        }
+    }
+}
 
 /// Drain in FIFO order. A replay that starts a run delegates the remaining
 /// drain to that run; a replay with no run settles its ack and continues here.
@@ -479,7 +506,7 @@ mod tests {
             "run-1".to_string(),
         )])));
         let terminal = Arc::new(RwLock::new(HashSet::from(["run-1".to_string()])));
-        let (_, claim) = crate::service::LiveChatService::claim_run_for_abort(
+        let (_, claim) = LiveChatService::claim_run_for_abort(
             &active_runs,
             &by_session,
             &terminal,

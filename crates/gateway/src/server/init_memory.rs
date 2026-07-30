@@ -21,6 +21,7 @@ pub(crate) async fn init_memory_system(
     effective_providers: &moltis_config::schema::ProvidersConfig,
     runtime_env_overrides: &HashMap<String, String>,
     db_pool_max_connections: u32,
+    start_background_tasks: bool,
 ) -> Option<moltis_memory::runtime::DynMemoryRuntime> {
     // Build embedding provider(s) for the fallback chain.
     let mut embedding_providers: Vec<(
@@ -224,7 +225,14 @@ pub(crate) async fn init_memory_system(
                 tracing::warn!("memory migration failed: {e}");
                 None
             } else {
-                build_memory_runtime(mem_cfg, data_dir, embedder, memory_pool).await
+                build_memory_runtime(
+                    mem_cfg,
+                    data_dir,
+                    embedder,
+                    memory_pool,
+                    start_background_tasks,
+                )
+                .await
             }
         },
         Err(e) => {
@@ -240,6 +248,7 @@ async fn build_memory_runtime(
     data_dir: &FsPath,
     embedder: Option<Box<dyn moltis_memory::embeddings::EmbeddingProvider>>,
     memory_pool: sqlx::SqlitePool,
+    start_background_tasks: bool,
 ) -> Option<moltis_memory::runtime::DynMemoryRuntime> {
     let data_memory_file = data_dir.join("MEMORY.md");
     let data_memory_file_lower = data_dir.join("memory.md");
@@ -340,6 +349,13 @@ async fn build_memory_runtime(
             }
         },
     };
+
+    if !start_background_tasks {
+        if let Err(error) = manager.sync().await {
+            tracing::warn!(%error, "memory: initial headless sync failed");
+        }
+        return Some(manager);
+    }
 
     // Initial sync + periodic re-sync (15min with watcher, 5min without).
     let sync_manager = Arc::clone(&manager);
