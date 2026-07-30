@@ -37,6 +37,7 @@ enum ThrottleScope {
     Api,
     Share,
     Ws,
+    #[cfg(any(feature = "slack", test))]
     SlackCallbackPreauth,
 }
 
@@ -65,7 +66,11 @@ impl ThrottleScope {
     }
 
     fn permits_authenticated_bypass(self) -> bool {
-        !matches!(self, Self::SlackCallbackPreauth)
+        #[cfg(any(feature = "slack", test))]
+        if self == Self::SlackCallbackPreauth {
+            return false;
+        }
+        true
     }
 }
 
@@ -94,6 +99,7 @@ struct ThrottleLimits {
     api: RateLimit,
     share: RateLimit,
     ws: RateLimit,
+    #[cfg(any(feature = "slack", test))]
     callback_preauth: RateLimit,
 }
 
@@ -125,6 +131,7 @@ impl Default for ThrottleLimits {
                 max_requests: 30,
                 window: Duration::from_secs(60),
             },
+            #[cfg(any(feature = "slack", test))]
             // This IP-level ceiling runs before account lookup and signature
             // verification. It is intentionally above Slack's three callback
             // endpoints at their verified 600/minute + 200 burst policy.
@@ -162,6 +169,7 @@ impl RequestThrottle {
             ThrottleScope::Api => self.limits.api,
             ThrottleScope::Share => self.limits.share,
             ThrottleScope::Ws => self.limits.ws,
+            #[cfg(any(feature = "slack", test))]
             ThrottleScope::SlackCallbackPreauth => self.limits.callback_preauth,
         }
     }
@@ -220,17 +228,19 @@ impl RequestThrottle {
     }
 
     fn max_window(&self) -> Duration {
-        [
+        let max_window = [
             self.limits.login.window,
             self.limits.auth_api.window,
             self.limits.api.window,
             self.limits.share.window,
             self.limits.ws.window,
-            self.limits.callback_preauth.window,
         ]
         .into_iter()
         .max()
-        .unwrap_or(Duration::from_secs(60))
+        .unwrap_or(Duration::from_secs(60));
+        #[cfg(any(feature = "slack", test))]
+        let max_window = max_window.max(self.limits.callback_preauth.window);
+        max_window
     }
 }
 
