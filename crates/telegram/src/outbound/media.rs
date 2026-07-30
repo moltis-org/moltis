@@ -252,7 +252,7 @@ async fn send_base64_image(
                 );
                 Ok(vec![message.id.0.to_string()])
             } else {
-                return Err(ChannelError::external("send media photo", e));
+                Err(ChannelError::external("send media photo", e))
             }
         },
     }
