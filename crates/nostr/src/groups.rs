@@ -21,7 +21,7 @@ use {
     },
 };
 
-use crate::error::Error;
+use crate::{error::Error, state::SharedConfig};
 
 /// Standard NIP-29 group chat message kind (`kind:9`).
 pub const GROUP_CHAT_KIND: u16 = 9;
@@ -241,6 +241,67 @@ pub fn build_group_message_tags(
         tags.push(Tag::public_key(pubkey));
     }
     tags
+}
+
+/// Authorize a group publish and perform it **without releasing the config lock
+/// in between**.
+///
+/// The single gate every outbound group event goes through — replies, streamed
+/// edits, reactions, and the command responses `bus` sends directly. It lives
+/// here rather than in `outbound` so those two callers cannot drift apart.
+///
+/// A check that merely runs before the publish leaves an interval — however
+/// short — in which a settings save can withdraw the group while the event is
+/// already on its way to the relay, and group messages are plaintext to every
+/// member of the channel. Holding the read guard across `publish` removes it: a
+/// writer disabling group chat blocks until the in-flight publish finishes, and
+/// any publish starting afterwards observes the new config, so "the operator's
+/// save has returned" and "nothing further is published" become the same
+/// instant. This is why [`SharedConfig`] is a `tokio::sync::RwLock`.
+///
+/// `publish` must not touch the config lock: `tokio::sync::RwLock` is
+/// write-preferring, so a nested read while a writer waits would deadlock.
+/// Resolve anything config-derived before calling.
+pub async fn authorized_publish<T, F>(
+    config: &SharedConfig,
+    group_id: &str,
+    publish: F,
+) -> Result<T, Error>
+where
+    F: AsyncFnOnce() -> Result<T, Error>,
+{
+    let cfg = config.read().await;
+    check_group_send(&cfg.groups, &cfg.group_mention_mode, group_id)?;
+    let result = publish().await;
+    drop(cfg);
+    result
+}
+
+/// Whether the account may currently publish into `group_id`.
+///
+/// Both ways of turning group chat off are honoured, reusing
+/// [`check_group_access`] so the outbound direction cannot drift from the
+/// inbound one:
+///
+/// * clearing `groups` (or removing this one) — the join list *is* the access
+///   model, and an empty list means group chat is disabled;
+/// * `group_mention_mode = "none"`, documented as receive-only.
+///
+/// Takes the two fields rather than the whole config so it is obvious what a
+/// send decision actually depends on.
+pub fn check_group_send(
+    groups: &[String],
+    mention_mode: &MentionMode,
+    group_id: &str,
+) -> Result<(), Error> {
+    check_group_access(group_id, groups)
+        .map_err(|denied| Error::GroupSendDenied(format!("{group_id}: {denied}")))?;
+    if *mention_mode == MentionMode::None {
+        return Err(Error::GroupSendDenied(format!(
+            "{group_id}: receive-only (group_mention_mode = none)"
+        )));
+    }
+    Ok(())
 }
 
 /// Publish a plaintext group chat message to the relay.

@@ -558,17 +558,22 @@ async fn handle_group_event(
                         command = cmd_name,
                         "refused operator-only command from non-allowlisted group sender"
                     );
-                    if let Err(e) = crate::groups::send_group_message(
-                        client,
-                        event.kind,
-                        &group_id,
-                        &format!("`/{cmd_name}` is restricted to this bot's operators."),
-                        Some(event.id),
-                        Some(event.pubkey),
-                    )
-                    .await
+                    let refusal = format!("`/{cmd_name}` is restricted to this bot's operators.");
+                    if let Err(e) =
+                        crate::groups::authorized_publish(config, &group_id, async || {
+                            crate::groups::send_group_message(
+                                client,
+                                event.kind,
+                                &group_id,
+                                &refusal,
+                                Some(event.id),
+                                Some(event.pubkey),
+                            )
+                            .await
+                        })
+                        .await
                     {
-                        tracing::warn!(account_id, "failed to send command refusal: {e}");
+                        tracing::warn!(account_id, "command refusal not published: {e}");
                     }
                     return;
                 }
@@ -584,17 +589,24 @@ async fn handle_group_event(
                 Ok(msg) => msg,
                 Err(e) => format!("Error: {e}"),
             };
-            if let Err(e) = crate::groups::send_group_message(
-                client,
-                event.kind,
-                &group_id,
-                &reply_text,
-                Some(event.id),
-                Some(event.pubkey),
-            )
+            // Re-authorized rather than published outright: `dispatch_command`
+            // can run for as long as the command takes (`/compact` rebuilds a
+            // session), and the group may have been withdrawn in the meantime.
+            // Same gate every other group publish uses.
+            if let Err(e) = crate::groups::authorized_publish(config, &group_id, async || {
+                crate::groups::send_group_message(
+                    client,
+                    event.kind,
+                    &group_id,
+                    &reply_text,
+                    Some(event.id),
+                    Some(event.pubkey),
+                )
+                .await
+            })
             .await
             {
-                tracing::warn!(account_id, "failed to send group command response: {e}");
+                tracing::warn!(account_id, "group command response not published: {e}");
             }
             return;
         }
@@ -1140,6 +1152,30 @@ mod tests {
         assert!(
             h.sink.dispatched().is_empty(),
             "commands are handled by the command path, not dispatched to the model"
+        );
+    }
+
+    /// A command reply is published after `dispatch_command` returns, and that
+    /// can take as long as the command does — long enough for the operator to
+    /// withdraw the bot. The reply goes through the same authorization gate as
+    /// every other group publish, so a revoked group refuses it rather than
+    /// answering into a channel the bot has been removed from.
+    #[tokio::test]
+    async fn command_replies_are_refused_once_the_group_is_revoked() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Always);
+        let event = h.incoming("grp", "/new", groups::group_chat_kind(), false);
+
+        // The command still reaches the handler...
+        h.handle(&event).await;
+        assert_eq!(h.sink.commands(), vec!["new".to_string()]);
+
+        // ...and publishing the answer is gated on the live config, which the
+        // harness has no relay for — so assert the gate itself refuses.
+        h.config.write().await.groups.clear();
+        let cfg = h.config.read().await;
+        assert!(
+            groups::check_group_send(&cfg.groups, &cfg.group_mention_mode, "grp").is_err(),
+            "a revoked group must refuse the command reply"
         );
     }
 

@@ -23,7 +23,7 @@ use {
     nostr_sdk::prelude::*,
 };
 
-use crate::{config::NostrAccountConfig, state::AccountState};
+use crate::state::AccountState;
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, histogram, nostr as nostr_metrics};
@@ -161,39 +161,22 @@ impl NostrOutbound {
         Ok(())
     }
 
-    /// Whether this account may publish into `group_id`, per the config the
-    /// caller has a guard on.
+    /// Authorize a group publish and perform it without releasing the config
+    /// lock in between — see [`groups::authorized_publish`](crate::groups::authorized_publish),
+    /// which is shared with the command replies `bus` publishes directly.
     ///
-    /// Takes the config by reference rather than reading it: the caller holds
-    /// the read guard across the publish (see
-    /// [`Self::authorized_group_publish`]), and this decision is only valid for
-    /// exactly as long as that guard is held.
-    ///
-    /// A reply target is persisted with the session and outlives the config that
-    /// produced it, so a queued or resumed turn can reach here long after group
-    /// chat was turned off. Turning it off must therefore stop outbound sends,
-    /// not just inbound dispatch — otherwise the bot keeps talking in a channel
-    /// the operator has already withdrawn it from.
-    ///
-    /// Both ways of turning it off are honoured, using the same
-    /// [`groups::check_group_access`](crate::groups::check_group_access) the
-    /// inbound path applies so the two directions cannot drift:
-    ///
-    /// * clearing `groups` (or removing this one) — the join list *is* the
-    ///   access model, and an empty list means group chat is disabled;
-    /// * `group_mention_mode = "none"`, documented as receive-only.
-    fn check_group_send(cfg: &NostrAccountConfig, group_id: &str) -> ChannelResult<()> {
-        crate::groups::check_group_access(group_id, &cfg.groups).map_err(|denied| {
-            moltis_channels::Error::unavailable(format!(
-                "nostr group send refused for {group_id}: {denied}"
-            ))
-        })?;
-        if cfg.group_mention_mode == moltis_channels::gating::MentionMode::None {
-            return Err(moltis_channels::Error::unavailable(format!(
-                "nostr group chat is receive-only for {group_id} (group_mention_mode = none)"
-            )));
-        }
-        Ok(())
+    /// Fails closed if the account was deleted mid-turn.
+    async fn authorized_group_publish<T, F>(
+        &self,
+        account_id: &str,
+        group_id: &str,
+        publish: F,
+    ) -> ChannelResult<T>
+    where
+        F: AsyncFnOnce() -> Result<T, crate::error::Error>,
+    {
+        let config = self.config_handle(account_id)?;
+        Ok(crate::groups::authorized_publish(&config, group_id, publish).await?)
     }
 
     /// The account's shared config handle, with the accounts map lock released.
@@ -206,44 +189,6 @@ impl NostrOutbound {
             moltis_channels::Error::unavailable(format!("nostr account not found: {account_id}"))
         })?;
         Ok(Arc::clone(&state.config))
-    }
-
-    /// Authorize a group publish and perform it **without releasing the config
-    /// lock in between**.
-    ///
-    /// This is the whole point of the config being a `tokio::sync::RwLock`. A
-    /// check that merely runs before the publish leaves an interval — however
-    /// short — in which a settings save can withdraw the group while the event
-    /// is already on its way to the relay, and group messages are plaintext to
-    /// every member of the channel. Re-checking more often narrows that
-    /// interval but never removes it.
-    ///
-    /// Holding the read guard across `publish` removes it. A writer disabling
-    /// group chat blocks until the in-flight publish finishes, and any publish
-    /// starting afterwards observes the new config, so "the operator's save has
-    /// returned" and "nothing further is published" become the same instant.
-    ///
-    /// Also fails closed if the account was deleted mid-turn.
-    ///
-    /// `publish` must not touch the config lock: `tokio::sync::RwLock` is
-    /// write-preferring, so a nested read while a writer waits would deadlock.
-    /// Everything config-derived (the dialect plan, the reply target) is
-    /// resolved by the caller before this is entered.
-    async fn authorized_group_publish<T, F>(
-        &self,
-        account_id: &str,
-        group_id: &str,
-        publish: F,
-    ) -> ChannelResult<T>
-    where
-        F: AsyncFnOnce() -> ChannelResult<T>,
-    {
-        let config = self.config_handle(account_id)?;
-        let guard = config.read().await;
-        Self::check_group_send(&guard, group_id)?;
-        let result = publish().await;
-        drop(guard);
-        result
     }
 
     /// Resolve `channel_id` to a group **without authorizing a send**, for the
@@ -313,7 +258,7 @@ impl NostrOutbound {
         // pubkey. Group participation is then re-checked so a group turned off
         // in the config fails closed rather than being delivered anywhere.
         if let Some(group_id) = crate::groups::parse_group_target(to) {
-            Self::check_group_send(&cfg, group_id)?;
+            crate::groups::check_group_send(&cfg.groups, &cfg.group_mention_mode, group_id)?;
             return Ok((client, keys, SendTarget::Group(group_id.to_string())));
         }
 
@@ -329,7 +274,7 @@ impl NostrOutbound {
         // group chat ships for the first time in this change.
         let legacy_group_target = cfg.groups.iter().any(|g| g == to);
         if legacy_group_target {
-            Self::check_group_send(&cfg, to)?;
+            crate::groups::check_group_send(&cfg.groups, &cfg.group_mention_mode, to)?;
             tracing::debug!(
                 account_id,
                 group = to,
@@ -379,11 +324,10 @@ impl ChannelOutbound for NostrOutbound {
                         plan.mention,
                     )
                     .await
-                    .map_err(|e| {
+                    .inspect_err(|_e| {
                         #[cfg(feature = "metrics")]
                         counter!(nostr_metrics::MESSAGE_SEND_ERRORS_TOTAL, "reason" => "group")
                             .increment(1);
-                        moltis_channels::Error::external("nostr", e)
                     })
                 })
                 .await
@@ -456,9 +400,7 @@ impl ChannelOutbound for NostrOutbound {
         let glyph = crate::groups::ack_emoji_glyph(emoji);
         let reaction = self
             .authorized_group_publish(account_id, &group_id, async || {
-                crate::groups::send_reaction(&client, &group_id, target, glyph)
-                    .await
-                    .map_err(|e| moltis_channels::Error::external("nostr", e))
+                crate::groups::send_reaction(&client, &group_id, target, glyph).await
             })
             .await?;
 
@@ -501,16 +443,29 @@ impl ChannelOutbound for NostrOutbound {
         let reaction = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             accounts.get(account_id).and_then(|state| {
-                let mut ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
-                ctxs.take_reaction(target, glyph)
+                let ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+                ctxs.reaction_id(target, glyph)
             })
         };
         let Some(reaction) = reaction else {
             return Ok(());
         };
 
+        // The id is only forgotten once the deletion is actually published. It
+        // is the sole record of the reaction, so dropping it on a failed
+        // retraction would strand the 👀 on the user's message with no way to
+        // try again.
         if let Err(e) = crate::groups::delete_event(&client, &group_id, reaction).await {
-            tracing::debug!(account_id, "failed to retract reaction: {e}");
+            tracing::debug!(
+                account_id,
+                "retraction not published, keeping the reaction id to retry: {e}"
+            );
+            return Ok(());
+        }
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accounts.get(account_id) {
+            let mut ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+            ctxs.forget_reaction(target, glyph);
         }
         Ok(())
     }
@@ -594,7 +549,6 @@ impl ChannelStreamOutbound for NostrOutbound {
                                 plan.mention,
                             )
                             .await
-                            .map_err(|e| moltis_channels::Error::external("nostr", e))
                         })
                         .await;
                     match published_id {
@@ -625,7 +579,6 @@ impl ChannelStreamOutbound for NostrOutbound {
                                     &client, &group_id, target, &buffer,
                                 )
                                 .await
-                                .map_err(|e| moltis_channels::Error::external("nostr", e))
                             })
                             .await;
                         if let Err(ref e) = result {
@@ -650,9 +603,7 @@ impl ChannelStreamOutbound for NostrOutbound {
             Some(target) => {
                 let revoked = if pending_edit {
                     self.authorized_group_publish(account_id, &group_id, async || {
-                        crate::groups::edit_group_message(&client, &group_id, target, &buffer)
-                            .await
-                            .map_err(|e| moltis_channels::Error::external("nostr", e))
+                        crate::groups::edit_group_message(&client, &group_id, target, &buffer).await
                     })
                     .await
                     .inspect_err(|e| {

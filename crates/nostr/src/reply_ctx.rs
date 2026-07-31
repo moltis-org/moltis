@@ -116,11 +116,23 @@ impl ReplyContexts {
         }
     }
 
-    /// Take back the id of a reaction we published, if we still know it.
-    pub fn take_reaction(&mut self, target: EventId, emoji: &str) -> Option<EventId> {
+    /// The id of a reaction we published, if we still know it.
+    ///
+    /// Deliberately non-consuming: the caller has to publish a NIP-09 deletion
+    /// before the mapping can be dropped, and that publish can fail. Forgetting
+    /// the id first would strand the reaction — this is the only record of it,
+    /// so a failed retraction could never be retried and the bot's 👀 would sit
+    /// on the user's message for good. Pair with [`Self::forget_reaction`].
+    #[must_use]
+    pub fn reaction_id(&self, target: EventId, emoji: &str) -> Option<EventId> {
         self.reactions
-            .remove(&(target, emoji.to_string()))
-            .map(|(reaction, _)| reaction)
+            .get(&(target, emoji.to_string()))
+            .map(|(reaction, _)| *reaction)
+    }
+
+    /// Drop a reaction mapping once its deletion has been published.
+    pub fn forget_reaction(&mut self, target: EventId, emoji: &str) {
+        self.reactions.remove(&(target, emoji.to_string()));
     }
 
     /// Drop the oldest ~10% of entries (at least one) to stay under capacity.
@@ -224,9 +236,13 @@ mod tests {
         let reaction = event_id();
         ctxs.record_reaction(target, "\u{1F440}", reaction);
 
-        // Taking it returns the id once, then forgets it.
-        assert_eq!(ctxs.take_reaction(target, "\u{1F440}"), Some(reaction));
-        assert_eq!(ctxs.take_reaction(target, "\u{1F440}"), None);
+        // Reading does not forget: the caller has to publish a deletion first,
+        // and that can fail — losing the id would strand the reaction.
+        assert_eq!(ctxs.reaction_id(target, "\u{1F440}"), Some(reaction));
+        assert_eq!(ctxs.reaction_id(target, "\u{1F440}"), Some(reaction));
+
+        ctxs.forget_reaction(target, "\u{1F440}");
+        assert_eq!(ctxs.reaction_id(target, "\u{1F440}"), None);
     }
 
     #[test]
@@ -238,10 +254,30 @@ mod tests {
         ctxs.record_reaction(target, "\u{1F440}", eyes);
         ctxs.record_reaction(target, "\u{2705}", check);
 
-        assert_eq!(ctxs.take_reaction(target, "\u{2705}"), Some(check));
-        // Removing one must not disturb the other.
-        assert_eq!(ctxs.take_reaction(target, "\u{1F440}"), Some(eyes));
-        assert_eq!(ctxs.take_reaction(event_id(), "\u{1F440}"), None);
+        assert_eq!(ctxs.reaction_id(target, "\u{2705}"), Some(check));
+        // Forgetting one must not disturb the other.
+        ctxs.forget_reaction(target, "\u{2705}");
+        assert_eq!(ctxs.reaction_id(target, "\u{1F440}"), Some(eyes));
+        assert_eq!(ctxs.reaction_id(event_id(), "\u{1F440}"), None);
+    }
+
+    /// A failed retraction must stay retryable. The mapping is the only record
+    /// of the reaction event, so a caller that publishes a deletion and fails
+    /// has to still find the id afterwards.
+    #[test]
+    fn a_failed_retraction_keeps_the_id_for_a_retry() {
+        let mut ctxs = ReplyContexts::new();
+        let target = event_id();
+        let reaction = event_id();
+        ctxs.record_reaction(target, "\u{1F440}", reaction);
+
+        // Deletion failed: nothing was forgotten, so it can be tried again.
+        assert_eq!(ctxs.reaction_id(target, "\u{1F440}"), Some(reaction));
+        assert_eq!(ctxs.reaction_id(target, "\u{1F440}"), Some(reaction));
+
+        // Deletion succeeded: now it is dropped.
+        ctxs.forget_reaction(target, "\u{1F440}");
+        assert_eq!(ctxs.reaction_id(target, "\u{1F440}"), None);
     }
 
     /// The gateway never retracts the terminal ✅/❌, so without a ceiling this
