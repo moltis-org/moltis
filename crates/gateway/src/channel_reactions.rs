@@ -28,7 +28,7 @@ use std::{
 use {
     moltis_channels::{ChannelAckOutcome, ChannelActivity, ChannelOutbound},
     tokio::sync::{Mutex, mpsc},
-    tracing::debug,
+    tracing::{debug, warn},
 };
 
 /// Acknowledgment/phase emoji, from the shared channel-neutral vocabulary.
@@ -597,6 +597,15 @@ async fn add_reaction(
     }
 }
 
+/// Retract a reaction, tolerating failure.
+///
+/// Every call here sits on a path that returns immediately afterwards — the
+/// terminal swap, cancellation, the lifetime safety net — so a channel that
+/// reports failure has already exhausted whatever retries it has (Nostr
+/// publishes a NIP-09 deletion and retries the transient cases itself). There is
+/// no later attempt to schedule, which is exactly why the failure is worth
+/// surfacing: the acknowledgment on the user's message is now wrong, visibly and
+/// permanently, and nothing else is coming to fix it.
 async fn remove_reaction(
     outbound: &Arc<dyn ChannelOutbound>,
     account_id: &str,
@@ -608,9 +617,9 @@ async fn remove_reaction(
         .remove_reaction(account_id, chat_id, message_id, emoji)
         .await
     {
-        debug!(
+        warn!(
             account_id,
-            chat_id, emoji, "channel remove_reaction failed: {e}"
+            chat_id, emoji, "channel reaction could not be retracted, it may stay visible: {e}"
         );
     }
 }
