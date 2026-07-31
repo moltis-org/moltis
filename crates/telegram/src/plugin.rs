@@ -88,7 +88,7 @@ impl TelegramPlugin {
     }
 
     /// Get the config for a specific account (serialized to JSON).
-    pub fn account_config(&self, account_id: &str) -> Option<serde_json::Value> {
+    pub async fn account_config(&self, account_id: &str) -> Option<serde_json::Value> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
@@ -98,7 +98,7 @@ impl TelegramPlugin {
     /// Update the in-memory config for an account without restarting the
     /// polling loop.  Use for allowlist changes that don't need
     /// re-authentication or bot restart.
-    pub fn update_account_config(
+    pub async fn update_account_config(
         &self,
         account_id: &str,
         config: serde_json::Value,
@@ -206,21 +206,21 @@ impl ChannelPlugin for TelegramPlugin {
         accounts.keys().cloned().collect()
     }
 
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .map(|s| Box::new(s.config.clone()) as Box<dyn ChannelConfigView>)
     }
 
-    fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
+    async fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .and_then(|s| serde_json::to_value(crate::config::RedactedConfig(&s.config)).ok())
     }
 
-    fn update_account_config(
+    async fn update_account_config(
         &self,
         account_id: &str,
         config: serde_json::Value,
@@ -346,8 +346,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn update_account_config_updates_allowlist() {
+    #[tokio::test]
+    async fn update_account_config_updates_allowlist() {
         let plugin = TelegramPlugin::new();
         let cancel = CancellationToken::new();
         {
@@ -367,7 +367,10 @@ mod tests {
             "dm_policy": "allowlist",
             "allowlist": ["alice", "bob"],
         });
-        plugin.update_account_config("test", new_config).unwrap();
+        plugin
+            .update_account_config("test", new_config)
+            .await
+            .unwrap();
 
         // Verify the change is immediately visible.
         let map = plugin.accounts.read().unwrap();
@@ -381,8 +384,8 @@ mod tests {
     /// offset 0, causing Telegram to re-deliver the OTP code message.  The
     /// re-delivered message would pass access control (user is now on the
     /// allowlist) and get forwarded to the LLM.
-    #[test]
-    fn security_update_config_does_not_cancel_polling() {
+    #[tokio::test]
+    async fn security_update_config_does_not_cancel_polling() {
         let plugin = TelegramPlugin::new();
         let cancel = CancellationToken::new();
         let cancel_witness = cancel.clone();
@@ -396,7 +399,10 @@ mod tests {
             "token": "test:fake_token_for_unit_tests",
             "allowlist": ["new_user"],
         });
-        plugin.update_account_config("test", new_config).unwrap();
+        plugin
+            .update_account_config("test", new_config)
+            .await
+            .unwrap();
 
         assert!(
             !cancel_witness.is_cancelled(),
@@ -408,8 +414,8 @@ mod tests {
     /// Security: after a hot config update, the access control check must
     /// immediately reflect the new allowlist.  This simulates the exact
     /// sequence that happens during OTP self-approval.
-    #[test]
-    fn security_config_update_immediately_affects_access_control() {
+    #[tokio::test]
+    async fn security_config_update_immediately_affects_access_control() {
         use {crate::access, moltis_common::types::ChatType};
 
         let plugin = TelegramPlugin::new();
@@ -438,7 +444,10 @@ mod tests {
             "dm_policy": "allowlist",
             "allowlist": ["alice"],
         });
-        plugin.update_account_config("test", new_config).unwrap();
+        plugin
+            .update_account_config("test", new_config)
+            .await
+            .unwrap();
 
         // After approval: user is allowed.
         {
@@ -452,15 +461,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn update_account_config_nonexistent_account_errors() {
+    #[tokio::test]
+    async fn update_account_config_nonexistent_account_errors() {
         let plugin = TelegramPlugin::new();
-        let result = plugin.update_account_config("nonexistent", serde_json::json!({"token": "t"}));
+        let result = plugin
+            .update_account_config("nonexistent", serde_json::json!({"token": "t"}))
+            .await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn update_account_config_preserves_otp_state() {
+    #[tokio::test]
+    async fn update_account_config_preserves_otp_state() {
         let plugin = TelegramPlugin::new();
         let cancel = CancellationToken::new();
         {
@@ -481,7 +492,10 @@ mod tests {
             "token": "test:fake_token_for_unit_tests",
             "allowlist": ["alice"],
         });
-        plugin.update_account_config("test", new_config).unwrap();
+        plugin
+            .update_account_config("test", new_config)
+            .await
+            .unwrap();
 
         // OTP challenge must still be pending (state was not wiped).
         let map = plugin.accounts.read().unwrap();
@@ -493,8 +507,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn update_account_config_preserves_bot_token() {
+    #[tokio::test]
+    async fn update_account_config_preserves_bot_token() {
         let plugin = TelegramPlugin::new();
         let cancel = CancellationToken::new();
         {
@@ -507,7 +521,10 @@ mod tests {
             "token": "test:fake_token_for_unit_tests",
             "allowlist": ["alice"],
         });
-        plugin.update_account_config("test", new_config).unwrap();
+        plugin
+            .update_account_config("test", new_config)
+            .await
+            .unwrap();
 
         // Bot instance itself is untouched (same object in memory).
         let map = plugin.accounts.read().unwrap();

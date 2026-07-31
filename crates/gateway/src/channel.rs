@@ -222,7 +222,7 @@ impl ChannelService for LiveChannelService {
                         Some(status) => Some(status.probe(aid).await),
                         None => None,
                     };
-                    let cfg = p.account_config_json(aid);
+                    let cfg = p.account_config_json(aid).await;
                     (snap, cfg)
                 };
 
@@ -895,7 +895,7 @@ impl ChannelService for LiveChannelService {
 
         // Persist the new channel to the store.
         if let Some(account_id) = result.get("account_id").and_then(Value::as_str)
-            && let Some(config_json) = plugin.account_config_json(account_id)
+            && let Some(config_json) = plugin.account_config_json(account_id).await
             && let Err(e) = self
                 .store
                 .upsert(StoredChannel {

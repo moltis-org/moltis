@@ -71,6 +71,7 @@ impl VoiceCallTool {
             .unwrap_or_default();
         let webhook_base_url = plugin
             .account_config_json(&selected_account_id)
+            .await
             .and_then(|config| {
                 config["webhook_url"]
                     .as_str()

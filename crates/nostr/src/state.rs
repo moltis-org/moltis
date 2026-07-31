@@ -14,10 +14,17 @@ use crate::{config::NostrAccountConfig, reply_ctx::ReplyContexts};
 /// this same `Arc` so runtime config updates (DM policy, allowlist) take
 /// effect immediately without restarting the account.
 ///
-/// Uses `std::sync::RwLock` (not `tokio::sync::RwLock`) because several
-/// `ChannelPlugin` trait methods are synchronous and must be callable from
-/// inside a tokio runtime without panicking.
-pub type SharedConfig = Arc<RwLock<NostrAccountConfig>>;
+/// Deliberately a `tokio::sync::RwLock`, not a `std::sync::RwLock`: its guards
+/// are held across `.await`, which is what makes group authorization atomic
+/// with respect to publishing. The outbound path takes a read guard, checks
+/// that the group is still permitted, and keeps the guard until the event has
+/// been handed to the relay — so a settings save that withdraws the group waits
+/// for that publish rather than slipping in behind the check. See
+/// `NostrOutbound::authorized_group_publish`.
+///
+/// This is why `ChannelPlugin`'s config accessors are async: a synchronous
+/// writer could not take this lock (`blocking_write` panics inside a runtime).
+pub type SharedConfig = Arc<tokio::sync::RwLock<NostrAccountConfig>>;
 
 /// Shared OTP state — bus loop initiates challenges, plugin reads pending list.
 pub type SharedOtp = Arc<Mutex<OtpState>>;

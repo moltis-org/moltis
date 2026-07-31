@@ -218,7 +218,7 @@ impl ChannelRegistry {
         let channel_type = self.resolve_channel_type(account_id)?;
         let plugin = self.plugins.get(&channel_type)?;
         let p = plugin.read().await;
-        p.account_config(account_id)
+        p.account_config(account_id).await
     }
 
     /// Get the raw JSON config for an account via the registry.
@@ -226,7 +226,7 @@ impl ChannelRegistry {
         let channel_type = self.resolve_channel_type(account_id)?;
         let plugin = self.plugins.get(&channel_type)?;
         let p = plugin.read().await;
-        p.account_config_json(account_id)
+        p.account_config_json(account_id).await
     }
 
     /// Fetch thread messages for context injection.
@@ -271,7 +271,7 @@ impl ChannelRegistry {
             .get(&channel_type)
             .ok_or_else(|| Error::invalid_input(format!("unknown channel type: {channel_type}")))?;
         let p = plugin.read().await;
-        p.update_account_config(account_id, config)
+        p.update_account_config(account_id, config).await
     }
 
     /// Retry deferred account setup for a running account.
@@ -635,7 +635,7 @@ mod tests {
             self.accounts.lock().unwrap().keys().cloned().collect()
         }
 
-        fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+        async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
             if self.has_account(account_id) {
                 Some(Box::new(TestConfigView))
             } else {
@@ -643,7 +643,7 @@ mod tests {
             }
         }
 
-        fn update_account_config(
+        async fn update_account_config(
             &self,
             _account_id: &str,
             _config: serde_json::Value,

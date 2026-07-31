@@ -466,7 +466,7 @@ async fn outbound_for(relay: &MockRelay, config: NostrAccountConfig) -> NostrOut
     let state = AccountState {
         client,
         keys,
-        config: Arc::new(RwLock::new(config)),
+        config: Arc::new(tokio::sync::RwLock::new(config)),
         cached_allowlist: Arc::new(RwLock::new(Vec::new())),
         cancel: CancellationToken::new(),
         otp: Arc::new(Mutex::new(OtpState::new(300))),
@@ -626,7 +626,7 @@ async fn revoking_the_group_mid_stream_publishes_no_further_events() {
     {
         let guard = accounts.read().expect("lock");
         let state = guard.get("acct").expect("account");
-        let mut cfg = state.config.write().expect("lock");
+        let mut cfg = state.config.write().await;
         cfg.groups.clear();
     }
 
@@ -675,7 +675,7 @@ async fn revoking_the_group_before_a_plain_send_publishes_nothing() {
     {
         let guard = outbound.accounts.read().expect("lock");
         let state = guard.get("acct").expect("account");
-        let mut cfg = state.config.write().expect("lock");
+        let mut cfg = state.config.write().await;
         cfg.groups.clear();
     }
 
@@ -723,6 +723,58 @@ async fn receive_only_mode_publishes_nothing() {
             .is_empty(),
         "receive-only must not put anything on the relay"
     );
+}
+
+/// The property the async config lock exists for: a settings save that
+/// withdraws the group cannot interleave between the authorization check and
+/// the publish.
+///
+/// A publish holds the config read guard until the event has been handed to the
+/// relay, so `update_account_config` (which takes the write guard) either lands
+/// entirely before it — and the publish is refused — or entirely after it. It
+/// can never land in between. This test drives the write concurrently with a
+/// send and asserts the two possible outcomes are the only ones: either the
+/// send was refused and nothing is on the relay, or it succeeded and exactly
+/// the authorized message is there. What must never happen is a refusal that
+/// still published, or a success carrying an unauthorized event.
+#[tokio::test]
+async fn a_concurrent_revocation_cannot_interleave_with_a_publish() {
+    let relay = MockRelay::run().await.expect("relay");
+    let outbound =
+        Arc::new(outbound_for(&relay, group_config("grp", GroupMessageKind::Nip29)).await);
+
+    let (client, config) = {
+        let guard = outbound.accounts.read().expect("lock");
+        let state = guard.get("acct").expect("account");
+        (state.client.clone(), Arc::clone(&state.config))
+    };
+
+    let sender = Arc::clone(&outbound);
+    let send = tokio::spawn(async move {
+        sender
+            .send_text("acct", &groups::group_target("grp"), "racing", None)
+            .await
+    });
+    // Withdraw the group at the same moment the send is being authorized.
+    let revoke = tokio::spawn(async move {
+        config.write().await.groups.clear();
+    });
+
+    let sent = send.await.expect("join");
+    revoke.await.expect("join");
+
+    let published = fetch_kind(&client, groups::group_chat_kind()).await;
+    match sent {
+        Ok(()) => assert_eq!(
+            published.len(),
+            1,
+            "an authorized send must publish exactly its own message"
+        ),
+        Err(_) => assert!(
+            published.is_empty(),
+            "a refused send must publish nothing at all"
+        ),
+    }
 }
 
 /// The gateway hands `add_reaction`/`remove_reaction` the reply target's

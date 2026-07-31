@@ -23,7 +23,7 @@ use {
     nostr_sdk::prelude::*,
 };
 
-use crate::state::AccountState;
+use crate::{config::NostrAccountConfig, state::AccountState};
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, histogram, nostr as nostr_metrics};
@@ -62,14 +62,21 @@ impl NostrOutbound {
     /// account's configured default. Buzz uses `kind:40002` while plain NIP-29
     /// uses `kind:9`, and a client filtering one never sees the other — so
     /// answering in the wrong dialect makes the bot invisible.
-    fn plan_group_send(
+    async fn plan_group_send(
         &self,
         account_id: &str,
         group_id: &str,
         reply_to: Option<&str>,
     ) -> GroupSendPlan {
-        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-        let Some(state) = accounts.get(account_id) else {
+        // Clone the handles out first: the accounts map is a std lock, whose
+        // guard must not be held across the config await below.
+        let handles = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            accounts
+                .get(account_id)
+                .map(|s| (Arc::clone(&s.reply_ctx), Arc::clone(&s.config)))
+        };
+        let Some((reply_ctx, config)) = handles else {
             return GroupSendPlan {
                 kind: crate::groups::group_chat_kind(),
                 mention: None,
@@ -77,10 +84,13 @@ impl NostrOutbound {
         };
 
         let reply_event = reply_to.and_then(|id| EventId::parse(id).ok());
-        let ctx = reply_event.and_then(|id| {
-            let ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
-            ctxs.get(&id)
-        });
+        let (ctx, learned) = {
+            let ctxs = reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+            (
+                reply_event.and_then(|id| ctxs.get(&id)),
+                ctxs.kind_for_group(group_id),
+            )
+        };
         if let Some(ctx) = ctx {
             return GroupSendPlan {
                 kind: ctx.kind,
@@ -88,14 +98,10 @@ impl NostrOutbound {
             };
         }
 
-        let learned = {
-            let ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
-            ctxs.kind_for_group(group_id)
+        let kind = match learned {
+            Some(kind) => kind,
+            None => Kind::from(config.read().await.group_message_kind),
         };
-        let kind = learned.unwrap_or_else(|| {
-            let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
-            Kind::from(cfg.group_message_kind)
-        });
         GroupSendPlan {
             kind,
             mention: None,
@@ -155,8 +161,13 @@ impl NostrOutbound {
         Ok(())
     }
 
-    /// Whether this account may still publish into `group_id`, re-checked at
-    /// send time.
+    /// Whether this account may publish into `group_id`, per the config the
+    /// caller has a guard on.
+    ///
+    /// Takes the config by reference rather than reading it: the caller holds
+    /// the read guard across the publish (see
+    /// [`Self::authorized_group_publish`]), and this decision is only valid for
+    /// exactly as long as that guard is held.
     ///
     /// A reply target is persisted with the session and outlives the config that
     /// produced it, so a queued or resumed turn can reach here long after group
@@ -171,8 +182,7 @@ impl NostrOutbound {
     /// * clearing `groups` (or removing this one) — the join list *is* the
     ///   access model, and an empty list means group chat is disabled;
     /// * `group_mention_mode = "none"`, documented as receive-only.
-    fn check_group_send(state: &AccountState, group_id: &str) -> ChannelResult<()> {
-        let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
+    fn check_group_send(cfg: &NostrAccountConfig, group_id: &str) -> ChannelResult<()> {
         crate::groups::check_group_access(group_id, &cfg.groups).map_err(|denied| {
             moltis_channels::Error::unavailable(format!(
                 "nostr group send refused for {group_id}: {denied}"
@@ -186,43 +196,54 @@ impl NostrOutbound {
         Ok(())
     }
 
-    /// Re-check [`Self::check_group_send`] for a stream already in flight.
+    /// The account's shared config handle, with the accounts map lock released.
     ///
-    /// A streamed reply holds a `Client` and group id resolved when the turn
-    /// started, but the config behind them is shared and mutated in place when
-    /// settings are saved (see `plugin::upsert_account`). A long turn can
-    /// therefore still be publishing minutes after the operator removed the
-    /// group or switched it to receive-only, so every publish re-reads the
-    /// live config instead of trusting the decision made at startup.
-    ///
-    /// Also fails closed if the account itself was deleted mid-stream.
-    ///
-    /// # What this does and does not guarantee
-    ///
-    /// Every group publish calls this immediately before handing the event to
-    /// the relay, so no publish proceeds on an authorization decision made
-    /// earlier in the turn. What remains is the interval between this returning
-    /// and the socket write: a config write landing there is not observed, and
-    /// that one event goes out.
-    ///
-    /// That interval cannot be closed by checking harder — only by holding the
-    /// config lock across the publish, which needs an async lock, which needs
-    /// `ChannelPlugin::update_account_config` to be async. It is sync for every
-    /// channel (`tokio::sync::RwLock::blocking_write` panics inside a runtime),
-    /// so closing it is a trait-level change rather than something this module
-    /// can do. Tracked as a follow-up.
-    ///
-    /// The residue is bounded and self-inflicted: at worst one already-composed
-    /// reply lands microseconds after the operator saved settings, in a channel
-    /// the bot was authorized in when the turn began. The cases that motivated
-    /// this check — a turn that streams for minutes, or a reply target resumed
-    /// from a session bound long ago — are fully covered.
-    fn recheck_group_send(&self, account_id: &str, group_id: &str) -> ChannelResult<()> {
+    /// Taken before awaiting on the config so the `std::sync::RwLock` guarding
+    /// the map is never held across an `.await`.
+    fn config_handle(&self, account_id: &str) -> ChannelResult<crate::state::SharedConfig> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         let state = accounts.get(account_id).ok_or_else(|| {
             moltis_channels::Error::unavailable(format!("nostr account not found: {account_id}"))
         })?;
-        Self::check_group_send(state, group_id)
+        Ok(Arc::clone(&state.config))
+    }
+
+    /// Authorize a group publish and perform it **without releasing the config
+    /// lock in between**.
+    ///
+    /// This is the whole point of the config being a `tokio::sync::RwLock`. A
+    /// check that merely runs before the publish leaves an interval — however
+    /// short — in which a settings save can withdraw the group while the event
+    /// is already on its way to the relay, and group messages are plaintext to
+    /// every member of the channel. Re-checking more often narrows that
+    /// interval but never removes it.
+    ///
+    /// Holding the read guard across `publish` removes it. A writer disabling
+    /// group chat blocks until the in-flight publish finishes, and any publish
+    /// starting afterwards observes the new config, so "the operator's save has
+    /// returned" and "nothing further is published" become the same instant.
+    ///
+    /// Also fails closed if the account was deleted mid-turn.
+    ///
+    /// `publish` must not touch the config lock: `tokio::sync::RwLock` is
+    /// write-preferring, so a nested read while a writer waits would deadlock.
+    /// Everything config-derived (the dialect plan, the reply target) is
+    /// resolved by the caller before this is entered.
+    async fn authorized_group_publish<T, F>(
+        &self,
+        account_id: &str,
+        group_id: &str,
+        publish: F,
+    ) -> ChannelResult<T>
+    where
+        F: AsyncFnOnce() -> ChannelResult<T>,
+    {
+        let config = self.config_handle(account_id)?;
+        let guard = config.read().await;
+        Self::check_group_send(&guard, group_id)?;
+        let result = publish().await;
+        drop(guard);
+        result
     }
 
     /// Look up account state and resolve the target: a `group:`-prefixed id is
@@ -234,18 +255,28 @@ impl NostrOutbound {
         account_id: &str,
         to: &str,
     ) -> ChannelResult<(Client, Keys, SendTarget)> {
-        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-        let state = accounts.get(account_id).ok_or_else(|| {
-            moltis_channels::Error::unavailable(format!("nostr account not found: {account_id}"))
-        })?;
-        let client = state.client.clone();
-        let keys = state.keys.clone();
+        // Clone the handles out before awaiting on the config: the accounts map
+        // is a std lock and its guard must not cross an await.
+        let (client, keys, config) = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            let state = accounts.get(account_id).ok_or_else(|| {
+                moltis_channels::Error::unavailable(format!(
+                    "nostr account not found: {account_id}"
+                ))
+            })?;
+            (
+                state.client.clone(),
+                state.keys.clone(),
+                Arc::clone(&state.config),
+            )
+        };
+        let cfg = config.read().await;
 
         // A prefixed target is a group, full stop — never reinterpret it as a
         // pubkey. Group participation is then re-checked so a group turned off
         // in the config fails closed rather than being delivered anywhere.
         if let Some(group_id) = crate::groups::parse_group_target(to) {
-            Self::check_group_send(state, group_id)?;
+            Self::check_group_send(&cfg, group_id)?;
             return Ok((client, keys, SendTarget::Group(group_id.to_string())));
         }
 
@@ -259,12 +290,9 @@ impl NostrOutbound {
         // ambiguous: the string carries no type and is indistinguishable from a
         // pubkey. That combination cannot arise from any released build, since
         // group chat ships for the first time in this change.
-        let legacy_group_target = {
-            let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
-            cfg.groups.iter().any(|g| g == to)
-        };
+        let legacy_group_target = cfg.groups.iter().any(|g| g == to);
         if legacy_group_target {
-            Self::check_group_send(state, to)?;
+            Self::check_group_send(&cfg, to)?;
             tracing::debug!(
                 account_id,
                 group = to,
@@ -300,35 +328,34 @@ impl ChannelOutbound for NostrOutbound {
                 // threaded via a NIP-10 `e` tag; the plan mirrors that
                 // message's kind and `p`-tags its author so they are notified.
                 let reply_event = reply_to.and_then(|id| EventId::parse(id).ok());
-                let plan = self.plan_group_send(account_id, &group_id, reply_to);
-                // Authorization is re-read here rather than relied on from
-                // `resolve`: everything between the two — the reply-id parse,
-                // the dialect plan, and their lock acquisitions — is time in
-                // which a settings save can withdraw the group. Same gate the
-                // streamed publishes use, so no publish site trusts a stale
-                // decision.
-                self.recheck_group_send(account_id, &group_id)
-                    .inspect_err(|e| {
-                        tracing::warn!(
-                            account_id,
-                            group = %group_id,
-                            "dropping group reply, group send was revoked before publish: {e}"
-                        );
-                    })?;
-                crate::groups::send_group_message(
-                    &client,
-                    plan.kind,
-                    &group_id,
-                    text,
-                    reply_event,
-                    plan.mention,
-                )
+                // Resolved before the guard is taken: `plan_group_send` reads
+                // the config itself, and a nested read under a waiting writer
+                // would deadlock.
+                let plan = self.plan_group_send(account_id, &group_id, reply_to).await;
+                self.authorized_group_publish(account_id, &group_id, async || {
+                    crate::groups::send_group_message(
+                        &client,
+                        plan.kind,
+                        &group_id,
+                        text,
+                        reply_event,
+                        plan.mention,
+                    )
+                    .await
+                    .map_err(|e| {
+                        #[cfg(feature = "metrics")]
+                        counter!(nostr_metrics::MESSAGE_SEND_ERRORS_TOTAL, "reason" => "group")
+                            .increment(1);
+                        moltis_channels::Error::external("nostr", e)
+                    })
+                })
                 .await
-                .map_err(|e| {
-                    #[cfg(feature = "metrics")]
-                    counter!(nostr_metrics::MESSAGE_SEND_ERRORS_TOTAL, "reason" => "group")
-                        .increment(1);
-                    moltis_channels::Error::external("nostr", e)
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        account_id,
+                        group = %group_id,
+                        "group reply not published: {e}"
+                    );
                 })?;
                 tracing::debug!(
                     account_id,
@@ -388,13 +415,16 @@ impl ChannelOutbound for NostrOutbound {
         };
 
         // A reaction is a publish into the group like any other, so it goes
-        // through the same live gate rather than trusting `resolve`.
-        self.recheck_group_send(account_id, &group_id)?;
-
+        // through the same authorization-holding gate rather than trusting the
+        // decision `resolve` made.
         let glyph = crate::groups::ack_emoji_glyph(emoji);
-        let reaction = crate::groups::send_reaction(&client, &group_id, target, glyph)
-            .await
-            .map_err(|e| moltis_channels::Error::external("nostr", e))?;
+        let reaction = self
+            .authorized_group_publish(account_id, &group_id, async || {
+                crate::groups::send_reaction(&client, &group_id, target, glyph)
+                    .await
+                    .map_err(|e| moltis_channels::Error::external("nostr", e))
+            })
+            .await?;
 
         // Remember it so `remove_reaction` can retract it via NIP-09.
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
@@ -477,7 +507,7 @@ impl ChannelStreamOutbound for NostrOutbound {
         // edit kind, and DMs are gift-wrapped, so both collect and send once.
         let live = match self.resolve(account_id, to).await {
             Ok((client, _, SendTarget::Group(group_id))) => {
-                let plan = self.plan_group_send(account_id, &group_id, reply_to);
+                let plan = self.plan_group_send(account_id, &group_id, reply_to).await;
                 crate::groups::supports_edit(plan.kind).then_some((client, group_id, plan))
             },
             _ => None,
@@ -518,24 +548,21 @@ impl ChannelStreamOutbound for NostrOutbound {
                 // First non-empty chunk: publish so the channel sees a reply
                 // forming instead of waiting for the whole turn.
                 None => {
-                    self.recheck_group_send(account_id, &group_id)
-                        .inspect_err(|e| {
-                            tracing::warn!(
-                                account_id,
-                                group = %group_id,
-                                "dropping streamed reply, group send was revoked mid-turn: {e}"
-                            );
-                        })?;
-                    match crate::groups::send_group_message(
-                        &client,
-                        plan.kind,
-                        &group_id,
-                        &buffer,
-                        reply_event,
-                        plan.mention,
-                    )
-                    .await
-                    {
+                    let published_id = self
+                        .authorized_group_publish(account_id, &group_id, async || {
+                            crate::groups::send_group_message(
+                                &client,
+                                plan.kind,
+                                &group_id,
+                                &buffer,
+                                reply_event,
+                                plan.mention,
+                            )
+                            .await
+                            .map_err(|e| moltis_channels::Error::external("nostr", e))
+                        })
+                        .await;
+                    match published_id {
                         Ok(id) => {
                             published = Some(id);
                             last_edit = tokio::time::Instant::now();
@@ -557,19 +584,17 @@ impl ChannelStreamOutbound for NostrOutbound {
                         // published stays as it is — a NIP-09 deletion is only
                         // a request the relay may ignore, so retracting it
                         // would promise more than it delivers.
-                        self.recheck_group_send(account_id, &group_id)
-                            .inspect_err(|e| {
-                                tracing::warn!(
-                                    account_id,
-                                    group = %group_id,
-                                    "stopping streamed edits, group send was revoked mid-turn: {e}"
-                                );
-                            })?;
-                        let result =
-                            crate::groups::edit_group_message(&client, &group_id, target, &buffer)
-                                .await;
+                        let result = self
+                            .authorized_group_publish(account_id, &group_id, async || {
+                                crate::groups::edit_group_message(
+                                    &client, &group_id, target, &buffer,
+                                )
+                                .await
+                                .map_err(|e| moltis_channels::Error::external("nostr", e))
+                            })
+                            .await;
                         if let Err(ref e) = result {
-                            tracing::warn!(account_id, "streamed edit failed: {e}");
+                            tracing::warn!(account_id, "streamed edit not published: {e}");
                         }
                         last_edit = tokio::time::Instant::now();
                         // Keep the flag set when the edit failed: it means
@@ -588,25 +613,24 @@ impl ChannelStreamOutbound for NostrOutbound {
             // Always land the final text, even if the last chunks were
             // throttled — otherwise the message stays truncated.
             Some(target) => {
-                let revoked =
-                    match pending_edit.then(|| self.recheck_group_send(account_id, &group_id)) {
-                        Some(Ok(())) | None => None,
-                        Some(Err(e)) => {
-                            tracing::warn!(
-                                account_id,
-                                group = %group_id,
-                                "skipping final streamed edit, group send was revoked mid-turn: {e}"
-                            );
-                            Some(e)
-                        },
-                    };
-                if revoked.is_none()
-                    && pending_edit
-                    && let Err(e) =
-                        crate::groups::edit_group_message(&client, &group_id, target, &buffer).await
-                {
-                    tracing::warn!(account_id, "final streamed edit failed: {e}");
-                }
+                let revoked = if pending_edit {
+                    self.authorized_group_publish(account_id, &group_id, async || {
+                        crate::groups::edit_group_message(&client, &group_id, target, &buffer)
+                            .await
+                            .map_err(|e| moltis_channels::Error::external("nostr", e))
+                    })
+                    .await
+                    .inspect_err(|e| {
+                        tracing::warn!(
+                            account_id,
+                            group = %group_id,
+                            "final streamed edit not published: {e}"
+                        );
+                    })
+                    .err()
+                } else {
+                    None
+                };
                 // Counted here rather than after the match: the initial publish
                 // went through `send_group_message`, which records no metrics,
                 // and the edits that follow are all the same logical message.
@@ -669,7 +693,7 @@ mod tests {
         let state = AccountState {
             client,
             keys,
-            config: Arc::new(RwLock::new(config)),
+            config: Arc::new(tokio::sync::RwLock::new(config)),
             cached_allowlist: Arc::new(RwLock::new(Vec::new())),
             cancel: CancellationToken::new(),
             otp: Arc::new(std::sync::Mutex::new(moltis_channels::otp::OtpState::new(
@@ -847,12 +871,22 @@ mod tests {
     }
 
     /// Overwrite the live account config, as saving channel settings does.
-    fn rewrite_config(outbound: &NostrOutbound, config: NostrAccountConfig) {
-        let accounts = outbound.accounts.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = accounts.get("acct") {
-            let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
-            *cfg = config;
+    async fn rewrite_config(outbound: &NostrOutbound, config: NostrAccountConfig) {
+        let handle = {
+            let accounts = outbound.accounts.read().unwrap_or_else(|e| e.into_inner());
+            accounts.get("acct").map(|s| Arc::clone(&s.config))
+        };
+        if let Some(handle) = handle {
+            *handle.write().await = config;
         }
+    }
+
+    /// Run the authorization gate on its own, with a publish that does nothing —
+    /// the check is what is under test, not the relay round trip.
+    async fn gate(outbound: &NostrOutbound, group_id: &str) -> ChannelResult<()> {
+        outbound
+            .authorized_group_publish("acct", group_id, async || Ok(()))
+            .await
     }
 
     /// A streamed reply resolves its group once and then publishes repeatedly
@@ -864,14 +898,14 @@ mod tests {
     async fn revoking_a_group_mid_stream_refuses_further_publishes() {
         let outbound = outbound_with_groups(vec!["grp".into()]);
         assert!(
-            outbound.recheck_group_send("acct", "grp").is_ok(),
+            gate(&outbound, "grp").await.is_ok(),
             "authorized while the group is joined"
         );
 
         // Operator removes the group while the turn is still generating.
-        rewrite_config(&outbound, NostrAccountConfig::default());
+        rewrite_config(&outbound, NostrAccountConfig::default()).await;
         assert!(
-            outbound.recheck_group_send("acct", "grp").is_err(),
+            gate(&outbound, "grp").await.is_err(),
             "removing the group must stop an in-flight stream"
         );
 
@@ -880,9 +914,10 @@ mod tests {
             groups: vec!["grp".into()],
             group_mention_mode: moltis_channels::gating::MentionMode::None,
             ..Default::default()
-        });
+        })
+        .await;
         assert!(
-            outbound.recheck_group_send("acct", "grp").is_err(),
+            gate(&outbound, "grp").await.is_err(),
             "receive-only must stop an in-flight stream"
         );
     }
@@ -897,7 +932,7 @@ mod tests {
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .remove("acct");
-        assert!(outbound.recheck_group_send("acct", "grp").is_err());
+        assert!(gate(&outbound, "grp").await.is_err());
     }
 
     /// Record an inbound message so the reply can mirror it.
@@ -914,46 +949,50 @@ mod tests {
 
     /// A reply to a Buzz kind:40002 message must go back as kind:40002 — a
     /// Buzz client filtering v2 would never see a kind:9 answer.
-    #[test]
-    fn reply_mirrors_buzz_dialect_and_tags_author() {
+    #[tokio::test]
+    async fn reply_mirrors_buzz_dialect_and_tags_author() {
         let outbound = outbound_with_groups(vec!["buzz-general".into()]);
         let (event_id, author) =
             record_inbound(&outbound, "buzz-general", buzz_stream_message_kind());
 
-        let plan = outbound.plan_group_send("acct", "buzz-general", Some(&event_id.to_hex()));
+        let plan = outbound
+            .plan_group_send("acct", "buzz-general", Some(&event_id.to_hex()))
+            .await;
         assert_eq!(plan.kind, buzz_stream_message_kind());
         assert_eq!(plan.mention, Some(author));
     }
 
-    #[test]
-    fn reply_mirrors_nip29_dialect() {
+    #[tokio::test]
+    async fn reply_mirrors_nip29_dialect() {
         let outbound = outbound_with_groups(vec!["grp".into()]);
         let (event_id, author) = record_inbound(&outbound, "grp", group_chat_kind());
 
-        let plan = outbound.plan_group_send("acct", "grp", Some(&event_id.to_hex()));
+        let plan = outbound
+            .plan_group_send("acct", "grp", Some(&event_id.to_hex()))
+            .await;
         assert_eq!(plan.kind, group_chat_kind());
         assert_eq!(plan.mention, Some(author));
     }
 
     /// With no specific message to answer, fall back to the dialect last seen
     /// in that group rather than the configured default.
-    #[test]
-    fn non_reply_uses_dialect_learned_from_group() {
+    #[tokio::test]
+    async fn non_reply_uses_dialect_learned_from_group() {
         let outbound = outbound_with_groups(vec!["buzz-general".into()]);
         record_inbound(&outbound, "buzz-general", buzz_stream_message_kind());
 
-        let plan = outbound.plan_group_send("acct", "buzz-general", None);
+        let plan = outbound.plan_group_send("acct", "buzz-general", None).await;
         assert_eq!(plan.kind, buzz_stream_message_kind());
         // Nobody specific to notify on a proactive send.
         assert_eq!(plan.mention, None);
     }
 
     /// Cold start with nothing learned falls back to the configured default.
-    #[test]
-    fn cold_start_uses_configured_dialect() {
+    #[tokio::test]
+    async fn cold_start_uses_configured_dialect() {
         let nip29 = outbound_with_groups(vec!["grp".into()]);
         assert_eq!(
-            nip29.plan_group_send("acct", "grp", None).kind,
+            nip29.plan_group_send("acct", "grp", None).await.kind,
             group_chat_kind(),
             "default config is the interoperable kind:9"
         );
@@ -964,35 +1003,37 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            buzz.plan_group_send("acct", "grp", None).kind,
+            buzz.plan_group_send("acct", "grp", None).await.kind,
             buzz_stream_message_kind(),
             "buzz_v2 config must post kind:40002"
         );
     }
 
     /// An unparseable or unknown reply id must not panic or mis-tag.
-    #[test]
-    fn unknown_reply_id_falls_back_without_mention() {
+    #[tokio::test]
+    async fn unknown_reply_id_falls_back_without_mention() {
         let outbound = outbound_with_groups(vec!["grp".into()]);
-        let plan = outbound.plan_group_send("acct", "grp", Some("not-an-event-id"));
+        let plan = outbound
+            .plan_group_send("acct", "grp", Some("not-an-event-id"))
+            .await;
         assert_eq!(plan.kind, group_chat_kind());
         assert_eq!(plan.mention, None);
     }
 
     /// Streaming edits are a Buzz extension; a plain NIP-29 group must fall
     /// back to collecting and sending once.
-    #[test]
-    fn only_buzz_dialect_streams_via_edits() {
+    #[tokio::test]
+    async fn only_buzz_dialect_streams_via_edits() {
         let outbound = outbound_with_groups(vec!["grp".into()]);
         record_inbound(&outbound, "grp", buzz_stream_message_kind());
         assert!(crate::groups::supports_edit(
-            outbound.plan_group_send("acct", "grp", None).kind
+            outbound.plan_group_send("acct", "grp", None).await.kind
         ));
 
         let plain = outbound_with_groups(vec!["grp".into()]);
         record_inbound(&plain, "grp", group_chat_kind());
         assert!(!crate::groups::supports_edit(
-            plain.plan_group_send("acct", "grp", None).kind
+            plain.plan_group_send("acct", "grp", None).await.kind
         ));
     }
 

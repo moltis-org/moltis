@@ -456,7 +456,7 @@ pub async fn prepare_gateway(
                             &account_id,
                             "status",
                             &headers,
-                            plugin_guard.account_config_json(&account_id),
+                            plugin_guard.account_config_json(&account_id).await,
                             &telephony_config_for_status,
                         ) {
                             Some(url) => url,
@@ -521,7 +521,7 @@ pub async fn prepare_gateway(
                                 &account_id,
                                 "answer",
                                 &headers,
-                                plugin_guard.account_config_json(&account_id),
+                                plugin_guard.account_config_json(&account_id).await,
                                 &telephony_config_for_answer,
                             ) {
                                 Some(url) => url,
@@ -553,7 +553,7 @@ pub async fn prepare_gateway(
                                     let existing_call = manager
                                         .resolve_call_id(provider_call_id)
                                         .and_then(|call_id| manager.get_call(&call_id));
-                                    if let Some(config_view) = plugin_guard.account_config(&account_id)
+                                    if let Some(config_view) = plugin_guard.account_config(&account_id).await
                                     {
                                         let rejected = inbound_call_rejected(
                                             config_view.dm_policy(),
@@ -675,7 +675,7 @@ pub async fn prepare_gateway(
                             &account_id,
                             "gather",
                             &headers,
-                            plugin_guard.account_config_json(&account_id),
+                            plugin_guard.account_config_json(&account_id).await,
                             &telephony_config_for_answer,
                         ) {
                             Some(url) => url,
@@ -712,7 +712,7 @@ pub async fn prepare_gateway(
                         // New inbound call — enforce access policy.
                         {
                             use moltis_channels::ChannelPlugin as _;
-                            if let Some(config_view) = plugin_guard.account_config(&account_id) {
+                            if let Some(config_view) = plugin_guard.account_config(&account_id).await {
                                 let policy = config_view.dm_policy();
                                 if inbound_call_rejected(policy.clone(), caller, config_view.allowlist()) {
                                     tracing::info!(account_id = %account_id, caller = %caller, policy = ?policy, "rejecting inbound call");
@@ -778,7 +778,7 @@ pub async fn prepare_gateway(
                             &account_id,
                             "gather",
                             &headers,
-                            plugin_guard.account_config_json(&account_id),
+                            plugin_guard.account_config_json(&account_id).await,
                             &telephony_config_for_gather,
                         ) {
                             Some(url) => url,

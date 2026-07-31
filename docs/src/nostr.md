@@ -231,6 +231,20 @@ group's `h` tag, a NIP-10 `e` tag threading it to the message being answered,
 and a `p` tag notifying that message's author. It is published with the same
 kind as the message it answers.
 
+### Turning Group Chat Off
+
+Removing a group from `groups`, or setting `group_mention_mode = "none"`, stops
+the bot publishing into that channel — not just answering in it. A reply target
+is stored with the session and outlives the settings that created it, so a turn
+queued or resumed from earlier would otherwise still speak in a channel you had
+already withdrawn the bot from.
+
+This is enforced at the publish itself, under the same lock the settings save
+takes. Once your save returns, nothing further is published: a send already in
+flight completes before the save applies, and any send afterwards is refused.
+A long streamed reply stops mid-answer rather than finishing; the text already
+posted stays, since a NIP-09 deletion is only a request the relay may ignore.
+
 ### Access Control
 
 `groups` is the whole access model: it is both the set of groups the bot

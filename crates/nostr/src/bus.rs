@@ -19,9 +19,8 @@ use {
 
 use crate::{
     access::{self, AccessDenied},
-    config::NostrAccountConfig,
     seen::SeenTracker,
-    state::{SharedOtp, SharedReplyContexts},
+    state::{SharedConfig, SharedOtp, SharedReplyContexts},
 };
 
 #[cfg(feature = "metrics")]
@@ -42,7 +41,7 @@ const OTP_CHALLENGE_MSG: &str = "You are not on the allowlist. A PIN challenge h
 pub async fn run_subscription_loop(
     client: Client,
     keys: Keys,
-    config: Arc<RwLock<NostrAccountConfig>>,
+    config: SharedConfig,
     cached_allowlist: Arc<RwLock<Vec<PublicKey>>>,
     otp: SharedOtp,
     reply_ctx: SharedReplyContexts,
@@ -87,7 +86,7 @@ pub async fn run_subscription_loop(
     // configured groups via the `h` tag. Relay subscriptions are fixed at
     // connect, so group membership changes take effect on account restart.
     let group_ids: Vec<String> = {
-        let cfg = config.read().unwrap_or_else(|e| e.into_inner());
+        let cfg = config.read().await;
         cfg.groups.clone()
     };
     if !group_ids.is_empty() {
@@ -166,7 +165,7 @@ async fn handle_event(
     bot_pubkey: &PublicKey,
     since: Timestamp,
     seen: &mut SeenTracker,
-    config: &Arc<RwLock<NostrAccountConfig>>,
+    config: &SharedConfig,
     cached_allowlist: &Arc<RwLock<Vec<PublicKey>>>,
     otp: &SharedOtp,
     reply_ctx: &SharedReplyContexts,
@@ -255,7 +254,7 @@ async fn handle_event(
 
     // 6. Read config fields (drop guard before any .await).
     let (dm_policy, otp_self_approval) = {
-        let cfg = config.read().unwrap_or_else(|e| e.into_inner());
+        let cfg = config.read().await;
         (cfg.dm_policy.clone(), cfg.otp_self_approval)
     };
 
@@ -419,7 +418,7 @@ async fn handle_group_event(
     bot_pubkey: &PublicKey,
     since: Timestamp,
     seen: &mut SeenTracker,
-    config: &Arc<RwLock<NostrAccountConfig>>,
+    config: &SharedConfig,
     cached_allowlist: &Arc<RwLock<Vec<PublicKey>>>,
     reply_ctx: &SharedReplyContexts,
     account_id: &str,
@@ -447,7 +446,7 @@ async fn handle_group_event(
 
     // Read group config fields (drop the guard before any .await).
     let (groups, mention_mode, ack_reactions) = {
-        let cfg = config.read().unwrap_or_else(|e| e.into_inner());
+        let cfg = config.read().await;
         (
             cfg.groups.clone(),
             cfg.group_mention_mode.clone(),
@@ -779,7 +778,7 @@ mod tests {
 
     use {
         super::*,
-        crate::{groups, reply_ctx::ReplyContexts},
+        crate::{config::NostrAccountConfig, groups, reply_ctx::ReplyContexts},
     };
 
     /// What a dispatched message looked like, for assertions.
@@ -864,7 +863,7 @@ mod tests {
         client: Client,
         bot: Keys,
         seen: SeenTracker,
-        config: Arc<RwLock<NostrAccountConfig>>,
+        config: SharedConfig,
         allowlist: Arc<RwLock<Vec<PublicKey>>>,
         reply_ctx: SharedReplyContexts,
         sink: Arc<RecordingSink>,
@@ -878,7 +877,7 @@ mod tests {
                 client: Client::new(bot.clone()),
                 bot,
                 seen: SeenTracker::new(),
-                config: Arc::new(RwLock::new(config)),
+                config: Arc::new(tokio::sync::RwLock::new(config)),
                 allowlist: Arc::new(RwLock::new(Vec::new())),
                 reply_ctx: Arc::new(Mutex::new(ReplyContexts::new())),
                 sink: Arc::new(RecordingSink::default()),

@@ -813,13 +813,35 @@ pub trait ChannelPlugin: Send + Sync {
     fn account_ids(&self) -> Vec<String>;
 
     /// Get the typed config view for a specific account.
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>>;
+    ///
+    /// Async so a plugin may keep its config behind an async lock — see
+    /// [`Self::update_account_config`].
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>>;
 
     /// Update the in-memory config for an account without restarting.
     ///
     /// Accepts raw JSON because the store persists `Value`. Each plugin
     /// deserializes into its concrete config type internally.
-    fn update_account_config(&self, account_id: &str, config: serde_json::Value) -> Result<()>;
+    ///
+    /// # Why this is async
+    ///
+    /// Config changes can revoke permission to talk somewhere, and a send
+    /// already authorized must not slip out behind the change. Making that
+    /// airtight means a plugin holds its config lock from the authorization
+    /// check until the message is handed to the network — i.e. across an await
+    /// — which only an async lock allows. A synchronous version of this method
+    /// could not take one (`tokio::sync::RwLock::blocking_write` panics inside
+    /// a runtime), so every implementor would be stuck with a check-then-send
+    /// gap. See `moltis_nostr::outbound::NostrOutbound::authorized_group_publish`
+    /// for the pattern.
+    ///
+    /// Implementations that do not need that guarantee can ignore it — the
+    /// signature costs them nothing.
+    async fn update_account_config(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> Result<()>;
 
     /// Get a shared outbound sender for routing outside the plugin.
     fn shared_outbound(&self) -> Arc<dyn ChannelOutbound>;
@@ -831,7 +853,7 @@ pub trait ChannelPlugin: Send + Sync {
     ///
     /// Each plugin serializes its concrete config type. Returns `None` if the
     /// account is not found.
-    fn account_config_json(&self, _account_id: &str) -> Option<serde_json::Value> {
+    async fn account_config_json(&self, _account_id: &str) -> Option<serde_json::Value> {
         None
     }
 
