@@ -186,6 +186,24 @@ impl NostrOutbound {
         Ok(())
     }
 
+    /// Re-check [`Self::check_group_send`] for a stream already in flight.
+    ///
+    /// A streamed reply holds a `Client` and group id resolved when the turn
+    /// started, but the config behind them is shared and mutated in place when
+    /// settings are saved (see `plugin::upsert_account`). A long turn can
+    /// therefore still be publishing minutes after the operator removed the
+    /// group or switched it to receive-only, so every publish re-reads the
+    /// live config instead of trusting the decision made at startup.
+    ///
+    /// Also fails closed if the account itself was deleted mid-stream.
+    fn recheck_group_send(&self, account_id: &str, group_id: &str) -> ChannelResult<()> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        let state = accounts.get(account_id).ok_or_else(|| {
+            moltis_channels::Error::unavailable(format!("nostr account not found: {account_id}"))
+        })?;
+        Self::check_group_send(state, group_id)
+    }
+
     /// Look up account state and resolve the target: a `group:`-prefixed id is
     /// a NIP-29 group send; anything else is parsed as a DM pubkey. Returns the
     /// group id with the prefix stripped — that bare value is what belongs in
@@ -455,6 +473,14 @@ impl ChannelStreamOutbound for NostrOutbound {
                 // First non-empty chunk: publish so the channel sees a reply
                 // forming instead of waiting for the whole turn.
                 None => {
+                    self.recheck_group_send(account_id, &group_id)
+                        .inspect_err(|e| {
+                            tracing::warn!(
+                                account_id,
+                                group = %group_id,
+                                "dropping streamed reply, group send was revoked mid-turn: {e}"
+                            );
+                        })?;
                     match crate::groups::send_group_message(
                         &client,
                         plan.kind,
@@ -482,6 +508,18 @@ impl ChannelStreamOutbound for NostrOutbound {
                 // Throttle edits: every token would be an event on the relay.
                 Some(target) => {
                     if last_edit.elapsed() >= STREAM_EDIT_INTERVAL {
+                        // Revoked mid-stream: stop revising. The text already
+                        // published stays as it is — a NIP-09 deletion is only
+                        // a request the relay may ignore, so retracting it
+                        // would promise more than it delivers.
+                        self.recheck_group_send(account_id, &group_id)
+                            .inspect_err(|e| {
+                                tracing::warn!(
+                                    account_id,
+                                    group = %group_id,
+                                    "stopping streamed edits, group send was revoked mid-turn: {e}"
+                                );
+                            })?;
                         let result =
                             crate::groups::edit_group_message(&client, &group_id, target, &buffer)
                                 .await;
@@ -505,7 +543,20 @@ impl ChannelStreamOutbound for NostrOutbound {
             // Always land the final text, even if the last chunks were
             // throttled — otherwise the message stays truncated.
             Some(target) => {
-                if pending_edit
+                let revoked =
+                    match pending_edit.then(|| self.recheck_group_send(account_id, &group_id)) {
+                        Some(Ok(())) | None => None,
+                        Some(Err(e)) => {
+                            tracing::warn!(
+                                account_id,
+                                group = %group_id,
+                                "skipping final streamed edit, group send was revoked mid-turn: {e}"
+                            );
+                            Some(e)
+                        },
+                    };
+                if revoked.is_none()
+                    && pending_edit
                     && let Err(e) =
                         crate::groups::edit_group_message(&client, &group_id, target, &buffer).await
                 {
@@ -514,8 +565,13 @@ impl ChannelStreamOutbound for NostrOutbound {
                 // Counted here rather than after the match: the initial publish
                 // went through `send_group_message`, which records no metrics,
                 // and the edits that follow are all the same logical message.
+                // Counted even when the final edit was refused — the message
+                // itself did reach the relay, only its tail was withheld.
                 #[cfg(feature = "metrics")]
                 counter!(nostr_metrics::MESSAGES_SENT_TOTAL).increment(1);
+                if let Some(e) = revoked {
+                    return Err(e);
+                }
             },
             // `send_text` records its own metrics, so counting again here
             // would double it — and an empty stream sent nothing at all.
@@ -743,6 +799,60 @@ mod tests {
                 "{mode:?} must still be able to reply"
             );
         }
+    }
+
+    /// Overwrite the live account config, as saving channel settings does.
+    fn rewrite_config(outbound: &NostrOutbound, config: NostrAccountConfig) {
+        let accounts = outbound.accounts.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accounts.get("acct") {
+            let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
+            *cfg = config;
+        }
+    }
+
+    /// A streamed reply resolves its group once and then publishes repeatedly
+    /// over the life of the turn, so authorization has to be re-read per
+    /// publish: `plugin::upsert_account` rewrites this very config in place,
+    /// and a turn that started while the group was joined must not keep
+    /// publishing after the operator withdrew the bot from it.
+    #[tokio::test]
+    async fn revoking_a_group_mid_stream_refuses_further_publishes() {
+        let outbound = outbound_with_groups(vec!["grp".into()]);
+        assert!(
+            outbound.recheck_group_send("acct", "grp").is_ok(),
+            "authorized while the group is joined"
+        );
+
+        // Operator removes the group while the turn is still generating.
+        rewrite_config(&outbound, NostrAccountConfig::default());
+        assert!(
+            outbound.recheck_group_send("acct", "grp").is_err(),
+            "removing the group must stop an in-flight stream"
+        );
+
+        // Switching the group to receive-only must stop it too.
+        rewrite_config(&outbound, NostrAccountConfig {
+            groups: vec!["grp".into()],
+            group_mention_mode: moltis_channels::gating::MentionMode::None,
+            ..Default::default()
+        });
+        assert!(
+            outbound.recheck_group_send("acct", "grp").is_err(),
+            "receive-only must stop an in-flight stream"
+        );
+    }
+
+    /// Deleting the account mid-stream leaves the stream holding a client for
+    /// state that no longer exists; it must fail closed rather than publish.
+    #[tokio::test]
+    async fn removing_the_account_mid_stream_refuses_further_publishes() {
+        let outbound = outbound_with_groups(vec!["grp".into()]);
+        outbound
+            .accounts
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove("acct");
+        assert!(outbound.recheck_group_send("acct", "grp").is_err());
     }
 
     /// Record an inbound message so the reply can mirror it.

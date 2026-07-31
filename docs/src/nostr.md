@@ -247,6 +247,12 @@ a hostile or buggy relay cannot inject text into the agent by inventing an `h`
 tag. Keep `groups` to channels you actually intend the bot to work in.
 ```
 
+Withdrawing the bot takes effect immediately, including mid-answer. Removing a
+group from `groups` — or switching it to `none` — is re-checked before every
+publish, so a reply that is still streaming stops where it is instead of running
+to completion. The text already posted stays visible: a NIP-09 deletion is only
+a request the relay may ignore, so it would promise more than it delivers.
+
 Note that group chat has no sender allowlist: in NIP-29 the relay owns
 membership, so anyone the relay admits to a joined channel can address the bot
 there. This is the same trust model as a Slack channel, and a reason to prefer

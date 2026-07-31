@@ -577,6 +577,84 @@ async fn nip29_stream_sends_one_complete_message_without_edits() {
     );
 }
 
+/// Poll until an event of `kind` reaches the relay, so the test synchronises on
+/// the publish itself rather than on a sleep.
+async fn wait_for_kind(client: &Client, kind: Kind) -> Event {
+    let mut found = None;
+    for _ in 0..100 {
+        found = fetch_kind(client, kind).await.into_iter().next();
+        if found.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    found.expect("event published within timeout")
+}
+
+/// Group access can be revoked while a turn is still generating — saving
+/// channel settings rewrites the very config the stream authorized against.
+/// Once revoked, nothing further may reach the relay: the already-published
+/// text stays truncated, which is the point, since the operator has withdrawn
+/// the bot from that channel and group messages are plaintext to every member.
+#[tokio::test]
+async fn revoking_the_group_mid_stream_publishes_no_further_events() {
+    let relay = MockRelay::run().await.expect("relay");
+    let outbound = outbound_for(
+        &relay,
+        group_config("buzz-general", GroupMessageKind::BuzzV2),
+    )
+    .await;
+
+    let accounts = outbound.accounts.clone();
+    let client = {
+        let guard = accounts.read().expect("lock");
+        guard.get("acct").expect("account").client.clone()
+    };
+
+    let (tx, rx) = mpsc::channel(16);
+    let target = groups::group_target("buzz-general");
+    let stream = tokio::spawn(async move { outbound.send_stream("acct", &target, None, rx).await });
+
+    // The first chunk publishes the reply that is forming.
+    tx.send(StreamEvent::Delta("Hello".to_string()))
+        .await
+        .expect("queue chunk");
+    let published = wait_for_kind(&client, groups::buzz_stream_message_kind()).await;
+    assert_eq!(published.content, "Hello");
+
+    // Operator drops the group, exactly as `plugin::upsert_account` does.
+    {
+        let guard = accounts.read().expect("lock");
+        let state = guard.get("acct").expect("account");
+        let mut cfg = state.config.write().expect("lock");
+        cfg.groups.clear();
+    }
+
+    // The rest of the answer, and the end of the turn, must stay unpublished.
+    tx.send(StreamEvent::Delta(", world".to_string()))
+        .await
+        .expect("queue chunk");
+    let _ = tx.send(StreamEvent::Done).await;
+    assert!(
+        stream.await.expect("join").is_err(),
+        "a revoked stream must report the refusal, not silently succeed"
+    );
+
+    assert!(
+        fetch_kind(&client, groups::buzz_edit_kind())
+            .await
+            .is_empty(),
+        "no edit may be published after group access was revoked"
+    );
+    assert_eq!(
+        fetch_kind(&client, groups::buzz_stream_message_kind())
+            .await
+            .len(),
+        1,
+        "the message published while authorized is the only one"
+    );
+}
+
 /// The gateway hands `add_reaction`/`remove_reaction` the reply target's
 /// `chat_id`, which is the *prefixed* form (`group:<id>`). The `h` tag on the
 /// published kind:7 and kind:5 must still be the bare group id — a NIP-29 relay
