@@ -438,12 +438,16 @@ mod tests {
             "sh".to_string(),
             output.to_string_lossy().into_owned(),
         ];
-        let transport = StdioTransport::spawn_with_timeout_in(
+        let options = StdioLaunchOptions {
+            current_dir: Some(cwd.path().to_path_buf()),
+            ..StdioLaunchOptions::default()
+        };
+        let transport = StdioTransport::spawn_with_options(
             "sh",
             &args,
             &HashMap::new(),
-            Some(cwd.path()),
             Duration::from_secs(1),
+            &options,
         )
         .await
         .unwrap();
@@ -459,7 +463,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            Path::new(written_cwd.trim()).canonicalize().unwrap(),
+            std::path::Path::new(written_cwd.trim())
+                .canonicalize()
+                .unwrap(),
             cwd.path().canonicalize().unwrap()
         );
         transport.kill().await;
