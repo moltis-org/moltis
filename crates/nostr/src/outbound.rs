@@ -1,10 +1,12 @@
 //! Outbound message sending for Nostr channels.
 //!
 //! Implements `ChannelOutbound` and `ChannelStreamOutbound`. A send target is
-//! either a configured NIP-29 group id — published as a plaintext kind:9 group
-//! chat message (e.g. a Buzz channel reply) — or a pubkey, sent as a NIP-59
-//! gift-wrapped DM (kind:1059). Routing is decided by whether the target
-//! matches one of the account's configured `groups`.
+//! either a `group:`-prefixed NIP-29 group id — published as a plaintext group
+//! chat message (kind:9, or kind:40002 in a Buzz channel) — or a bare pubkey,
+//! sent as a NIP-59 gift-wrapped DM (kind:1059). The prefix decides the route,
+//! so classification never depends on mutable config; membership is then
+//! re-checked so a group removed from `groups` fails closed. See
+//! [`crate::groups::GROUP_TARGET_PREFIX`].
 
 use std::{
     collections::HashMap,
@@ -153,8 +155,10 @@ impl NostrOutbound {
         Ok(())
     }
 
-    /// Look up account state and resolve the target: a configured group id is
-    /// treated as a NIP-29 group send; anything else is parsed as a DM pubkey.
+    /// Look up account state and resolve the target: a `group:`-prefixed id is
+    /// a NIP-29 group send; anything else is parsed as a DM pubkey. Returns the
+    /// group id with the prefix stripped — that bare value is what belongs in
+    /// the `h` tag.
     async fn resolve(
         &self,
         account_id: &str,
@@ -271,7 +275,11 @@ impl ChannelOutbound for NostrOutbound {
         message_id: &str,
         emoji: &str,
     ) -> ChannelResult<()> {
-        let Ok((client, _, SendTarget::Group(_))) = self.resolve(account_id, channel_id).await
+        // `channel_id` is the reply target, i.e. the *prefixed* `group:<id>`.
+        // The `h` tag must carry the bare id `resolve` hands back, or a NIP-29
+        // relay refuses the write / files it under a group nobody watches.
+        let Ok((client, _, SendTarget::Group(group_id))) =
+            self.resolve(account_id, channel_id).await
         else {
             return Ok(());
         };
@@ -280,7 +288,7 @@ impl ChannelOutbound for NostrOutbound {
         };
 
         let glyph = crate::groups::ack_emoji_glyph(emoji);
-        let reaction = crate::groups::send_reaction(&client, channel_id, target, glyph)
+        let reaction = crate::groups::send_reaction(&client, &group_id, target, glyph)
             .await
             .map_err(|e| moltis_channels::Error::external("nostr", e))?;
 
@@ -305,7 +313,8 @@ impl ChannelOutbound for NostrOutbound {
         message_id: &str,
         emoji: &str,
     ) -> ChannelResult<()> {
-        let Ok((client, _, SendTarget::Group(_))) = self.resolve(account_id, channel_id).await
+        let Ok((client, _, SendTarget::Group(group_id))) =
+            self.resolve(account_id, channel_id).await
         else {
             return Ok(());
         };
@@ -325,7 +334,7 @@ impl ChannelOutbound for NostrOutbound {
             return Ok(());
         };
 
-        if let Err(e) = crate::groups::delete_event(&client, channel_id, reaction).await {
+        if let Err(e) = crate::groups::delete_event(&client, &group_id, reaction).await {
             tracing::debug!(account_id, "failed to retract reaction: {e}");
         }
         Ok(())

@@ -19,7 +19,9 @@ use std::{
 };
 
 use {
-    moltis_channels::{ChannelStreamOutbound, StreamReceiver, otp::OtpState, plugin::StreamEvent},
+    moltis_channels::{
+        ChannelOutbound, ChannelStreamOutbound, StreamReceiver, otp::OtpState, plugin::StreamEvent,
+    },
     moltis_nostr::{
         config::NostrAccountConfig,
         groups::{self, GroupMessageKind},
@@ -304,6 +306,74 @@ async fn group_filter_matches_both_dialects() {
     assert_eq!(kinds, vec![9, 40_002]);
 }
 
+/// The production client runs with `verify_subscriptions(true)`, which makes
+/// the SDK re-check every delivered event against the filters we subscribed
+/// with and silently drop the rest. That is a security boundary, but it also
+/// means a mismatch between our `h`-tag filter and the SDK's own matcher would
+/// make the bot go quiet in group chat with nothing logged. Subscribe exactly
+/// as `bus` does, publish from a second client, and require both dialects to
+/// arrive as notifications.
+#[tokio::test]
+async fn verified_subscription_still_delivers_both_group_dialects() {
+    let relay = MockRelay::run().await.expect("start mock relay");
+    let url = relay.url().await;
+
+    let bot = moltis_nostr::client::build_client(Keys::generate());
+    bot.add_relay(&url).await.expect("add relay");
+    bot.connect().await;
+
+    let mut notifications = bot.notifications();
+    bot.subscribe(
+        Filter::new()
+            .kinds(groups::group_message_kinds())
+            .custom_tags(groups::h_tag(), ["buzz-general".to_string()]),
+        None,
+    )
+    .await
+    .expect("subscribe");
+
+    let author = Client::new(Keys::generate());
+    author.add_relay(&url).await.expect("add relay");
+    author.connect().await;
+    for kind in groups::group_message_kinds() {
+        groups::send_group_message(&author, kind, "buzz-general", "hi", None, None)
+            .await
+            .expect("publish");
+    }
+    // Must not be delivered: different group, same kinds.
+    groups::send_group_message(
+        &author,
+        groups::buzz_stream_message_kind(),
+        "other-channel",
+        "elsewhere",
+        None,
+        None,
+    )
+    .await
+    .expect("publish");
+
+    let mut received: Vec<u16> = Vec::new();
+    let collect = async {
+        while received.len() < 2 {
+            if let Ok(nostr_sdk::prelude::RelayPoolNotification::Event { event, .. }) =
+                notifications.recv().await
+            {
+                assert_eq!(
+                    groups::extract_group_id(&event).as_deref(),
+                    Some("buzz-general")
+                );
+                received.push(event.kind.as_u16());
+            }
+        }
+    };
+    tokio::time::timeout(FETCH_TIMEOUT, collect)
+        .await
+        .expect("both group messages must survive subscription verification");
+
+    received.sort_unstable();
+    assert_eq!(received, vec![9, 40_002]);
+}
+
 /// The `h` tag survives the round trip well enough for the inbound gate to read
 /// it back — the value the access check keys on.
 #[tokio::test]
@@ -505,6 +575,57 @@ async fn nip29_stream_sends_one_complete_message_without_edits() {
             .is_empty(),
         "must not emit Buzz edit kinds on a plain NIP-29 relay"
     );
+}
+
+/// The gateway hands `add_reaction`/`remove_reaction` the reply target's
+/// `chat_id`, which is the *prefixed* form (`group:<id>`). The `h` tag on the
+/// published kind:7 and kind:5 must still be the bare group id — a NIP-29 relay
+/// keys authorization on it, so `group:buzz-general` is either refused or filed
+/// under a group nobody is watching.
+#[tokio::test]
+async fn ack_reactions_use_the_bare_group_id_in_the_h_tag() {
+    let relay = MockRelay::run().await.expect("relay");
+    let outbound = outbound_for(
+        &relay,
+        group_config("buzz-general", GroupMessageKind::BuzzV2),
+    )
+    .await;
+    let target = EventId::all_zeros();
+    let chat_id = groups::group_target("buzz-general");
+
+    outbound
+        .add_reaction("acct", &chat_id, &target.to_hex(), "eyes")
+        .await
+        .expect("react");
+
+    let client = {
+        let accounts = outbound.accounts.read().expect("lock");
+        accounts.get("acct").expect("account").client.clone()
+    };
+
+    let reactions = fetch_kind(&client, Kind::Reaction).await;
+    let reaction = reactions.first().expect("reaction stored by relay");
+    assert_eq!(tag_values(reaction, TagKind::h())[0], [
+        "h".to_string(),
+        "buzz-general".to_string()
+    ]);
+
+    // The retraction is scoped the same way, and must reference the reaction.
+    outbound
+        .remove_reaction("acct", &chat_id, &target.to_hex(), "eyes")
+        .await
+        .expect("retract");
+
+    let deletions = fetch_kind(&client, Kind::EventDeletion).await;
+    let deletion = deletions.first().expect("deletion stored by relay");
+    assert_eq!(tag_values(deletion, TagKind::h())[0], [
+        "h".to_string(),
+        "buzz-general".to_string()
+    ]);
+    assert_eq!(tag_values(deletion, TagKind::e())[0], [
+        "e".to_string(),
+        reaction.id.to_hex()
+    ]);
 }
 
 /// A stream that errors before producing text still says something rather than
