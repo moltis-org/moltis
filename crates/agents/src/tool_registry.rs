@@ -296,6 +296,16 @@ impl ToolRegistry {
         self.clone_allowed_entries(|name, _| predicate(name))
     }
 
+    /// Merge another registry while preserving each tool's source metadata.
+    pub fn extend_from(&mut self, other: &ToolRegistry) {
+        self.tools.extend(other.tools.iter().map(|(name, entry)| {
+            (name.clone(), ToolEntry {
+                tool: Arc::clone(&entry.tool),
+                source: entry.source.clone(),
+            })
+        }));
+    }
+
     /// Clone the registry keeping only tools whose name and source metadata match `predicate`.
     pub fn clone_allowed_entries<F>(&self, mut predicate: F) -> ToolRegistry
     where

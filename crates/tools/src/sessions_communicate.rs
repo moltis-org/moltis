@@ -288,12 +288,6 @@ impl AgentTool for SessionsSearchTool {
             None
         };
 
-        let search_limit = limit.saturating_mul(4).max(limit);
-        let hits =
-            self.store.search(query, search_limit).await.map_err(|e| {
-                Error::message(format!("failed to search sessions for '{query}': {e}"))
-            })?;
-
         let entries: HashMap<String, moltis_sessions::metadata::SessionEntry> = self
             .metadata
             .list()
@@ -301,6 +295,13 @@ impl AgentTool for SessionsSearchTool {
             .into_iter()
             .map(|entry| (entry.key.clone(), entry))
             .collect();
+        let known_keys = entries.keys().cloned().collect::<Vec<_>>();
+        let search_limit = limit.saturating_mul(4).max(limit);
+        let hits = self
+            .store
+            .search_known_keys(query, search_limit, &known_keys)
+            .await
+            .map_err(|e| Error::message(format!("failed to search sessions for '{query}': {e}")))?;
 
         let mut results = Vec::with_capacity(limit);
         for hit in hits {

@@ -32,6 +32,7 @@ pub(crate) async fn init_channels(
     session_metadata: Arc<moltis_sessions::metadata::SqliteSessionMetadata>,
     deferred_state: Arc<tokio::sync::OnceCell<Arc<crate::state::GatewayState>>>,
     data_dir: &std::path::Path,
+    start_accounts: bool,
 ) -> ChannelInitResult {
     #[cfg(not(feature = "whatsapp"))]
     let _ = data_dir;
@@ -192,70 +193,73 @@ pub(crate) async fn init_channels(
     let mut pending_starts: Vec<(String, String, serde_json::Value)> = Vec::new();
     let mut queued: HashSet<(String, String)> = HashSet::new();
 
-    #[cfg(feature = "telephony")]
-    if let Some((account_id, account_config)) = crate::methods::phone::phone_channel_account(config)
-    {
-        let key = ("telephony".to_string(), account_id.clone());
-        if registry.get("telephony").is_some() && queued.insert(key) {
-            pending_starts.push(("telephony".to_string(), account_id, account_config));
-        }
-    }
-
-    for (channel_type, accounts) in config.channels.all_channel_configs() {
-        if registry.get(channel_type).is_none() {
-            if !accounts.is_empty() {
-                tracing::debug!(
-                    channel_type,
-                    "skipping config — no plugin registered for this channel type"
-                );
-            }
-            continue;
-        }
-        for (account_id, account_config) in accounts {
-            let key = (channel_type.to_string(), account_id.clone());
-            if queued.insert(key) {
-                pending_starts.push((
-                    channel_type.to_string(),
-                    account_id.clone(),
-                    account_config.clone(),
-                ));
+    if start_accounts {
+        #[cfg(feature = "telephony")]
+        if let Some((account_id, account_config)) =
+            crate::methods::phone::phone_channel_account(config)
+        {
+            let key = ("telephony".to_string(), account_id.clone());
+            if registry.get("telephony").is_some() && queued.insert(key) {
+                pending_starts.push(("telephony".to_string(), account_id, account_config));
             }
         }
-    }
 
-    // Load persisted channels that were not queued from config.
-    match channel_store.list().await {
-        Ok(stored) => {
-            info!("{} stored channel(s) found in database", stored.len());
-            for ch in stored {
-                let key = (ch.channel_type.clone(), ch.account_id.clone());
-                if queued.contains(&key) {
+        for (channel_type, accounts) in config.channels.all_channel_configs() {
+            if registry.get(channel_type).is_none() {
+                if !accounts.is_empty() {
+                    tracing::debug!(
+                        channel_type,
+                        "skipping config — no plugin registered for this channel type"
+                    );
+                }
+                continue;
+            }
+            for (account_id, account_config) in accounts {
+                let key = (channel_type.to_string(), account_id.clone());
+                if queued.insert(key) {
+                    pending_starts.push((
+                        channel_type.to_string(),
+                        account_id.clone(),
+                        account_config.clone(),
+                    ));
+                }
+            }
+        }
+
+        // Load persisted channels that were not queued from config.
+        match channel_store.list().await {
+            Ok(stored) => {
+                info!("{} stored channel(s) found in database", stored.len());
+                for ch in stored {
+                    let key = (ch.channel_type.clone(), ch.account_id.clone());
+                    if queued.contains(&key) {
+                        info!(
+                            account_id = ch.account_id,
+                            channel_type = ch.channel_type,
+                            "skipping stored channel (already started from config)"
+                        );
+                        continue;
+                    }
+                    if registry.get(&ch.channel_type).is_none() {
+                        tracing::warn!(
+                            account_id = ch.account_id,
+                            channel_type = ch.channel_type,
+                            "unsupported channel type, skipping stored account"
+                        );
+                        continue;
+                    }
                     info!(
                         account_id = ch.account_id,
                         channel_type = ch.channel_type,
-                        "skipping stored channel (already started from config)"
+                        "starting stored channel"
                     );
-                    continue;
+                    if queued.insert(key) {
+                        pending_starts.push((ch.channel_type, ch.account_id, ch.config));
+                    }
                 }
-                if registry.get(&ch.channel_type).is_none() {
-                    tracing::warn!(
-                        account_id = ch.account_id,
-                        channel_type = ch.channel_type,
-                        "unsupported channel type, skipping stored account"
-                    );
-                    continue;
-                }
-                info!(
-                    account_id = ch.account_id,
-                    channel_type = ch.channel_type,
-                    "starting stored channel"
-                );
-                if queued.insert(key) {
-                    pending_starts.push((ch.channel_type, ch.account_id, ch.config));
-                }
-            }
-        },
-        Err(e) => tracing::warn!("failed to load stored channels: {e}"),
+            },
+            Err(e) => tracing::warn!("failed to load stored channels: {e}"),
+        }
     }
 
     let registry = Arc::new(registry);

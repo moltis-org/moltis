@@ -1,6 +1,6 @@
 // ── Message action bar (copy, voice, retry, fork) ────────────
 //
-// Appended below each finalized assistant message footer.
+// Appended to each finalized assistant message.
 // The retry button opens a popover with "Try again", "Add details",
 // and "More concise" options.
 // Icons use CSS mask-image classes (icon-*) backed by SVG files on disk.
@@ -68,16 +68,17 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 	bar.className = "msg-action-bar";
 
 	// ── Copy button ──────────────────────────────────────────
-	const copyBtn = actionButton("icon-copy", "Copy");
+	const copyTitle = "Copy as Markdown";
+	const copyBtn = actionButton("icon-copy", copyTitle);
 	copyBtn.addEventListener("click", () => {
-		const text = extractPlainText(messageEl);
+		const text = ctx.text?.trim() ? ctx.text : extractPlainText(messageEl);
 		copyToClipboard(text, "", "Failed to copy to clipboard").then((ok) => {
 			if (!ok) return;
 			copyBtn.replaceChildren(iconSpan("icon-checkmark"));
-			copyBtn.title = "Copied";
+			copyBtn.title = "Copied as Markdown";
 			setTimeout(() => {
 				copyBtn.replaceChildren(iconSpan("icon-copy"));
-				copyBtn.title = "Copy";
+				copyBtn.title = copyTitle;
 			}, 1500);
 		});
 	});

@@ -17,6 +17,7 @@ import {
 import { targetValue } from "../../typed-events";
 import { ErrorPanel } from "../shared";
 import type {
+	ExternalAgentInfo,
 	KeyHelp,
 	LocalModel,
 	ModelSelectorRow,
@@ -607,6 +608,7 @@ export function OnboardingProviderRow(props: OnboardingProviderRowProps): VNode 
 
 export function ProviderStep({ onNext, onBack }: { onNext: () => void; onBack?: (() => void) | null }): VNode {
 	const [providers, setProviders] = useState<ProviderInfo[]>([]);
+	const [acpAgents, setAcpAgents] = useState<ExternalAgentInfo[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [showAllProviders, setShowAllProviders] = useState(false);
@@ -640,6 +642,17 @@ export function ProviderStep({ onNext, onBack }: { onNext: () => void; onBack?: 
 		});
 	}
 
+	function refreshAcpAgents(cancelled?: () => boolean): Promise<unknown> {
+		return sendRpc<ExternalAgentInfo[]>("external_agents.list", {})
+			.then((res) => {
+				if (!cancelled?.() && res?.ok) {
+					setAcpAgents((res.payload || []).filter((agent) => agent.installed && agent.isAcp));
+				}
+				return res;
+			})
+			.catch(() => null);
+	}
+
 	useEffect(() => {
 		let cancelled = false;
 		let attempts = 0;
@@ -650,6 +663,7 @@ export function ProviderStep({ onNext, onBack }: { onNext: () => void; onBack?: 
 				if (res?.ok) {
 					setProviders(sortProviders(res.payload || []));
 					setLoading(false);
+					refreshAcpAgents(() => cancelled);
 					return;
 				}
 				if (
@@ -1130,6 +1144,21 @@ export function ProviderStep({ onNext, onBack }: { onNext: () => void; onBack?: 
 			<p className="text-xs text-[var(--muted)] leading-relaxed">
 				Configure one or more LLM providers to power your agent. You can add more later in Settings.
 			</p>
+			{acpAgents.length > 0 ? (
+				<div className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 flex flex-col gap-2">
+					<div className="text-xs text-[var(--muted)]">Detected ACP agents</div>
+					<div className="flex flex-wrap gap-2">
+						{acpAgents.map((agent) => (
+							<span key={agent.kind} className="provider-item-badge configured">
+								{agent.name}
+							</span>
+						))}
+					</div>
+					<div className="text-xs text-[var(--muted)]">
+						These are available in chat, so you can skip LLM setup if you want to use an ACP agent.
+					</div>
+				</div>
+			) : null}
 			{configuredProviders.length > 0 ? (
 				<div className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 flex flex-col gap-2">
 					<div className="text-xs text-[var(--muted)]">Detected LLM providers</div>

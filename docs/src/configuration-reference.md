@@ -285,6 +285,7 @@ User profile collected during onboarding.
 | `message_queue_mode` | enum: `followup`, `collect` | `"followup"` | How to handle messages that arrive while an agent run is active. `followup` queues each message and replays them one-by-one; `collect` concatenates and processes as a single message. |
 | `prompt_memory_mode` | enum: `live-reload`, `frozen-at-session-start` | `"live-reload"` | How `MEMORY.md` is loaded into the prompt for an ongoing session. `live-reload` reloads from disk before each turn; `frozen-at-session-start` freezes the initial content for the session lifetime. |
 | `workspace_file_max_chars` | integer | `32000` | Maximum characters from each workspace prompt file (`AGENTS.md`, `TOOLS.md`). |
+| `context_command` | optional string | `null` | Command run before each turn to generate additional prompt context. Stdout is appended to normal chat project context and external-agent context snapshots. Runs in the session worktree or bound project directory when a project is active, otherwise the server's working directory. Times out after 30s; stdout is capped at 32,000 bytes (truncated beyond that). |
 | `priority_models` | array | `[]` | Preferred model IDs to show first in selectors (full or raw model IDs). |
 | `allowed_models` | array | `[]` | ⚠️ **Deprecated.** Legacy model allowlist kept for backward compatibility; currently ignored (model visibility is provider-driven). Will be removed in a future release. |
 

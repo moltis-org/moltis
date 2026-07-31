@@ -309,6 +309,7 @@ async fn handle_event(
 
     // 9. Intercept slash commands before dispatching to the LLM.
     let reply_to = moltis_channels::ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: moltis_channels::ChannelType::Nostr,
         account_id: account_id.to_string(),
         chat_id: sender_hex.clone(),

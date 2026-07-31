@@ -269,6 +269,8 @@ function renderHistoryAssistantMessage(msg: AssistantMsg): HTMLElement | null {
 		const footer = createModelFooter(msg);
 		el.appendChild(footer);
 		upsertTtsProviderFooter(el, msg.tts_provider);
+	}
+	if (el) {
 		appendMessageActions({
 			messageEl: el,
 			sessionKey: S.activeSessionKey,
@@ -371,7 +373,8 @@ export function appendLastMessageTimestamp(epochMs: number): void {
 	if (!footer) {
 		footer = document.createElement("div");
 		footer.className = "msg-model-footer";
-		lastMsg.appendChild(footer);
+		const actionBar = lastMsg.querySelector(".msg-action-bar");
+		lastMsg.insertBefore(footer, actionBar || null);
 	}
 	const timeEl = document.createElement("time");
 	timeEl.className = "msg-footer-time";

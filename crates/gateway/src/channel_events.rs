@@ -8,8 +8,8 @@ use {
 
 use {
     moltis_channels::{
-        ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget,
-        Error as ChannelError, Result as ChannelResult, SavedChannelFile,
+        ChannelAckOutcome, ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelMessageMeta,
+        ChannelReplyTarget, Error as ChannelError, Result as ChannelResult, SavedChannelFile,
     },
     moltis_sessions::metadata::{SessionEntry, SqliteSessionMetadata},
     moltis_tools::approval::PendingApprovalView,
@@ -17,6 +17,7 @@ use {
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
+    channel_reactions::ChannelReactionController,
     state::GatewayState,
 };
 
@@ -331,6 +332,82 @@ fn start_channel_typing_loop(
     });
 
     Some(done_tx)
+}
+
+/// Create and register a per-turn acknowledgment reaction controller, keyed by
+/// the inbound message's own ack key. The controller immediately adds 👀 to that
+/// exact message and is later driven through phase emojis and finalized by
+/// whichever agent run claims it.
+///
+/// No-op unless the channel populated `ack_message_id` (bot directly addressed
+/// and reactions enabled) and an outbound implementation is available. Today
+/// that is Slack; other channels leave `ack_message_id` unset and get no
+/// reactions.
+///
+/// Returns the ack key so the caller can carry it into `chat.send`.
+async fn register_channel_reaction_controller(
+    state: &Arc<GatewayState>,
+    reply_to: &ChannelReplyTarget,
+) -> Option<String> {
+    let message_id = reply_to.ack_message_id.clone()?;
+    let outbound = state.services.channel_outbound_arc()?;
+    let key =
+        crate::channel_reactions::ack_key(&reply_to.account_id, &reply_to.chat_id, &message_id);
+    let controller = ChannelReactionController::start(
+        outbound,
+        reply_to.account_id.clone(),
+        reply_to.chat_id.clone(),
+        message_id,
+    );
+    // Park it against this message's own identity. A run claims it once the
+    // queue decision is known, so a message that queues behind an active run
+    // keeps its own 👀 instead of hijacking the running turn's reactions.
+    state
+        .channel_reaction_controllers
+        .register_pending(key.clone(), controller)
+        .await;
+    Some(key)
+}
+
+/// Finalize the acknowledgment reaction only when `chat.send` returned before
+/// the run executed — an error, or an `Ok` payload carrying a terminal state
+/// (`rejected`/`error`/`blocked`/`aborted`). Normal runs (which return
+/// `{ok, runId}` with no terminal state) finalize from the run's completion, so
+/// this leaves their controller in place.
+async fn finalize_reaction_on_early_return(
+    state: &Arc<GatewayState>,
+    ack_key: Option<&String>,
+    send_result: &Result<serde_json::Value, moltis_service_traits::ServiceError>,
+) {
+    let Some(ack_key) = ack_key else {
+        return;
+    };
+    let outcome = match send_result {
+        Err(_) => Some(ChannelAckOutcome::Failure),
+        Ok(payload) => {
+            // A queued message keeps its acknowledgment: it has not run yet and
+            // will claim it on replay.
+            if payload.get("queued").and_then(serde_json::Value::as_bool) == Some(true) {
+                None
+            } else if payload.get("rejected").and_then(serde_json::Value::as_bool) == Some(true) {
+                // Blocked by a MessageReceived hook — no run will ever start.
+                Some(ChannelAckOutcome::Failure)
+            } else {
+                match payload.get("state").and_then(|v| v.as_str()) {
+                    Some("rejected" | "error" | "blocked") => Some(ChannelAckOutcome::Failure),
+                    Some("aborted") => Some(ChannelAckOutcome::Cancelled),
+                    _ => None,
+                }
+            }
+        },
+    };
+    let Some(outcome) = outcome else {
+        return;
+    };
+    state
+        .channel_reaction_controllers
+        .finalize_keys(std::slice::from_ref(ack_key), outcome)
+        .await;
 }
 
 async fn resolve_channel_agent_id(

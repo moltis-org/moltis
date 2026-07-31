@@ -4,7 +4,7 @@
 // component that auto-rerenders from sessionStore signals.
 
 import type { VNode } from "preact";
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import {
 	makeBranchIcon,
 	makeChatIcon,
@@ -55,8 +55,39 @@ function channelSessionType(s: Session): ChannelType | null {
 	}
 }
 
-function formatHHMM(epochMs: number): string {
-	return new Date(epochMs).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function startOfLocalDay(date: Date): number {
+	return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function millisecondsUntilNextLocalDay(nowMs: number): number {
+	const now = new Date(nowMs);
+	const nextDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+	return Math.max(0, nextDay.getTime() - nowMs);
+}
+
+export function formatSessionTimestamp(epochMs: number, nowMs = Date.now()): string {
+	const date = new Date(epochMs);
+	const now = new Date(nowMs);
+	if (!(Number.isFinite(date.getTime()) && Number.isFinite(now.getTime()))) return "";
+
+	const daysAgo = Math.round((startOfLocalDay(now) - startOfLocalDay(date)) / MILLISECONDS_PER_DAY);
+	if (daysAgo === 0) {
+		return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+	}
+	if (daysAgo === 1) {
+		return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(-1, "day");
+	}
+	if (daysAgo > 1 && daysAgo < 7) {
+		return date.toLocaleDateString(undefined, { weekday: "long" });
+	}
+
+	return date.toLocaleDateString(undefined, {
+		month: "short",
+		day: "numeric",
+		...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+	});
 }
 
 // ── Icon component (renders SVG icon into a ref) ────────────
@@ -176,10 +207,11 @@ interface SessionItemProps {
 	activeKey: string;
 	depth: number;
 	keyMap: KeyMap;
+	nowMs: number;
 	refreshing: boolean;
 }
 
-function SessionItem({ session, activeKey, depth, keyMap, refreshing }: SessionItemProps): VNode {
+function SessionItem({ session, activeKey, depth, keyMap, nowMs, refreshing }: SessionItemProps): VNode {
 	const isBranch = depth > 0;
 	const active = session.key === activeKey;
 	// Read per-session signals — auto-subscribes for re-render.
@@ -239,7 +271,7 @@ function SessionItem({ session, activeKey, depth, keyMap, refreshing }: SessionI
 					)}
 					{ts > 0 && (
 						<span className="session-time" title={new Date(ts).toLocaleString()}>
-							{formatHHMM(ts)}
+							{formatSessionTimestamp(ts, nowMs)}
 						</span>
 					)}
 				</div>
@@ -258,6 +290,7 @@ export function SessionList(): VNode {
 	const filterId = projectStore.projectFilterId.value;
 	const tab = sessionStore.sessionListTab.value;
 	const showArchived = sessionStore.showArchivedSessions.value;
+	const [nowMs, setNowMs] = useState(Date.now);
 
 	// Spinner animation via setInterval
 	const spinnersRef = useRef<HTMLDivElement>(null);
@@ -274,11 +307,26 @@ export function SessionList(): VNode {
 		return () => clearInterval(timer);
 	}, []);
 
+	// Session date buckets change at local midnight even when no session data
+	// changes. Schedule the next boundary exactly and repeat after each rollover.
+	useEffect(() => {
+		let timer: ReturnType<typeof setTimeout>;
+		const scheduleNextDay = (): void => {
+			const currentTime = Date.now();
+			timer = setTimeout(() => {
+				setNowMs(Date.now());
+				scheduleNextDay();
+			}, millisecondsUntilNextLocalDay(currentTime));
+		};
+		scheduleNextDay();
+		return () => clearTimeout(timer);
+	}, []);
+
 	let filtered = filterId ? allSessions.filter((s) => s.projectId === filterId) : allSessions;
 	if (tab === "sessions") {
 		filtered = filtered.filter((s) => !(s.key || "").startsWith("cron:") && (showArchived || !s.archived));
 	} else if (tab === "cron") {
-		filtered = filtered.filter((s) => (s.key || "").startsWith("cron:"));
+		filtered = filtered.filter((s) => (s.key || "").startsWith("cron:") && (showArchived || !s.archived));
 	}
 
 	// Build parent→children map for tree rendering
@@ -303,6 +351,7 @@ export function SessionList(): VNode {
 					activeKey={activeKey}
 					depth={depth}
 					keyMap={keyMap}
+					nowMs={nowMs}
 					refreshing={session.key === refreshingKey}
 				/>
 				{children.map((child) => renderTree(child, depth + 1))}

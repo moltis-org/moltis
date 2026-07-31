@@ -18,6 +18,7 @@ import {
 	setSessionReplying,
 	switchSession,
 } from "../sessions";
+import { saveSessionAsMarkdown } from "../sessions/session-markdown";
 import { sessionStore } from "../stores/session-store";
 import { ComboSelect, confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui";
 
@@ -38,13 +39,6 @@ interface AgentOption {
 	[key: string]: unknown;
 }
 
-interface ExternalAgentInfo {
-	kind: string;
-	name: string;
-	installed: boolean;
-	version?: string | null;
-}
-
 interface SelectOption {
 	value: string;
 	label: string;
@@ -59,6 +53,7 @@ export interface SessionHeaderProps {
 	showSelectors?: boolean;
 	showName?: boolean;
 	showShare?: boolean;
+	showSaveMarkdown?: boolean;
 	showFork?: boolean;
 	showStop?: boolean;
 	showClear?: boolean;
@@ -125,6 +120,7 @@ export function SessionHeader({
 	showSelectors = true,
 	showName = true,
 	showShare = true,
+	showSaveMarkdown = false,
 	showFork = true,
 	showStop = true,
 	showClear = true,
@@ -148,6 +144,7 @@ export function SessionHeader({
 
 	const [renaming, setRenaming] = useState(false);
 	const [clearing, setClearing] = useState(false);
+	const [savingMarkdown, setSavingMarkdown] = useState(false);
 	const [stopping, setStopping] = useState(false);
 	const [switchingAgent, setSwitchingAgent] = useState(false);
 	const [agentOptions, setAgentOptions] = useState<AgentOption[]>(initialAgentOptions);
@@ -155,8 +152,6 @@ export function SessionHeader({
 	const [agentOptionsLoaded, setAgentOptionsLoaded] = useState(initialAgentOptions.length > 0);
 	const [nodeOptions, setNodeOptions] = useState<NodeInfo[]>([]);
 	const [switchingNode, setSwitchingNode] = useState(false);
-	const [externalAgentOptions, setExternalAgentOptions] = useState<ExternalAgentInfo[]>([]);
-	const [switchingExternalAgent, setSwitchingExternalAgent] = useState(false);
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	const fullName = session ? session.label || session.key : currentKey;
@@ -172,11 +167,6 @@ export function SessionHeader({
 	const showArchivedSessions = sessionStore.showArchivedSessions.value;
 	const currentAgentId = session?.agent_id || defaultAgentId || "main";
 	const currentNodeId = session?.node_id || "";
-	const currentExternalAgentKind = session?.external_agent_kind || "";
-	const currentExternalAgent = currentExternalAgentKind
-		? externalAgentOptions.find((agent) => agent.kind === currentExternalAgentKind) || null
-		: null;
-	const currentExternalAgentName = currentExternalAgent?.name || currentExternalAgentKind;
 
 	useEffect(() => {
 		let cancelled = false;
@@ -190,17 +180,6 @@ export function SessionHeader({
 			setDefaultAgentId(parsed.defaultId);
 			setAgentOptions(parsed.agents as AgentOption[]);
 			setAgentOptionsLoaded(true);
-		});
-		return () => {
-			cancelled = true;
-		};
-	}, [currentKey]);
-
-	useEffect(() => {
-		let cancelled = false;
-		sendRpc<ExternalAgentInfo[]>("external_agents.list", {}).then((res) => {
-			if (cancelled || !res?.ok) return;
-			setExternalAgentOptions(Array.isArray(res.payload) ? res.payload : []);
 		});
 		return () => {
 			cancelled = true;
@@ -399,6 +378,18 @@ export function SessionHeader({
 		});
 	}, [onBeforeShare, shareSnapshot]);
 
+	const onSaveMarkdown = useCallback(() => {
+		if (savingMarkdown) return;
+		setSavingMarkdown(true);
+		saveSessionAsMarkdown(currentKey, fullName)
+			.then(() => showToast("Session saved as Markdown", "success"))
+			.catch((error: unknown) => {
+				const message = error instanceof Error ? error.message : "Failed to save session as Markdown";
+				showToast(message, "error");
+			})
+			.finally(() => setSavingMarkdown(false));
+	}, [currentKey, fullName, savingMarkdown]);
+
 	const onArchive = useCallback(() => {
 		if (!(session && canArchive)) return;
 		if (typeof onBeforeArchive === "function") {
@@ -475,32 +466,6 @@ export function SessionHeader({
 		[currentKey, session, switchingNode],
 	);
 
-	const onExternalAgentChange = useCallback(
-		(nextKind: string) => {
-			if (switchingExternalAgent || nextKind === currentExternalAgentKind) return;
-			setSwitchingExternalAgent(true);
-			const request = nextKind
-				? sendRpc("external_agents.bind", { sessionKey: currentKey, kind: nextKind })
-				: sendRpc("external_agents.unbind", { sessionKey: currentKey });
-			request
-				.then((res) => {
-					if (!res?.ok) {
-						showToast((res?.error as { message?: string })?.message || "Failed to update external agent", "error");
-						return;
-					}
-					if (session) {
-						session.external_agent_kind = nextKind || null;
-						session.dataVersion.value++;
-					}
-					fetchSessions();
-				})
-				.finally(() => {
-					setSwitchingExternalAgent(false);
-				});
-		},
-		[currentExternalAgentKind, currentKey, session, switchingExternalAgent],
-	);
-
 	const agentSelectValue = currentAgentId;
 	const hasCurrentAgentOption = agentOptions.some((agent) => agent.id === agentSelectValue);
 	let agentSelectOptions: SelectOption[] = agentOptions.map((agent) => {
@@ -524,24 +489,6 @@ export function SessionHeader({
 	const shouldShowAgentPicker = !isCron && agentOptionsLoaded && (agentOptions.length > 1 || !hasCurrentAgentOption);
 
 	const shouldShowNodePicker = !isCron && (nodeOptions.length > 0 || Boolean(currentNodeId));
-	const selectableExternalAgents = externalAgentOptions.filter(
-		(agent) => agent.installed || agent.kind === currentExternalAgentKind,
-	);
-	const externalAgentSelectOptions: SelectOption[] = [
-		{ value: "", label: "Moltis agent" },
-		...selectableExternalAgents.map((agent) => ({
-			value: agent.kind,
-			label: `${agent.name}${agent.installed ? "" : " (unavailable)"}`,
-		})),
-	];
-	const shouldShowExternalAgentPicker = !isCron && selectableExternalAgents.length > 0;
-	const externalAgentStatus = currentExternalAgentKind
-		? currentExternalAgent?.installed === false
-			? `${currentExternalAgentName} unavailable`
-			: session?.externalSessionId
-				? `${currentExternalAgentName} session ${session.externalSessionId}`
-				: `${currentExternalAgentName} bound`
-		: "";
 	const hasCurrentNodeOption = currentNodeId === "" || nodeOptions.some((node) => node.nodeId === currentNodeId);
 	let nodeSelectOptions: SelectOption[] = [
 		{ value: "", label: "Local" },
@@ -580,7 +527,7 @@ export function SessionHeader({
 			/>
 		) : (
 			<span
-				className="chat-session-name"
+				className="chat-session-name min-w-0 truncate"
 				style={nameStyle}
 				title={canRename ? "Click to rename" : ""}
 				onClick={startRename}
@@ -639,25 +586,6 @@ export function SessionHeader({
 						disabled={switchingNode}
 					/>
 				)}
-				{showSelectors && shouldShowExternalAgentPicker && (
-					<div className="flex items-center gap-1.5" data-testid="external-agent-picker">
-						<ComboSelect
-							options={externalAgentSelectOptions}
-							value={currentExternalAgentKind}
-							onChange={onExternalAgentChange}
-							placeholder="External agent"
-							searchable={false}
-							allowEmpty={false}
-							fullWidth={false}
-							disabled={switchingExternalAgent}
-						/>
-						{externalAgentStatus && (
-							<span className="text-xs text-[var(--text-muted)]" title={externalAgentStatus}>
-								{externalAgentStatus}
-							</span>
-						)}
-					</div>
-				)}
 				{!nameOwnLine && showName && nameControl}
 				{!nameOwnLine && renameCta}
 				{showArchive && canArchive && (
@@ -687,6 +615,20 @@ export function SessionHeader({
 					>
 						<span className="icon icon-sm icon-share shrink-0" />
 						Share
+					</button>
+				)}
+				{showSaveMarkdown && (
+					<button
+						type="button"
+						className={`${actionButtonClass} inline-flex items-center gap-1.5`}
+						onClick={onSaveMarkdown}
+						title="Save as Markdown"
+						aria-label="Save as Markdown"
+						aria-busy={savingMarkdown}
+						disabled={savingMarkdown}
+					>
+						<span className="icon icon-sm icon-document shrink-0" />
+						<span className="hidden md:inline">Save .md</span>
 					</button>
 				)}
 				{showDelete && !isMain && (

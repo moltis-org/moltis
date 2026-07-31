@@ -900,6 +900,7 @@ impl EventHandler for Handler {
         }
 
         let reply_to = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Discord,
             account_id: self.account_id.clone(),
             chat_id: chat_id.clone(),

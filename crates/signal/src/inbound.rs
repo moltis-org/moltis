@@ -118,6 +118,7 @@ pub async fn handle_event(
     }
 
     let reply_to = ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: ChannelType::Signal,
         account_id: account_id.to_string(),
         chat_id: chat_id.clone(),
@@ -306,7 +307,9 @@ fn group_access_allowed(
     };
     let policy_allows = match cfg.group_policy {
         GroupPolicy::Open => true,
-        GroupPolicy::Allowlist => is_allowed(group_id, &cfg.group_allowlist),
+        GroupPolicy::Allowlist => {
+            !cfg.group_allowlist.is_empty() && is_allowed(group_id, &cfg.group_allowlist)
+        },
         GroupPolicy::Disabled => false,
     };
     if !policy_allows {
@@ -521,6 +524,21 @@ mod tests {
     #[test]
     fn groups_are_disabled_by_default() {
         let cfg = SignalAccountConfig::default();
+        assert!(!crate::inbound::group_access_allowed(
+            Some("group-id"),
+            "hello",
+            None,
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn empty_group_allowlist_denies_all() {
+        let cfg = SignalAccountConfig {
+            group_policy: GroupPolicy::Allowlist,
+            mention_mode: MentionMode::Always,
+            ..Default::default()
+        };
         assert!(!crate::inbound::group_access_allowed(
             Some("group-id"),
             "hello",

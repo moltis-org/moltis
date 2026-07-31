@@ -4,20 +4,24 @@
 //! ChannelPlugin trait with sub-traits for config, auth, inbound/outbound
 //! messaging, status, and gateway lifecycle.
 
+pub mod activity;
 pub mod channel_webhook_middleware;
 pub mod commands;
 pub mod config_view;
 pub mod contract;
 pub mod error;
+pub mod fair_queue;
 pub mod gating;
 pub mod media_download;
 pub mod message_log;
 pub mod otp;
 pub mod plugin;
 pub mod registry;
+pub mod slack_api_url;
 pub mod store;
 
 pub use {
+    activity::{ChannelAckOutcome, ChannelActivity},
     channel_webhook_middleware::{
         ChannelWebhookDedupeResult, ChannelWebhookRatePolicy, ChannelWebhookRejection,
         ChannelWebhookVerifier, TimestampGuard, VerifiedChannelWebhook,
@@ -35,4 +39,5 @@ pub use {
         web_session_channel_binding,
     },
     registry::{ChannelRegistry, RegistryOutboundRouter},
+    slack_api_url::{normalize_slack_api_base_url, validate_slack_api_base_url},
 };

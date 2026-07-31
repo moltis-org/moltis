@@ -1,13 +1,19 @@
-use std::{collections::HashMap, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::SystemTime,
+};
+
+mod permissions;
 
 use {
     async_trait::async_trait,
     futures::StreamExt,
     moltis_config::schema::ExternalAgentsConfig,
     moltis_external_agents::{
-        AcpPermissionHandler, AcpPermissionOptionKind, AcpPermissionRequest, AgentTransportKind,
-        ContextSnapshot, ExternalAgentEvent, ExternalAgentRegistry, ExternalAgentSession,
-        ExternalAgentSpec,
+        AcpPermissionHandler, AgentTransportKind, ContextSnapshot, ExternalAgentEvent,
+        ExternalAgentRegistry, ExternalAgentSession, ExternalAgentSpec,
         runtimes::{acp::AcpTransport, claude_code::ClaudeCodeTransport, codex::CodexTransport},
         types::ContextTurn,
     },
@@ -18,9 +24,17 @@ use {
     tracing::warn,
 };
 
-use moltis_tools::approval::{ApprovalDecision, ApprovalManager};
+#[cfg(test)]
+use {
+    moltis_external_agents::{AcpPermissionOptionKind, AcpPermissionRequest},
+    permissions::{select_allowed_acp_option, select_rejected_acp_option},
+};
+
+use moltis_tools::approval::ApprovalManager;
 
 use crate::{broadcast::BroadcastOpts, state::GatewayState};
+
+use self::permissions::GatewayAcpPermissionHandler;
 
 pub struct GatewayExternalAgentService {
     registry: ExternalAgentRegistry,
@@ -42,74 +56,6 @@ struct LiveSessionEntry {
 struct LiveSessionKey {
     session_key: String,
     kind: AgentTransportKind,
-}
-
-struct GatewayAcpPermissionHandler {
-    approval_manager: Arc<ApprovalManager>,
-}
-
-impl GatewayAcpPermissionHandler {
-    fn new(approval_manager: Arc<ApprovalManager>) -> Self {
-        Self { approval_manager }
-    }
-}
-
-#[async_trait]
-impl AcpPermissionHandler for GatewayAcpPermissionHandler {
-    async fn select_option(&self, request: AcpPermissionRequest) -> anyhow::Result<Option<String>> {
-        let command = format!(
-            "ACP permission requested for {} [{}]",
-            request.tool_call,
-            request
-                .options
-                .iter()
-                .map(|option| option.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        let session_key = request.moltis_session_key.as_deref();
-        let (request_id, decision_rx) = self
-            .approval_manager
-            .create_request(&command, session_key)
-            .await;
-        if let Some(session_key) = request.moltis_session_key.as_deref() {
-            tracing::info!(request_id, session_key, "ACP permission request is pending");
-        }
-        match self.approval_manager.wait_for_decision(decision_rx).await {
-            ApprovalDecision::Approved => Ok(select_allowed_acp_option(&request)),
-            ApprovalDecision::Denied | ApprovalDecision::Timeout => {
-                Ok(select_rejected_acp_option(&request))
-            },
-        }
-    }
-}
-
-fn select_allowed_acp_option(request: &AcpPermissionRequest) -> Option<String> {
-    request
-        .options
-        .iter()
-        .find(|option| option.kind == AcpPermissionOptionKind::AllowOnce)
-        .or_else(|| {
-            request
-                .options
-                .iter()
-                .find(|option| option.kind == AcpPermissionOptionKind::AllowAlways)
-        })
-        .map(|option| option.id.clone())
-}
-
-fn select_rejected_acp_option(request: &AcpPermissionRequest) -> Option<String> {
-    request
-        .options
-        .iter()
-        .find(|option| option.kind == AcpPermissionOptionKind::RejectOnce)
-        .or_else(|| {
-            request
-                .options
-                .iter()
-                .find(|option| option.kind == AcpPermissionOptionKind::RejectAlways)
-        })
-        .map(|option| option.id.clone())
 }
 
 impl GatewayExternalAgentService {
@@ -484,6 +430,28 @@ impl ExternalAgentChatService {
         Some(self.send_external(params.clone(), session_key, kind).await)
     }
 
+    /// Resolve the directory the configured `context_command` should run in for
+    /// this session: the session worktree when present, else the bound project
+    /// directory. Returns `None` when no project is bound, in which case the
+    /// command inherits the server process's current directory.
+    async fn resolve_context_working_dir(&self, session_key: &str) -> Option<PathBuf> {
+        let entry = self.session_metadata.get(session_key).await?;
+        let pid = entry.project_id?;
+        let val = self
+            .state
+            .services
+            .project
+            .get(serde_json::json!({ "id": pid }))
+            .await
+            .ok()?;
+        let dir = val.get("directory").and_then(|v| v.as_str())?;
+        let worktree = entry.worktree_branch.as_ref().and_then(|_| {
+            let wt = Path::new(dir).join(".moltis-worktrees").join(session_key);
+            wt.exists().then_some(wt)
+        });
+        Some(worktree.unwrap_or_else(|| PathBuf::from(dir)))
+    }
+
     async fn send_external(
         &self,
         params: Value,
@@ -537,7 +505,13 @@ impl ExternalAgentChatService {
         )
         .await;
 
-        let context = context_from_history(&history);
+        let context_working_dir = self.resolve_context_working_dir(&session_key).await;
+        let context_command_output = moltis_common::context_command::run_context_command(
+            self.state.config.chat.context_command.as_deref(),
+            context_working_dir.as_deref(),
+        )
+        .await;
+        let context = context_from_history_with_project_context(&history, context_command_output);
         let start = std::time::Instant::now();
         let live_session = self
             .external_agents
@@ -563,6 +537,7 @@ impl ExternalAgentChatService {
             },
         };
         let mut assistant_text = String::new();
+        let mut thinking_text = String::new();
         let mut token_usage = None;
         let mut external_error = None;
         while let Some(event) = events.next().await {
@@ -584,6 +559,7 @@ impl ExternalAgentChatService {
                     .await;
                 },
                 ExternalAgentEvent::ThinkingDelta(delta) => {
+                    thinking_text.push_str(&delta);
                     crate::broadcast::broadcast(
                         &self.state,
                         "chat",
@@ -591,7 +567,7 @@ impl ExternalAgentChatService {
                             "runId": run_id,
                             "sessionKey": session_key,
                             "state": "thinking_text",
-                            "text": delta,
+                            "text": thinking_text,
                             "seq": seq,
                         }),
                         BroadcastOpts::default(),
@@ -671,7 +647,14 @@ impl ExternalAgentChatService {
             BroadcastOpts::default(),
         )
         .await;
-        Ok(serde_json::json!({ "ok": true, "runId": run_id }))
+        Ok(serde_json::json!({
+            "ok": true,
+            "runId": run_id,
+            "text": assistant_text,
+            "inputTokens": token_usage.as_ref().map(|usage| usage.input_tokens).unwrap_or(0),
+            "outputTokens": token_usage.as_ref().map(|usage| usage.output_tokens).unwrap_or(0),
+            "durationMs": duration_ms,
+        }))
     }
 }
 
@@ -685,7 +668,10 @@ impl ChatService for ExternalAgentChatService {
     }
 
     async fn send_sync(&self, params: Value) -> ServiceResult {
-        self.send(params).await
+        if let Some(result) = self.maybe_send_external(&params).await {
+            return result;
+        }
+        self.inner.send_sync(params).await
     }
 
     async fn abort(&self, params: Value) -> ServiceResult {
@@ -791,7 +777,7 @@ impl ExternalAgentChatService {
             .read(&session_key)
             .await
             .unwrap_or_default();
-        let context = context_from_history(&history);
+        let context = context_from_history_with_project_context(&history, None);
         let messages: Vec<Value> = context
             .recent_turns
             .iter()
@@ -865,7 +851,10 @@ async fn resolve_session_key(params: &Value, state: &GatewayState) -> String {
     "main".to_string()
 }
 
-fn context_from_history(history: &[Value]) -> ContextSnapshot {
+fn context_from_history_with_project_context(
+    history: &[Value],
+    project_context: Option<String>,
+) -> ContextSnapshot {
     let recent_turns = history
         .iter()
         .rev()
@@ -892,6 +881,7 @@ fn context_from_history(history: &[Value]) -> ContextSnapshot {
         .collect();
     ContextSnapshot {
         recent_turns,
+        project_context,
         ..ContextSnapshot::default()
     }
 }
@@ -1048,6 +1038,28 @@ mod tests {
                 ExternalAgentStatus::Stopped
             }
         }
+    }
+
+    #[test]
+    fn context_from_history_includes_project_context() {
+        let history = vec![
+            PersistedMessage::User {
+                content: MessageContent::Text("hello".to_string()),
+                created_at: None,
+                audio: None,
+                documents: None,
+                channel: None,
+                seq: None,
+                run_id: None,
+            }
+            .to_value(),
+        ];
+
+        let context =
+            context_from_history_with_project_context(&history, Some("dynamic context".into()));
+
+        assert_eq!(context.project_context.as_deref(), Some("dynamic context"));
+        assert_eq!(context.recent_turns.len(), 1);
     }
 
     async fn sqlite_pool() -> sqlx::SqlitePool {

@@ -54,7 +54,7 @@ provider has complete credentials.
 enabled = true                         # Enable phone calls globally
 provider = "twilio"                    # twilio | telnyx | plivo
 inbound_policy = "disabled"            # disabled | allowlist | open
-allowlist = ["+15559876543"]           # Allowed inbound callers (E.164)
+allowlist = ["+15559876543"]           # Allowed inbound callers (E.164); empty list denies all calls
 max_duration_secs = 3600               # Max call duration (default: 1 hour)
 
 [phone.twilio]
@@ -132,7 +132,7 @@ Configure these in your provider's phone number or call-control settings, or the
 ## Security
 
 - **Webhook verification**: Twilio webhooks are verified using HMAC-SHA1 signature validation; Plivo and Telnyx verification are used when their signature credentials are configured
-- **Inbound access control**: Phone numbers can be restricted via allowlist
+- **Inbound access control**: Phone numbers can be restricted via allowlist. With `inbound_policy = "allowlist"`, an empty allowlist rejects all inbound calls
 - **Credential storage**: Provider credentials are stored in the credential store when configured from Settings > Phone
 - **Max duration**: Calls are automatically terminated after the configured max duration
 

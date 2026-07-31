@@ -666,7 +666,7 @@ function initSessionTabBar(): void {
 			btn.classList.toggle("active", btn.dataset.tab === current);
 		}
 		if (archivedRow) {
-			archivedRow.classList.toggle("hidden", current !== "sessions");
+			archivedRow.classList.toggle("hidden", current !== "sessions" && current !== "cron");
 		}
 	}
 

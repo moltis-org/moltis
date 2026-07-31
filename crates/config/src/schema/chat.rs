@@ -16,6 +16,12 @@ pub struct ChatConfig {
     /// Maximum characters from each workspace prompt file (`AGENTS.md`, `TOOLS.md`).
     #[serde(default = "default_workspace_file_max_chars")]
     pub workspace_file_max_chars: usize,
+    /// Command run before each turn to generate additional prompt context.
+    ///
+    /// Stdout is appended to project context for normal Moltis chat runs and
+    /// external-agent context snapshots. Failures are logged and ignored.
+    #[serde(default)]
+    pub context_command: Option<String>,
     /// Preferred model IDs to show first in selectors (full or raw model IDs).
     pub priority_models: Vec<String>,
     /// Legacy model allowlist. Kept for backward compatibility.
@@ -51,6 +57,7 @@ impl Default for ChatConfig {
             message_queue_mode: default_message_queue_mode(),
             prompt_memory_mode: default_prompt_memory_mode(),
             workspace_file_max_chars: default_workspace_file_max_chars(),
+            context_command: None,
             priority_models: Vec::new(),
             allowed_models: Vec::new(),
             compaction: CompactionConfig::default(),

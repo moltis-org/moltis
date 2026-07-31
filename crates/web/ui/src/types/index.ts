@@ -11,6 +11,8 @@ export type {
 // ChannelType is both a type and a runtime const object, so use plain re-export.
 export { ChannelType } from "./channel";
 
+export type { ExternalAgentInfo } from "./external-agent";
+
 export type {
 	ActiveHoursConfig,
 	CronJob,
@@ -142,7 +144,7 @@ export interface McpServerInfo {
 /** A history message stored in the session history cache. */
 export interface HistoryMessage {
 	role?: string;
-	content?: string;
+	content?: string | unknown[];
 	historyIndex?: number;
 	messageIndex?: number;
 	tool_call_id?: string;

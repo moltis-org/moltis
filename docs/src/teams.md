@@ -127,6 +127,8 @@ app_password = "your-client-secret-here"
 | `mention_mode` | no | `"mention"` | When the bot responds in groups: `"always"`, `"mention"`, or `"none"` |
 | `allowlist` | no | `[]` | AAD object IDs or user IDs allowed to DM the bot |
 | `group_allowlist` | no | `[]` | Conversation/team IDs allowed for group messages |
+| `otp_self_approval` | no | `true` | Enable OTP self-approval for non-allowlisted DM users |
+| `otp_cooldown_secs` | no | `300` | Cooldown after failed OTP attempts |
 | `model` | no | — | Override the default model for this channel |
 | `model_provider` | no | — | Provider for the overridden model |
 | `stream_mode` | no | `"edit_in_place"` | `"edit_in_place"` (live updates) or `"off"` (send once complete) |
@@ -158,6 +160,8 @@ dm_policy = "allowlist"
 group_policy = "open"
 mention_mode = "mention"
 allowlist = ["00000000-0000-0000-0000-000000000001"]
+otp_self_approval = true
+otp_cooldown_secs = 300
 stream_mode = "edit_in_place"
 edit_throttle_ms = 1500
 welcome_card = true
@@ -193,9 +197,14 @@ Controls who can send direct messages to the bot.
 
 | Value | Behavior |
 |-------|----------|
-| `"allowlist"` | Only users listed in `allowlist` can DM (default) |
+| `"allowlist"` | Only users listed in `allowlist` can DM (default). If the allowlist is empty, unknown users receive an OTP challenge when `otp_self_approval = true`. |
 | `"open"` | Anyone who can reach the bot can DM it |
 | `"disabled"` | DMs are silently ignored |
+
+When `dm_policy = "allowlist"` and `otp_self_approval = true`, unknown DM users
+receive a verification prompt. The PIN is visible to the bot owner in the web UI
+under **Channels → Senders**. After a correct PIN reply, Moltis adds the sender's
+Teams user ID to the account allowlist.
 
 ### Group Policy
 
@@ -204,7 +213,7 @@ Controls who can interact with the bot in group chats and team channels.
 | Value | Behavior |
 |-------|----------|
 | `"open"` | Bot responds in any group chat (default) |
-| `"allowlist"` | Only conversations listed in `group_allowlist` are allowed |
+| `"allowlist"` | Only conversations listed in `group_allowlist` are allowed. An empty group allowlist denies all groups. |
 | `"disabled"` | Group messages are silently ignored |
 
 ### Mention Mode

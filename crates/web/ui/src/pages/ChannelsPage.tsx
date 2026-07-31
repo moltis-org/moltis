@@ -84,10 +84,14 @@ export interface ChannelConfig {
 	// Slack
 	bot_token?: string;
 	app_token?: string;
+	api_base_url?: string;
 	connection_mode?: string;
 	group_policy?: string;
 	signing_secret?: string;
 	channel_allowlist?: string[];
+	ack_reactions?: boolean;
+	reaction_triggers?: boolean;
+	rich_blocks?: boolean;
 	// Matrix
 	homeserver?: string;
 	user_id?: string;

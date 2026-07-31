@@ -17,7 +17,7 @@ use crate::{
 };
 
 /// How long an OTP code stays valid.
-const OTP_TTL: Duration = Duration::from_secs(300);
+pub const OTP_TTL: Duration = Duration::from_secs(300);
 
 /// Maximum wrong-code attempts before lockout.
 const MAX_ATTEMPTS: u32 = 3;

@@ -188,7 +188,7 @@ impl ChannelType {
                     supports_threads: true,
                     supports_voice_ingest: false,
                     supports_pairing: false,
-                    supports_otp: false,
+                    supports_otp: true,
                     supports_reactions: true,
                     supports_location: true,
                 },
@@ -220,7 +220,7 @@ impl ChannelType {
                     supports_threads: true,
                     supports_voice_ingest: false,
                     supports_pairing: false,
-                    supports_otp: false,
+                    supports_otp: true,
                     supports_reactions: true,
                     supports_location: false,
                 },
@@ -645,6 +645,16 @@ pub struct ChannelReplyTarget {
     /// top-level chat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
+    /// Platform-specific ID of the *exact* inbound message to acknowledge with
+    /// reactions, distinct from [`Self::message_id`] (the reply/thread anchor).
+    ///
+    /// For threaded replies these differ: `message_id` points at the thread
+    /// root (so replies land in the right thread) while `ack_message_id` points
+    /// at the specific message the user just sent (so the 👀/✅/❌ reaction lands
+    /// on it). Channels set this only when the bot is directly addressed and the
+    /// channel supports acknowledgment reactions; `None` disables ack reactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ack_message_id: Option<String>,
 }
 
 impl ChannelReplyTarget {
@@ -1115,6 +1125,7 @@ mod tests {
     async fn default_update_location_returns_false() {
         let sink = DummySink;
         let target = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "42".into(),
@@ -1127,6 +1138,7 @@ mod tests {
     #[test]
     fn outbound_to_without_thread_id() {
         let target = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "12345".into(),
@@ -1139,6 +1151,7 @@ mod tests {
     #[test]
     fn outbound_to_with_thread_id() {
         let target = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "-100999".into(),
@@ -1151,6 +1164,7 @@ mod tests {
     #[test]
     fn reply_target_thread_id_serde_roundtrip() {
         let target = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "-100999".into(),
@@ -1452,6 +1466,7 @@ mod tests {
     #[test]
     fn channel_reply_target_converts_to_hook_channel_binding() {
         let target = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "-100999".into(),

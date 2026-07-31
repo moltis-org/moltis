@@ -285,6 +285,9 @@ port = {port}                           # Port number (auto-generated for this i
                                       #   "live-reload"            - Re-read MEMORY.md before each turn
                                       #   "frozen-at-session-start" - Freeze the first MEMORY.md snapshot per session
 # workspace_file_max_chars = 32000  # Optional: per-file prompt cap for AGENTS.md / TOOLS.md before truncation.
+# context_command = ""              # Optional command run before each turn; stdout is appended to prompt context.
+                                    #   Runs in the active project/worktree dir when set, else the server cwd.
+                                    #   Times out after 30s; stdout capped at 32,000 bytes.
 # priority_models = ["claude-opus-4-5", "gpt-5.6-sol", "gemini-3-flash"]  # Optional: models to pin first in selectors
 
 # ── Compaction ─────────────────────────────────────────────────────────────
@@ -806,6 +809,30 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [channels]
 # offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]
+
+# Example Slack account. api_base_url defaults to Slack; set it only for
+# Slack-compatible proxies, mock servers, or gateways.
+# [channels.slack.my-bot]
+# bot_token = "xoxb-..."
+# app_token = "xapp-..."
+# api_base_url = "https://slack.com/api"
+# dm_policy = "allowlist"
+# allowlist = []
+# thread_replies = true
+# ack_reactions = true       # 👀 on receipt, phase emoji while working, ✅/❌ on completion
+# reaction_triggers = false  # route user reactions into the agent (react ✅ to approve)
+# rich_blocks = false        # render replies as Block Kit blocks (fallback to plain text)
+# otp_self_approval = true
+# otp_cooldown_secs = 300
+
+# Example Microsoft Teams account.
+# [channels.msteams.my-bot]
+# app_id = "00000000-0000-0000-0000-000000000000"
+# app_password = "..."
+# dm_policy = "allowlist"
+# allowlist = []
+# otp_self_approval = true
+# otp_cooldown_secs = 300
 
 # See docs or defaults.toml for full channel configuration examples
 # (WhatsApp, Telegram, Teams, Discord, Slack, Matrix, Nostr, Signal).

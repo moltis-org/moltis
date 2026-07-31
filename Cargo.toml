@@ -1,6 +1,7 @@
 [workspace]
 default-members = [
   "apps/courier",
+  "crates/acp",
   "crates/agents",
   "crates/auth",
   "crates/auto-reply",
@@ -70,8 +71,10 @@ default-members = [
   "crates/webhooks",
   "crates/whatsapp",
 ]
+exclude = ["vendor/agent-client-protocol"]
 members = [
   "apps/courier",
+  "crates/acp",
   "crates/agents",
   "crates/auth",
   "crates/auto-reply",
@@ -144,6 +147,9 @@ members = [
 resolver = "2"
 
 [patch.crates-io]
+# Keep ACP stdin cancellation and EOF processing independent of blocked stdout,
+# while bounding queued wire bytes. Remove once a compatible release includes it.
+agent-client-protocol = { path = "vendor/agent-client-protocol" }
 # Widen libsqlite3-sys pin (0.30.1 → >=0.30.1,<0.36.0) so sqlx-sqlite 0.8.6
 # can coexist with matrix-sdk-sqlite's rusqlite 0.37 (libsqlite3-sys 0.35).
 # Remove once sqlx ≥ 0.9 ships stable.
@@ -190,6 +196,7 @@ axum       = { features = ["ws"], version = "0.8" }
 axum-extra = "0.10"
 # Serialization
 postcard        = { features = ["alloc"], version = "1.1" }
+process-wrap    = { default-features = false, features = ["job-object", "kill-on-drop", "process-group", "tokio1"], version = "9.1" }
 schemars        = "1.2"
 serde           = { features = ["derive"], version = "1" }
 serde-big-array = "0.5"
@@ -256,6 +263,7 @@ half               = "2"
 hex                = "0.4"
 hmac               = "0.12"
 jsonwebtoken       = { features = ["aws_lc_rs"], version = "10" }
+libc               = "0.2"
 llama-cpp-2        = "0.1"
 matrix-sdk         = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
 mockito            = "1.7"
@@ -303,12 +311,15 @@ hostname    = "0.4"
 http        = "1"
 hyper       = { features = ["client", "http1", "http2", "server"], version = "1" }
 hyper-util  = { features = ["client-legacy", "http1", "http2", "server-auto", "service", "tokio"], version = "0.1" }
+isahc       = "1.8"
 ngrok       = "0.18"
 tower       = "0.5"
 tower-http  = "0.6"
 url         = "2"
 urlencoding = "2"
-web-push    = "0.11"
+# Form bodies (application/x-www-form-urlencoded)
+form_urlencoded = "1"
+web-push        = "0.11"
 # Metrics
 metrics                     = "0.24"
 metrics-exporter-prometheus = "0.16"
@@ -376,6 +387,7 @@ zeroize       = { features = ["derive"], version = "1" }
 
 # Workspace crates
 moltis                  = { path = "crates/cli" }
+moltis-acp              = { path = "crates/acp" }
 moltis-agents           = { path = "crates/agents" }
 moltis-auth             = { path = "crates/auth" }
 moltis-auto-reply       = { path = "crates/auto-reply" }

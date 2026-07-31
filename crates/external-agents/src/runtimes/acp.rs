@@ -30,6 +30,9 @@ use crate::{
     },
 };
 
+const MAX_ACP_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const MAX_INFLIGHT_ACP_MESSAGES: usize = 256;
+
 /// Transport for ACP (Agent Client Protocol) agents over JSON-RPC stdio.
 pub struct AcpTransport {
     kind: AgentTransportKind,
@@ -601,10 +604,15 @@ async fn run_acp_controller(
             tokio::task::spawn_local(forward_stderr(stderr, Arc::clone(&client)));
         }
 
-        let (conn, io_task) = acp::ClientSideConnection::new(
+        let (conn, io_task) = acp::ClientSideConnection::new_with_limits(
             Arc::clone(&client),
             stdin.compat_write(),
             stdout.compat(),
+            acp::ConnectionLimits::bounded(
+                MAX_ACP_FRAME_BYTES,
+                MAX_ACP_FRAME_BYTES,
+                MAX_INFLIGHT_ACP_MESSAGES,
+            ),
             |future| {
                 tokio::task::spawn_local(future);
             },
