@@ -7934,6 +7934,7 @@ dependencies = [
  "half",
  "hex",
  "moltis-memory",
+ "moltis-metrics",
  "redb",
  "serde",
  "serde_json",
@@ -7943,8 +7944,8 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "zvec",
- "zvec-sys",
+ "zvec-rust",
+ "zvec-rust-sys",
 ]
 
 [[package]]
@@ -16131,14 +16132,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "zvec"
-version = "0.5.0"
-source = "git+https://github.com/zvec-ai/zvec-rust?rev=b1ca2393029f5c807275e8580e4ef22d83aff404#b1ca2393029f5c807275e8580e4ef22d83aff404"
+name = "zvec-rust"
+version = "0.6.0"
+source = "git+https://github.com/zvec-ai/zvec-rust?rev=f8e81a1645db9e5004fddc2e3f2160e0a512bfce#f8e81a1645db9e5004fddc2e3f2160e0a512bfce"
 dependencies = [
- "zvec-sys",
+ "zvec-rust-sys",
 ]
 
 [[package]]
-name = "zvec-sys"
-version = "0.5.0"
-source = "git+https://github.com/zvec-ai/zvec-rust?rev=b1ca2393029f5c807275e8580e4ef22d83aff404#b1ca2393029f5c807275e8580e4ef22d83aff404"
+name = "zvec-rust-sys"
+version = "0.6.0"
+source = "git+https://github.com/zvec-ai/zvec-rust?rev=f8e81a1645db9e5004fddc2e3f2160e0a512bfce#f8e81a1645db9e5004fddc2e3f2160e0a512bfce"

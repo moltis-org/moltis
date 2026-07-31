@@ -127,6 +127,7 @@ const READ_METHODS: &[&str] = &[
     "graphql.config.get",
     "memory.status",
     "memory.config.get",
+    "memory.search",
     "memory.qmd.status",
     "hooks.list",
     "network.audit.list",

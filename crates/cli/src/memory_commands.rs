@@ -1,5 +1,52 @@
 use clap::Subcommand;
 
+/// Call a gateway RPC method via the `/api/rpc` HTTP endpoint.
+///
+/// Used as a fallback when the zvec collection is locked by the running
+/// gateway and cannot be opened directly by the CLI.
+async fn gateway_rpc(method: &str, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    let config = moltis_config::discover_and_load();
+    let port = config.server.port;
+    if port == 0 {
+        anyhow::bail!("gateway port not configured (server.port is 0)");
+    }
+    let url = format!("http://127.0.0.1:{port}/api/rpc");
+    let body = serde_json::json!({ "method": method, "params": params });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build HTTP client: {e}"))?;
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("cannot reach gateway at {url}: {e}"))?;
+
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        anyhow::bail!(
+            "gateway requires authentication. \
+             Set [auth] disabled = true in moltis.toml, or use the web UI."
+        );
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("gateway returned {status}: {body}");
+    }
+
+    let result: serde_json::Value = resp.json().await?;
+    if let Some(err) = result.get("error") {
+        let msg = err
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        anyhow::bail!("RPC error: {msg}");
+    }
+    Ok(result.get("payload").cloned().unwrap_or(result))
+}
+
 #[derive(Subcommand)]
 pub enum MemoryAction {
     /// Search memories using keyword (FTS5) search.
@@ -162,7 +209,7 @@ async fn open_zvec_store(
         let stem = collection_stem;
         let cp = cache_path;
         tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let collection = moltis_memory_zvec::open_or_create_collection(&stem, Some(dim))?;
+            let collection = moltis_memory_zvec::open_collection(&stem, Some(dim))?;
             let cache = moltis_memory_zvec::RedbCache::new(&cp)?;
             Ok(
                 moltis_memory_zvec::ZvecMemoryStore::with_cache(collection, cache)
@@ -174,31 +221,12 @@ async fn open_zvec_store(
         .map_err(|e| anyhow::anyhow!("spawn_blocking join failed: {e}"))??
     };
 
-    // If a writer (e.g. a killed gateway) flushed documents but exited before
-    // optimizing, the reopened collection has its documents but an empty FTS
-    // index — keyword search returns nothing. Probe the FTS index with a token
-    // from an existing chunk; if it's stale, rebuild it via re-ingestion.
-    #[cfg(feature = "zvec")]
-    {
-        use moltis_memory::store::{MemoryStore as _, MergeStrategy};
-        let probe = &store;
-        if let Ok(files) = probe.list_files().await
-            && !files.is_empty()
-            && let Ok(chunks) = probe.get_chunks_for_file(&files[0].path).await
-            && let Some(first) = chunks.first()
-            && let Some(token) = first.text.split_whitespace().next()
-            && !token.is_empty()
-            && let Ok(results) = probe
-                .hybrid_search(&[], token, 0.0, 1.0, MergeStrategy::Weighted, 1)
-                .await
-            && results.is_empty()
-        {
-            let count = store.rebuild_keyword_index().await?;
-            eprintln!(
-                "Keyword index was stale (likely a non-optimized writer exit); rebuilt {count} chunks."
-            );
-        }
-    }
+    // NOTE: no FTS rebuild here. The CLI uses native FTS search
+    // (SearchQuery::fts) which relies on the FTS index the gateway
+    // persisted via flush(). Do not call rebuild_keyword_index — it
+    // upserts all chunks and can corrupt the FTS RocksDB.
+
+    let display_path = format!("{}_{}", display_path.display(), dim).into();
 
     Ok(ActiveStore::Open {
         store: Box::new(store),
@@ -275,28 +303,88 @@ async fn open_memory_pool() -> anyhow::Result<sqlx::SqlitePool> {
 }
 
 async fn search_memory(query: &str, limit: usize, json: bool) -> anyhow::Result<()> {
-    let store = match open_active_store().await? {
-        ActiveStore::Open { store, .. } => store,
-        ActiveStore::NotFound { message } => anyhow::bail!(message),
-    };
-    let results = moltis_memory::search::keyword_only_search(store.as_ref(), query, limit).await?;
+    // Try opening the collection directly first. If it's locked by the
+    // running gateway, fall back to the gateway's RPC endpoint. If the
+    // store genuinely doesn't exist, bail with the helpful message.
+    match open_active_store().await {
+        Ok(ActiveStore::Open { store, .. }) => {
+            let results =
+                moltis_memory::search::keyword_only_search(store.as_ref(), query, limit).await?;
+            print_search_results(&results, json);
+        },
+        Ok(ActiveStore::NotFound { message }) => {
+            anyhow::bail!(message);
+        },
+        Err(e) => {
+            if let Err(rpc_err) = search_via_rpc(query, limit, json).await {
+                anyhow::bail!(
+                    "direct open failed: {e}\n\
+                     gateway RPC fallback also failed: {rpc_err}"
+                );
+            }
+        },
+    }
+    Ok(())
+}
 
+async fn search_via_rpc(query: &str, limit: usize, json: bool) -> anyhow::Result<()> {
+    let payload = gateway_rpc(
+        "memory.search",
+        serde_json::json!({ "query": query, "limit": limit }),
+    )
+    .await?;
+
+    if let Some(err) = payload.get("error").and_then(|v| v.as_str())
+        && !err.is_empty()
+    {
+        anyhow::bail!("{err}");
+    }
+
+    let raw_results = payload
+        .get("results")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&raw_results)?);
+        return Ok(());
+    }
+
+    if raw_results.is_empty() {
+        println!("No results found.");
+        return Ok(());
+    }
+
+    // Format consistently with the direct path's print_human().
+    for r in &raw_results {
+        let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let path = r.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+        let start = r.get("start_line").and_then(|v| v.as_i64()).unwrap_or(0);
+        let end = r.get("end_line").and_then(|v| v.as_i64()).unwrap_or(0);
+        let text = r.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        println!("[{score:.2}] {path} (lines {start}-{end})");
+        for line in text.lines().take(5) {
+            println!("  {line}");
+        }
+        println!("  ...");
+        println!();
+    }
+    Ok(())
+}
+
+fn print_search_results(results: &[moltis_memory::search::SearchResult], json: bool) {
     if results.is_empty() {
         if json {
             println!("[]");
         } else {
             println!("No results found.");
         }
-        return Ok(());
-    }
-
-    if json {
-        print_json(&results)?;
+    } else if json {
+        let _ = print_json(results);
     } else {
-        print_human(&results);
+        print_human(results);
     }
-
-    Ok(())
 }
 
 fn print_json(results: &[moltis_memory::search::SearchResult]) -> anyhow::Result<()> {
@@ -337,33 +425,136 @@ fn print_human(results: &[moltis_memory::search::SearchResult]) {
 }
 
 async fn show_status() -> anyhow::Result<()> {
-    let (store, display_path) = match open_active_store().await? {
-        ActiveStore::Open {
+    let config = moltis_config::discover_and_load();
+    let data_dir = moltis_config::data_dir();
+
+    // Try to open the active store for detailed counts. If the gateway is
+    // running and holds the zvec lock, fall back to a limited status from
+    // config + filesystem metadata.
+    match open_store_for_backend(&config.memory, &data_dir).await {
+        Ok(ActiveStore::Open {
             store,
             display_path,
-        } => (store, display_path),
-        ActiveStore::NotFound { message } => {
-            println!("{message}");
-            return Ok(());
+        }) => {
+            let mem_config = moltis_memory::config::MemoryConfig {
+                db_path: display_path.to_string_lossy().to_string(),
+                ..Default::default()
+            };
+            let manager = moltis_memory::manager::MemoryManager::keyword_only(mem_config, store);
+            let status = manager.status().await?;
+
+            let embedding_model = format_embedding_model(&config);
+            println!("Memory status:");
+            println!("  Files:           {}", status.total_files);
+            println!("  Chunks:          {}", status.total_chunks);
+            println!("  Embedding model: {}", embedding_model);
+            println!("  Backend:         {}", status.backend_type);
+            println!("  Database size:   {}", status.db_size_display());
+            println!("  Database path:   {}", display_path.display());
         },
-    };
+        Ok(ActiveStore::NotFound { message }) => {
+            println!("{message}");
+        },
+        Err(e) => {
+            // Collection exists but is locked by the running gateway.
+            // Report what we can without opening it.
+            let embedding_model = format_embedding_model(&config);
+            let backend_name = match config.memory.backend {
+                moltis_config::MemoryBackend::Zvec => "zvec",
+                _ => "sqlite",
+            };
 
-    let config = moltis_memory::config::MemoryConfig {
-        db_path: display_path.to_string_lossy().to_string(),
-        ..Default::default()
-    };
-    let manager = moltis_memory::manager::MemoryManager::keyword_only(config, store);
-    let status = manager.status().await?;
+            #[cfg(feature = "zvec")]
+            {
+                if matches!(config.memory.backend, moltis_config::MemoryBackend::Zvec) {
+                    let db_name = config.memory.db_path.as_deref().unwrap_or("memory.zvec");
+                    let collection_stem =
+                        moltis_memory_zvec::path::resolve_data_subpath(&data_dir, db_name)
+                            .unwrap_or_else(|_| data_dir.join(db_name));
+                    let disk_size = compute_disk_usage(&collection_stem);
 
-    println!("Memory status:");
-    println!("  Files:           {}", status.total_files);
-    println!("  Chunks:          {}", status.total_chunks);
-    println!("  Embedding model: {}", status.embedding_model);
-    println!("  Backend:         {}", status.backend_type);
-    println!("  Database size:   {}", status.db_size_display());
-    println!("  Database path:   {}", display_path.display());
+                    println!("Memory status (gateway is running — counts unavailable):");
+                    println!("  Embedding model: {}", embedding_model);
+                    println!("  Backend:         {}", backend_name);
+                    println!("  Database size:   {}", format_bytes(disk_size));
+                    println!("  Database path:   {}", collection_stem.display());
+                    println!(
+                        "  Note:            Stop the gateway for detailed file/chunk counts. ({})",
+                        e.to_string().lines().next().unwrap_or("collection locked")
+                    );
+                    return Ok(());
+                }
+            }
+
+            println!("Memory status (gateway is running — counts unavailable):");
+            println!("  Embedding model: {}", embedding_model);
+            println!("  Backend:         {}", backend_name);
+            println!(
+                "  Note:            Stop the gateway for detailed file/chunk counts. ({})",
+                e.to_string().lines().next().unwrap_or("database locked")
+            );
+        },
+    }
 
     Ok(())
+}
+
+fn format_embedding_model(config: &moltis_config::MoltisConfig) -> String {
+    use moltis_config::MemoryProvider;
+    match &config.memory.provider {
+        Some(provider) => {
+            let provider_str = match provider {
+                MemoryProvider::Local => "local",
+                MemoryProvider::Ollama => "ollama",
+                MemoryProvider::OpenAi => "openai",
+                MemoryProvider::Custom => "custom",
+            };
+            let model = config.memory.model.as_deref().unwrap_or("(unset)");
+            format!("{provider_str}/{model}")
+        },
+        None => "none (keyword-only)".to_string(),
+    }
+}
+
+fn compute_disk_usage(stem: &std::path::Path) -> u64 {
+    let Some(parent) = stem.parent() else {
+        return 0;
+    };
+    let Some(stem_name) = stem.file_name().and_then(|s| s.to_str()) else {
+        return 0;
+    };
+    let Ok(dir) = std::fs::read_dir(parent) else {
+        return 0;
+    };
+    let mut total = 0u64;
+    for entry in dir.flatten() {
+        let matches = entry
+            .file_name()
+            .to_str()
+            .map(|name| name.starts_with(stem_name))
+            .unwrap_or(false);
+        if !matches {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata()
+            && meta.is_file()
+        {
+            total += meta.len();
+        }
+    }
+    total
+}
+
+fn format_bytes(bytes: u64) -> String {
+    if bytes >= 1_073_741_824 {
+        format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+    } else if bytes >= 1_048_576 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{} B", bytes)
+    }
 }
 
 #[cfg(feature = "zvec")]
@@ -447,6 +638,13 @@ async fn handle_reindex(
         total_chunks += source.get_chunks_for_file(fp).await?.len();
     }
 
+    if total_chunks == 0 {
+        anyhow::bail!(
+            "source collection contains 0 chunks; nothing to re-index. \
+             Check that the source path is correct."
+        );
+    }
+
     let model_name = model.unwrap_or_else(|| {
         config
             .memory
@@ -464,12 +662,7 @@ async fn handle_reindex(
         .as_ref()
         .map(|k| k.expose_secret().clone())
         .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "No embedding API key configured. Set [memory] api_key in config \
-                 or OPENAI_API_KEY environment variable."
-            )
-        })?;
+        .unwrap_or_default();
 
     let base_url = config
         .memory
@@ -502,8 +695,13 @@ async fn handle_reindex(
         print!("Proceed with re-index? [y/N]: ");
         use std::io::Write;
         std::io::stdout().flush()?;
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer)?;
+        let answer = tokio::task::spawn_blocking(|| {
+            let mut answer = String::new();
+            let _ = std::io::stdin().read_line(&mut answer);
+            answer
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("stdin read failed: {e}"))?;
         let answer = answer.trim().to_lowercase();
         if answer != "y" && answer != "yes" {
             println!("Cancelled.");
@@ -514,6 +712,21 @@ async fn handle_reindex(
     // Open the target as a store so writes populate its redb index too.
     let target_path = moltis_memory_zvec::path::resolve_data_subpath(&data_dir, &to)
         .map_err(|e| anyhow::anyhow!("invalid --to path: {e}"))?;
+
+    // Guard against reindexing into the active gateway collection — concurrent
+    // writes from the gateway and this CLI would corrupt the collection.
+    let active_db_name = config.memory.db_path.as_deref().unwrap_or("memory.zvec");
+    let active_collection_stem =
+        moltis_memory_zvec::path::resolve_data_subpath(&data_dir, active_db_name)
+            .map_err(|e| anyhow::anyhow!("invalid memory.db_path: {e}"))?;
+    if target_path == active_collection_stem {
+        anyhow::bail!(
+            "Refusing to reindex into the active gateway collection ({}). \
+             Stop the gateway first, or specify a different --to path.",
+            target_path.display()
+        );
+    }
+
     let target_cache_path = {
         let mut p = target_path.clone();
         p.as_mut_os_string().push(".cache");
@@ -553,7 +766,13 @@ async fn handle_reindex(
         target.upsert_file(file_row).await?;
 
         let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-        let embeddings: Vec<Vec<f32>> = embedder.embed_batch(&texts).await?;
+
+        // Embed in batches of ≤100 to avoid exceeding provider token limits.
+        let mut embeddings: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+        for batch in texts.chunks(100) {
+            let batch_emb = embedder.embed_batch(batch).await?;
+            embeddings.extend(batch_emb);
+        }
 
         let new_chunks: Vec<moltis_memory::schema::ChunkRow> = chunks
             .into_iter()
@@ -620,8 +839,10 @@ mod tests {
         let result = search_memory("test", 5, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
+        // NotFound now bails directly with the helpful message instead of
+        // falling through to RPC.
         assert!(
-            err.contains("Memory database not found"),
+            err.contains("not found"),
             "expected 'not found' error, got: {err}"
         );
     }
@@ -959,12 +1180,9 @@ mod tests {
                     updated_at: "2025-01-01T00:00:00Z".into(),
                 }];
                 store.upsert_chunks(&chunks).await.unwrap();
-                // zvec buffers writes; flush + optimize so the reopened handle
-                // can see them (including the FTS index). The gateway achieves
-                // this steady state via its periodic-optimize background task.
+                // zvec buffers writes; flush so the reopened handle can see them.
                 let coll = store.collection_arc();
                 moltis_memory_zvec::flush_collection(&coll).unwrap();
-                store.optimize().unwrap();
             }
 
             let cfg = mem_cfg_zvec("memory.zvec", Some(768));
@@ -973,7 +1191,7 @@ mod tests {
                     store,
                     display_path,
                 } => {
-                    assert_eq!(display_path, stem);
+                    assert_eq!(display_path, format!("{}_768", stem.display()));
                     // Diagnostic: confirm the chunk persisted across reopen.
                     let persisted = store.get_chunk_by_id("route-1").await.unwrap();
                     assert!(

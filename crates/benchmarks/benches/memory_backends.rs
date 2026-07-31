@@ -232,7 +232,8 @@ fn search_fixture_zvec() -> &'static SearchFixtureZvec {
             let store = create_zvec_store(&db_path);
             let chunks = make_chunks(SEARCH_COUNT, VECTOR_DIM);
             zvec_batched_upsert(&store, &chunks).await;
-            store.optimize().unwrap();
+            let coll = store.collection_arc();
+            moltis_memory_zvec::flush_collection(&coll).unwrap();
             SearchFixtureZvec {
                 store,
                 _db_dir: dir,

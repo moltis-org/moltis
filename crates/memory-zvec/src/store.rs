@@ -19,7 +19,6 @@ use moltis_memory::{
 use crate::{cache::RedbCache, chunks::ChunkDoc};
 
 const DEFAULT_DIMENSION: u32 = 768;
-const META_DOC_SOURCE: &str = "__meta__";
 
 /// Convert an `anyhow::Error` from a zvec/redb call into a [`Error::Backend`],
 /// preserving the full error chain in the message.
@@ -42,19 +41,37 @@ where
 /// `true` if the document is a real chunk (not a file marker or meta doc).
 fn is_real_chunk(doc: &Doc) -> bool {
     let source = doc.get_string("source").ok().flatten().unwrap_or_default();
-    source != crate::files::FILE_MARKER && source != META_DOC_SOURCE
+    source != crate::files::FILE_MARKER && source != crate::collection::META_DOC_SOURCE
 }
 
-/// Build a [`SearchResult`] (without text) from a zvec document.
-fn doc_to_search_result(doc: &Doc) -> SearchResult {
+/// Build a [`SearchResult`] (without text) from a **vector** search result.
+///
+/// zvec's `get_score()` for vector (cosine) queries returns DISTANCE
+/// (0.0 = identical, 1.0 = orthogonal). We convert to similarity
+/// (1 − distance) so downstream ranking (which sorts descending) puts the
+/// closest match first.
+fn doc_to_vector_result(doc: &Doc) -> SearchResult {
+    doc_with_score(doc, 1.0 - doc.get_score())
+}
+
+/// Build a [`SearchResult`] from a **keyword/FTS** search result.
+///
+/// zvec's `get_score()` for FTS queries returns BM25 relevance
+/// (higher = more relevant, frequently > 1.0). We pass it through directly
+/// (floored at 0.0) since downstream ranking sorts descending.
+fn doc_to_keyword_result(doc: &Doc) -> SearchResult {
+    doc_with_score(doc, doc.get_score().max(0.0))
+}
+
+fn doc_with_score(doc: &Doc, score: f32) -> SearchResult {
     SearchResult {
         chunk_id: doc.get_string("id").ok().flatten().unwrap_or_default(),
         path: doc.get_string("path").ok().flatten().unwrap_or_default(),
         source: doc.get_string("source").ok().flatten().unwrap_or_default(),
         start_line: doc.get_i64("start_line").ok().flatten().unwrap_or(0),
         end_line: doc.get_i64("end_line").ok().flatten().unwrap_or(0),
-        score: doc.get_score(),
-        text: String::new(),
+        score,
+        text: doc.get_string("text").ok().flatten().unwrap_or_default(),
     }
 }
 
@@ -76,14 +93,24 @@ pub struct ZvecMemoryStore {
     shutdown: Option<tokio::sync::watch::Sender<()>>,
 }
 
-// zvec's periodic-optimize task (spawned by the gateway) persists both
-// documents and the FTS index to disk every hour. A best-effort flush on
-// Drop would block the Tokio runtime thread with a synchronous C-library
-// call — exactly what the rest of this crate avoids by routing through
-// spawn_blocking. Instead, callers that need durability guarantees should
-// call `flush_collection()` explicitly.
+// The gateway spawns a periodic flush task that persists documents and the
+// HNSW graph. That task is awaited on the Tokio runtime, which may be torn
+// down during process exit before the final flush completes. To avoid silent
+// data loss, we perform a best-effort final flush here on a dedicated OS
+// thread — it runs independently of the Tokio runtime and completes even if
+// the runtime has already been cancelled.
 impl Drop for ZvecMemoryStore {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        let collection = Arc::clone(&self.collection);
+        // Dropping `shutdown` signals the periodic task, but we also flush
+        // directly to not depend on the task completing before runtime exit.
+        self.shutdown.take();
+        std::thread::spawn(move || {
+            if let Err(e) = collection.flush() {
+                tracing::warn!(error = %e, "zvec: final flush on drop failed");
+            }
+        });
+    }
 }
 
 impl ZvecMemoryStore {
@@ -149,42 +176,49 @@ impl ZvecMemoryStore {
         Arc::clone(&self.cache)
     }
 
-    pub fn optimize(&self) -> MemoryResult<()> {
-        self.collection
-            .optimize()
-            .map_err(|e| Error::Backend(e.to_string()))
-    }
-
-    /// Rebuild the zvec full-text-search index from the durable documents on
-    /// disk.
+    /// Rebuild the zvec full-text-search index from durable documents.
     ///
-    /// zvec's FTS index lives in memory and is only persisted by `optimize()`.
-    /// `flush()` persists documents but **not** the FTS index. If a writer
-    /// exits (e.g. the gateway is killed) after flushing documents but before
-    /// optimizing, the reopened collection has all its documents but an empty
-    /// FTS index, so keyword search returns nothing.
-    ///
-    /// This method recovers by re-feeding every stored chunk back into the
-    /// collection (rebuilding the in-memory FTS index) and then flushing +
-    /// optimizing to persist it. Returns the number of chunks re-ingested.
+    /// Re-feeds every stored chunk into the collection to ensure the FTS
+    /// index is fully populated. Useful after data migrations or when the
+    /// FTS index may be stale. Returns the number of chunks re-ingested.
     pub async fn rebuild_keyword_index(&self) -> MemoryResult<usize> {
         let files = self.list_files().await?;
         let mut total = 0usize;
+        let mut all_docs: Vec<ChunkDoc> = Vec::new();
+
         for file in files {
             let chunks = self.get_chunks_for_file(&file.path).await?;
             if chunks.is_empty() {
                 continue;
             }
             total += chunks.len();
-            self.upsert_chunks(&chunks).await?;
+            for chunk in &chunks {
+                all_docs.push(ChunkDoc::from_chunk_row(chunk, self.dimension));
+            }
         }
+
+        if all_docs.is_empty() {
+            return Ok(0);
+        }
+
+        // Re-feed chunks in batches of 1024 (self-imposed limit to keep
+        // per-batch memory bounded) without per-batch flushing. A single flush
+        // at the end avoids N/1024 synchronous fsyncs.
+        for batch in all_docs.chunks(1024) {
+            let collection = Arc::clone(&self.collection);
+            let batch_vec = batch.to_vec();
+            tokio::task::spawn_blocking(move || {
+                crate::chunks::upsert_chunks_no_flush(&collection, &batch_vec)
+            })
+            .await
+            .map_err(|e| Error::Backend(format!("spawn_blocking join failed: {e}")))?
+            .map_err(|e| Error::Backend(e.to_string()))?;
+        }
+
+        // Single flush to persist all re-ingested chunks.
         let collection = self.collection_arc();
         blocking(move || crate::flush_collection(&collection).map_err(map_err)).await?;
-        blocking({
-            let coll = Arc::clone(&self.collection);
-            move || coll.optimize().map_err(|e| Error::Backend(e.to_string()))
-        })
-        .await?;
+
         Ok(total)
     }
 }
@@ -227,13 +261,12 @@ impl MemoryStore for ZvecMemoryStore {
             .map(|c| ChunkDoc::from_chunk_row(c, self.dimension))
             .collect();
 
-        // Upsert chunk docs into the zvec collection (for vector/keyword search).
-        let collection = Arc::clone(&self.collection);
-        blocking(move || crate::chunks::upsert_chunks(&collection, &docs).map_err(map_err)).await?;
-
-        // Maintain the per-path chunk-PK index atomically: one write txn reads,
-        // merges, and writes each path's PKs, so concurrent upserts can't
-        // overwrite each other and orphan chunks.
+        // Write the redb PK index FIRST. If the process crashes before the
+        // zvec upsert completes, phantom PKs remain (referencing absent zvec
+        // docs) — these are silently filtered by fetch_with_options and removed
+        // on the next delete_chunks_for_file. Reversing this order (zvec first)
+        // would leave chunks searchable in zvec but invisible to management
+        // paths, permanently polluting search results.
         let cache = Arc::clone(&self.cache);
         let mut by_path: std::collections::BTreeMap<String, Vec<String>> =
             std::collections::BTreeMap::new();
@@ -245,6 +278,10 @@ impl MemoryStore for ZvecMemoryStore {
         }
         let entries: Vec<(String, Vec<String>)> = by_path.into_iter().collect();
         blocking(move || cache.extend_chunk_pks_batch(&entries).map_err(map_err)).await?;
+
+        // Upsert chunk docs into the zvec collection (for vector/keyword search).
+        let collection = Arc::clone(&self.collection);
+        blocking(move || crate::chunks::upsert_chunks(&collection, &docs).map_err(map_err)).await?;
 
         Ok(())
     }
@@ -269,7 +306,8 @@ impl MemoryStore for ZvecMemoryStore {
                 .iter()
                 .filter(|doc| {
                     let source = doc.get_string("source").ok().flatten().unwrap_or_default();
-                    source != crate::files::FILE_MARKER && source != META_DOC_SOURCE
+                    source != crate::files::FILE_MARKER
+                        && source != crate::collection::META_DOC_SOURCE
                 })
                 .map(ChunkDoc::from_doc)
                 .collect::<anyhow::Result<Vec<_>>>()
@@ -286,34 +324,51 @@ impl MemoryStore for ZvecMemoryStore {
     async fn delete_chunks_for_file(&self, path: &str) -> MemoryResult<()> {
         let existing_chunks = self.get_chunks_for_file(path).await?;
 
-        // Invalidate embedding cache entries for the removed chunks.
-        let mut seen: HashSet<(String, String)> = HashSet::new();
-        for chunk in &existing_chunks {
-            if seen.insert((chunk.model.clone(), chunk.hash.clone())) {
-                let cache = Arc::clone(&self.cache);
-                let model = chunk.model.clone();
-                let hash = chunk.hash.clone();
-                blocking(move || {
-                    cache
-                        .delete_matching_model_hash(&model, &hash)
-                        .map_err(map_err)
-                })
-                .await?;
-            }
+        // Snapshot the PKs of the chunks we're about to delete. Deleting by PK
+        // (instead of by path filter) ensures concurrently-upserted chunks for
+        // the same path survive — they're not in this snapshot.
+        let pks_to_delete: Vec<String> = existing_chunks
+            .iter()
+            .map(|c| ChunkDoc::safe_pk(&c.id))
+            .collect();
+
+        // Invalidate embedding cache entries for the removed chunks in a
+        // single table scan (batched by unique model+hash pair).
+        let pairs: Vec<(String, String)> = {
+            let mut seen = HashSet::new();
+            existing_chunks
+                .iter()
+                .filter(|c| seen.insert((c.model.clone(), c.hash.clone())))
+                .map(|c| (c.model.clone(), c.hash.clone()))
+                .collect()
+        };
+        if !pairs.is_empty() {
+            let cache = Arc::clone(&self.cache);
+            blocking(move || {
+                cache
+                    .delete_matching_model_hash_batch(&pairs)
+                    .map_err(map_err)
+            })
+            .await?;
         }
 
-        // Remove the chunk documents from the zvec collection.
+        // Remove the chunk documents from the zvec collection by PK.
         let collection = Arc::clone(&self.collection);
-        let path_owned = path.to_string();
-        blocking(move || {
-            crate::chunks::delete_chunks_for_file(&collection, &path_owned).map_err(map_err)
-        })
-        .await?;
+        let pks = pks_to_delete.clone();
+        blocking(move || crate::chunks::delete_chunks_by_pks(&collection, &pks).map_err(map_err))
+            .await?;
 
-        // Drop the per-path chunk-PK index entry.
+        // Remove only the deleted PKs from the cache index, preserving any
+        // concurrently-added PKs.
         let cache = Arc::clone(&self.cache);
         let path_for_index = path.to_string();
-        blocking(move || cache.remove_chunk_pks(&path_for_index).map_err(map_err)).await
+        let pks_for_cache = pks_to_delete;
+        blocking(move || {
+            cache
+                .remove_specific_chunk_pks(&path_for_index, &pks_for_cache)
+                .map_err(map_err)
+        })
+        .await
     }
 
     #[tracing::instrument(skip(self), fields(id = %id))]
@@ -328,7 +383,8 @@ impl MemoryStore for ZvecMemoryStore {
                 .iter()
                 .find(|doc| {
                     let source = doc.get_string("source").ok().flatten().unwrap_or_default();
-                    source != crate::files::FILE_MARKER && source != META_DOC_SOURCE
+                    source != crate::files::FILE_MARKER
+                        && source != crate::collection::META_DOC_SOURCE
                 })
                 .map(ChunkDoc::from_doc)
                 .transpose()
@@ -471,11 +527,12 @@ impl MemoryStore for ZvecMemoryStore {
 /// Sum the byte sizes of every regular file living next to `stem_path` whose
 /// name starts with `stem_path`'s file-name component.
 ///
-/// zvec writes its collection under `<path>_<dimension>` (plus auxiliary
-/// files), and the redb embedding cache lives at `<path>.cache` — all of which
-/// share the configured collection stem. Matching by prefix therefore captures
-/// the full on-disk footprint regardless of the active dimension, without
-/// double counting. Best-effort: returns 0 if the directory cannot be read.
+/// zvec writes its collection under `<path>_<dimension>` (a directory
+/// containing LOCK, segment dirs, RocksDB files, etc.), and the redb embedding
+/// cache lives at `<path>.cache` — all of which share the configured collection
+/// stem. Matching by prefix therefore captures the full on-disk footprint
+/// regardless of the active dimension, without double counting. Best-effort:
+/// returns 0 if the directory cannot be read.
 fn disk_usage_for_stem(stem_path: &Path) -> u64 {
     let Some(parent) = stem_path.parent() else {
         return 0;
@@ -496,12 +553,40 @@ fn disk_usage_for_stem(stem_path: &Path) -> u64 {
             .unwrap_or(false);
         if !matches {
             continue;
-        }
-        let Ok(meta) = entry.metadata() else {
+        };
+        let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
             continue;
         };
+        // Skip symlinks to avoid inflating disk usage with linked files.
+        if meta.is_symlink() {
+            continue;
+        }
         if meta.is_file() {
             total += meta.len();
+        } else if meta.is_dir() {
+            total += sum_dir_recursive(&entry.path());
+        }
+    }
+    total
+}
+
+/// Recursively sum the sizes of all non-symlink regular files in a directory.
+fn sum_dir_recursive(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut total = 0u64;
+    for entry in entries.flatten() {
+        let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        if meta.is_symlink() {
+            continue;
+        }
+        if meta.is_file() {
+            total += meta.len();
+        } else if meta.is_dir() {
+            total += sum_dir_recursive(&entry.path());
         }
     }
     total
@@ -523,10 +608,22 @@ async fn vector_search_zvec(
             .set_output_fields(&["id", "path", "source", "start_line", "end_line", "text"])
             .map_err(backend_err)?;
         let docs = collection.query(&query).map_err(backend_err)?;
+
+        // Log index completeness + top score for diagnostics.
+        if let Ok(stats) = collection.stats() {
+            tracing::debug!(
+                doc_count = stats.doc_count,
+                index_completeness = ?stats.indexes.iter().map(|i| (i.name.as_str(), i.completeness)).collect::<Vec<_>>(),
+                result_count = docs.len(),
+                top_score = docs.first().map(|d| d.get_score()).unwrap_or(-1.0),
+                "vector_search_zvec: query executed"
+            );
+        }
+
         Ok(docs
             .into_iter()
             .filter(is_real_chunk)
-            .map(|doc| doc_to_search_result(&doc))
+            .map(|doc| doc_to_vector_result(&doc))
             .collect())
     })
     .await
@@ -543,23 +640,29 @@ async fn keyword_search_zvec(
     let backend_err = |e: zvec::Error| Error::Backend(e.to_string());
 
     blocking(move || -> MemoryResult<Vec<SearchResult>> {
-        // SearchQuery requires a vector even for FTS; pass a 1-element dummy
-        // (the `set_fts` payload drives matching, the vector is ignored).
-        let dummy_vec = [0.0f32];
         let mut fts = Fts::new().map_err(backend_err)?;
+        // Use match_string for natural-language matching (whole-word,
+        // stemming) rather than query_string (boolean expression syntax).
         fts.set_match_string(&query_owned).map_err(backend_err)?;
 
-        let mut s_query = SearchQuery::new("text", &dummy_vec, limit_i32).map_err(backend_err)?;
-        s_query.set_fts(&fts).map_err(backend_err)?;
+        let mut s_query = SearchQuery::fts("text", &fts, limit_i32).map_err(backend_err)?;
         s_query
             .set_output_fields(&["id", "path", "source", "start_line", "end_line", "text"])
             .map_err(backend_err)?;
+        s_query
+            .set_filter(&format!(
+                "source != '{}' AND source != '{}'",
+                crate::files::FILE_MARKER,
+                crate::collection::META_DOC_SOURCE,
+            ))
+            .map_err(backend_err)?;
 
         let docs = collection.query(&s_query).map_err(backend_err)?;
+
         Ok(docs
             .into_iter()
             .filter(is_real_chunk)
-            .map(|doc| doc_to_search_result(&doc))
+            .map(|doc| doc_to_keyword_result(&doc))
             .collect())
     })
     .await
@@ -605,6 +708,14 @@ mod tests {
         (collection, dir)
     }
 
+    /// Flush the store's collection and drop it cleanly, avoiding RocksDB
+    /// cleanup errors from the C destructor.
+    fn close_store(store: ZvecMemoryStore) {
+        let coll = store.collection_arc();
+        let _ = crate::flush_collection(&coll);
+        drop(store);
+    }
+
     // ── Cache tests ──
 
     #[tokio::test]
@@ -632,7 +743,7 @@ mod tests {
             assert!((a - b).abs() < 1e-3);
         }
 
-        drop(store);
+        close_store(store);
         let _ = std::fs::remove_file(&cache_path);
     }
 
@@ -650,7 +761,7 @@ mod tests {
             .unwrap();
         assert!(result.is_none());
 
-        drop(store);
+        close_store(store);
         let _ = std::fs::remove_file(&cache_path);
     }
 
@@ -704,7 +815,7 @@ mod tests {
                 .is_some()
         );
 
-        drop(store);
+        close_store(store);
         let _ = std::fs::remove_file(&cache_path);
     }
 
@@ -745,7 +856,7 @@ mod tests {
         assert_eq!(evicted, 3, "evict(0) must remove all entries");
         assert_eq!(store.count_cached_embeddings().await.unwrap(), 0);
 
-        drop(store);
+        close_store(store);
         let _ = std::fs::remove_file(&cache_path);
     }
 
@@ -786,7 +897,7 @@ mod tests {
         assert_eq!(evicted, 1);
         assert_eq!(store.count_cached_embeddings().await.unwrap(), 2);
 
-        drop(store);
+        close_store(store);
         let _ = std::fs::remove_file(&cache_path);
     }
 
@@ -817,6 +928,173 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let stem = dir.path().join("absent.zvec");
         assert_eq!(disk_usage_for_stem(&stem), 0);
+    }
+
+    /// Covers the `is_dir()` branch of disk_usage_for_stem (~line 558-560) and
+    /// the recursive walk in sum_dir_recursive (~578-582): the existing tests
+    /// only match regular files, never a matching subdirectory.
+    #[test]
+    fn test_disk_usage_for_stem_includes_matching_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let stem = dir.path().join("memory.zvec");
+
+        // A matching directory containing nested files and a subdirectory.
+        let subdir = dir.path().join("memory.zvec_768");
+        std::fs::create_dir_all(&subdir).unwrap();
+        std::fs::write(subdir.join("CURRENT"), [0u8; 50]).unwrap();
+        std::fs::write(subdir.join("MANIFEST"), [0u8; 30]).unwrap();
+        let nested = subdir.join("seg");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("data"), [0u8; 120]).unwrap();
+
+        // A matching regular file alongside it (also counted).
+        std::fs::write(dir.path().join("memory.zvec.cache"), [0u8; 40]).unwrap();
+        // Non-matching file ignored.
+        std::fs::write(dir.path().join("other.db"), [0u8; 999]).unwrap();
+
+        // 50 + 30 + 120 (recursive dir) + 40 (file) = 240.
+        assert_eq!(disk_usage_for_stem(&stem), 240);
+    }
+
+    #[test]
+    fn test_disk_usage_for_stem_without_parent_is_zero() {
+        // A bare file name with no parent dir component → early return 0.
+        assert_eq!(disk_usage_for_stem(Path::new("bare")), 0);
+    }
+
+    /// Covers the MemoryStore trait methods store_type() and hnsw_percent()
+    /// (~lines 503-509), which were never exercised by any test.
+    #[tokio::test]
+    async fn test_trait_store_type_and_hnsw_percent() {
+        ensure_init();
+        let dir = tempfile::tempdir().unwrap();
+        let collection =
+            crate::open_or_create_collection(&dir.path().join("db"), Some(768)).unwrap();
+        let cache = RedbCache::new(&cache_path()).unwrap();
+        let store = ZvecMemoryStore::new(collection, cache);
+
+        assert_eq!(store.store_type(), "zvec");
+        assert_eq!(store.hnsw_percent(), None);
+
+        close_store(store);
+    }
+
+    /// Covers disk_size_bytes() (~lines 511-516): with no collection_path it
+    /// returns 0; with the path set it delegates to disk_usage_for_stem and
+    /// reports the real on-disk footprint of the flushed collection.
+    #[tokio::test]
+    async fn test_disk_size_bytes_reports_collection_footprint() {
+        ensure_init();
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("ds-db");
+
+        // Without the path, disk_size_bytes must be 0 (no collection_path set).
+        {
+            let collection = crate::open_or_create_collection(&db_path, Some(768)).unwrap();
+            let cache = RedbCache::new(&cache_path()).unwrap();
+            let store = ZvecMemoryStore::new(collection, cache);
+            assert_eq!(store.disk_size_bytes(), 0, "no path → 0");
+            // Flush so on-disk files exist under <parent>/ds-db_768/.
+            let coll = store.collection_arc();
+            crate::flush_collection(&coll).unwrap();
+            close_store(store);
+        }
+
+        let store_with_path = ZvecMemoryStore::with_cache(
+            crate::open_or_create_collection(&db_path, Some(768)).unwrap(),
+            RedbCache::new(&cache_path()).unwrap(),
+        )
+        .with_collection_disk_path(&db_path);
+        // Measure both in the same stable state (no writes between) so the
+        // trait method's delegation to disk_usage_for_stem is exact.
+        let expected = disk_usage_for_stem(&db_path);
+        assert!(
+            expected > 0,
+            "flushed collection must produce matching files ({expected} bytes)"
+        );
+        assert_eq!(
+            store_with_path.disk_size_bytes(),
+            expected,
+            "disk_size_bytes must equal disk_usage_for_stem for the same stem"
+        );
+
+        close_store(store_with_path);
+    }
+
+    /// Covers the all-empty early-return of rebuild_keyword_index (~line
+    /// 200-201): with no chunks anywhere, it must return Ok(0) without
+    /// attempting any upsert.
+    #[tokio::test]
+    async fn test_rebuild_keyword_index_empty_returns_zero() {
+        ensure_init();
+        let dir = tempfile::tempdir().unwrap();
+        let collection =
+            crate::open_or_create_collection(&dir.path().join("db"), Some(768)).unwrap();
+        let cache = RedbCache::new(&cache_path()).unwrap();
+        let store = ZvecMemoryStore::with_cache(collection, cache).with_cache_dimension(768);
+
+        let count = store.rebuild_keyword_index().await.unwrap();
+        assert_eq!(count, 0, "empty store rebuild must report 0 chunks");
+
+        close_store(store);
+    }
+
+    /// Covers the per-file `continue` (~line 191-192) when a listed file has no
+    /// chunks: register one file with no chunks and one file with chunks; the
+    /// empty one must be skipped and the populated one re-ingested.
+    #[tokio::test]
+    async fn test_rebuild_keyword_index_skips_files_without_chunks() {
+        ensure_init();
+        let dir = tempfile::tempdir().unwrap();
+        let collection =
+            crate::open_or_create_collection(&dir.path().join("db"), Some(768)).unwrap();
+        let cache = RedbCache::new(&cache_path()).unwrap();
+        let store = ZvecMemoryStore::with_cache(collection, cache).with_cache_dimension(768);
+
+        // File A: registered but no chunks → must hit the `continue`.
+        store
+            .upsert_file(&FileRow {
+                path: "empty.md".into(),
+                source: "empty.md".into(),
+                hash: "he".into(),
+                mtime: 1,
+                size: 1,
+            })
+            .await
+            .unwrap();
+
+        // File B: registered with one chunk → must be re-ingested.
+        store
+            .upsert_file(&FileRow {
+                path: "full.md".into(),
+                source: "full.md".into(),
+                hash: "hf".into(),
+                mtime: 1,
+                size: 1,
+            })
+            .await
+            .unwrap();
+        store
+            .upsert_chunks(&[ChunkRow {
+                id: "full-1".into(),
+                path: "full.md".into(),
+                source: "test".into(),
+                start_line: 1,
+                end_line: 2,
+                hash: "hf".into(),
+                model: "m".into(),
+                text: "rebuild skip test chunk".into(),
+                embedding: Some(vec![0u8; 768 * 4]),
+                updated_at: "2025-01-01T00:00:00Z".into(),
+            }])
+            .await
+            .unwrap();
+
+        // Only the one chunk from full.md must be counted (empty.md skipped).
+        let count = store.rebuild_keyword_index().await.unwrap();
+        assert_eq!(count, 1, "only the populated file's chunk must be counted");
+
+        close_store(store);
     }
 
     // ── Explicit flush ──
@@ -925,7 +1203,7 @@ mod tests {
             "RRF hybrid search with both vector and keyword must return results"
         );
 
-        drop(store);
+        close_store(store);
     }
 
     // ── get_chunks_for_file empty early return ──
@@ -941,7 +1219,7 @@ mod tests {
             .unwrap();
         assert!(result.is_empty());
 
-        drop(store);
+        close_store(store);
     }
 
     // ── Hybrid search with both empty ──
@@ -957,7 +1235,7 @@ mod tests {
             .unwrap();
         assert!(results.is_empty());
 
-        drop(store);
+        close_store(store);
     }
 
     // ── Store trait: file ops persist to the collection ──
@@ -986,7 +1264,7 @@ mod tests {
         store.delete_file("f1.md").await.unwrap();
         assert!(store.get_file("f1.md").await.unwrap().is_none());
 
-        drop(store);
+        close_store(store);
     }
 
     #[tokio::test]
@@ -1014,7 +1292,7 @@ mod tests {
         assert!(chunk.is_some(), "chunk must be fetchable by id");
         assert_eq!(chunk.unwrap().text, "store chunk text");
 
-        drop(store);
+        close_store(store);
     }
 
     /// Regression test for keyword-only mode (P1): upserting chunks with no
@@ -1062,7 +1340,7 @@ mod tests {
             "keyword search must find the keyword-only chunk"
         );
 
-        drop(store);
+        close_store(store);
     }
 
     #[tokio::test]
@@ -1107,7 +1385,7 @@ mod tests {
         let after_delete = store.get_chunks_for_file("gcf.md").await.unwrap();
         assert!(after_delete.is_empty());
 
-        drop(store);
+        close_store(store);
     }
 
     /// Regression test: concurrent upserts on the same path must not orphan
@@ -1168,6 +1446,8 @@ mod tests {
             "delete after concurrent upserts must clear every chunk"
         );
 
+        let coll = store.collection_arc();
+        let _ = crate::flush_collection(&coll);
         drop(store);
     }
 
@@ -1192,7 +1472,7 @@ mod tests {
             "keyword search with no matching data must be empty"
         );
 
-        drop(store);
+        close_store(store);
     }
 
     // ── Keyword-only search with RRF ──
@@ -1215,7 +1495,7 @@ mod tests {
             .unwrap();
         assert!(results.is_empty());
 
-        drop(store);
+        close_store(store);
     }
 
     // ── Keyword search with special characters ──
@@ -1271,7 +1551,7 @@ mod tests {
             .unwrap();
         assert!(results.is_empty());
 
-        drop(store);
+        close_store(store);
     }
 
     /// Re-opening a collection whose FTS index was not persisted (writer
@@ -1335,17 +1615,18 @@ mod tests {
                 "docs must survive flush across reopen"
             );
 
-            // Keyword search is empty (stale FTS).
-            let stale = store
+            // Native FTS (v0.6.0 enhanced tokenizer) should find chunks even
+            // after reopen — the FTS index is rebuilt from persisted documents.
+            let pre_rebuild = store
                 .hybrid_search(&[], "rebuild", 0.0, 1.0, MergeStrategy::Weighted, 10)
                 .await
                 .unwrap();
             assert!(
-                stale.is_empty(),
-                "keyword search must be empty when FTS is stale"
+                !pre_rebuild.is_empty(),
+                "native FTS keyword search must find chunks after reopen"
             );
 
-            // Rebuild recovers the FTS index and returns the chunk count.
+            // Rebuild re-ingests all chunks for completeness.
             let count = store.rebuild_keyword_index().await.unwrap();
             assert_eq!(count, 3, "rebuild must re-ingest all 3 chunks");
 
@@ -1364,7 +1645,7 @@ mod tests {
             assert!(results.iter().any(|r| r.chunk_id == "rb-2"));
 
             // Verify FTS persists across reopen (no second rebuild needed).
-            drop(store);
+            close_store(store);
         }
 
         // Phase 3: reopen a second time — FTS must still work (no rebuild).
@@ -1386,4 +1667,133 @@ mod tests {
 
     // RRF vs weighted divergence is covered in moltis-memory's `search::tests`,
     // which runs without the zvec feature enabled.
+
+    /// Definitive test: vector search must survive flush + reopen.
+    ///
+    /// With FTS removed from the schema, `optimize()` no longer corrupts
+    /// RocksDB. After flush(), documents are persisted. After reopen,
+    /// the HNSW index must still produce correct vector search results.
+    #[tokio::test]
+    async fn test_vector_search_survives_flush_and_reopen() {
+        ensure_init();
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("hnsw_survive");
+        let cache_path = dir.path().join("hnsw_survive.cache");
+        let dim: usize = 768;
+
+        // Phase 1: create collection, upsert a chunk with a distinct vector,
+        // flush, drop.
+        {
+            let collection = crate::open_or_create_collection(&db_path, Some(dim as u32)).unwrap();
+            let cache = RedbCache::new(&cache_path).unwrap();
+            let store =
+                ZvecMemoryStore::with_cache(collection, cache).with_cache_dimension(dim as u32);
+
+            store
+                .upsert_file(&FileRow {
+                    path: "v.md".into(),
+                    source: "v.md".into(),
+                    hash: "h".into(),
+                    mtime: 1,
+                    size: 10,
+                })
+                .await
+                .unwrap();
+
+            // Vector A: unit vector along dim 0
+            let mut emb_a = vec![0.0f32; dim];
+            emb_a[0] = 1.0;
+            let emb_a_bytes: Vec<u8> = emb_a.iter().flat_map(|f| f.to_le_bytes()).collect();
+
+            // Vector B: unit vector along dim 1
+            let mut emb_b = vec![0.0f32; dim];
+            emb_b[1] = 1.0;
+            let emb_b_bytes: Vec<u8> = emb_b.iter().flat_map(|f| f.to_le_bytes()).collect();
+
+            store
+                .upsert_chunks(&[
+                    ChunkRow {
+                        id: "vec-a".into(),
+                        path: "v.md".into(),
+                        source: "test".into(),
+                        start_line: 1,
+                        end_line: 5,
+                        hash: "ha".into(),
+                        model: "m".into(),
+                        text: "alpha vector document".into(),
+                        embedding: Some(emb_a_bytes),
+                        updated_at: "2025-01-01T00:00:00Z".into(),
+                    },
+                    ChunkRow {
+                        id: "vec-b".into(),
+                        path: "v.md".into(),
+                        source: "test".into(),
+                        start_line: 6,
+                        end_line: 10,
+                        hash: "hb".into(),
+                        model: "m".into(),
+                        text: "beta vector document".into(),
+                        embedding: Some(emb_b_bytes),
+                        updated_at: "2025-01-01T00:00:00Z".into(),
+                    },
+                ])
+                .await
+                .unwrap();
+
+            // Verify search works BEFORE flush (sanity check).
+            {
+                let mut query = vec![0.0f32; dim];
+                query[0] = 0.99;
+                query[1] = 0.01;
+                let results = store
+                    .hybrid_search(&query, "", 1.0, 0.0, MergeStrategy::Weighted, 10)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    results.first().map(|r| r.chunk_id.as_str()),
+                    Some("vec-a"),
+                    "query near vec-a must rank vec-a first (before flush)"
+                );
+            }
+
+            // Flush to persist documents + HNSW to disk.
+            let coll = store.collection_arc();
+            crate::flush_collection(&coll).unwrap();
+            close_store(store);
+        }
+
+        // Phase 2: reopen and verify vector search finds the right chunk.
+        {
+            let collection = crate::open_or_create_collection(&db_path, Some(dim as u32)).unwrap();
+            let cache = RedbCache::new(&cache_path).unwrap();
+            let store =
+                ZvecMemoryStore::with_cache(collection, cache).with_cache_dimension(dim as u32);
+
+            // Documents survived.
+            assert!(
+                store.get_chunk_by_id("vec-a").await.unwrap().is_some(),
+                "doc must survive flush+reopen"
+            );
+
+            // Vector search: query close to A should rank vec-a above vec-b.
+            let mut query = vec![0.0f32; dim];
+            query[0] = 0.99;
+            query[1] = 0.01;
+            let results = store
+                .hybrid_search(&query, "", 1.0, 0.0, MergeStrategy::Weighted, 10)
+                .await
+                .unwrap();
+
+            assert!(
+                !results.is_empty(),
+                "vector search must return results after flush+reopen"
+            );
+            let top = &results[0];
+            assert_eq!(
+                top.chunk_id, "vec-a",
+                "query close to vec-a must rank vec-a first after reopen, got {}",
+                top.chunk_id
+            );
+        }
+    }
 }

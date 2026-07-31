@@ -102,26 +102,10 @@ impl RedbCache {
             Ok(None) => None,
             Err(e) => return Err(anyhow::anyhow!("redb get error: {e}")),
         };
-        drop(read_tx);
 
-        if let Some(ref emb) = embedding {
-            let value = build_value(emb);
-            let write_tx = self
-                .db
-                .begin_write()
-                .context("failed to begin write transaction for access update")?;
-            {
-                let mut table = write_tx
-                    .open_table(EMBEDDING_CACHE)
-                    .context("failed to open embedding cache table for access update")?;
-                table
-                    .insert(key, value.as_slice())
-                    .context("failed to update access timestamp")?;
-            }
-            write_tx
-                .commit()
-                .context("failed to commit access timestamp update")?;
-        }
+        // No write-on-read: skip access-timestamp update to avoid serializing
+        // concurrent reads. Eviction uses insertion order instead of LRU,
+        // which is fine for embeddings (created during sync, rarely re-read).
 
         Ok(embedding)
     }
@@ -182,6 +166,16 @@ impl RedbCache {
     }
 
     pub fn delete_matching_model_hash(&self, model: &str, hash: &str) -> Result<usize> {
+        self.delete_matching_model_hash_batch(&[(model.to_string(), hash.to_string())])
+    }
+
+    /// Delete all embedding-cache entries matching ANY of the given
+    /// `(model, hash)` pairs in a **single table scan + single write txn**.
+    /// Avoids O(pairs × cache_size) when deleting many chunks at once.
+    pub fn delete_matching_model_hash_batch(&self, pairs: &[(String, String)]) -> Result<usize> {
+        if pairs.is_empty() {
+            return Ok(0);
+        }
         let keys_to_delete: Vec<String> = {
             let tx = self
                 .db
@@ -197,7 +191,7 @@ impl RedbCache {
                 let (key_guard, _value_guard) =
                     item.context("failed to read embedding cache entry")?;
                 let key: &str = key_guard.value();
-                if key_matches_model_hash(key, model, hash) {
+                if pairs.iter().any(|(m, h)| key_matches_model_hash(key, m, h)) {
                     keys.push(key.to_string());
                 }
             }
@@ -225,10 +219,7 @@ impl RedbCache {
         }
         tx.commit()
             .context("failed to commit cache invalidation transaction")?;
-        debug!(
-            model,
-            hash, removed, "invalidated stale embedding cache entries"
-        );
+        debug!(removed, "invalidated stale embedding cache entries (batch)");
         Ok(removed)
     }
 
@@ -412,6 +403,63 @@ impl RedbCache {
         Ok(())
     }
 
+    /// Remove specific PKs from a path's chunk-PK index entry, preserving any
+    /// other PKs (e.g. concurrently-added chunks). If the removal empties the
+    /// list, the entry is removed entirely.
+    pub fn remove_specific_chunk_pks(&self, path: &str, pks: &[String]) -> Result<()> {
+        if pks.is_empty() {
+            return Ok(());
+        }
+        let pk_set: std::collections::HashSet<&str> = pks.iter().map(String::as_str).collect();
+        let tx = self
+            .db
+            .begin_write()
+            .context("failed to begin write transaction for chunk index update")?;
+        {
+            let mut table = tx
+                .open_table(CHUNK_INDEX)
+                .context("failed to open chunk_index table for update")?;
+
+            // Read + deserialize, dropping the immutable borrow before mutating.
+            let filtered: Option<Vec<String>> = {
+                let guard = table
+                    .get(path)
+                    .context("failed to read chunk pks for update")?;
+                match guard {
+                    Some(g) => {
+                        let existing: Vec<String> = serde_json::from_slice(g.value())
+                            .context("failed to deserialize chunk pks for update")?;
+                        Some(
+                            existing
+                                .into_iter()
+                                .filter(|pk| !pk_set.contains(pk.as_str()))
+                                .collect(),
+                        )
+                    },
+                    None => None,
+                }
+            };
+
+            match filtered {
+                Some(remaining) if remaining.is_empty() => {
+                    table
+                        .remove(path)
+                        .context("failed to remove empty chunk pks")?;
+                },
+                Some(remaining) => {
+                    let encoded = serde_json::to_vec(&remaining)
+                        .context("failed to serialize filtered chunk pks")?;
+                    table
+                        .insert(path, encoded.as_slice())
+                        .context("failed to write filtered chunk pks")?;
+                },
+                None => {},
+            }
+        }
+        tx.commit().context("failed to commit chunk index update")?;
+        Ok(())
+    }
+
     /// Atomically extend the per-path chunk-PK index. Each path's existing PKs
     /// are read, merged, and written back in one write transaction — redb
     /// serializes these, so concurrent callers can't drop each other's PKs.
@@ -439,8 +487,10 @@ impl RedbCache {
                     Some(guard) => {
                         let mut existing: Vec<String> = serde_json::from_slice(guard.value())
                             .context("failed to deserialize chunk pks for extend")?;
+                        let existing_set: std::collections::HashSet<String> =
+                            existing.iter().cloned().collect();
                         for pk in new_pks {
-                            if !existing.contains(pk) {
+                            if !existing_set.contains(pk) {
                                 existing.push(pk.clone());
                             }
                         }
@@ -1005,6 +1055,114 @@ mod tests {
             "concurrent extends must not drop any PKs, got {}",
             stored.len()
         );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_remove_chunk_pks_deletes_entry() {
+        let path = cache_path();
+        let _ = std::fs::remove_file(&path);
+        let cache = RedbCache::new(&path).unwrap();
+
+        cache
+            .set_chunk_pks("file.md", &["pk1".into(), "pk2".into()])
+            .unwrap();
+        assert_eq!(cache.get_chunk_pks("file.md").unwrap().len(), 2);
+
+        cache.remove_chunk_pks("file.md").unwrap();
+        assert!(
+            cache.get_chunk_pks("file.md").unwrap().is_empty(),
+            "entry must be gone after remove_chunk_pks"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_remove_chunk_pks_missing_is_noop() {
+        let path = cache_path();
+        let _ = std::fs::remove_file(&path);
+        let cache = RedbCache::new(&path).unwrap();
+
+        // Removing a key that was never set must succeed (no-op).
+        cache.remove_chunk_pks("never-set.md").unwrap();
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_remove_specific_chunk_pks_empty_input_is_noop() {
+        let path = cache_path();
+        let _ = std::fs::remove_file(&path);
+        let cache = RedbCache::new(&path).unwrap();
+
+        cache
+            .set_chunk_pks("file.md", &["pk1".into(), "pk2".into()])
+            .unwrap();
+        cache.remove_specific_chunk_pks("file.md", &[]).unwrap();
+        assert_eq!(
+            cache.get_chunk_pks("file.md").unwrap().len(),
+            2,
+            "empty removal set must leave entry untouched"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_remove_specific_chunk_pks_missing_path_is_noop() {
+        let path = cache_path();
+        let _ = std::fs::remove_file(&path);
+        let cache = RedbCache::new(&path).unwrap();
+
+        // Path never stored: None branch — must succeed without error.
+        cache
+            .remove_specific_chunk_pks("never-set.md", &["pk1".into()])
+            .unwrap();
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_remove_specific_chunk_pks_empties_entry_removes_it() {
+        let path = cache_path();
+        let _ = std::fs::remove_file(&path);
+        let cache = RedbCache::new(&path).unwrap();
+
+        cache
+            .set_chunk_pks("file.md", &["pk1".into(), "pk2".into()])
+            .unwrap();
+        // Remove every PK — list becomes empty, entry must be removed entirely.
+        cache
+            .remove_specific_chunk_pks("file.md", &["pk1".into(), "pk2".into()])
+            .unwrap();
+        assert!(
+            cache.get_chunk_pks("file.md").unwrap().is_empty(),
+            "entry must be removed when all PKs are deleted"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_remove_specific_chunk_pks_partial_preserves_rest() {
+        let path = cache_path();
+        let _ = std::fs::remove_file(&path);
+        let cache = RedbCache::new(&path).unwrap();
+
+        cache
+            .set_chunk_pks("file.md", &["pk1".into(), "pk2".into(), "pk3".into()])
+            .unwrap();
+        // Remove one PK — remaining two must be written back.
+        cache
+            .remove_specific_chunk_pks("file.md", &["pk2".into()])
+            .unwrap();
+        let remaining = cache.get_chunk_pks("file.md").unwrap();
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.contains(&"pk1".to_string()));
+        assert!(remaining.contains(&"pk3".to_string()));
+        assert!(!remaining.contains(&"pk2".to_string()));
 
         let _ = std::fs::remove_file(&path);
     }

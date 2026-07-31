@@ -316,12 +316,9 @@ async fn try_init_zvec(
     embedding_dimension: u32,
 ) -> anyhow::Result<Box<dyn moltis_memory::store::MemoryStore>> {
     let db_path = cfg.db_path.as_deref().unwrap_or("memory.zvec");
-    // Prevent path-traversal via config: Path::join silently discards the
-    // base when given an absolute component (e.g. "/etc/shadow").
     let collection_path = moltis_memory_zvec::path::resolve_data_subpath(data_dir, db_path)
         .map_err(|e| anyhow::anyhow!("invalid memory.zvec db_path: {e}"))?;
     let dim = embedding_dimension;
-    let collection = moltis_memory_zvec::initialize(&collection_path, Some(dim))?;
 
     let cache_path =
         moltis_memory_zvec::path::resolve_data_subpath(data_dir, &format!("{db_path}.cache"))
@@ -330,64 +327,54 @@ async fn try_init_zvec(
         dimension: dim,
         cache_max_entries: 200_000,
     };
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
+
+    let collection = moltis_memory_zvec::initialize(&collection_path, Some(dim))?;
     let cache = moltis_memory_zvec::RedbCache::with_config(&cache_path, cache_config)?;
 
-    // Dropping the store drops the sender, cancelling the optimize task on shutdown.
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
+    // Log index completeness on startup. `flush()` persists documents AND the
+    // HNSW graph (via WAL recovery on reopen), so vector search works even
+    // when `index_completeness` reports 0.0 — the metric is cosmetic. We do
+    // NOT call `optimize()` because it corrupts the FTS RocksDB index.
+    if let Ok(stats) = collection.stats() {
+        tracing::info!(
+            doc_count = stats.doc_count,
+            indexes = ?stats.indexes.iter().map(|i| (i.name.as_str(), i.completeness)).collect::<Vec<_>>(),
+            "zvec: opened existing collection"
+        );
+    }
     let store = moltis_memory_zvec::ZvecMemoryStore::with_cache(collection, cache)
         .with_cache_dimension(dim)
         .with_collection_disk_path(&collection_path)
         .with_shutdown_signal(shutdown_tx);
 
+    // Periodic flush to persist new writes; exits when `shutdown_rx` closes.
+    // `flush()` persists documents + HNSW graph. We avoid `optimize()` because
+    // it corrupts the FTS RocksDB index. Keyword search uses the native FTS
+    // engine (v0.6.0 enhanced tokenizer), which is rebuilt from persisted
+    // documents on reopen.
     let zvec_collection = store.collection_arc();
-
-    // zvec's HNSW optimize is a blocking C call that can take several seconds
-    // on a large existing collection. Run it on the blocking pool so we don't
-    // stall the Tokio runtime thread (and every other task sharing it) during
-    // server startup.
-    let collection_for_init = Arc::clone(&zvec_collection);
-    match tokio::task::spawn_blocking(move || collection_for_init.optimize()).await {
-        Ok(Ok(())) => {},
-        Ok(Err(e)) => tracing::warn!("zvec: initial optimize failed: {e}"),
-        Err(join_err) => tracing::warn!("zvec: initial optimize task panicked: {join_err}"),
-    }
-
-    // Periodic HNSW optimization; exits when `shutdown_rx` closes (store dropped).
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
-        interval.tick().await; // skip the immediate first tick
+        interval.tick().await;
         let mut shutdown_rx = shutdown_rx;
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    // Same blocking-C-call concern as the initial optimize: run
-                    // on the blocking pool so the periodic task never stalls the
-                    // runtime thread.
-                    let collection_for_periodic = Arc::clone(&zvec_collection);
-                    match tokio::task::spawn_blocking(move || collection_for_periodic.optimize()).await {
-                        Ok(Ok(())) => {},
-                        Ok(Err(e)) => tracing::warn!("zvec: periodic optimize failed: {e}"),
-                        Err(join_err) => {
-                            tracing::warn!("zvec: periodic optimize task panicked: {join_err}")
-                        },
+                    let c = Arc::clone(&zvec_collection);
+                    match tokio::task::spawn_blocking(move || c.flush()).await {
+                        Ok(Ok(())) => tracing::debug!("zvec: periodic flush ok"),
+                        Ok(Err(e)) => tracing::warn!("zvec: periodic flush failed: {e}"),
+                        Err(join_err) => tracing::warn!("zvec: periodic flush task panicked: {join_err}"),
                     }
                 }
                 changed = shutdown_rx.changed() => {
                     if changed.is_err() {
-                        // Final flush + optimize before exit so the
-                        // on-disk state is complete (the Drop impl no
-                        // longer calls flush to avoid blocking the
-                        // Tokio runtime thread).
-                        let collection_for_shutdown = Arc::clone(&zvec_collection);
+                        let c = Arc::clone(&zvec_collection);
                         let _ = tokio::task::spawn_blocking(move || {
-                            if let Err(e) = moltis_memory_zvec::flush_collection(&collection_for_shutdown) {
-                                tracing::warn!("zvec: shutdown flush failed: {e}");
-                            }
-                            if let Err(e) = collection_for_shutdown.optimize() {
-                                tracing::warn!("zvec: shutdown optimize failed: {e}");
-                            }
+                            let _ = c.flush();
                         }).await;
-                        tracing::debug!("zvec: periodic optimize task stopped (store dropped)");
                         break;
                     }
                 }

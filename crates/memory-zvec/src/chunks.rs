@@ -24,7 +24,7 @@ impl ChunkDoc {
     pub fn safe_pk(original_id: &str) -> String {
         use sha2::{Digest, Sha256};
         let hash = Sha256::digest(original_id.as_bytes());
-        hex::encode(&hash[..8])
+        hex::encode(&hash[..16])
     }
 
     /// Build a [`ChunkDoc`] from a stored [`ChunkRow`]. `mtime`/`size` are not
@@ -41,7 +41,7 @@ impl ChunkDoc {
             .embedding
             .as_ref()
             .map(|blob| {
-                blob.chunks(4)
+                blob.chunks_exact(4)
                     .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                     .collect()
             })
@@ -138,6 +138,16 @@ impl From<ChunkDoc> for moltis_memory::schema::ChunkRow {
 }
 
 pub fn upsert_chunks(collection: &Collection, docs: &[ChunkDoc]) -> Result<()> {
+    upsert_chunks_no_flush(collection, docs)?;
+    collection
+        .flush()
+        .map_err(|e| anyhow::anyhow!("failed to flush after upserting chunks: {e:#}"))?;
+    Ok(())
+}
+
+/// Upsert chunks without flushing. Callers must flush the collection
+/// themselves when done (e.g. after a batch loop).
+pub fn upsert_chunks_no_flush(collection: &Collection, docs: &[ChunkDoc]) -> Result<()> {
     let zvec_docs: Vec<Doc> = docs
         .iter()
         .map(|d| d.to_zvec_doc())
@@ -149,9 +159,6 @@ pub fn upsert_chunks(collection: &Collection, docs: &[ChunkDoc]) -> Result<()> {
     collection
         .upsert(&doc_refs)
         .map_err(|e| anyhow::anyhow!("failed to upsert chunks: {e:#}"))?;
-    collection
-        .flush()
-        .map_err(|e| anyhow::anyhow!("failed to flush after upserting chunks: {e:#}"))?;
 
     Ok(())
 }
@@ -161,6 +168,22 @@ pub fn delete_chunks_for_file(collection: &Collection, path: &str) -> Result<()>
     collection
         .delete_by_filter(&filter)
         .context("failed to delete chunks by path filter")?;
+    Ok(())
+}
+
+/// Delete chunks by their primary keys (safe against concurrent upserts).
+///
+/// Unlike [`delete_chunks_for_file`] which uses a path filter (and thus catches
+/// concurrently-upserted chunks for the same path), this only deletes the
+/// specific PKs passed in, leaving any newer chunks intact.
+pub fn delete_chunks_by_pks(collection: &Collection, pks: &[String]) -> Result<()> {
+    if pks.is_empty() {
+        return Ok(());
+    }
+    let pk_refs: Vec<&str> = pks.iter().map(String::as_str).collect();
+    collection
+        .delete(&pk_refs)
+        .map_err(|e| anyhow::anyhow!("failed to delete chunks by pks: {e:#}"))?;
     Ok(())
 }
 
@@ -353,5 +376,63 @@ mod tests {
             .unwrap()
             .expect("keyword-only chunk must be retrievable after upsert");
         assert_eq!(fetched.text, "keyword-only upsert");
+    }
+
+    #[test]
+    fn test_from_chunk_doc_to_row_with_embedding() {
+        // Exercises the Some(..) arm of From<ChunkDoc> for ChunkRow, which
+        // flattens the f32 embedding into little-endian bytes. Only the
+        // empty-embedding (None) arm was covered previously.
+        let chunk = ChunkDoc {
+            id: "emb-1".into(),
+            path: "emb.md".into(),
+            source: "test".into(),
+            start_line: 1,
+            end_line: 2,
+            hash: "h".into(),
+            model: "m".into(),
+            text: "with embedding".into(),
+            embedding: vec![0.5f32, -0.25, 1.0],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            mtime: 0,
+            size: 0,
+        };
+
+        let row = moltis_memory::schema::ChunkRow::from(chunk);
+        let emb = row
+            .embedding
+            .as_ref()
+            .expect("non-empty embedding must be serialized to Some(bytes)");
+        // 3 f32 values = 12 bytes (little-endian).
+        assert_eq!(emb.len(), 12);
+        // First value 0.5f32 little-endian bytes.
+        assert_eq!(&emb[0..4], &0.5f32.to_le_bytes());
+        assert_eq!(&emb[4..8], &(-0.25f32).to_le_bytes());
+        assert_eq!(&emb[8..12], &1.0f32.to_le_bytes());
+        assert_eq!(row.id, "emb-1");
+        assert_eq!(row.path, "emb.md");
+    }
+
+    #[test]
+    fn test_from_chunk_doc_to_row_empty_embedding_is_none() {
+        // Explicitly assert the empty-embedding arm yields None (mirrors the
+        // non-empty test for completeness of the From impl).
+        let chunk = ChunkDoc {
+            id: "no-emb".into(),
+            path: "n.md".into(),
+            source: "test".into(),
+            start_line: 0,
+            end_line: 0,
+            hash: "h".into(),
+            model: "m".into(),
+            text: "no emb".into(),
+            embedding: vec![],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            mtime: 0,
+            size: 0,
+        };
+
+        let row = moltis_memory::schema::ChunkRow::from(chunk);
+        assert!(row.embedding.is_none(), "empty embedding must map to None");
     }
 }

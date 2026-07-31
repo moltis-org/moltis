@@ -35,8 +35,11 @@ pub(crate) fn ensure_global_shutdown() {
 const DEFAULT_VECTOR_DIM: u32 = 768;
 
 fn build_schema(dimension: u32) -> Result<CollectionSchema> {
-    let fts_params =
-        IndexParams::fts(None, None, None).context("failed to create FTS index params")?;
+    // The "text" field is FTS-indexed so zvec's native full-text search (UAX #29
+    // tokenizer + Snowball stemmer in C++ core v0.6.0) can perform keyword
+    // search without scanning every document. `SearchQuery::fts` targets this
+    // field for keyword-only retrieval.
+    let fts_params = IndexParams::fts(None, None, None)?;
     CollectionSchema::builder("moltis_chunks")
         .add_field(FieldSchema::new("id", DataType::String, false, 0)?)
         .add_field(FieldSchema::new("path", DataType::String, false, 0)?)
@@ -79,7 +82,7 @@ pub fn initialize(db_path: &Path, dimension: Option<u32>) -> Result<Collection> 
         },
         Err(open_err) => {
             if let Some(lock_path) = stale_lock_path(&path_str) {
-                debug!(path = %path_str, "removing stale zvec lock file and retrying open");
+                warn!(path = %path_str, "removing stale zvec lock file and retrying open");
                 if let Err(e) = std::fs::remove_file(&lock_path) {
                     debug!(path = %lock_path.display(), error = %e, "failed to remove stale lock");
                 }
@@ -131,6 +134,23 @@ pub fn shutdown(collection: Collection) -> Result<()> {
     Ok(())
 }
 
+/// Open an existing zvec collection **without** any stale-lock cleanup or
+/// create-and-open fallback.
+///
+/// zvec requires exclusive access to the collection's LOCK file, even in
+/// read-only mode. If the gateway is running, this will fail with a clear
+/// error. Stop the gateway first for CLI access.
+pub fn open_collection(db_path: &Path, dimension: Option<u32>) -> Result<Collection> {
+    ensure_zvec_initialized()?;
+    let path_str = collection_path(db_path, dimension);
+    Collection::open(&path_str, None).with_context(|| {
+        format!(
+            "failed to open zvec collection at {path_str} \
+             (if the gateway is running, stop it first)"
+        )
+    })
+}
+
 fn stale_lock_path(collection_path: &str) -> Option<std::path::PathBuf> {
     let lock = Path::new(collection_path).join("LOCK");
     lock.exists().then_some(lock)
@@ -142,7 +162,7 @@ fn stale_lock_path(collection_path: &str) -> Option<std::path::PathBuf> {
 fn is_empty_collection_dir(path: &str) -> bool {
     let dir = match std::fs::read_dir(path) {
         Ok(entries) => entries,
-        Err(_) => return true,
+        Err(_) => return false,
     };
     for entry in dir.flatten() {
         if entry.file_name() != "LOCK" {
@@ -164,7 +184,7 @@ pub fn open_or_create_collection(db_path: &Path, dimension: Option<u32>) -> Resu
             // LOCK file left behind by a killed process can block the open.
             // Try removing it and retrying before falling through to create.
             if let Some(lock_path) = stale_lock_path(&path_str) {
-                debug!(path = %path_str, "removing stale zvec lock file and retrying open");
+                warn!(path = %path_str, "removing stale zvec lock file and retrying open");
                 if let Err(e) = std::fs::remove_file(&lock_path) {
                     debug!(path = %lock_path.display(), error = %e, "failed to remove stale lock");
                 }
@@ -212,6 +232,7 @@ pub fn open_or_create_collection(db_path: &Path, dimension: Option<u32>) -> Resu
     }
 }
 
+pub const META_DOC_SOURCE: &str = "__meta__";
 const META_DOC_PK: &str = "__moltis_dim_meta__";
 
 pub fn write_dimension_meta(collection: &Collection, dimension: u32) -> Result<()> {
@@ -219,7 +240,7 @@ pub fn write_dimension_meta(collection: &Collection, dimension: u32) -> Result<(
     doc.set_pk(META_DOC_PK);
     doc.add_string("id", META_DOC_PK)?;
     doc.add_string("path", META_DOC_PK)?;
-    doc.add_string("source", "__meta__")?;
+    doc.add_string("source", META_DOC_SOURCE)?;
     doc.add_i64("start_line", dimension as i64)?;
     doc.add_i64("end_line", 0)?;
     doc.add_string("hash", "")?;
@@ -246,7 +267,7 @@ pub fn read_dimension_meta(collection: &Collection) -> Result<Option<u32>> {
             .get_string("source")
             .context("failed to get source field from meta doc")?
             .unwrap_or_default();
-        if source == "__meta__" {
+        if source == META_DOC_SOURCE {
             let dim = doc
                 .get_i64("start_line")
                 .context("failed to get start_line from meta doc")?
@@ -585,6 +606,227 @@ mod tests {
             "valid data must survive reopen (non-empty dir must not be removed)"
         );
         assert_eq!(fetched.unwrap().text, "valid data");
+        collection.flush().unwrap();
+        drop(collection);
+    }
+
+    #[test]
+    fn test_initialize_reopens_existing_collection() {
+        // Covers the Collection::open Ok-branch (line ~79-81) of initialize():
+        // a second call on an already-created collection must open it rather
+        // than recreate it.
+        ensure_zvec_initialized().unwrap();
+        let (_dir, path) = temp_db_path();
+        {
+            let collection = initialize(&path, Some(768)).unwrap();
+            let chunk = chunks::ChunkDoc {
+                id: "init-reopen-1".into(),
+                path: "p".into(),
+                source: "s".into(),
+                start_line: 1,
+                end_line: 2,
+                hash: "h".into(),
+                model: "m".into(),
+                text: "persist across initialize reopen".into(),
+                embedding: vec![0.0f32; 768],
+                updated_at: "2025-01-01T00:00:00Z".into(),
+                mtime: 0,
+                size: 0,
+            };
+            chunks::upsert_chunks(&collection, &[chunk]).unwrap();
+            collection.flush().unwrap();
+        }
+        {
+            let collection = initialize(&path, Some(768)).unwrap();
+            let fetched = get_chunk_by_id(&collection, "init-reopen-1")
+                .unwrap()
+                .expect("data must persist across initialize() reopen");
+            assert_eq!(fetched.text, "persist across initialize reopen");
+            collection.flush().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_initialize_recovers_from_stale_lock() {
+        // Covers initialize() stale-lock recovery branch (lines ~85-96).
+        ensure_zvec_initialized().unwrap();
+        let (_dir, path) = temp_db_path();
+        {
+            let collection = initialize(&path, Some(768)).unwrap();
+            let chunk = chunks::ChunkDoc {
+                id: "init-lock-1".into(),
+                path: "p".into(),
+                source: "s".into(),
+                start_line: 1,
+                end_line: 2,
+                hash: "h".into(),
+                model: "m".into(),
+                text: "init stale lock data".into(),
+                embedding: vec![0.0f32; 768],
+                updated_at: "2025-01-01T00:00:00Z".into(),
+                mtime: 0,
+                size: 0,
+            };
+            chunks::upsert_chunks(&collection, &[chunk]).unwrap();
+            collection.flush().unwrap();
+        }
+
+        let coll_dir = collection_path(&path, Some(768));
+        let lock_path = Path::new(&coll_dir).join("LOCK");
+        std::fs::write(&lock_path, b"").unwrap();
+        assert!(lock_path.exists());
+
+        let collection = initialize(&path, Some(768)).unwrap();
+        let fetched = get_chunk_by_id(&collection, "init-lock-1")
+            .unwrap()
+            .expect("data must survive stale-lock recovery in initialize()");
+        assert_eq!(fetched.text, "init stale lock data");
+        collection.flush().unwrap();
+        drop(collection);
+    }
+
+    #[test]
+    fn test_initialize_recovers_from_stale_empty_dir() {
+        // Covers initialize() stale-empty-directory recovery branch
+        // (lines ~105-116): create_and_open fails with "exists" on a dir that
+        // only contains nothing/a LOCK, so it must be removed and retried.
+        ensure_zvec_initialized().unwrap();
+        let (_dir, path) = temp_db_path();
+        let coll_dir = collection_path(&path, Some(768));
+
+        std::fs::create_dir_all(&coll_dir).unwrap();
+        assert!(Path::new(&coll_dir).is_dir());
+
+        let collection = initialize(&path, Some(768)).unwrap();
+        let chunk = chunks::ChunkDoc {
+            id: "init-stale-dir-1".into(),
+            path: "p".into(),
+            source: "s".into(),
+            start_line: 1,
+            end_line: 2,
+            hash: "h".into(),
+            model: "m".into(),
+            text: "init recovered from stale empty dir".into(),
+            embedding: vec![0.0f32; 768],
+            updated_at: "2025-01-01T00:00:00Z".into(),
+            mtime: 0,
+            size: 0,
+        };
+        chunks::upsert_chunks(&collection, &[chunk]).unwrap();
+        collection.flush().unwrap();
+        drop(collection);
+    }
+
+    #[test]
+    fn test_open_collection_opens_existing() {
+        // Covers open_collection() (lines ~143-152): after a collection is
+        // created and dropped, open_collection must reopen it read-only.
+        ensure_zvec_initialized().unwrap();
+        let (_dir, path) = temp_db_path();
+        {
+            let collection = open_or_create_collection(&path, Some(768)).unwrap();
+            let chunk = chunks::ChunkDoc {
+                id: "open-coll-1".into(),
+                path: "p".into(),
+                source: "s".into(),
+                start_line: 1,
+                end_line: 2,
+                hash: "h".into(),
+                model: "m".into(),
+                text: "open_collection readable".into(),
+                embedding: vec![0.0f32; 768],
+                updated_at: "2025-01-01T00:00:00Z".into(),
+                mtime: 0,
+                size: 0,
+            };
+            chunks::upsert_chunks(&collection, &[chunk]).unwrap();
+            collection.flush().unwrap();
+        }
+
+        let collection = open_collection(&path, Some(768)).unwrap();
+        let fetched = get_chunk_by_id(&collection, "open-coll-1")
+            .unwrap()
+            .expect("data must be readable via open_collection");
+        assert_eq!(fetched.text, "open_collection readable");
+        collection.flush().unwrap();
+        drop(collection);
+    }
+
+    #[test]
+    fn test_open_collection_missing_path_errors() {
+        // open_collection must NOT create; a non-existent path must error.
+        ensure_zvec_initialized().unwrap();
+        let (_dir, path) = temp_db_path();
+        let result = open_collection(&path, Some(768));
+        assert!(
+            result.is_err(),
+            "open_collection must fail on a non-existent collection"
+        );
+    }
+
+    #[test]
+    fn test_is_empty_collection_dir_branches() {
+        let (_dir, path) = temp_db_path();
+        let coll_dir = collection_path(&path, Some(768));
+
+        // Non-existent directory → false.
+        assert!(
+            !is_empty_collection_dir(&coll_dir),
+            "missing dir must not be treated as empty"
+        );
+
+        // Empty directory → true.
+        std::fs::create_dir_all(&coll_dir).unwrap();
+        assert!(
+            is_empty_collection_dir(&coll_dir),
+            "truly empty dir must be treated as empty"
+        );
+
+        // Directory containing only a LOCK file → true.
+        std::fs::write(Path::new(&coll_dir).join("LOCK"), b"").unwrap();
+        assert!(
+            is_empty_collection_dir(&coll_dir),
+            "dir with only a LOCK file must be treated as empty"
+        );
+
+        // Directory containing any other file → false.
+        std::fs::write(Path::new(&coll_dir).join("CURRENT"), b"x").unwrap();
+        assert!(
+            !is_empty_collection_dir(&coll_dir),
+            "dir with a non-LOCK file must NOT be treated as empty"
+        );
+    }
+
+    #[test]
+    fn test_read_dimension_meta_none_when_zero() {
+        // Covers the dim==0 → Ok(None) arm of read_dimension_meta (~line 278):
+        // a meta doc whose start_line is 0 must yield None.
+        ensure_zvec_initialized().unwrap();
+        let (_dir, path) = temp_db_path();
+        let schema = build_schema(768).unwrap();
+        let collection =
+            Collection::create_and_open(&collection_path(&path, Some(768)), &schema, None).unwrap();
+
+        // Manually upsert a meta doc with start_line (dimension) == 0.
+        let mut doc = Doc::new().unwrap();
+        doc.set_pk(META_DOC_PK);
+        doc.add_string("id", META_DOC_PK).unwrap();
+        doc.add_string("path", META_DOC_PK).unwrap();
+        doc.add_string("source", META_DOC_SOURCE).unwrap();
+        doc.add_i64("start_line", 0).unwrap();
+        doc.add_i64("end_line", 0).unwrap();
+        doc.add_string("hash", "").unwrap();
+        doc.add_string("model", "").unwrap();
+        doc.add_string("text", "").unwrap();
+        doc.add_string("updated_at", "").unwrap();
+        doc.add_i64("mtime", 0).unwrap();
+        doc.add_i64("size", 0).unwrap();
+        doc.add_vector_f32("embedding", &vec![0.0f32; 768]).unwrap();
+        collection.upsert(&[&doc]).unwrap();
+
+        let dim = read_dimension_meta(&collection).unwrap();
+        assert_eq!(dim, None, "meta doc with dimension 0 must resolve to None");
+
         collection.flush().unwrap();
         drop(collection);
     }

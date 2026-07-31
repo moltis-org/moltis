@@ -831,6 +831,56 @@ pub(super) fn register(reg: &mut MethodRegistry) {
     );
 
     reg.register(
+        "memory.search",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                let query = ctx
+                    .params
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let limit = ctx
+                    .params
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10)
+                    .clamp(1, 100) as usize;
+
+                let Some(ref mm) = ctx.state.memory_manager else {
+                    return Ok(serde_json::json!({
+                        "results": [],
+                        "error": "Memory system not initialized",
+                    }));
+                };
+
+                // Match the agent's memory_search tool: over-fetch, return raw.
+                let search_limit = limit.saturating_mul(8);
+                match mm.search(&query, search_limit).await {
+                    Ok(results) => {
+                        let truncated: Vec<_> = results.into_iter().take(limit).collect();
+                        Ok(serde_json::json!({
+                            "results": truncated.iter().map(|r| serde_json::json!({
+                                "chunk_id": r.chunk_id,
+                                "path": r.path,
+                                "source": r.source,
+                                "start_line": r.start_line,
+                                "end_line": r.end_line,
+                                "score": r.score,
+                                "text": r.text,
+                            })).collect::<Vec<_>>(),
+                        }))
+                    },
+                    Err(e) => Ok(serde_json::json!({
+                        "results": [],
+                        "error": e.to_string(),
+                    })),
+                }
+            })
+        }),
+    );
+
+    reg.register(
         "memory.config.get",
         Box::new(|ctx| {
             Box::pin(async move {

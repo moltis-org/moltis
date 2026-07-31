@@ -23,7 +23,7 @@ fn zero_vector(dimension: u32) -> Vec<f32> {
 /// A small nonzero vector for filter-based listing queries. HNSW needs a
 /// meaningful query vector to navigate; the filter does the actual selection.
 /// Listing reliability depends on `LIST_TOPK` exceeding the collection size.
-fn listing_query_vector(dimension: u32) -> Vec<f32> {
+pub(crate) fn listing_query_vector(dimension: u32) -> Vec<f32> {
     let mut v = vec![0.0f32; dimension as usize];
     v[0] = 1.0;
     v
@@ -267,7 +267,7 @@ pub fn get_chunk_by_id(collection: &Collection, id: &str) -> Result<Option<Chunk
             .get_string("source")
             .context("failed to get source")?
             .unwrap_or_default();
-        if source == FILE_MARKER || source == "__meta__" {
+        if source == FILE_MARKER || source == crate::collection::META_DOC_SOURCE {
             return Ok(None);
         }
         Ok(Some(ChunkDoc {
@@ -519,6 +519,128 @@ mod tests {
         assert!(
             result.is_none(),
             "file marker with __file__ source must return None from get_chunk_by_id"
+        );
+    }
+
+    /// Exercises the META_DOC_SOURCE arm of get_chunk_by_id (~line 271):
+    /// fetching the dimension-meta doc by its PK must return None, not a
+    /// spurious chunk.
+    #[test]
+    fn test_get_chunk_by_id_filters_meta_doc() {
+        let guard = TestGuard::new();
+        // TestGuard::new creates the collection via open_or_create_collection,
+        // which writes the dimension-meta doc (source == META_DOC_SOURCE) under
+        // the PK "__moltis_dim_meta__".
+        let result = get_chunk_by_id(&guard, "__moltis_dim_meta__").unwrap();
+        assert!(
+            result.is_none(),
+            "dimension-meta doc must return None from get_chunk_by_id"
+        );
+    }
+
+    /// Exercises the full `.map()` body of get_chunks_for_file (lines ~203-253)
+    /// with real, non-marker chunks: existing tests only query file markers,
+    /// which are filtered out before the map ever runs.
+    #[test]
+    fn test_get_chunks_for_file_returns_real_chunks() {
+        let guard = TestGuard::new();
+        // A file marker for the same path — must be filtered out, not mapped.
+        upsert_file(&guard, &file_row("multi-chunk.md", 0, 0), DIM).unwrap();
+
+        let emb = nonzero_embedding();
+        let chunks = vec![
+            ChunkDoc {
+                id: "mc-1".into(),
+                path: "multi-chunk.md".into(),
+                source: "daily".into(),
+                start_line: 1,
+                end_line: 5,
+                hash: "h1".into(),
+                model: "m".into(),
+                text: "first chunk".into(),
+                embedding: emb.clone(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+                mtime: 100,
+                size: 200,
+            },
+            ChunkDoc {
+                id: "mc-2".into(),
+                path: "multi-chunk.md".into(),
+                source: "daily".into(),
+                start_line: 6,
+                end_line: 10,
+                hash: "h2".into(),
+                model: "m".into(),
+                text: "second chunk".into(),
+                embedding: emb.clone(),
+                updated_at: "2026-01-02T00:00:00Z".into(),
+                mtime: 300,
+                size: 400,
+            },
+        ];
+        crate::chunks::upsert_chunks(&guard, &chunks).unwrap();
+
+        // A chunk for a different file — must NOT appear in this file's list.
+        let other = ChunkDoc {
+            id: "other-1".into(),
+            path: "other.md".into(),
+            source: "daily".into(),
+            start_line: 1,
+            end_line: 1,
+            hash: "ho".into(),
+            model: "m".into(),
+            text: "other file chunk".into(),
+            embedding: emb,
+            updated_at: "2026-01-03T00:00:00Z".into(),
+            mtime: 0,
+            size: 0,
+        };
+        crate::chunks::upsert_chunks(&guard, &[other]).unwrap();
+
+        let fetched = get_chunks_for_file(&guard, "multi-chunk.md", DIM).unwrap();
+        assert_eq!(
+            fetched.len(),
+            2,
+            "exactly the two real chunks must be returned"
+        );
+
+        let mut by_id: std::collections::HashMap<String, ChunkDoc> =
+            fetched.into_iter().map(|c| (c.id.clone(), c)).collect();
+        let first = by_id.remove("mc-1").expect("mc-1 must be present");
+        assert_eq!(first.path, "multi-chunk.md");
+        assert_eq!(first.source, "daily");
+        assert_eq!(first.text, "first chunk");
+        assert_eq!(first.start_line, 1);
+        assert_eq!(first.end_line, 5);
+        assert_eq!(first.hash, "h1");
+        assert_eq!(first.model, "m");
+        assert_eq!(first.mtime, 100);
+        assert_eq!(first.size, 200);
+        assert!(
+            first.embedding.is_empty(),
+            "embedding is not requested by get_chunks_for_file"
+        );
+
+        let second = by_id.remove("mc-2").expect("mc-2 must be present");
+        assert_eq!(second.text, "second chunk");
+        assert_eq!(second.start_line, 6);
+        assert_eq!(second.end_line, 10);
+        // get_chunks_for_file does not request the embedding field in its
+        // output_fields, so it round-trips as an empty vector.
+        assert!(
+            second.embedding.is_empty(),
+            "embedding is not requested by get_chunks_for_file"
+        );
+        assert!(by_id.is_empty(), "no extra chunks");
+    }
+
+    #[test]
+    fn test_get_chunks_for_file_empty() {
+        let guard = TestGuard::new();
+        let fetched = get_chunks_for_file(&guard, "no-such-file.md", DIM).unwrap();
+        assert!(
+            fetched.is_empty(),
+            "file with no chunks must return empty list"
         );
     }
 }

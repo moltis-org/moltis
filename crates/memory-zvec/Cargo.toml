@@ -5,27 +5,27 @@ name              = "moltis-memory-zvec"
 version.workspace = true
 
 [dependencies]
-anyhow        = { workspace = true }
-async-trait   = { workspace = true }
-futures       = { workspace = true }
-half          = { workspace = true }
-hex           = { workspace = true }
-moltis-memory = { path = "../memory" }
+anyhow         = { workspace = true }
+async-trait    = { workspace = true }
+futures        = { workspace = true }
+half           = { workspace = true }
+hex            = { workspace = true }
+moltis-memory  = { path = "../memory" }
 moltis-metrics = { optional = true, workspace = true }
-redb          = { workspace = true }
-serde         = { workspace = true }
-serde_json    = { workspace = true }
-sha2          = { workspace = true }
-thiserror     = { workspace = true }
-tokio         = { workspace = true }
-tracing       = { workspace = true, optional = true }
-zvec          = { workspace = true }
-zvec-sys      = { workspace = true }
+redb           = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+sha2           = { workspace = true }
+thiserror      = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+zvec           = { workspace = true }
+zvec-sys       = { workspace = true }
 
 [features]
 default = ["tracing"]
 metrics = ["dep:moltis-metrics"]
-tracing = ["dep:tracing"]
+tracing = []
 
 [lints]
 workspace = true
