@@ -198,6 +198,10 @@ relay charges per event or you would rather keep the channel quiet.
 Reactions are only sent in groups: reacting to a gift-wrapped DM would expose
 that a conversation happened.
 
+Withdrawing the bot from a group stops new reactions, but it can still take back
+one it already placed — otherwise its last 👀 would sit on someone's message
+permanently.
+
 ### Message Kinds (kind:9 vs kind:40002)
 
 Buzz defines two chat kinds and posts channel messages as **`kind:40002`**

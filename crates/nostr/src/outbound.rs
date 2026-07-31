@@ -246,6 +246,43 @@ impl NostrOutbound {
         result
     }
 
+    /// Resolve `channel_id` to a group **without authorizing a send**, for the
+    /// reaction paths.
+    ///
+    /// [`Self::resolve`] answers two questions at once — "is this a group?" and
+    /// "may we publish to it?" — and reactions need them separated. A DM target
+    /// is a silent no-op (reacting to a gift-wrapped conversation would reveal
+    /// it happened), whereas a revoked group is a real refusal the caller must
+    /// report; conflating them turns the second into the first.
+    ///
+    /// Separating them also lets a retraction run after revocation. Withdrawing
+    /// the bot should remove its presence, not freeze its last 👀 on a user's
+    /// message — so [`ChannelOutbound::remove_reaction`] uses this and skips
+    /// the gate, while [`ChannelOutbound::add_reaction`] uses it and then
+    /// applies [`Self::authorized_group_publish`] like every other publish.
+    ///
+    /// Only ever resolves a group, never a DM, so it cannot become a way to
+    /// send anything to a pubkey. A `group:`-prefixed target resolves whatever
+    /// the config now says, since the prefix already proves it is a group; a
+    /// legacy unprefixed one must still name a configured group, because
+    /// nothing else distinguishes it from a public key.
+    async fn resolve_group_target(
+        &self,
+        account_id: &str,
+        channel_id: &str,
+    ) -> Option<(Client, String)> {
+        let (client, config) = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            let state = accounts.get(account_id)?;
+            (state.client.clone(), Arc::clone(&state.config))
+        };
+        if let Some(group_id) = crate::groups::parse_group_target(channel_id) {
+            return Some((client, group_id.to_string()));
+        }
+        let is_legacy_group = config.read().await.groups.iter().any(|g| g == channel_id);
+        is_legacy_group.then(|| (client, channel_id.to_string()))
+    }
+
     /// Look up account state and resolve the target: a `group:`-prefixed id is
     /// a NIP-29 group send; anything else is parsed as a DM pubkey. Returns the
     /// group id with the prefix stripped — that bare value is what belongs in
@@ -403,10 +440,9 @@ impl ChannelOutbound for NostrOutbound {
         emoji: &str,
     ) -> ChannelResult<()> {
         // `channel_id` is the reply target, i.e. the *prefixed* `group:<id>`.
-        // The `h` tag must carry the bare id `resolve` hands back, or a NIP-29
-        // relay refuses the write / files it under a group nobody watches.
-        let Ok((client, _, SendTarget::Group(group_id))) =
-            self.resolve(account_id, channel_id).await
+        // The `h` tag must carry the bare id, or a NIP-29 relay refuses the
+        // write / files it under a group nobody watches.
+        let Some((client, group_id)) = self.resolve_group_target(account_id, channel_id).await
         else {
             return Ok(());
         };
@@ -441,11 +477,11 @@ impl ChannelOutbound for NostrOutbound {
     /// honour — so this is best-effort and silently no-ops when the reaction
     /// id is no longer known.
     ///
-    /// Deliberately *not* gated on [`Self::recheck_group_send`], unlike every
-    /// other publish here. This one only ever withdraws something we already
-    /// put in the channel, so refusing it after a revocation would leave the
-    /// bot's 👀 stuck on a user's message forever — making the revocation more
-    /// visible, not less.
+    /// Deliberately routed around the send authorization gate, unlike every
+    /// other publish here — see [`Self::resolve_group_target`]. This
+    /// one only ever withdraws something already in the channel, so refusing it
+    /// after a revocation would leave the bot's 👀 stuck on a user's message
+    /// forever, which is the opposite of what withdrawing the bot should do.
     async fn remove_reaction(
         &self,
         account_id: &str,
@@ -453,8 +489,7 @@ impl ChannelOutbound for NostrOutbound {
         message_id: &str,
         emoji: &str,
     ) -> ChannelResult<()> {
-        let Ok((client, _, SendTarget::Group(group_id))) =
-            self.resolve(account_id, channel_id).await
+        let Some((client, group_id)) = self.resolve_group_target(account_id, channel_id).await
         else {
             return Ok(());
         };
@@ -1047,6 +1082,22 @@ mod tests {
             .add_reaction("acct", &peer, &event_id.to_hex(), "eyes")
             .await;
         assert!(result.is_ok(), "DM reaction must be a silent no-op");
+
+        // A revoked group is a different thing entirely: not-applicable versus
+        // refused. Collapsing the two would hide a dropped acknowledgement.
+        rewrite_config(&outbound, NostrAccountConfig::default()).await;
+        assert!(
+            outbound
+                .add_reaction(
+                    "acct",
+                    &crate::groups::group_target("grp"),
+                    &event_id.to_hex(),
+                    "eyes"
+                )
+                .await
+                .is_err(),
+            "a revoked group must report the refusal, not look like a no-op"
+        );
     }
 
     /// A malformed message id must not panic or publish anything.

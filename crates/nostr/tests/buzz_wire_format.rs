@@ -623,12 +623,13 @@ async fn revoking_the_group_mid_stream_publishes_no_further_events() {
     assert_eq!(published.content, "Hello");
 
     // Operator drops the group, exactly as `plugin::upsert_account` does.
-    {
+    // The handle is cloned out first — the accounts map is a std lock, whose
+    // guard must not be held across the config await.
+    let config = {
         let guard = accounts.read().expect("lock");
-        let state = guard.get("acct").expect("account");
-        let mut cfg = state.config.write().await;
-        cfg.groups.clear();
-    }
+        Arc::clone(&guard.get("acct").expect("account").config)
+    };
+    config.write().await.groups.clear();
 
     // The rest of the answer, and the end of the turn, must stay unpublished.
     tx.send(StreamEvent::Delta(", world".to_string()))
@@ -672,12 +673,11 @@ async fn revoking_the_group_before_a_plain_send_publishes_nothing() {
 
     // Operator drops the group after the turn was authorized and bound to this
     // reply target, but before the reply is published.
-    {
+    let config = {
         let guard = outbound.accounts.read().expect("lock");
-        let state = guard.get("acct").expect("account");
-        let mut cfg = state.config.write().await;
-        cfg.groups.clear();
-    }
+        Arc::clone(&guard.get("acct").expect("account").config)
+    };
+    config.write().await.groups.clear();
 
     let result = outbound
         .send_text("acct", &groups::group_target("grp"), "too late", None)
@@ -723,6 +723,79 @@ async fn receive_only_mode_publishes_nothing() {
             .is_empty(),
         "receive-only must not put anything on the relay"
     );
+}
+
+/// Withdrawing the bot must not freeze its 👀 on a user's message.
+///
+/// Every path that puts new content in a channel is refused once the group is
+/// revoked — but a retraction takes content *out*, and gating it would mean the
+/// last acknowledgement the bot placed stays there permanently, which is the
+/// opposite of what removing the bot should do. The NIP-09 deletion therefore
+/// still goes out after revocation, while a fresh reaction on the same target
+/// is refused.
+#[tokio::test]
+async fn a_reaction_can_still_be_retracted_after_the_group_is_revoked() {
+    let relay = MockRelay::run().await.expect("relay");
+    let outbound = outbound_for(
+        &relay,
+        group_config("buzz-general", GroupMessageKind::BuzzV2),
+    )
+    .await;
+    let chat_id = groups::group_target("buzz-general");
+    let target = EventId::all_zeros();
+
+    let (client, config) = {
+        let guard = outbound.accounts.read().expect("lock");
+        let state = guard.get("acct").expect("account");
+        (state.client.clone(), Arc::clone(&state.config))
+    };
+
+    // Acknowledge a message while still authorized.
+    outbound
+        .add_reaction("acct", &chat_id, &target.to_hex(), "eyes")
+        .await
+        .expect("react");
+    let reaction = fetch_kind(&client, Kind::Reaction)
+        .await
+        .first()
+        .expect("reaction stored")
+        .id;
+
+    // Operator withdraws the bot mid-turn.
+    config.write().await.groups.clear();
+
+    // Publishing anything new is refused...
+    assert!(
+        outbound
+            .add_reaction("acct", &chat_id, &target.to_hex(), "white_check_mark")
+            .await
+            .is_err(),
+        "a revoked group must not accept a new reaction"
+    );
+    assert_eq!(
+        fetch_kind(&client, Kind::Reaction).await.len(),
+        1,
+        "no further reaction may reach the relay"
+    );
+
+    // ...but the acknowledgement already placed can still be taken back.
+    outbound
+        .remove_reaction("acct", &chat_id, &target.to_hex(), "eyes")
+        .await
+        .expect("retract");
+
+    let deletions = fetch_kind(&client, Kind::EventDeletion).await;
+    let deletion = deletions
+        .first()
+        .expect("retraction must still be published after revocation");
+    assert_eq!(tag_values(deletion, TagKind::e())[0], [
+        "e".to_string(),
+        reaction.to_hex()
+    ]);
+    assert_eq!(tag_values(deletion, TagKind::h())[0], [
+        "h".to_string(),
+        "buzz-general".to_string()
+    ]);
 }
 
 /// The property the async config lock exists for: a settings save that
