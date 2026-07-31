@@ -795,11 +795,22 @@ mod tests {
     #[derive(Default)]
     struct RecordingSink {
         dispatched: Mutex<Vec<Dispatched>>,
+        commands: Mutex<Vec<String>>,
     }
 
     impl RecordingSink {
         fn dispatched(&self) -> Vec<Dispatched> {
             self.dispatched
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        }
+
+        /// Commands that reached the command handler. Distinguishes "refused by
+        /// the operator gate" from "handled as a command" — both leave
+        /// `dispatched` empty, so asserting on that alone proves nothing.
+        fn commands(&self) -> Vec<String> {
+            self.commands
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone()
@@ -828,10 +839,14 @@ mod tests {
 
         async fn dispatch_command(
             &self,
-            _command: &str,
+            command: &str,
             _reply_to: ChannelReplyTarget,
             _sender_id: Option<&str>,
         ) -> ChannelResult<String> {
+            self.commands
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(command.to_string());
             Ok(String::new())
         }
 
@@ -1069,6 +1084,19 @@ mod tests {
         let got = h.sink.dispatched();
         assert_eq!(got.len(), 1, "unknown slash text is just a message");
         assert_eq!(got[0].text, "/notacommand hello");
+        assert!(h.sink.commands().is_empty());
+    }
+
+    /// A non-execution command from an ordinary group member is not gated —
+    /// the operator list only guards `/sh` and `/sandbox`.
+    #[tokio::test]
+    async fn ordinary_commands_are_open_to_group_members() {
+        let mut h = Harness::with_groups(vec!["grp"], MentionModeAlias::Always);
+        let event = h.incoming("grp", "/new", groups::group_chat_kind(), false);
+        h.handle(&event).await;
+
+        assert_eq!(h.sink.commands(), vec!["new".to_string()]);
+        assert!(h.sink.dispatched().is_empty());
     }
 
     /// `/sh` grants shell execution, and group membership is the relay's call,
@@ -1081,12 +1109,16 @@ mod tests {
 
         assert!(
             h.sink.dispatched().is_empty(),
-            "/sh from a non-operator must not reach the command handler"
+            "/sh from a non-operator must not reach the model"
+        );
+        assert!(
+            h.sink.commands().is_empty(),
+            "/sh from a non-operator must not reach the command handler either"
         );
     }
 
-    /// The same command from an allowlisted key is intercepted as a command
-    /// (handled, not forwarded to the model).
+    /// The same command from an allowlisted key does reach the command handler
+    /// — the gate is about who sent it, not about the command being ignored.
     #[tokio::test]
     async fn operator_only_commands_are_allowed_from_operators() {
         let author = Keys::generate();
@@ -1101,6 +1133,11 @@ mod tests {
             .expect("sign");
         h.handle(&event).await;
 
+        assert_eq!(
+            h.sink.commands(),
+            vec!["sh on".to_string()],
+            "an operator's /sh must be handled as a command"
+        );
         assert!(
             h.sink.dispatched().is_empty(),
             "commands are handled by the command path, not dispatched to the model"
