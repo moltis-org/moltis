@@ -3,7 +3,7 @@
 //! Supports both GGUF and MLX model formats with automatic format selection
 //! based on the current platform.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, PathBuf};
 
 use {
     anyhow::{Context, bail},
@@ -319,13 +319,13 @@ fn validate_hf_path<'a>(value: &'a str, description: &str) -> anyhow::Result<Vec
     if value.contains('\\') {
         bail!("{description} must use '/' path separators");
     }
-    if Path::new(value).is_absolute() {
+    if std::path::Path::new(value).is_absolute() {
         bail!("{description} must be a relative path");
     }
 
     let mut segments = Vec::new();
     for segment in value.split('/') {
-        let mut components = Path::new(segment).components();
+        let mut components = std::path::Path::new(segment).components();
         if segment.contains(':')
             || !matches!(components.next(), Some(Component::Normal(_)))
             || components.next().is_some()
@@ -367,14 +367,14 @@ pub fn default_models_dir() -> PathBuf {
 
 /// Check if a GGUF model file is cached locally.
 #[must_use]
-pub fn is_gguf_model_cached(model: &LocalModelDef, cache_dir: &Path) -> bool {
+pub fn is_gguf_model_cached(model: &LocalModelDef, cache_dir: &std::path::Path) -> bool {
     let model_path = cache_dir.join(model.gguf_filename);
     model_path.exists()
 }
 
 /// Check if an MLX model directory is cached locally.
 #[must_use]
-pub fn is_mlx_model_cached(model: &LocalModelDef, cache_dir: &Path) -> bool {
+pub fn is_mlx_model_cached(model: &LocalModelDef, cache_dir: &std::path::Path) -> bool {
     let Some(mlx_repo) = model.mlx_repo else {
         return false;
     };
@@ -392,7 +392,11 @@ pub fn is_mlx_model_cached(model: &LocalModelDef, cache_dir: &Path) -> bool {
 
 /// Check if a model is cached for the specified backend.
 #[must_use]
-pub fn is_model_cached(model: &LocalModelDef, backend: BackendType, cache_dir: &Path) -> bool {
+pub fn is_model_cached(
+    model: &LocalModelDef,
+    backend: BackendType,
+    cache_dir: &std::path::Path,
+) -> bool {
     match backend {
         BackendType::Gguf => is_gguf_model_cached(model, cache_dir),
         BackendType::Mlx => is_mlx_model_cached(model, cache_dir),
@@ -400,14 +404,17 @@ pub fn is_model_cached(model: &LocalModelDef, backend: BackendType, cache_dir: &
 }
 
 /// Ensure a model is downloaded, returning the path to the file.
-pub async fn ensure_model(model: &LocalModelDef, cache_dir: &Path) -> anyhow::Result<PathBuf> {
+pub async fn ensure_model(
+    model: &LocalModelDef,
+    cache_dir: &std::path::Path,
+) -> anyhow::Result<PathBuf> {
     ensure_model_with_progress(model, cache_dir, |_| {}).await
 }
 
 /// Ensure a model is downloaded with progress reporting.
 pub async fn ensure_model_with_progress<F>(
     model: &LocalModelDef,
-    cache_dir: &Path,
+    cache_dir: &std::path::Path,
     mut on_progress: F,
 ) -> anyhow::Result<PathBuf>
 where
@@ -500,12 +507,12 @@ const MLX_SHARD_PATTERNS: &[&str] = &[
     "weights.", // weights.00.safetensors, etc. (some MLX models use this)
 ];
 
-fn mlx_model_dir(hf_repo: &str, cache_dir: &Path) -> anyhow::Result<PathBuf> {
+fn mlx_model_dir(hf_repo: &str, cache_dir: &std::path::Path) -> anyhow::Result<PathBuf> {
     let [owner, repo] = validate_hf_repo_id(hf_repo)?;
     Ok(cache_dir.join("mlx").join(format!("{owner}__{repo}")))
 }
 
-fn mlx_file_path(model_dir: &Path, filename: &str) -> anyhow::Result<PathBuf> {
+fn mlx_file_path(model_dir: &std::path::Path, filename: &str) -> anyhow::Result<PathBuf> {
     let segments = validate_hf_file_path(filename)?;
     let mut path = model_dir.to_path_buf();
     path.extend(segments);
@@ -560,14 +567,17 @@ fn mlx_files_to_download(files: Vec<String>) -> anyhow::Result<Vec<String>> {
 ///
 /// MLX models are directories containing multiple files (config.json, model.safetensors, etc.).
 /// This function downloads all necessary files from HuggingFace.
-pub async fn ensure_mlx_model(model: &LocalModelDef, cache_dir: &Path) -> anyhow::Result<PathBuf> {
+pub async fn ensure_mlx_model(
+    model: &LocalModelDef,
+    cache_dir: &std::path::Path,
+) -> anyhow::Result<PathBuf> {
     ensure_mlx_model_with_progress(model, cache_dir, |_| {}).await
 }
 
 /// Ensure an MLX model is downloaded with progress reporting.
 pub async fn ensure_mlx_model_with_progress<F>(
     model: &LocalModelDef,
-    cache_dir: &Path,
+    cache_dir: &std::path::Path,
     mut on_progress: F,
 ) -> anyhow::Result<PathBuf>
 where
@@ -681,7 +691,7 @@ where
 
 /// Check if an arbitrary HuggingFace MLX repo is cached locally.
 #[must_use]
-pub fn is_mlx_repo_cached(hf_repo: &str, cache_dir: &Path) -> bool {
+pub fn is_mlx_repo_cached(hf_repo: &str, cache_dir: &std::path::Path) -> bool {
     let Ok(model_dir) = mlx_model_dir(hf_repo, cache_dir) else {
         return false;
     };
@@ -699,14 +709,17 @@ pub fn is_mlx_repo_cached(hf_repo: &str, cache_dir: &Path) -> bool {
 /// Unlike [`ensure_mlx_model`], this accepts any HuggingFace repo ID (e.g.
 /// `mlx-community/Qwen3.5-4B-MLX-4bit`) and does not require the model to be
 /// in the built-in catalog.
-pub async fn ensure_mlx_repo(hf_repo: &str, cache_dir: &Path) -> anyhow::Result<PathBuf> {
+pub async fn ensure_mlx_repo(
+    hf_repo: &str,
+    cache_dir: &std::path::Path,
+) -> anyhow::Result<PathBuf> {
     ensure_mlx_repo_with_progress(hf_repo, cache_dir, |_| {}).await
 }
 
 /// Ensure an arbitrary HuggingFace MLX repo is downloaded with progress reporting.
 pub async fn ensure_mlx_repo_with_progress<F>(
     hf_repo: &str,
-    cache_dir: &Path,
+    cache_dir: &std::path::Path,
     mut on_progress: F,
 ) -> anyhow::Result<PathBuf>
 where
@@ -839,7 +852,11 @@ async fn list_hf_repo_files(repo: &str) -> anyhow::Result<Vec<String>> {
 
 /// Download a single file with progress reporting.
 /// Returns the number of bytes downloaded.
-async fn download_file<F>(url: reqwest::Url, path: &Path, mut on_progress: F) -> anyhow::Result<u64>
+async fn download_file<F>(
+    url: reqwest::Url,
+    path: &std::path::Path,
+    mut on_progress: F,
+) -> anyhow::Result<u64>
 where
     F: FnMut(DownloadProgress),
 {
@@ -901,7 +918,7 @@ where
 pub async fn ensure_model_for_backend(
     model: &LocalModelDef,
     backend: BackendType,
-    cache_dir: &Path,
+    cache_dir: &std::path::Path,
 ) -> anyhow::Result<PathBuf> {
     match backend {
         BackendType::Gguf => ensure_model(model, cache_dir).await,
@@ -1230,7 +1247,7 @@ mod tests {
 
     #[test]
     fn hf_file_paths_preserve_safe_nested_components() {
-        let model_dir = Path::new("/models/repo");
+        let model_dir = std::path::Path::new("/models/repo");
         let path = mlx_file_path(model_dir, "weights/shards/model-00001.safetensors").unwrap();
         assert_eq!(
             path,
