@@ -187,6 +187,29 @@ impl NostrOutbound {
             return Ok((client, keys, SendTarget::Group(group_id.to_string())));
         }
 
+        // Legacy: a target persisted before group targets carried the prefix.
+        // If it names a group this account is still in, read it as that group.
+        // The competing reading — a DM to a peer whose pubkey happens to equal
+        // a configured group id — is far less likely, and misrouting a channel
+        // reply into a stranger's DM is the more damaging way to be wrong.
+        //
+        // An unprefixed target for a group that has *also* been removed stays
+        // ambiguous: the string carries no type and is indistinguishable from a
+        // pubkey. That combination cannot arise from any released build, since
+        // group chat ships for the first time in this change.
+        let legacy_group_target = {
+            let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
+            cfg.groups.iter().any(|g| g == to)
+        };
+        if legacy_group_target {
+            tracing::debug!(
+                account_id,
+                group = to,
+                "routing unprefixed legacy group target"
+            );
+            return Ok((client, keys, SendTarget::Group(to.to_string())));
+        }
+
         let recipient = PublicKey::parse(to).map_err(|e| {
             moltis_channels::Error::invalid_input(format!("invalid recipient pubkey: {e}"))
         })?;
@@ -544,6 +567,34 @@ mod tests {
             .resolve("acct", &crate::groups::group_target("buzz-general"))
             .await;
         assert!(matches!(resolved, Ok((_, _, SendTarget::Group(ref g))) if g == "buzz-general"));
+    }
+
+    /// A target persisted before group targets carried the `group:` prefix must
+    /// still reach the group, not be parsed as a pubkey — even when the group
+    /// id is itself pubkey-shaped, which is exactly when the DM fallback would
+    /// have leaked channel content to a stranger.
+    #[tokio::test]
+    async fn legacy_unprefixed_target_still_routes_to_a_configured_group() {
+        let pubkey_shaped_id = Keys::generate().public_key().to_hex();
+        let outbound = outbound_with_groups(vec![pubkey_shaped_id.clone()]);
+
+        // No `group:` prefix — as a pre-upgrade session binding would have it.
+        let resolved = outbound.resolve("acct", &pubkey_shaped_id).await;
+
+        assert!(
+            matches!(resolved, Ok((_, _, SendTarget::Group(ref g))) if *g == pubkey_shaped_id),
+            "a legacy target naming a joined group must route to that group"
+        );
+    }
+
+    /// The legacy path must not swallow ordinary DMs: a pubkey that is not a
+    /// configured group still resolves as a DM recipient.
+    #[tokio::test]
+    async fn legacy_path_does_not_capture_ordinary_dms() {
+        let outbound = outbound_with_groups(vec!["buzz-general".into()]);
+        let peer = Keys::generate().public_key().to_hex();
+        let resolved = outbound.resolve("acct", &peer).await;
+        assert!(matches!(resolved, Ok((_, _, SendTarget::Dm(_)))));
     }
 
     #[tokio::test]
