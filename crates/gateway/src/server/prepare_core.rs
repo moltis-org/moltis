@@ -7,7 +7,7 @@ use {
             validate_proxy_tls_configuration,
         },
         init_channels, init_code_index, init_memory,
-        prepared::PreparedGatewayCore,
+        prepared::{CoreStartupProfile, PreparedGatewayCore},
         workspace::{
             seed_default_workspace_markdown_files, sync_persona_into_preset,
             warn_on_workspace_prompt_file_truncation,
@@ -38,6 +38,27 @@ mod log_persistence;
 mod post_state;
 mod sandbox;
 mod tool_registration;
+
+#[cfg(feature = "trusted-network")]
+fn apply_web_fetch_network_policy(
+    tool: moltis_tools::web_fetch::WebFetchTool,
+    profile: CoreStartupProfile,
+    sandbox: &moltis_tools::sandbox::SandboxConfig,
+) -> moltis_tools::web_fetch::WebFetchTool {
+    if sandbox.network != moltis_network_filter::NetworkPolicy::Trusted {
+        return tool;
+    }
+    let proxy = if profile.is_headless() {
+        "http://127.0.0.1:0".to_string()
+    } else {
+        format!(
+            "http://127.0.0.1:{}",
+            moltis_network_filter::DEFAULT_PROXY_PORT
+        )
+    };
+    tool.with_proxy(proxy)
+}
+
 /// Prepare the core gateway: load config, run migrations, wire services,
 /// spawn background tasks, and return the core state without any HTTP layer.
 /// This is the transport-agnostic initialisation. Non-HTTP consumers (TUI,
@@ -54,6 +75,34 @@ pub async fn prepare_gateway_core(
     tailscale_mode_override: Option<String>,
     tailscale_reset_on_exit_override: Option<bool>,
     session_event_bus: Option<SessionEventBus>,
+) -> anyhow::Result<PreparedGatewayCore> {
+    prepare_gateway_core_with_profile(
+        bind,
+        port,
+        no_tls,
+        log_buffer,
+        config_dir,
+        data_dir,
+        tailscale_mode_override,
+        tailscale_reset_on_exit_override,
+        session_event_bus,
+        CoreStartupProfile::Server,
+    )
+    .await
+}
+
+#[allow(clippy::expect_used)]
+pub async fn prepare_gateway_core_with_profile(
+    bind: &str,
+    port: u16,
+    no_tls: bool,
+    log_buffer: Option<crate::logs::LogBuffer>,
+    config_dir: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    tailscale_mode_override: Option<String>,
+    tailscale_reset_on_exit_override: Option<bool>,
+    session_event_bus: Option<SessionEventBus>,
+    profile: CoreStartupProfile,
 ) -> anyhow::Result<PreparedGatewayCore> {
     let session_event_bus = session_event_bus.unwrap_or_default();
     #[cfg(not(feature = "tailscale"))]
@@ -204,7 +253,7 @@ pub async fn prepare_gateway_core(
     // Refresh dynamic provider model discovery daily.
     const DYNAMIC_PROVIDER_MODEL_REFRESH_INTERVAL: std::time::Duration =
         std::time::Duration::from_secs(24 * 60 * 60);
-    {
+    if !profile.is_headless() {
         let registry_for_refresh = Arc::clone(&registry);
         let provider_config_for_refresh = base_provider_config.clone();
         tokio::spawn(async move {
@@ -518,15 +567,17 @@ pub async fn prepare_gateway_core(
     live_mcp
         .set_credential_store(Arc::clone(&credential_store))
         .await;
-    let mgr = Arc::clone(live_mcp.manager());
-    let mcp_for_sync = Arc::clone(&live_mcp);
-    tokio::spawn(async move {
-        let started = mgr.start_enabled().await;
-        if !started.is_empty() {
-            tracing::info!(servers = ?started, "MCP servers started");
-        }
-        mcp_for_sync.sync_tools_if_ready().await;
-    });
+    if !profile.is_headless() {
+        let mgr = Arc::clone(live_mcp.manager());
+        let mcp_for_sync = Arc::clone(&live_mcp);
+        tokio::spawn(async move {
+            let started = mgr.start_enabled().await;
+            if !started.is_empty() {
+                tracing::info!(servers = ?started, "MCP servers started");
+            }
+            mcp_for_sync.sync_tools_if_ready().await;
+        });
+    }
 
     // If MOLTIS_PASSWORD is set and no password in DB yet, migrate it.
     if let Some(ref pw) = password
@@ -620,9 +671,11 @@ pub async fn prepare_gateway_core(
         tracing::warn!(error = %e, "failed to ensure main agent DB row");
     }
 
+    #[cfg(feature = "voice")]
     let voice_persona_store = Arc::new(crate::voice_persona::VoicePersonaStore::new(
         db_pool.clone(),
     ));
+    #[cfg(feature = "voice")]
     match voice_persona_store.seed_defaults().await {
         Ok(0) => {},
         Ok(n) => tracing::info!(count = n, "seeded default voice personas"),
@@ -944,7 +997,9 @@ pub async fn prepare_gateway_core(
             "trusted-network: evaluating network policy"
         );
 
-        if sandbox_config.network == moltis_network_filter::NetworkPolicy::Trusted {
+        if !profile.is_headless()
+            && sandbox_config.network == moltis_network_filter::NetworkPolicy::Trusted
+        {
             let domain_mgr = Arc::new(
                 moltis_network_filter::domain_approval::DomainApprovalManager::new(
                     &sandbox_config.trusted_domains,
@@ -975,11 +1030,21 @@ pub async fn prepare_gateway_core(
             moltis_tools::init_shared_http_client(Some(&url));
             proxy_shutdown_tx = Some(shutdown_tx);
         } else {
-            info!(
+            debug!(
                 network_policy = ?sandbox_config.network,
-                "trusted-network proxy not started (policy is not Trusted)"
+                headless = profile.is_headless(),
+                "trusted-network proxy not started"
             );
-            moltis_tools::init_shared_http_client(upstream_proxy);
+            if profile.is_headless()
+                && sandbox_config.network == moltis_network_filter::NetworkPolicy::Trusted
+            {
+                // ACP has no domain-approval UI, so trusted-network mode must
+                // fail closed rather than bypass policy or bind a proxy port.
+                info!("trusted-network HTTP access disabled in headless mode");
+                moltis_tools::init_shared_http_client(Some("http://127.0.0.1:0"));
+            } else {
+                moltis_tools::init_shared_http_client(upstream_proxy);
+            }
             proxy_shutdown_tx = None;
         }
 
@@ -996,10 +1061,13 @@ pub async fn prepare_gateway_core(
     }
 
     // Spawn background sandbox tasks (image pre-build, host provisioning, container GC).
-    sandbox::spawn_sandbox_background_tasks(&sandbox_router, &deferred_state);
+    if !profile.is_headless() {
+        sandbox::spawn_sandbox_background_tasks(&sandbox_router, &deferred_state);
+    }
 
     // Periodic cron session retention pruning.
-    if let Some(retention_days) = config.cron.session_retention_days
+    if !profile.is_headless()
+        && let Some(retention_days) = config.cron.session_retention_days
         && retention_days > 0
     {
         let prune_store = Arc::clone(&cron_store_for_pruning);
@@ -1060,7 +1128,8 @@ pub async fn prepare_gateway_core(
     }
 
     // Pre-pull browser container image.
-    if config.tools.browser.enabled
+    if !profile.is_headless()
+        && config.tools.browser.enabled
         && !matches!(
             sandbox_router.config().mode,
             moltis_tools::sandbox::SandboxMode::Off
@@ -1145,6 +1214,7 @@ pub async fn prepare_gateway_core(
         Arc::clone(&session_metadata),
         Arc::clone(&deferred_state),
         &data_dir,
+        !profile.is_headless(),
     )
     .await;
     services = channel_result.services;
@@ -1159,7 +1229,10 @@ pub async fn prepare_gateway_core(
     services = services.with_session_store(Arc::clone(&session_store));
     services = services.with_session_share_store(Arc::clone(&session_share_store));
     services = services.with_agent_persona_store(Arc::clone(&agent_persona_store));
-    services = services.with_voice_persona_store(Arc::clone(&voice_persona_store));
+    #[cfg(feature = "voice")]
+    {
+        services = services.with_voice_persona_store(Arc::clone(&voice_persona_store));
+    }
     startup_mem_probe.checkpoint("channels.initialized");
 
     let agents_config = Arc::new(tokio::sync::RwLock::new(config.agents.clone()));
@@ -1200,14 +1273,18 @@ pub async fn prepare_gateway_core(
     {
         let mut session_svc =
             LiveSessionService::new(Arc::clone(&session_store), Arc::clone(&session_metadata))
-                .with_tts_service(Arc::clone(&services.tts))
                 .with_share_store(Arc::clone(&session_share_store))
                 .with_sandbox_router(Arc::clone(&sandbox_router))
                 .with_agent_persona_store(Arc::clone(&agent_persona_store))
-                .with_voice_persona_store(Arc::clone(&voice_persona_store))
                 .with_project_store(Arc::clone(&project_store))
                 .with_state_store(Arc::clone(&session_state_store))
                 .with_browser_service(Arc::clone(&services.browser));
+        #[cfg(feature = "voice")]
+        {
+            session_svc = session_svc
+                .with_tts_service(Arc::clone(&services.tts))
+                .with_voice_persona_store(Arc::clone(&voice_persona_store));
+        }
         #[cfg(feature = "fs-tools")]
         if let Some(ref fs_state) = shared_fs_state {
             session_svc = session_svc.with_fs_state(Arc::clone(fs_state));
@@ -1225,6 +1302,7 @@ pub async fn prepare_gateway_core(
         &effective_providers,
         &runtime_env_overrides,
         config.server.db_pool_max_connections,
+        !profile.is_headless(),
     )
     .await;
     startup_mem_probe.checkpoint("memory_manager.initialized");
@@ -1234,6 +1312,7 @@ pub async fn prepare_gateway_core(
     startup_mem_probe.checkpoint("code_index.initialized");
 
     post_state::complete_startup(post_state::PostStateInputs {
+        profile,
         bind: bind.to_string(),
         port,
         config,

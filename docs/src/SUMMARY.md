@@ -24,6 +24,7 @@
   - [Anthropic OAuth (FAQ)](anthropic-oauth.md)
 - [MCP Servers](mcp.md)
 - [External Agents](external-agents.md)
+  - [Moltis as an ACP Agent](acp-server.md)
 - [Memory](memory.md)
   - [Memory Surfaces](memory-surfaces.md)
   - [Moltis vs OpenClaw](memory-comparison.md)

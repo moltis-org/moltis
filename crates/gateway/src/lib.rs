@@ -18,6 +18,7 @@ pub mod broadcast;
 pub mod channel;
 pub mod channel_agent_tools;
 pub mod channel_events;
+pub mod channel_reactions;
 pub mod channel_store;
 pub mod channel_webhook_dedup;
 pub mod channel_webhook_middleware;
@@ -64,7 +65,9 @@ pub mod updater;
 #[cfg(feature = "vault")]
 pub mod vault_lifecycle;
 pub mod voice;
+#[cfg(feature = "voice")]
 pub mod voice_agent_tools;
+#[cfg(feature = "voice")]
 pub mod voice_persona;
 pub mod webhooks;
 

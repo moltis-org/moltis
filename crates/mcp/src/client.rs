@@ -20,7 +20,7 @@ use crate::{
     remote::ResolvedRemoteConfig,
     sse_transport::SseTransport,
     traits::{McpClientTrait, McpTransport},
-    transport::StdioTransport,
+    transport::{StdioLaunchOptions, StdioTransport},
     types::{
         ClientCapabilities, ClientInfo, InitializeParams, InitializeResult, McpToolDef,
         McpTransportError, PROTOCOL_VERSION, ToolsCallParams, ToolsCallResult, ToolsListResult,
@@ -58,9 +58,29 @@ impl McpClient {
         env: &HashMap<String, Secret<String>>,
         request_timeout: Duration,
     ) -> Result<Self> {
-        info!(server = %server_name, command = %command, args = ?args, "connecting to MCP server");
+        Self::connect_with_options(
+            server_name,
+            command,
+            args,
+            env,
+            request_timeout,
+            &StdioLaunchOptions::default(),
+        )
+        .await
+    }
+
+    pub async fn connect_with_options(
+        server_name: &str,
+        command: &str,
+        args: &[String],
+        env: &HashMap<String, Secret<String>>,
+        request_timeout: Duration,
+        options: &StdioLaunchOptions,
+    ) -> Result<Self> {
+        info!(server = %server_name, command = %command, arg_count = args.len(), "connecting to MCP server");
         let transport =
-            StdioTransport::spawn_with_timeout(command, args, env, request_timeout).await?;
+            StdioTransport::spawn_with_options(command, args, env, request_timeout, options)
+                .await?;
 
         let mut client = Self {
             server_name: server_name.into(),
@@ -71,7 +91,7 @@ impl McpClient {
         };
 
         if let Err(e) = client.initialize().await {
-            warn!(server = %server_name, error = %e, "MCP initialize handshake failed");
+            warn!(server = %server_name, "MCP initialize handshake failed");
             return Err(e);
         }
 
@@ -108,7 +128,7 @@ impl McpClient {
         };
 
         if let Err(e) = client.initialize().await {
-            warn!(server = %server_name, error = %e, "remote MCP initialize handshake failed");
+            warn!(server = %server_name, "remote MCP initialize handshake failed");
             return Err(e);
         }
         Ok(client)
@@ -139,7 +159,7 @@ impl McpClient {
         };
 
         if let Err(e) = client.initialize().await {
-            warn!(server = %server_name, error = %e, "legacy SSE MCP initialize handshake failed");
+            warn!(server = %server_name, "legacy SSE MCP initialize handshake failed");
             return Err(e);
         }
 
@@ -177,7 +197,7 @@ impl McpClient {
         };
 
         if let Err(e) = client.initialize().await {
-            warn!(server = %server_name, error = %e, "legacy SSE (auth) MCP initialize handshake failed");
+            warn!(server = %server_name, "legacy SSE (auth) MCP initialize handshake failed");
             return Err(e);
         }
 
@@ -214,7 +234,7 @@ impl McpClient {
         };
 
         if let Err(e) = client.initialize().await {
-            warn!(server = %server_name, error = %e, "MCP SSE (auth) initialize handshake failed");
+            warn!(server = %server_name, "MCP SSE (auth) initialize handshake failed");
             return Err(e);
         }
 
@@ -259,8 +279,6 @@ impl McpClient {
 
         info!(
             server = %self.server_name,
-            protocol = %result.protocol_version,
-            server_name = %result.server_info.name,
             "MCP server initialized"
         );
 

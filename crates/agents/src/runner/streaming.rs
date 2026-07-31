@@ -251,7 +251,11 @@ pub async fn run_agent_loop_streaming_with_limits(
             messages_count = messages.len(),
             "calling LLM (streaming)"
         );
-        trace!(iteration = iterations, messages = ?messages, "LLM request messages");
+        trace!(
+            iteration = iterations,
+            messages_count = messages.len(),
+            "LLM request prepared"
+        );
 
         // Dispatch BeforeLLMCall hook — may block the LLM call.
         if let Some(ref hooks) = hook_registry {
@@ -459,12 +463,9 @@ pub async fn run_agent_loop_streaming_with_limits(
         // Use stream_idx_to_vec_pos to map streaming indices (which may not
         // start at 0) to the actual position in the tool_calls vec.
         for (stream_idx, args_str) in &tool_call_args {
-            // Emit raw accumulated string at debug level so future variants of
-            // "default to {} because no deltas arrived" can be diagnosed
-            // without a repro (issue #658).
             debug!(
                 stream_idx,
-                args_str = %args_str,
+                argument_bytes = args_str.len(),
                 "finalizing tool call args"
             );
             if let Some(&vec_pos) = stream_idx_to_vec_pos.get(stream_idx)
@@ -537,7 +538,10 @@ pub async fn run_agent_loop_streaming_with_limits(
             && let Some(command) = explicit_shell_command.as_ref()
             && tools.get("exec").is_some()
         {
-            info!(command = %command, "forcing exec tool call from explicit /sh command");
+            info!(
+                command_bytes = command.len(),
+                "forcing exec tool call from explicit /sh command"
+            );
             // Preserve streamed reasoning/planning text on the assistant tool
             // message so providers that validate thinking history accept the
             // next iteration.
@@ -899,7 +903,7 @@ pub async fn run_agent_loop_streaming_with_limits(
         for (tc, (success, mut result, error, rejected)) in tool_calls.iter().zip(results) {
             if success {
                 info!(tool = %tc.name, id = %tc.id, "tool execution succeeded");
-                trace!(tool = %tc.name, result = %result, "tool result");
+                trace!(tool = %tc.name, "tool result available");
             } else if rejected {
                 warn!(
                     tool = %tc.name,
@@ -907,7 +911,7 @@ pub async fn run_agent_loop_streaming_with_limits(
                     "tool call rejected before execution by pre-dispatch validation"
                 );
             } else {
-                warn!(tool = %tc.name, id = %tc.id, error = %error.as_deref().unwrap_or(""), "tool execution failed");
+                warn!(tool = %tc.name, id = %tc.id, has_error = error.is_some(), "tool execution failed");
             }
 
             // Record outcome in the loop detector (issue #658).
@@ -984,7 +988,7 @@ pub async fn run_agent_loop_streaming_with_limits(
                 result_len = tool_result_str.len(),
                 "appending tool result to messages"
             );
-            trace!(tool = %tc.name, content = %tool_result_str, "tool result message content");
+            trace!(tool = %tc.name, content_bytes = tool_result_str.len(), "tool result message prepared");
 
             messages.push(ChatMessage::tool(&tc.id, &tool_result_str));
         }
@@ -1004,7 +1008,7 @@ pub async fn run_agent_loop_streaming_with_limits(
             let mut guard = inbox.lock().await;
             if !guard.is_empty() {
                 let combined = guard.drain(..).collect::<Vec<_>>().join("\n");
-                debug!(steer_text = %combined, "injecting /steer guidance");
+                debug!(steer_bytes = combined.len(), "injecting /steer guidance");
                 messages.push(ChatMessage::system(format!(
                     "[Steering note from the user — adjust your approach accordingly]: {combined}"
                 )));

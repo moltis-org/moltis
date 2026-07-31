@@ -326,7 +326,7 @@ export function SessionList(): VNode {
 	if (tab === "sessions") {
 		filtered = filtered.filter((s) => !(s.key || "").startsWith("cron:") && (showArchived || !s.archived));
 	} else if (tab === "cron") {
-		filtered = filtered.filter((s) => (s.key || "").startsWith("cron:"));
+		filtered = filtered.filter((s) => (s.key || "").startsWith("cron:") && (showArchived || !s.archived));
 	}
 
 	// Build parent→children map for tree rendering

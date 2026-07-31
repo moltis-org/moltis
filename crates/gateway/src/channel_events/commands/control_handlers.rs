@@ -799,6 +799,25 @@ pub(in crate::channel_events) async fn handle_peek(
 /// - `/tts persona` — list all personas and show active
 /// - `/tts persona <id>` — set active persona
 /// - `/tts persona off|none` — deactivate persona
+#[cfg(feature = "voice")]
+async fn active_voice_persona_line(state: &GatewayState) -> String {
+    if let Some(ref store) = state.services.voice_persona_store
+        && let Ok(Some(active)) = store.get_active().await
+    {
+        format!(
+            "\nPersona: {} ({})",
+            active.persona.label, active.persona.id
+        )
+    } else {
+        "\nPersona: none".to_string()
+    }
+}
+
+#[cfg(not(feature = "voice"))]
+async fn active_voice_persona_line(_state: &GatewayState) -> String {
+    "\nPersona: none".to_string()
+}
+
 pub(in crate::channel_events) async fn handle_tts(
     state: &Arc<GatewayState>,
     session_key: &str,
@@ -828,16 +847,7 @@ pub(in crate::channel_events) async fn handle_tts(
                 .and_then(|v| v.as_str())
                 .unwrap_or("none");
 
-            let persona_line = if let Some(ref store) = state.services.voice_persona_store
-                && let Ok(Some(active)) = store.get_active().await
-            {
-                format!(
-                    "\nPersona: {} ({})",
-                    active.persona.label, active.persona.id
-                )
-            } else {
-                "\nPersona: none".to_string()
-            };
+            let persona_line = active_voice_persona_line(state).await;
 
             Ok(format!(
                 "TTS: {}\nProvider: {provider}{persona_line}",
@@ -855,6 +865,7 @@ pub(in crate::channel_events) async fn handle_tts(
     }
 }
 
+#[cfg(feature = "voice")]
 async fn handle_tts_persona(state: &Arc<GatewayState>, args: &str) -> ChannelResult<String> {
     let Some(ref store) = state.services.voice_persona_store else {
         return Err(ChannelError::unavailable("voice personas not available"));
@@ -924,6 +935,11 @@ async fn handle_tts_persona(state: &Arc<GatewayState>, args: &str) -> ChannelRes
             }
         },
     }
+}
+
+#[cfg(not(feature = "voice"))]
+async fn handle_tts_persona(_state: &Arc<GatewayState>, _args: &str) -> ChannelResult<String> {
+    Err(ChannelError::unavailable("voice personas not available"))
 }
 
 /// Handle `/tts provider [<id>]` — list or set the preferred TTS provider.

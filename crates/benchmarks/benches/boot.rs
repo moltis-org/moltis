@@ -87,8 +87,9 @@ const SESSION_KEYS: &[&str] = &[
 ];
 
 #[divan::bench(args = SESSION_KEYS)]
-fn session_key_to_filename(key: &str) -> String {
-    divan::black_box(moltis_sessions::store::SessionStore::key_to_filename(key))
+fn session_history_path(bencher: divan::Bencher, key: &str) {
+    let store = moltis_sessions::store::SessionStore::new(std::path::PathBuf::from("sessions"));
+    bencher.bench_local(|| divan::black_box(store.history_path_for(divan::black_box(key))));
 }
 
 fn build_sanitize_input(payload_bytes: usize) -> String {

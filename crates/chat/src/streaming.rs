@@ -26,7 +26,10 @@ use {
 };
 
 use crate::{
-    agent_loop::{ChannelStreamDispatcher, clear_unsupported_model, mark_unsupported_model},
+    agent_loop::{
+        ChannelStreamDispatcher, clear_unsupported_model,
+        commit_terminal_and_finish_channel_stream, mark_unsupported_model,
+    },
     channels::{
         deliver_channel_error, deliver_channel_replies, generate_tts_audio,
         send_retry_status_to_channels,
@@ -41,7 +44,7 @@ use crate::{
 };
 
 #[cfg(feature = "push-notifications")]
-use crate::channels::send_chat_push_notification;
+use crate::channel_push::send_chat_push_notification;
 
 const STREAM_RETRYABLE_SERVER_PATTERNS: &[&str] = &[
     "http 500",
@@ -335,19 +338,11 @@ pub(crate) async fn run_streaming(
                         let trimmed = accumulated_reasoning.trim();
                         (!trimmed.is_empty()).then(|| trimmed.to_string())
                     };
-                    let streamed_target_keys =
-                        if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
-                            dispatcher.finish().await;
-                            dispatcher.completed_target_keys().await
-                        } else {
-                            HashSet::new()
-                        };
-
                     info!(
                         run_id,
                         input_tokens = usage.input_tokens,
                         output_tokens = usage.output_tokens,
-                        response = %accumulated,
+                        response_bytes = accumulated.len(),
                         silent = is_silent,
                         "chat stream done"
                     );
@@ -363,17 +358,22 @@ pub(crate) async fn run_streaming(
                             "The provider returned an empty response (possible network error). Please try again.",
                             Some(provider_name),
                         );
-                        deliver_channel_error(state, session_key, &error_obj).await;
                         let error_payload = ChatErrorBroadcast {
                             run_id: run_id.to_string(),
                             session_key: session_key.to_string(),
                             state: "error",
-                            error: error_obj,
+                            error: error_obj.clone(),
                             seq: client_seq,
                         };
                         #[allow(clippy::unwrap_used)] // serializing known-valid struct
                         let payload_val = serde_json::to_value(&error_payload).unwrap();
-                        terminal_runs.write().await.insert(run_id.to_string());
+                        commit_terminal_and_finish_channel_stream(
+                            terminal_runs,
+                            run_id,
+                            channel_stream_dispatcher.as_mut(),
+                        )
+                        .await;
+                        deliver_channel_error(state, session_key, &error_obj).await;
                         broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
                         return None;
                     }
@@ -436,18 +436,37 @@ pub(crate) async fn run_streaming(
                     );
                     #[allow(clippy::unwrap_used)] // serializing known-valid struct
                     let payload_val = serde_json::to_value(&final_payload).unwrap();
-                    terminal_runs.write().await.insert(run_id.to_string());
-                    broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
+
+                    // Channel Done and fallback replies are irreversible. Claim
+                    // terminal ownership before either can be accepted.
+                    let streamed_target_keys = commit_terminal_and_finish_channel_stream(
+                        terminal_runs,
+                        run_id,
+                        channel_stream_dispatcher.as_mut(),
+                    )
+                    .await;
 
                     if !is_silent {
-                        // Send push notification when chat response completes
                         #[cfg(feature = "push-notifications")]
                         {
                             tracing::info!("push: checking push notification");
-                            send_chat_push_notification(state, session_key, &accumulated).await;
+                            let push_state = Arc::clone(state);
+                            let push_session_key = session_key.to_string();
+                            let push_text = accumulated.clone();
+                            let push_order = crate::channel_push::next_push_notification_order();
+                            tokio::spawn(async move {
+                                send_chat_push_notification(
+                                    &push_state,
+                                    &push_session_key,
+                                    &push_text,
+                                    push_order,
+                                )
+                                .await;
+                            });
                         }
                         deliver_channel_replies(
                             state,
+                            run_id,
                             session_key,
                             &accumulated,
                             desired_reply_medium,
@@ -457,14 +476,16 @@ pub(crate) async fn run_streaming(
                     }
                     let llm_api_response =
                         (!raw_llm_responses.is_empty()).then_some(Value::Array(raw_llm_responses));
-                    return Some(build_assistant_turn_output(
+                    let mut output = build_assistant_turn_output(
                         accumulated,
                         UsageSnapshot::new(usage.clone(), Some(usage)),
                         run_started.elapsed().as_millis() as u64,
                         audio_path,
                         reasoning,
                         llm_api_response,
-                    ));
+                    );
+                    output.final_broadcast = Some(payload_val);
+                    return Some(output);
                 },
                 StreamEvent::Error(msg) => {
                     let error_obj = parse_chat_error(&msg, Some(provider_name));
@@ -518,23 +539,25 @@ pub(crate) async fn run_streaming(
                     }
 
                     warn!(run_id, error = %msg, "chat stream error");
-                    if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
-                        dispatcher.finish().await;
-                    }
                     state.set_run_error(run_id, msg.clone()).await;
                     mark_unsupported_model(state, model_store, model_id, provider_name, &error_obj)
                         .await;
-                    deliver_channel_error(state, session_key, &error_obj).await;
                     let error_payload = ChatErrorBroadcast {
                         run_id: run_id.to_string(),
                         session_key: session_key.to_string(),
                         state: "error",
-                        error: error_obj,
+                        error: error_obj.clone(),
                         seq: client_seq,
                     };
                     #[allow(clippy::unwrap_used)] // serializing known-valid struct
                     let payload_val = serde_json::to_value(&error_payload).unwrap();
-                    terminal_runs.write().await.insert(run_id.to_string());
+                    commit_terminal_and_finish_channel_stream(
+                        terminal_runs,
+                        run_id,
+                        channel_stream_dispatcher.as_mut(),
+                    )
+                    .await;
+                    deliver_channel_error(state, session_key, &error_obj).await;
                     broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
                     return None;
                 },

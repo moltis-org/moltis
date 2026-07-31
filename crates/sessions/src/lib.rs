@@ -1,8 +1,8 @@
 //! Session storage and management.
 //!
-//! Sessions are stored as JSONL files (one message per line) at
-//! `<data_dir>/agents/<agentId>/sessions/<sessionKey>.jsonl`
-//! with file locking for concurrent access.
+//! Sessions are stored as JSONL files (one message per line) under
+//! `<data_dir>/sessions/v1/`, using a reversible filesystem-safe encoding of
+//! each session key. Legacy files are copied lazily when their key is accessed.
 
 pub mod compaction;
 pub mod error;
@@ -11,6 +11,7 @@ pub mod message;
 pub mod metadata;
 pub mod session_events;
 pub mod state_store;
+mod storage_layout;
 pub mod store;
 
 pub use {

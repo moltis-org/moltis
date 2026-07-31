@@ -19,7 +19,7 @@ import {
 import { SessionHeader } from "../components/SessionHeader";
 import { formatTokens, sendRpc } from "../helpers";
 import { initMediaDrop, teardownMediaDrop } from "../media-drop";
-import { bindModelComboEvents, modelDisplayLabel, modelTitle } from "../models";
+import { bindModelComboEvents, fetchModels, modelDisplayLabel, modelTitle } from "../models";
 import { bindNodeComboEvents, fetchNodes, unbindNodeEvents } from "../nodes-selector";
 import { bindProjectComboEvents } from "../project-combo";
 import { fetchProjects } from "../projects";
@@ -670,6 +670,7 @@ function mountSessionHeaderControls(): void {
 			<SessionHeader
 				showSelectors={false}
 				showName={false}
+				showSaveMarkdown={true}
 				showStop={false}
 				actionButtonClass={
 					"text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] text-[var(--muted)]"
@@ -731,8 +732,10 @@ function initializeChatControls(): void {
 	S.setModelComboLabel(S.$("modelComboLabel"));
 	S.setModelDropdown(S.$("modelDropdown"));
 	S.setModelSearchInput(S.$("modelSearchInput"));
+	S.modelSearchInput?.setAttribute("placeholder", "Search models or ACP agents...");
 	S.setModelDropdownList(S.$("modelDropdownList"));
 	bindModelComboEvents();
+	void fetchModels();
 	bindReasoningToggle();
 	S.setNodeCombo(S.$("nodeCombo"));
 	S.setNodeComboBtn(S.$("nodeComboBtn"));
@@ -841,7 +844,11 @@ const chatPageHTML =
 	'<div class="chat-toolbar h-12 px-4 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2" style="grid-row:1;">' +
 	'<div id="nodeCombo" class="model-combo hidden"><button id="nodeComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-server" style="flex-shrink:0;"></span><span id="nodeComboLabel">Local</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="nodeDropdown" class="model-dropdown hidden" tabindex="-1"><div id="nodeDropdownList" class="model-dropdown-list"></div></div></div>' +
 	'<div id="projectCombo" class="model-combo hidden"><button id="projectComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-folder" style="flex-shrink:0;"></span><span id="projectComboLabel">No project</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="projectDropdown" class="model-dropdown hidden"><div id="projectDropdownList" class="model-dropdown-list"></div></div></div>' +
-	'<div id="sessionNameMount" class="ml-auto flex items-center min-w-0"></div>' +
+	// overflow-hidden keeps a long session name inside its own box. Without it a
+	// crowded toolbar lets the name spill left underneath #projectCombo, which is
+	// position:relative and so paints on top — the name looks clickable but every
+	// click lands on the project combo instead.
+	'<div id="sessionNameMount" class="ml-auto flex items-center min-w-0 overflow-hidden"></div>' +
 	'<div id="sessionHeaderToolbarMount" class="flex items-center gap-1.5"></div>' +
 	'<button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle sandbox mode"><span class="icon icon-md icon-lock shrink-0"></span><span id="sandboxLabel">direct</span></button>' +
 	'<div class="chat-badge-desktop-only" style="position:relative;display:inline-block"><button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Sandbox image"><span class="icon icon-md icon-cube shrink-0"></span><span id="sandboxImageLabel" class="max-w-[120px] truncate">unavailable</span></button><div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div>' +

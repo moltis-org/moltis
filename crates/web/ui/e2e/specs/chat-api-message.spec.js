@@ -149,4 +149,35 @@ test.describe("API-sent user messages (GH #729)", () => {
 		await expect(page.locator(".msg.user")).toHaveCount(0, { timeout: 2_000 });
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("channel audio cache does not reconstruct storage paths", async ({ page }) => {
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "agent:private",
+				state: "channel_user",
+				text: "Voice message",
+				channel: { audio_filename: "voice.ogg" },
+			},
+		});
+
+		const cachedHistory = await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var cache = await import(`${prefix}js/stores/session-history-cache.js`);
+			return cache.getSessionHistory("agent:private");
+		});
+
+		expect(cachedHistory).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: "user",
+					audio: "voice.ogg",
+				}),
+			]),
+		);
+		expect(pageErrors).toEqual([]);
+	});
 });

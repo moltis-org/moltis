@@ -1,13 +1,19 @@
 {
+  "id": "/",
   "name": "moltis",
   "short_name": "moltis",
   "description": "AI-powered command gateway",
+  "lang": "en",
+  "dir": "ltr",
   "start_url": "/chats",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0f1115",
   "theme_color": "#f97316",
-  "orientation": "portrait-primary",
+  "orientation": "any",
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
   "icons": [
     {
       "src": "/assets/icons/icon-72.png",
@@ -68,6 +74,28 @@
       "name": "New Chat",
       "short_name": "Chat",
       "url": "/chats",
+      "icons": [
+        {
+          "src": "/assets/icons/icon-96.png",
+          "sizes": "96x96"
+        }
+      ]
+    },
+    {
+      "name": "Projects",
+      "short_name": "Projects",
+      "url": "/projects",
+      "icons": [
+        {
+          "src": "/assets/icons/icon-96.png",
+          "sizes": "96x96"
+        }
+      ]
+    },
+    {
+      "name": "Settings",
+      "short_name": "Settings",
+      "url": "/settings",
       "icons": [
         {
           "src": "/assets/icons/icon-96.png",

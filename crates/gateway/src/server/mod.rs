@@ -35,8 +35,8 @@ mod tests_legacy;
 pub(crate) use hooks::discover_and_build_hooks;
 pub use {
     helpers::approval_manager_from_config,
-    prepare_core::prepare_gateway_core,
-    prepared::PreparedGatewayCore,
+    prepare_core::{prepare_gateway_core, prepare_gateway_core_with_profile},
+    prepared::{CoreStartupProfile, PreparedGatewayCore},
     startup::{
         claude_detected_for_ui, codex_detected_for_ui, hermes_detected_for_ui,
         openclaw_detected_for_ui, start_browser_warmup_after_listener,

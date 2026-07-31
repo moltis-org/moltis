@@ -46,6 +46,7 @@ pub struct GatewayServices {
     /// Optional agent persona store for multi-agent support.
     pub agent_persona_store: Option<Arc<crate::agent_persona::AgentPersonaStore>>,
     /// Optional voice persona store for named voice identities.
+    #[cfg(feature = "voice")]
     pub voice_persona_store: Option<Arc<crate::voice_persona::VoicePersonaStore>>,
     /// Shared agents config (presets) for spawn_agent and RPC sync.
     pub agents_config: Option<Arc<tokio::sync::RwLock<moltis_config::AgentsConfig>>>,
@@ -172,6 +173,7 @@ impl GatewayServices {
             session_store: None,
             session_share_store: None,
             agent_persona_store: None,
+            #[cfg(feature = "voice")]
             voice_persona_store: None,
             agents_config: None,
             #[cfg(feature = "telephony")]
@@ -233,6 +235,7 @@ impl GatewayServices {
         self
     }
 
+    #[cfg(feature = "voice")]
     pub fn with_voice_persona_store(
         mut self,
         store: Arc<crate::voice_persona::VoicePersonaStore>,
