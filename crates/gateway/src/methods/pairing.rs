@@ -587,7 +587,7 @@ mod tests {
         crate::{
             auth::{AuthMode, ResolvedAuth},
             methods::MethodContext,
-            pairing::PairRequest,
+            pairing::{PairRequest, PairingStore},
             services::GatewayServices,
             state::GatewayState,
         },
@@ -605,6 +605,17 @@ mod tests {
             },
             GatewayServices::noop(),
         )
+    }
+
+    fn test_state_with_pairing_store(
+        pairing_store: std::sync::Arc<PairingStore>,
+    ) -> std::sync::Arc<GatewayState> {
+        let mut state = test_state();
+        let Some(unique_state) = std::sync::Arc::get_mut(&mut state) else {
+            panic!("test state should be uniquely owned");
+        };
+        unique_state.pairing_store = Some(pairing_store);
+        state
     }
 
     fn public_key(signing_key: &SigningKey) -> String {
@@ -676,6 +687,69 @@ mod tests {
             response.payload,
             Some(serde_json::json!({ "verified": true }))
         );
+    }
+
+    #[tokio::test]
+    async fn pair_verify_accepts_valid_signature_from_sqlite_store() -> anyhow::Result<()> {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await?;
+        crate::run_migrations(&pool).await?;
+        let pairing_store = std::sync::Arc::new(PairingStore::new(pool));
+        let state = test_state_with_pairing_store(std::sync::Arc::clone(&pairing_store));
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let public_key = public_key(&signing_key);
+        let request = pairing_store
+            .request_pair(
+                "sqlite-valid-node",
+                Some("SQLite test node"),
+                "test",
+                Some(&public_key),
+            )
+            .await?;
+        let pending = pairing_store.list_pending().await?;
+        assert_eq!(pending.len(), 1);
+        let persisted = &pending[0];
+        assert_eq!(persisted.device_id, "sqlite-valid-node");
+        assert_eq!(persisted.display_name.as_deref(), Some("SQLite test node"));
+        assert_eq!(persisted.platform, "test");
+        assert_eq!(persisted.public_key.as_deref(), Some(public_key.as_str()));
+        assert_eq!(persisted.nonce, request.nonce);
+
+        let response = dispatch_pair_verify(state, signed_params(&request, &signing_key)).await;
+
+        assert!(response.ok);
+        assert_eq!(
+            response.payload,
+            Some(serde_json::json!({ "verified": true }))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pair_verify_rejects_expired_request_from_sqlite_store() -> anyhow::Result<()> {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await?;
+        crate::run_migrations(&pool).await?;
+        let pairing_store = std::sync::Arc::new(PairingStore::new(pool.clone()));
+        let state = test_state_with_pairing_store(std::sync::Arc::clone(&pairing_store));
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let public_key = public_key(&signing_key);
+        let request = pairing_store
+            .request_pair(
+                "sqlite-expired-node",
+                Some("Expired SQLite test node"),
+                "test",
+                Some(&public_key),
+            )
+            .await?;
+        sqlx::query("UPDATE pair_requests SET expires_at = ? WHERE id = ?")
+            .bind("2000-01-01T00:00:00Z")
+            .bind(&request.id)
+            .execute(&pool)
+            .await?;
+
+        let response = dispatch_pair_verify(state, signed_params(&request, &signing_key)).await;
+
+        assert_invalid_request(&response);
+        Ok(())
     }
 
     #[tokio::test]
