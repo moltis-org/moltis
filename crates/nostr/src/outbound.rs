@@ -109,6 +109,17 @@ impl NostrOutbound {
     }
 }
 
+/// How many times to attempt publishing a reaction retraction.
+///
+/// The gateway acknowledges a message with 👀 and replaces it at the end of the
+/// turn; if the retraction is dropped the two pile up and the 👀 never leaves.
+/// Nothing upstream retries — the reaction worker exits once the turn is done —
+/// so the attempts have to happen here.
+const RETRACTION_ATTEMPTS: u32 = 3;
+
+/// Delay before the second retraction attempt, doubled for each one after.
+const RETRACTION_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// Minimum gap between edit events while streaming a reply.
 ///
 /// Every token would otherwise be a signed event on the relay; this keeps the
@@ -451,23 +462,51 @@ impl ChannelOutbound for NostrOutbound {
             return Ok(());
         };
 
-        // The id is only forgotten once the deletion is actually published. It
-        // is the sole record of the reaction, so dropping it on a failed
-        // retraction would strand the 👀 on the user's message with no way to
-        // try again.
-        if let Err(e) = crate::groups::delete_event(&client, &group_id, reaction).await {
-            tracing::debug!(
-                account_id,
-                "retraction not published, keeping the reaction id to retry: {e}"
-            );
-            return Ok(());
+        // Retried here, because nothing else will: the gateway's reaction
+        // worker finishes the turn right after this call and never comes back,
+        // so a relay hiccup that goes unanswered leaves the 👀 sitting on the
+        // user's message for good. Only retryable failures are worth repeating
+        // — a rejection is a decision, not a hiccup.
+        let mut backoff = RETRACTION_RETRY_BACKOFF;
+        let mut last_error = None;
+        for attempt in 1..=RETRACTION_ATTEMPTS {
+            match crate::groups::delete_event(&client, &group_id, reaction).await {
+                Ok(()) => {
+                    // Forgotten only now: this is the sole record of the
+                    // reaction, so dropping it any earlier would leave a failed
+                    // retraction with nothing to retry from.
+                    let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+                    if let Some(state) = accounts.get(account_id) {
+                        let mut ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+                        ctxs.forget_reaction(target, glyph);
+                    }
+                    return Ok(());
+                },
+                Err(e) => {
+                    let retry = e.is_retryable() && attempt < RETRACTION_ATTEMPTS;
+                    tracing::debug!(
+                        account_id,
+                        attempt,
+                        retry,
+                        "reaction retraction failed: {e}"
+                    );
+                    last_error = Some(e);
+                    if !retry {
+                        break;
+                    }
+                    tokio::time::sleep(backoff).await;
+                    backoff *= 2;
+                },
+            }
         }
-        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = accounts.get(account_id) {
-            let mut ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
-            ctxs.forget_reaction(target, glyph);
-        }
-        Ok(())
+
+        // Out of attempts. The id is kept so a later call for the same
+        // acknowledgement can try again, and the failure is reported rather
+        // than dressed up as success — the 👀 is still on the message.
+        Err(last_error.map_or_else(
+            || moltis_channels::Error::unavailable("reaction retraction failed"),
+            Into::into,
+        ))
     }
 
     async fn send_media(
@@ -1076,6 +1115,50 @@ mod tests {
                 )
                 .await
                 .is_ok()
+        );
+    }
+
+    /// A retraction that cannot be published must say so and keep the id.
+    ///
+    /// Reporting success here would be the worst outcome: the gateway's
+    /// reaction worker finishes the turn straight after this call, so a failure
+    /// swallowed as `Ok` leaves the 👀 on the user's message permanently, with
+    /// the only record of it thrown away. This outbound has no relay, so every
+    /// attempt fails.
+    #[tokio::test]
+    async fn a_retraction_that_cannot_be_published_reports_it_and_keeps_the_id() {
+        let outbound = outbound_with_groups(vec!["grp".into()]);
+        let target = EventId::from_byte_array(Keys::generate().public_key().to_bytes());
+        let reaction = EventId::from_byte_array(Keys::generate().public_key().to_bytes());
+        {
+            let accounts = outbound.accounts.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(state) = accounts.get("acct") {
+                let mut ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+                ctxs.record_reaction(target, "\u{1F440}", reaction);
+            }
+        }
+
+        let result = outbound
+            .remove_reaction(
+                "acct",
+                &crate::groups::group_target("grp"),
+                &target.to_hex(),
+                "eyes",
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "an unpublishable retraction must not report success"
+        );
+
+        // The id survives, so a later attempt still has something to work from.
+        let accounts = outbound.accounts.read().unwrap_or_else(|e| e.into_inner());
+        let state = accounts.get("acct").unwrap_or_else(|| unreachable!());
+        let ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(
+            ctxs.reaction_id(target, "\u{1F440}"),
+            Some(reaction),
+            "a failed retraction must stay retryable"
         );
     }
 

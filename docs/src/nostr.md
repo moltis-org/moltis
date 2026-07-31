@@ -200,7 +200,8 @@ that a conversation happened.
 
 Withdrawing the bot from a group stops new reactions, but it can still take back
 one it already placed — otherwise its last 👀 would sit on someone's message
-permanently.
+permanently. A retraction that fails to reach the relay is retried a few times
+before the bot gives up, since nothing revisits the turn once it has finished.
 
 ### Message Kinds (kind:9 vs kind:40002)
 
