@@ -655,6 +655,76 @@ async fn revoking_the_group_mid_stream_publishes_no_further_events() {
     );
 }
 
+/// The same revocation guarantee on the non-streaming path, which is where a
+/// plain NIP-29 reply and every queued or resumed turn go. `send_text` resolves
+/// the target, parses the reply id and plans the dialect before publishing, and
+/// a settings save landing in that interval must still stop the send — the
+/// authorization decision `resolve` made is not carried to the publish.
+#[tokio::test]
+async fn revoking_the_group_before_a_plain_send_publishes_nothing() {
+    let relay = MockRelay::run().await.expect("relay");
+    let outbound = outbound_for(&relay, group_config("grp", GroupMessageKind::Nip29)).await;
+
+    let client = {
+        let guard = outbound.accounts.read().expect("lock");
+        guard.get("acct").expect("account").client.clone()
+    };
+
+    // Operator drops the group after the turn was authorized and bound to this
+    // reply target, but before the reply is published.
+    {
+        let guard = outbound.accounts.read().expect("lock");
+        let state = guard.get("acct").expect("account");
+        let mut cfg = state.config.write().expect("lock");
+        cfg.groups.clear();
+    }
+
+    let result = outbound
+        .send_text("acct", &groups::group_target("grp"), "too late", None)
+        .await;
+
+    assert!(
+        result.is_err(),
+        "a revoked group send must report the refusal, not silently succeed"
+    );
+    assert!(
+        fetch_kind(&client, groups::group_chat_kind())
+            .await
+            .is_empty(),
+        "nothing may reach the relay after group access was revoked"
+    );
+}
+
+/// Receive-only is enforced at the publish too, not just on the inbound side.
+#[tokio::test]
+async fn receive_only_mode_publishes_nothing() {
+    let relay = MockRelay::run().await.expect("relay");
+    let outbound = outbound_for(&relay, NostrAccountConfig {
+        groups: vec!["grp".to_string()],
+        group_mention_mode: moltis_channels::gating::MentionMode::None,
+        ..Default::default()
+    })
+    .await;
+
+    let client = {
+        let guard = outbound.accounts.read().expect("lock");
+        guard.get("acct").expect("account").client.clone()
+    };
+
+    assert!(
+        outbound
+            .send_text("acct", &groups::group_target("grp"), "quiet please", None)
+            .await
+            .is_err()
+    );
+    assert!(
+        fetch_kind(&client, groups::group_chat_kind())
+            .await
+            .is_empty(),
+        "receive-only must not put anything on the relay"
+    );
+}
+
 /// The gateway hands `add_reaction`/`remove_reaction` the reply target's
 /// `chat_id`, which is the *prefixed* form (`group:<id>`). The `h` tag on the
 /// published kind:7 and kind:5 must still be the bare group id — a NIP-29 relay

@@ -196,6 +196,27 @@ impl NostrOutbound {
     /// live config instead of trusting the decision made at startup.
     ///
     /// Also fails closed if the account itself was deleted mid-stream.
+    ///
+    /// # What this does and does not guarantee
+    ///
+    /// Every group publish calls this immediately before handing the event to
+    /// the relay, so no publish proceeds on an authorization decision made
+    /// earlier in the turn. What remains is the interval between this returning
+    /// and the socket write: a config write landing there is not observed, and
+    /// that one event goes out.
+    ///
+    /// That interval cannot be closed by checking harder — only by holding the
+    /// config lock across the publish, which needs an async lock, which needs
+    /// `ChannelPlugin::update_account_config` to be async. It is sync for every
+    /// channel (`tokio::sync::RwLock::blocking_write` panics inside a runtime),
+    /// so closing it is a trait-level change rather than something this module
+    /// can do. Tracked as a follow-up.
+    ///
+    /// The residue is bounded and self-inflicted: at worst one already-composed
+    /// reply lands microseconds after the operator saved settings, in a channel
+    /// the bot was authorized in when the turn began. The cases that motivated
+    /// this check — a turn that streams for minutes, or a reply target resumed
+    /// from a session bound long ago — are fully covered.
     fn recheck_group_send(&self, account_id: &str, group_id: &str) -> ChannelResult<()> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         let state = accounts.get(account_id).ok_or_else(|| {
@@ -280,6 +301,20 @@ impl ChannelOutbound for NostrOutbound {
                 // message's kind and `p`-tags its author so they are notified.
                 let reply_event = reply_to.and_then(|id| EventId::parse(id).ok());
                 let plan = self.plan_group_send(account_id, &group_id, reply_to);
+                // Authorization is re-read here rather than relied on from
+                // `resolve`: everything between the two — the reply-id parse,
+                // the dialect plan, and their lock acquisitions — is time in
+                // which a settings save can withdraw the group. Same gate the
+                // streamed publishes use, so no publish site trusts a stale
+                // decision.
+                self.recheck_group_send(account_id, &group_id)
+                    .inspect_err(|e| {
+                        tracing::warn!(
+                            account_id,
+                            group = %group_id,
+                            "dropping group reply, group send was revoked before publish: {e}"
+                        );
+                    })?;
                 crate::groups::send_group_message(
                     &client,
                     plan.kind,
@@ -352,6 +387,10 @@ impl ChannelOutbound for NostrOutbound {
             return Ok(());
         };
 
+        // A reaction is a publish into the group like any other, so it goes
+        // through the same live gate rather than trusting `resolve`.
+        self.recheck_group_send(account_id, &group_id)?;
+
         let glyph = crate::groups::ack_emoji_glyph(emoji);
         let reaction = crate::groups::send_reaction(&client, &group_id, target, glyph)
             .await
@@ -371,6 +410,12 @@ impl ChannelOutbound for NostrOutbound {
     /// Nostr has no "unreact", and deletion is only a request the relay may
     /// honour — so this is best-effort and silently no-ops when the reaction
     /// id is no longer known.
+    ///
+    /// Deliberately *not* gated on [`Self::recheck_group_send`], unlike every
+    /// other publish here. This one only ever withdraws something we already
+    /// put in the channel, so refusing it after a revocation would leave the
+    /// bot's 👀 stuck on a user's message forever — making the revocation more
+    /// visible, not less.
     async fn remove_reaction(
         &self,
         account_id: &str,
