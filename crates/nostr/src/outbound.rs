@@ -155,6 +155,37 @@ impl NostrOutbound {
         Ok(())
     }
 
+    /// Whether this account may still publish into `group_id`, re-checked at
+    /// send time.
+    ///
+    /// A reply target is persisted with the session and outlives the config that
+    /// produced it, so a queued or resumed turn can reach here long after group
+    /// chat was turned off. Turning it off must therefore stop outbound sends,
+    /// not just inbound dispatch — otherwise the bot keeps talking in a channel
+    /// the operator has already withdrawn it from.
+    ///
+    /// Both ways of turning it off are honoured, using the same
+    /// [`groups::check_group_access`](crate::groups::check_group_access) the
+    /// inbound path applies so the two directions cannot drift:
+    ///
+    /// * clearing `groups` (or removing this one) — the join list *is* the
+    ///   access model, and an empty list means group chat is disabled;
+    /// * `group_mention_mode = "none"`, documented as receive-only.
+    fn check_group_send(state: &AccountState, group_id: &str) -> ChannelResult<()> {
+        let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
+        crate::groups::check_group_access(group_id, &cfg.groups).map_err(|denied| {
+            moltis_channels::Error::unavailable(format!(
+                "nostr group send refused for {group_id}: {denied}"
+            ))
+        })?;
+        if cfg.group_mention_mode == moltis_channels::gating::MentionMode::None {
+            return Err(moltis_channels::Error::unavailable(format!(
+                "nostr group chat is receive-only for {group_id} (group_mention_mode = none)"
+            )));
+        }
+        Ok(())
+    }
+
     /// Look up account state and resolve the target: a `group:`-prefixed id is
     /// a NIP-29 group send; anything else is parsed as a DM pubkey. Returns the
     /// group id with the prefix stripped — that bare value is what belongs in
@@ -172,18 +203,10 @@ impl NostrOutbound {
         let keys = state.keys.clone();
 
         // A prefixed target is a group, full stop — never reinterpret it as a
-        // pubkey. Membership is then re-checked so a group removed from the
-        // config fails closed rather than being delivered anywhere.
+        // pubkey. Group participation is then re-checked so a group turned off
+        // in the config fails closed rather than being delivered anywhere.
         if let Some(group_id) = crate::groups::parse_group_target(to) {
-            let still_joined = {
-                let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
-                cfg.groups.iter().any(|g| g == group_id)
-            };
-            if !still_joined {
-                return Err(moltis_channels::Error::unavailable(format!(
-                    "nostr group no longer configured: {group_id}"
-                )));
-            }
+            Self::check_group_send(state, group_id)?;
             return Ok((client, keys, SendTarget::Group(group_id.to_string())));
         }
 
@@ -202,6 +225,7 @@ impl NostrOutbound {
             cfg.groups.iter().any(|g| g == to)
         };
         if legacy_group_target {
+            Self::check_group_send(state, to)?;
             tracing::debug!(
                 account_id,
                 group = to,
@@ -659,6 +683,66 @@ mod tests {
             matches!(resolved, Ok((_, _, SendTarget::Group(ref g))) if *g == pubkey_shaped_id),
             "a configured group keeps routing as a group even when its id parses as a pubkey"
         );
+    }
+
+    /// `group_mention_mode = "none"` is documented as receive-only, so it has to
+    /// stop the bot publishing as well as stop it answering. A reply target
+    /// outlives the config that produced it, so a queued or resumed turn would
+    /// otherwise keep talking in a channel the operator has withdrawn from.
+    #[tokio::test]
+    async fn refuses_group_send_when_mention_mode_is_none() {
+        let outbound = outbound_with_config(NostrAccountConfig {
+            groups: vec!["grp".into()],
+            group_mention_mode: moltis_channels::gating::MentionMode::None,
+            ..Default::default()
+        });
+        let resolved = outbound
+            .resolve("acct", &crate::groups::group_target("grp"))
+            .await;
+        assert!(
+            resolved.is_err(),
+            "receive-only must not publish into the group"
+        );
+
+        // A DM to the same account is unaffected — the mode is about groups.
+        let peer = Keys::generate().public_key().to_hex();
+        assert!(matches!(
+            outbound.resolve("acct", &peer).await,
+            Ok((_, _, SendTarget::Dm(_)))
+        ));
+    }
+
+    /// The legacy unprefixed path must not bypass the same gate.
+    #[tokio::test]
+    async fn legacy_target_is_refused_when_mention_mode_is_none() {
+        let outbound = outbound_with_config(NostrAccountConfig {
+            groups: vec!["grp".into()],
+            group_mention_mode: moltis_channels::gating::MentionMode::None,
+            ..Default::default()
+        });
+        assert!(outbound.resolve("acct", "grp").await.is_err());
+    }
+
+    /// The remaining modes keep publishing — the gate is about `none` only.
+    #[tokio::test]
+    async fn other_mention_modes_still_publish() {
+        for mode in [
+            moltis_channels::gating::MentionMode::Mention,
+            moltis_channels::gating::MentionMode::Always,
+        ] {
+            let outbound = outbound_with_config(NostrAccountConfig {
+                groups: vec!["grp".into()],
+                group_mention_mode: mode.clone(),
+                ..Default::default()
+            });
+            let resolved = outbound
+                .resolve("acct", &crate::groups::group_target("grp"))
+                .await;
+            assert!(
+                matches!(resolved, Ok((_, _, SendTarget::Group(_)))),
+                "{mode:?} must still be able to reply"
+            );
+        }
     }
 
     /// Record an inbound message so the reply can mirror it.
