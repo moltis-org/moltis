@@ -342,6 +342,8 @@ tree-sitter-typescript = "0.23"
 # Allocator
 tikv-jemallocator = "0.6"
 # Filesystem / archiving
+cap-fs-ext            = "4.0.2"
+cap-std               = "4.0.2"
 chrono                = "0.4"
 chrono-tz             = { features = ["serde"], version = "0.10" }
 cron                  = "0.13"

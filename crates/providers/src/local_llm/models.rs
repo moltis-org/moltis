@@ -7,11 +7,15 @@ use std::path::{Component, PathBuf};
 
 use {
     anyhow::{Context, bail},
+    cap_fs_ext::DirExt,
+    cap_std::fs::Dir,
     futures::StreamExt,
     tracing::{debug, info},
 };
 
 use super::{backend::BackendType, system_info::MemoryTier};
+
+mod download_temp;
 
 pub mod chat_templates;
 
@@ -379,15 +383,11 @@ pub fn is_mlx_model_cached(model: &LocalModelDef, cache_dir: &std::path::Path) -
         return false;
     };
 
-    let Ok(model_dir) = mlx_model_dir(mlx_repo, cache_dir) else {
+    let Ok(model_dir) = open_mlx_cache_dir(mlx_repo, cache_dir, DirectoryMode::Existing) else {
         return false;
     };
 
-    let config_path = model_dir.join("config.json");
-    let model_path = model_dir.join("model.safetensors");
-    let index_path = model_dir.join("model.safetensors.index.json");
-
-    config_path.exists() && (model_path.exists() || index_path.exists())
+    mlx_cache_complete(&model_dir).unwrap_or(false)
 }
 
 /// Check if a model is cached for the specified backend.
@@ -508,15 +508,80 @@ const MLX_SHARD_PATTERNS: &[&str] = &[
 ];
 
 fn mlx_model_dir(hf_repo: &str, cache_dir: &std::path::Path) -> anyhow::Result<PathBuf> {
-    let [owner, repo] = validate_hf_repo_id(hf_repo)?;
-    Ok(cache_dir.join("mlx").join(format!("{owner}__{repo}")))
+    Ok(cache_dir.join(mlx_model_relative_dir(hf_repo)?))
 }
 
+fn mlx_model_relative_dir(hf_repo: &str) -> anyhow::Result<PathBuf> {
+    let [owner, repo] = validate_hf_repo_id(hf_repo)?;
+    Ok(PathBuf::from("mlx").join(format!("{owner}__{repo}")))
+}
+
+#[cfg(test)]
 fn mlx_file_path(model_dir: &std::path::Path, filename: &str) -> anyhow::Result<PathBuf> {
     let segments = validate_hf_file_path(filename)?;
     let mut path = model_dir.to_path_buf();
     path.extend(segments);
     Ok(path)
+}
+
+#[derive(Clone, Copy)]
+enum DirectoryMode {
+    Existing,
+    Create,
+}
+
+fn open_dir_nofollow(
+    root: &Dir,
+    path: &std::path::Path,
+    mode: DirectoryMode,
+) -> anyhow::Result<Dir> {
+    let mut current = root.try_clone()?;
+    for component in path.components() {
+        let Component::Normal(segment) = component else {
+            bail!("cache path contains a non-normal component");
+        };
+        if matches!(mode, DirectoryMode::Create) {
+            match current.create_dir(segment) {
+                Ok(()) => {},
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+                Err(error) => return Err(anyhow::Error::from(error)),
+            }
+        }
+        current = current
+            .open_dir_nofollow(segment)
+            .with_context(|| format!("opening cache directory component {segment:?}"))?;
+    }
+    Ok(current)
+}
+
+fn open_mlx_cache_dir(
+    hf_repo: &str,
+    cache_dir: &std::path::Path,
+    mode: DirectoryMode,
+) -> anyhow::Result<Dir> {
+    if matches!(mode, DirectoryMode::Create) {
+        std::fs::create_dir_all(cache_dir).context("creating models cache dir")?;
+    }
+    let root = Dir::open_ambient_dir(cache_dir, cap_std::ambient_authority())
+        .context("opening models cache dir")?;
+    open_dir_nofollow(&root, &mlx_model_relative_dir(hf_repo)?, mode)
+}
+
+fn regular_file_exists(dir: &Dir, path: &std::path::Path) -> anyhow::Result<bool> {
+    match dir.symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => Ok(true),
+        Ok(_) => bail!("cache entry is not a regular file: {path:?}"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(anyhow::Error::from(error)),
+    }
+}
+
+fn mlx_cache_complete(dir: &Dir) -> anyhow::Result<bool> {
+    Ok(
+        regular_file_exists(dir, std::path::Path::new("config.json"))?
+            && (regular_file_exists(dir, std::path::Path::new("model.safetensors"))?
+                || regular_file_exists(dir, std::path::Path::new("model.safetensors.index.json"))?),
+    )
 }
 
 fn huggingface_url() -> anyhow::Result<reqwest::Url> {
@@ -591,14 +656,10 @@ where
     };
 
     let model_dir = mlx_model_dir(mlx_repo, cache_dir)?;
-
-    // Check if model is already fully downloaded
-    let config_path = model_dir.join("config.json");
-    let model_path = model_dir.join("model.safetensors");
-    let index_path = model_dir.join("model.safetensors.index.json");
-
-    // A model is considered cached if it has config.json and either model.safetensors or an index file
-    if config_path.exists() && (model_path.exists() || index_path.exists()) {
+    if open_mlx_cache_dir(mlx_repo, cache_dir, DirectoryMode::Existing)
+        .and_then(|dir| mlx_cache_complete(&dir))
+        .unwrap_or(false)
+    {
         info!(
             path = %model_dir.display(),
             model = model.id,
@@ -607,10 +668,7 @@ where
         return Ok(model_dir);
     }
 
-    // Create the model directory
-    tokio::fs::create_dir_all(&model_dir)
-        .await
-        .context("creating MLX model cache dir")?;
+    let model_cache = open_mlx_cache_dir(mlx_repo, cache_dir, DirectoryMode::Create)?;
 
     info!(
         hf_repo = mlx_repo,
@@ -638,25 +696,26 @@ where
     // Download each file
     let mut total_downloaded: u64 = 0;
     for filename in &files_to_download {
-        let file_path = mlx_file_path(&model_dir, filename)?;
+        let segments = validate_hf_file_path(filename)?;
+        let (file_name, parents) = segments
+            .split_last()
+            .ok_or_else(|| anyhow::anyhow!("HuggingFace file path cannot be empty"))?;
+        let parent = open_dir_nofollow(
+            &model_cache,
+            &parents.iter().copied().collect::<PathBuf>(),
+            DirectoryMode::Create,
+        )?;
 
         // Skip if already downloaded
-        if file_path.exists() {
+        if regular_file_exists(&parent, std::path::Path::new(file_name))? {
             debug!(file = filename, "file already cached, skipping");
             continue;
-        }
-
-        // Create parent directories if needed (for sharded files)
-        if let Some(parent) = file_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .with_context(|| format!("creating parent directory for {filename}"))?;
         }
 
         let url = hf_download_url(mlx_repo, filename)?;
         debug!(url = %url, file = filename, "downloading file");
 
-        let downloaded = download_file(url, &file_path, |progress| {
+        let downloaded = download_file(url, &parent, std::path::Path::new(file_name), |progress| {
             on_progress(DownloadProgress {
                 downloaded: total_downloaded + progress.downloaded,
                 total: None, // We don't know total size for multi-file download
@@ -692,15 +751,11 @@ where
 /// Check if an arbitrary HuggingFace MLX repo is cached locally.
 #[must_use]
 pub fn is_mlx_repo_cached(hf_repo: &str, cache_dir: &std::path::Path) -> bool {
-    let Ok(model_dir) = mlx_model_dir(hf_repo, cache_dir) else {
+    let Ok(model_dir) = open_mlx_cache_dir(hf_repo, cache_dir, DirectoryMode::Existing) else {
         return false;
     };
 
-    let config_path = model_dir.join("config.json");
-    let model_path = model_dir.join("model.safetensors");
-    let index_path = model_dir.join("model.safetensors.index.json");
-
-    config_path.exists() && (model_path.exists() || index_path.exists())
+    mlx_cache_complete(&model_dir).unwrap_or(false)
 }
 
 /// Ensure an arbitrary HuggingFace MLX repo is downloaded, returning the path to
@@ -726,13 +781,10 @@ where
     F: FnMut(DownloadProgress),
 {
     let model_dir = mlx_model_dir(hf_repo, cache_dir)?;
-
-    // Check if model is already fully downloaded
-    let config_path = model_dir.join("config.json");
-    let model_path = model_dir.join("model.safetensors");
-    let index_path = model_dir.join("model.safetensors.index.json");
-
-    if config_path.exists() && (model_path.exists() || index_path.exists()) {
+    if open_mlx_cache_dir(hf_repo, cache_dir, DirectoryMode::Existing)
+        .and_then(|dir| mlx_cache_complete(&dir))
+        .unwrap_or(false)
+    {
         info!(
             path = %model_dir.display(),
             hf_repo,
@@ -741,9 +793,7 @@ where
         return Ok(model_dir);
     }
 
-    tokio::fs::create_dir_all(&model_dir)
-        .await
-        .context("creating MLX model cache dir")?;
+    let model_cache = open_mlx_cache_dir(hf_repo, cache_dir, DirectoryMode::Create)?;
 
     info!(hf_repo, "downloading custom MLX model from HuggingFace");
 
@@ -767,23 +817,25 @@ where
 
     let mut total_downloaded: u64 = 0;
     for filename in &files_to_download {
-        let file_path = mlx_file_path(&model_dir, filename)?;
+        let segments = validate_hf_file_path(filename)?;
+        let (file_name, parents) = segments
+            .split_last()
+            .ok_or_else(|| anyhow::anyhow!("HuggingFace file path cannot be empty"))?;
+        let parent = open_dir_nofollow(
+            &model_cache,
+            &parents.iter().copied().collect::<PathBuf>(),
+            DirectoryMode::Create,
+        )?;
 
-        if file_path.exists() {
+        if regular_file_exists(&parent, std::path::Path::new(file_name))? {
             debug!(file = filename, "file already cached, skipping");
             continue;
-        }
-
-        if let Some(parent) = file_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .with_context(|| format!("creating parent directory for {filename}"))?;
         }
 
         let url = hf_download_url(hf_repo, filename)?;
         debug!(url = %url, file = filename, "downloading file");
 
-        let downloaded = download_file(url, &file_path, |progress| {
+        let downloaded = download_file(url, &parent, std::path::Path::new(file_name), |progress| {
             on_progress(DownloadProgress {
                 downloaded: total_downloaded + progress.downloaded,
                 total: None,
@@ -854,6 +906,7 @@ async fn list_hf_repo_files(repo: &str) -> anyhow::Result<Vec<String>> {
 /// Returns the number of bytes downloaded.
 async fn download_file<F>(
     url: reqwest::Url,
+    dir: &Dir,
     path: &std::path::Path,
     mut on_progress: F,
 ) -> anyhow::Result<u64>
@@ -875,11 +928,7 @@ where
 
     on_progress(DownloadProgress { downloaded, total });
 
-    let tmp_path = path.with_extension("tmp");
-    let mut file = tokio::fs::File::create(&tmp_path)
-        .await
-        .context("creating temp file")?;
-
+    let mut temporary = download_temp::TemporaryDownload::create(dir, path)?;
     let mut stream = response.bytes_stream();
     let mut last_report = std::time::Instant::now();
 
@@ -887,9 +936,7 @@ where
         let chunk = chunk.context("reading chunk")?;
         downloaded += chunk.len() as u64;
 
-        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
-            .await
-            .context("writing chunk")?;
+        temporary.write_all(&chunk).await.context("writing chunk")?;
 
         if last_report.elapsed() >= std::time::Duration::from_millis(100) {
             on_progress(DownloadProgress { downloaded, total });
@@ -899,14 +946,8 @@ where
 
     on_progress(DownloadProgress { downloaded, total });
 
-    tokio::io::AsyncWriteExt::flush(&mut file)
-        .await
-        .context("flushing file")?;
-    drop(file);
-
-    tokio::fs::rename(&tmp_path, path)
-        .await
-        .context("renaming file")?;
+    temporary.flush().await.context("flushing file")?;
+    temporary.rename_to(path)?;
 
     Ok(downloaded)
 }
@@ -1382,5 +1423,27 @@ mod tests {
         // Missing model.safetensors and index
 
         assert!(!is_mlx_repo_cached(repo, cache_dir));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mlx_cache_directory_creation_rejects_symlink_parent() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        let outside = temp_dir.path().join("outside");
+        std::fs::create_dir(&cache_dir).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, cache_dir.join("mlx")).unwrap();
+        let root = Dir::open_ambient_dir(&cache_dir, cap_std::ambient_authority()).unwrap();
+
+        assert!(
+            open_dir_nofollow(
+                &root,
+                std::path::Path::new("mlx/model"),
+                DirectoryMode::Create,
+            )
+            .is_err()
+        );
+        assert!(!outside.join("model").exists());
     }
 }

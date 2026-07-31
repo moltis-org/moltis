@@ -5,7 +5,11 @@
 
 use std::path::{Component, Path};
 
-use serde::{Deserialize, Serialize};
+use {
+    cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt},
+    cap_std::fs::{Dir, OpenOptions},
+    serde::{Deserialize, Serialize},
+};
 
 use crate::{
     error::{Error, Result},
@@ -348,29 +352,45 @@ pub async fn install_from_clawhub(slug: &str, install_dir: &Path) -> Result<Vec<
     let dir_name = format!("clawhub-{slug}");
     let target = install_dir.join(&dir_name);
 
-    // Remove existing if re-installing.
-    if target.exists() {
-        tokio::fs::remove_dir_all(&target).await?;
+    tokio::fs::create_dir_all(install_dir).await?;
+    let install_root = Dir::open_ambient_dir(install_dir, cap_std::ambient_authority())?;
+    match install_root.symlink_metadata(&dir_name) {
+        Ok(metadata) if metadata.is_dir() => install_root.remove_dir_all(&dir_name)?,
+        Ok(_) => {
+            return Err(Error::Install(format!(
+                "ClawHub install destination is not a real directory: {target:?}"
+            )));
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+        Err(error) => return Err(Error::Io(error)),
     }
-    tokio::fs::create_dir_all(&target).await?;
+    install_root.create_dir(&dir_name)?;
+    let target_dir = install_root.open_dir_nofollow(&dir_name)?;
 
     // Download zip archive.
     let zip_bytes = client.download_zip(slug, &version).await?;
 
     // Extract zip on a blocking thread (zip I/O is synchronous).
-    let target_owned = target.clone();
-    tokio::task::spawn_blocking(move || extract_zip(&zip_bytes, &target_owned)).await??;
+    let extraction =
+        tokio::task::spawn_blocking(move || extract_zip_into(&zip_bytes, &target_dir)).await;
+    finish_extraction(extraction, &install_root, Path::new(&dir_name))?;
 
-    // Parse SKILL.md to get metadata.
-    let skill_md_path = target.join("SKILL.md");
-    if !skill_md_path.exists() {
-        let _ = tokio::fs::remove_dir_all(&target).await;
-        return Err(Error::Install(format!(
-            "ClawHub skill '{slug}' has no SKILL.md"
-        )));
-    }
-
-    let content = tokio::fs::read_to_string(&skill_md_path).await?;
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let metadata_dir = install_root.open_dir_nofollow(&dir_name)?;
+    let skill_file = match metadata_dir.open_with("SKILL.md", &options) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let _ = install_root.remove_dir_all(&dir_name);
+            return Err(Error::Install(format!(
+                "ClawHub skill '{slug}' has no SKILL.md"
+            )));
+        },
+        Err(error) => return Err(Error::Io(error)),
+    };
+    let mut skill_file = tokio::fs::File::from_std(skill_file.into_std());
+    let mut content = String::new();
+    tokio::io::AsyncReadExt::read_to_string(&mut skill_file, &mut content).await?;
     let metadata = parse::parse_metadata(&content, &target)?;
 
     let skill_states = vec![SkillState {
@@ -411,6 +431,21 @@ pub async fn install_from_clawhub(slug: &str, install_dir: &Path) -> Result<Vec<
     Ok(vec![metadata])
 }
 
+fn finish_extraction(
+    extraction: std::result::Result<Result<()>, tokio::task::JoinError>,
+    install_root: &Dir,
+    target: &Path,
+) -> Result<()> {
+    let error = match extraction {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(error)) => error,
+        Err(error) => Error::Join(error),
+    };
+
+    let _ = install_root.remove_dir_all(target);
+    Err(error)
+}
+
 /// Build the manifest source key for a ClawHub skill.
 pub fn clawhub_source_key(slug: &str) -> String {
     format!("clawhub:{slug}")
@@ -440,12 +475,23 @@ pub fn validate_slug(slug: &str) -> Result<()> {
 }
 
 /// Extract a zip archive into a target directory with security checks.
+#[cfg(test)]
 fn extract_zip(zip_bytes: &[u8], target: &Path) -> Result<()> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| Error::Install("zip target has no parent directory".into()))?;
+    let file_name = target
+        .file_name()
+        .ok_or_else(|| Error::Install("zip target has no directory name".into()))?;
+    let parent_dir = Dir::open_ambient_dir(parent, cap_std::ambient_authority())?;
+    let target_dir = parent_dir.open_dir_nofollow(file_name)?;
+    extract_zip_into(zip_bytes, &target_dir)
+}
+
+fn extract_zip_into(zip_bytes: &[u8], target_dir: &Dir) -> Result<()> {
     let reader = std::io::Cursor::new(zip_bytes);
     let mut archive = zip::ZipArchive::new(reader)
         .map_err(|e| Error::Install(format!("invalid zip archive: {e}")))?;
-
-    let canonical_target = std::fs::canonicalize(target)?;
 
     for i in 0..archive.len() {
         let mut file = archive
@@ -473,34 +519,26 @@ fn extract_zip(zip_bytes: &[u8], target: &Path) -> Result<()> {
             )));
         }
 
-        let dest = target.join(&relative);
-
         if file.is_dir() {
-            create_zip_directories(target, &canonical_target, &relative)?;
+            create_zip_directories(target_dir, &relative)?;
             continue;
         }
 
-        if let Some(parent) = relative.parent() {
-            create_zip_directories(target, &canonical_target, parent)?;
-        }
-
-        match std::fs::symlink_metadata(&dest) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(Error::Install(format!(
-                    "zip entry resolves to symlink destination: {raw_name:?}"
-                )));
-            },
-            Ok(metadata) if !metadata.is_file() => {
-                return Err(Error::Install(format!(
-                    "zip entry resolves to unsupported destination: {raw_name:?}"
-                )));
-            },
-            Ok(_) => {},
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
-            Err(error) => return Err(Error::Io(error)),
-        }
-
-        let mut dest_file = std::fs::File::create(&dest)?;
+        let parent =
+            create_zip_directories(target_dir, relative.parent().unwrap_or(Path::new("")))?;
+        let file_name = relative
+            .file_name()
+            .ok_or_else(|| Error::Install(format!("zip entry has no filename: {raw_name:?}")))?;
+        let mut options = OpenOptions::new();
+        options
+            .write(true)
+            .create_new(true)
+            .follow(FollowSymlinks::No);
+        let mut dest_file = parent.open_with(file_name, &options).map_err(|error| {
+            Error::Install(format!(
+                "cannot securely create zip destination {raw_name:?}: {error}"
+            ))
+        })?;
         std::io::copy(&mut file, &mut dest_file)?;
     }
     Ok(())
@@ -533,37 +571,24 @@ fn validate_zip_unix_mode(
     Ok(())
 }
 
-fn create_zip_directories(target: &Path, canonical_target: &Path, relative: &Path) -> Result<()> {
-    let mut current = target.to_path_buf();
+fn create_zip_directories(target: &Dir, relative: &Path) -> Result<Dir> {
+    let mut current = target.try_clone()?;
     for component in relative.components() {
         let Component::Normal(segment) = component else {
             return Err(Error::Install("zip entry contains non-normal path".into()));
         };
-        current.push(segment);
 
-        match std::fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(Error::Install(
-                    "zip entry parent resolves to a symlink".into(),
-                ));
-            },
-            Ok(metadata) if !metadata.is_dir() => {
-                return Err(Error::Install("zip entry parent is not a directory".into()));
-            },
-            Ok(_) => {},
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::create_dir(&current)?;
-            },
+        match current.create_dir(segment) {
+            Ok(()) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
             Err(error) => return Err(Error::Io(error)),
         }
-
-        let canonical_parent = std::fs::canonicalize(&current)?;
-        if !canonical_parent.starts_with(canonical_target) {
-            return Err(Error::Install("zip entry escaped install directory".into()));
-        }
+        current = current.open_dir_nofollow(segment).map_err(|error| {
+            Error::Install(format!("zip entry parent is not a real directory: {error}"))
+        })?;
     }
 
-    Ok(())
+    Ok(current)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -713,8 +738,90 @@ mod tests {
         std::os::unix::fs::symlink(&outside, target.join("link")).unwrap();
 
         let error = extract_zip(&zip, &target).unwrap_err();
-        assert_eq!(error.to_string(), "zip entry parent resolves to a symlink");
+        assert!(error.to_string().contains("not a real directory"));
         assert!(!outside.join("escaped.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extract_zip_rejects_preexisting_symlink_destination() {
+        let zip = build_zip(|writer| add_zip_file(writer, "SKILL.md", b"replaced"));
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target = temp_dir.path().join("target");
+        let outside = temp_dir.path().join("outside.md");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(&outside, b"outside").unwrap();
+        std::os::unix::fs::symlink(&outside, target.join("SKILL.md")).unwrap();
+
+        assert!(extract_zip(&zip, &target).is_err());
+        assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
+    }
+
+    #[test]
+    fn extract_zip_rejects_preexisting_file_destination() {
+        let zip = build_zip(|writer| add_zip_file(writer, "SKILL.md", b"replaced"));
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target = temp_dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("SKILL.md"), b"original").unwrap();
+
+        assert!(extract_zip(&zip, &target).is_err());
+        assert_eq!(std::fs::read(target.join("SKILL.md")).unwrap(), b"original");
+    }
+
+    #[tokio::test]
+    async fn failed_extraction_removes_partially_extracted_target() {
+        let zip = build_zip(|writer| {
+            add_zip_file(writer, "partial.txt", b"partial");
+            add_zip_file(writer, "../outside.txt", b"escaped");
+        });
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_name = Path::new("clawhub-test");
+        let target = temp_dir.path().join(target_name);
+        std::fs::create_dir(&target).unwrap();
+        let install_root =
+            Dir::open_ambient_dir(temp_dir.path(), cap_std::ambient_authority()).unwrap();
+        let target_dir = install_root.open_dir_nofollow(target_name).unwrap();
+
+        let extraction =
+            tokio::task::spawn_blocking(move || extract_zip_into(&zip, &target_dir)).await;
+        let error = finish_extraction(extraction, &install_root, target_name).unwrap_err();
+
+        assert!(error.to_string().contains("unsafe path"));
+        assert!(!target.exists());
+    }
+
+    #[tokio::test]
+    async fn extraction_join_error_removes_partially_extracted_target() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_name = Path::new("clawhub-test");
+        let target = temp_dir.path().join(target_name);
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("partial.txt"), b"partial").unwrap();
+        let install_root =
+            Dir::open_ambient_dir(temp_dir.path(), cap_std::ambient_authority()).unwrap();
+        let extraction =
+            tokio::task::spawn_blocking(|| -> Result<()> { panic!("simulated extraction panic") })
+                .await;
+
+        let error = finish_extraction(extraction, &install_root, target_name).unwrap_err();
+
+        assert!(matches!(error, Error::Join(_)));
+        assert!(!target.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extract_zip_rejects_symlink_install_root() {
+        let zip = build_zip(|writer| add_zip_file(writer, "SKILL.md", b"escaped"));
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target = temp_dir.path().join("target");
+        let outside = temp_dir.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, &target).unwrap();
+
+        assert!(extract_zip(&zip, &target).is_err());
+        assert!(!outside.join("SKILL.md").exists());
     }
 
     /// Test with the actual JSON shape returned by the ClawHub /api/v1/search endpoint.
