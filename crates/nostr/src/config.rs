@@ -158,7 +158,9 @@ pub struct RedactedConfig<'a>(pub &'a NostrAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 15;
+        // Must equal the number of unconditional `serialize_field` calls below;
+        // self-describing formats emit the declared length verbatim.
+        let mut count = 14;
         count += c.agent_id.is_some() as usize;
         let mut s = serializer.serialize_struct("NostrAccountConfig", count)?;
         s.serialize_field("secret_key", "[REDACTED]")?;
@@ -313,6 +315,27 @@ mod tests {
         let parsed: NostrAccountConfig = serde_json::from_value(json).unwrap_or_default();
         assert_eq!(parsed.groups, vec!["buzz-general"]);
         assert_eq!(parsed.group_mention_mode, MentionMode::Always);
+    }
+
+    /// The declared struct length is not observable in JSON, so pin the field
+    /// count instead: adding a field without bumping `count` desynchronises the
+    /// two, which self-describing formats do surface.
+    #[test]
+    fn redacted_config_field_count_matches_declaration() {
+        let base = serde_json::to_value(RedactedConfig(&NostrAccountConfig::default()))
+            .unwrap_or_default();
+        assert_eq!(
+            base.as_object().map(serde_json::Map::len),
+            Some(14),
+            "keep `count` in RedactedConfig::serialize in sync"
+        );
+
+        let with_agent = NostrAccountConfig {
+            agent_id: Some("agent".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(RedactedConfig(&with_agent)).unwrap_or_default();
+        assert_eq!(json.as_object().map(serde_json::Map::len), Some(15));
     }
 
     #[test]
