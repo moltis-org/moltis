@@ -185,13 +185,18 @@ posted once, as before. DMs are unchanged (gift wrap has no edit path).
 ### Acknowledgement Reactions
 
 With `group_ack_reactions` enabled (the default), the bot reacts 👀 to a message
-it has picked up, then replaces it with ✅ or ❌ when the turn finishes — the
-same acknowledgement pattern Moltis uses on Slack.
+it has picked up, swaps in a phase glyph as the agent works (🌐 browsing, 💻
+shell, ✏️ editing, 🏗️ building, 🛫 deploying, 🛠️ any other tool, ⏳ stalled), and
+finishes with ✅ or ❌ — the same acknowledgement pattern Moltis uses on Slack.
 
-Reactions are NIP-25 `kind:7` events. Retracting the 👀 means publishing a NIP-09
-deletion (`kind:5`) for the reaction, which relays honour at their discretion,
-so the 👀 may briefly linger. Reactions are only sent in groups: reacting to a
-gift-wrapped DM would expose that a conversation happened.
+Reactions are NIP-25 `kind:7` events, so each swap publishes one and retracts
+the previous with a NIP-09 deletion (`kind:5`). Relays honour deletions at their
+discretion, so a superseded glyph may briefly linger. On a busy turn this is a
+handful of extra events per message — set `group_ack_reactions = false` if your
+relay charges per event or you would rather keep the channel quiet.
+
+Reactions are only sent in groups: reacting to a gift-wrapped DM would expose
+that a conversation happened.
 
 ### Message Kinds (kind:9 vs kind:40002)
 
@@ -216,7 +221,9 @@ lands correctly.
   (an `@`-mention). Best for busy channels.
 - **`always`** — respond to every message in joined groups. Use for dedicated
   agent channels.
-- **`none`** — never respond in groups (receive-only).
+- **`none`** — receive-only. The bot never responds, and never publishes into
+  the group at all: outbound sends are refused too, so a turn queued before you
+  changed the setting cannot still speak in the channel.
 
 Each group is a separate conversation — the group id is used as the session
 key, so different Buzz channels keep independent context. A reply carries the

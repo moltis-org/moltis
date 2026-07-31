@@ -63,8 +63,9 @@ pub struct NostrAccountConfig {
     /// pubkey is `p`-tagged — the default), `always`, or `none`.
     pub group_mention_mode: MentionMode,
 
-    /// Acknowledge inbound group messages with reactions: 👀 on receipt, then
-    /// ✅ or ❌ when the turn finishes (NIP-25 `kind:7`, retracted via NIP-09).
+    /// Acknowledge inbound group messages with reactions: 👀 on receipt, a phase
+    /// glyph per tool the agent runs (🌐 💻 ✏️ …), then ✅ or ❌ when the turn
+    /// finishes (NIP-25 `kind:7`, each retracted via NIP-09).
     pub group_ack_reactions: bool,
 
     /// Dialect for group messages that are not replies: `nip29` (`kind:9`) or

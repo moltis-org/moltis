@@ -366,18 +366,30 @@ pub async fn delete_event(client: &Client, group_id: &str, target: EventId) -> R
     Ok(())
 }
 
-/// Translate the gateway's Slack-style ack shortcodes into emoji glyphs.
+/// Render an acknowledgement emoji in the form NIP-25 expects.
 ///
-/// The gateway emits shortcodes (`eyes`, `white_check_mark`, `x`) because Slack's
-/// Web API wants them, but NIP-25 expects the literal glyph (or `+`/`-`).
-/// Anything unrecognised is passed through, so callers can supply a glyph
-/// directly.
+/// The reaction controller emits the channel-neutral glyph vocabulary
+/// ([`ack_emoji::ALL`](moltis_channels::activity::ack_emoji::ALL)) — 👀 on
+/// receipt, a phase glyph per tool, then ✅/❌ — and NIP-25 wants exactly that:
+/// the literal glyph (or `+`/`-`). Glyphs therefore pass through untouched.
+///
+/// The shortcode arm remains because a name can also arrive from a config
+/// override rather than the controller, and Slack-style shortcodes are the form
+/// operators are used to writing. Publishing `white_check_mark` as the content
+/// of a `kind:7` would render as that literal text in every NIP-25 client.
 #[must_use]
 pub fn ack_emoji_glyph(shortcode: &str) -> &str {
     match shortcode {
         "eyes" => "👀",
         "white_check_mark" | "heavy_check_mark" => "✅",
         "x" | "negative_squared_cross_mark" => "❌",
+        "hourglass_flowing_sand" => "⏳",
+        "globe_with_meridians" => "🌐",
+        "computer" => "💻",
+        "pencil2" => "✏️",
+        "airplane_departure" => "🛫",
+        "building_construction" => "🏗️",
+        "hammer_and_wrench" => "🛠️",
         other => other,
     }
 }
@@ -639,13 +651,35 @@ mod tests {
 
     #[test]
     fn ack_shortcodes_map_to_nip25_glyphs() {
-        // The gateway speaks Slack shortcodes; NIP-25 wants the glyph.
+        // A shortcode from a config override still has to reach the wire as a
+        // glyph — NIP-25 renders the content literally.
         assert_eq!(ack_emoji_glyph("eyes"), "👀");
         assert_eq!(ack_emoji_glyph("white_check_mark"), "✅");
         assert_eq!(ack_emoji_glyph("x"), "❌");
+        assert_eq!(ack_emoji_glyph("globe_with_meridians"), "🌐");
         // Already a glyph, or unknown: pass through untouched.
         assert_eq!(ack_emoji_glyph("🎉"), "🎉");
         assert_eq!(ack_emoji_glyph("+"), "+");
+    }
+
+    /// The cross-crate contract `ack_emoji::ALL` exists for: the reaction
+    /// controller emits this vocabulary — 👀, the phase glyphs, then ✅/❌ — and
+    /// NIP-25 puts the content on the wire verbatim. Every one of them must
+    /// survive unchanged, so adding a canonical emoji that Nostr mangles into
+    /// literal text fails here rather than in a channel.
+    #[test]
+    fn every_canonical_ack_emoji_reaches_nip25_unchanged() {
+        for glyph in moltis_channels::activity::ack_emoji::ALL {
+            assert_eq!(
+                ack_emoji_glyph(glyph),
+                *glyph,
+                "canonical ack emoji {glyph} must pass through untouched"
+            );
+            assert!(
+                !glyph.is_ascii(),
+                "{glyph} is not a glyph — a shortcode would publish as literal text"
+            );
+        }
     }
 
     #[test]
