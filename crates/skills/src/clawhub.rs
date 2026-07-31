@@ -3,7 +3,7 @@
 //! Uses the public ClawHub REST API at `https://clawhub.ai/api/v1/`.
 //! No authentication required for read operations. Rate limit: 180 req/min.
 
-use std::path::Path;
+use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -441,8 +441,6 @@ pub fn validate_slug(slug: &str) -> Result<()> {
 
 /// Extract a zip archive into a target directory with security checks.
 fn extract_zip(zip_bytes: &[u8], target: &Path) -> Result<()> {
-    use std::io::Read;
-
     let reader = std::io::Cursor::new(zip_bytes);
     let mut archive = zip::ZipArchive::new(reader)
         .map_err(|e| Error::Install(format!("invalid zip archive: {e}")))?;
@@ -455,32 +453,116 @@ fn extract_zip(zip_bytes: &[u8], target: &Path) -> Result<()> {
             .map_err(|e| Error::Install(format!("zip entry error: {e}")))?;
 
         let raw_name = file.name().to_string();
+        if file.is_symlink() {
+            return Err(Error::Install(format!(
+                "zip archive contains unsupported symlink entry: {raw_name:?}"
+            )));
+        }
+        validate_zip_unix_mode(&raw_name, file.is_dir(), file.unix_mode())?;
 
-        // Security: reject symlinks, absolute paths, path traversal.
-        if raw_name.contains("..") || raw_name.starts_with('/') {
-            tracing::warn!(path = %raw_name, "skipping unsafe zip entry");
-            continue;
+        let relative = file.enclosed_name().ok_or_else(|| {
+            Error::Install(format!("zip archive contains unsafe path: {raw_name:?}"))
+        })?;
+        if relative.as_os_str().is_empty()
+            || !relative
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+        {
+            return Err(Error::Install(format!(
+                "zip archive contains non-normal path: {raw_name:?}"
+            )));
         }
 
-        let dest = target.join(&raw_name);
+        let dest = target.join(&relative);
 
         if file.is_dir() {
-            std::fs::create_dir_all(&dest)?;
+            create_zip_directories(target, &canonical_target, &relative)?;
             continue;
         }
 
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-            let canonical_parent = std::fs::canonicalize(parent)?;
-            if !canonical_parent.starts_with(&canonical_target) {
-                return Err(Error::Install("zip entry escaped install directory".into()));
-            }
+        if let Some(parent) = relative.parent() {
+            create_zip_directories(target, &canonical_target, parent)?;
         }
 
-        let mut buf = Vec::with_capacity(file.size() as usize);
-        file.read_to_end(&mut buf)?;
-        std::fs::write(&dest, &buf)?;
+        match std::fs::symlink_metadata(&dest) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::Install(format!(
+                    "zip entry resolves to symlink destination: {raw_name:?}"
+                )));
+            },
+            Ok(metadata) if !metadata.is_file() => {
+                return Err(Error::Install(format!(
+                    "zip entry resolves to unsupported destination: {raw_name:?}"
+                )));
+            },
+            Ok(_) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) => return Err(Error::Io(error)),
+        }
+
+        let mut dest_file = std::fs::File::create(&dest)?;
+        std::io::copy(&mut file, &mut dest_file)?;
     }
+    Ok(())
+}
+
+fn validate_zip_unix_mode(
+    raw_name: &str,
+    is_directory: bool,
+    unix_mode: Option<u32>,
+) -> Result<()> {
+    const FILE_TYPE_MASK: u32 = 0o170000;
+    const REGULAR_FILE: u32 = 0o100000;
+    const DIRECTORY: u32 = 0o040000;
+
+    let Some(mode) = unix_mode else {
+        return Ok(());
+    };
+    let file_type = mode & FILE_TYPE_MASK;
+    let supported = if is_directory {
+        matches!(file_type, 0 | DIRECTORY)
+    } else {
+        matches!(file_type, 0 | REGULAR_FILE)
+    };
+    if !supported {
+        return Err(Error::Install(format!(
+            "zip archive contains unsupported special entry: {raw_name:?} (Unix mode {mode:#o})"
+        )));
+    }
+
+    Ok(())
+}
+
+fn create_zip_directories(target: &Path, canonical_target: &Path, relative: &Path) -> Result<()> {
+    let mut current = target.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(segment) = component else {
+            return Err(Error::Install("zip entry contains non-normal path".into()));
+        };
+        current.push(segment);
+
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::Install(
+                    "zip entry parent resolves to a symlink".into(),
+                ));
+            },
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(Error::Install("zip entry parent is not a directory".into()));
+            },
+            Ok(_) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current)?;
+            },
+            Err(error) => return Err(Error::Io(error)),
+        }
+
+        let canonical_parent = std::fs::canonicalize(&current)?;
+        if !canonical_parent.starts_with(canonical_target) {
+            return Err(Error::Install("zip entry escaped install directory".into()));
+        }
+    }
+
     Ok(())
 }
 
@@ -489,7 +571,25 @@ fn extract_zip(zip_bytes: &[u8], target: &Path) -> Result<()> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        std::io::{Cursor, Write},
+    };
+
+    use zip::{ZipWriter, write::SimpleFileOptions};
+
+    fn build_zip(build: impl FnOnce(&mut ZipWriter<Cursor<Vec<u8>>>)) -> Vec<u8> {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        build(&mut writer);
+        writer.finish().unwrap().into_inner()
+    }
+
+    fn add_zip_file(writer: &mut ZipWriter<Cursor<Vec<u8>>>, name: &str, contents: &[u8]) {
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(contents).unwrap();
+    }
 
     #[test]
     fn clawhub_source_key_format() {
@@ -516,6 +616,105 @@ mod tests {
         assert!(validate_slug("../etc/passwd").is_err());
         assert!(validate_slug("foo bar").is_err());
         assert!(validate_slug("foo/bar").is_err());
+    }
+
+    #[test]
+    fn extract_zip_writes_normal_nested_files() {
+        let zip = build_zip(|writer| {
+            writer
+                .add_directory("scripts/", SimpleFileOptions::default())
+                .unwrap();
+            add_zip_file(writer, "scripts/run.sh", b"#!/bin/sh\n");
+            add_zip_file(writer, "SKILL.md", b"# Test\n");
+        });
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target = temp_dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+
+        extract_zip(&zip, &target).unwrap();
+
+        assert_eq!(
+            std::fs::read(target.join("scripts/run.sh")).unwrap(),
+            b"#!/bin/sh\n"
+        );
+        assert_eq!(std::fs::read(target.join("SKILL.md")).unwrap(), b"# Test\n");
+    }
+
+    #[test]
+    fn extract_zip_rejects_parent_traversal() {
+        let zip = build_zip(|writer| add_zip_file(writer, "../outside.txt", b"escaped"));
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target = temp_dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+
+        assert!(extract_zip(&zip, &target).is_err());
+        assert!(!temp_dir.path().join("outside.txt").exists());
+    }
+
+    #[test]
+    fn extract_zip_rejects_symlink_entries() {
+        let zip = build_zip(|writer| {
+            writer
+                .add_symlink("link", "../outside", SimpleFileOptions::default())
+                .unwrap();
+        });
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target = temp_dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+
+        let error = extract_zip(&zip, &target).unwrap_err();
+        assert!(error.to_string().contains("unsupported symlink entry"));
+        assert!(!target.join("link").exists());
+    }
+
+    #[test]
+    fn zip_unix_mode_validation_rejects_special_file_types() {
+        assert!(validate_zip_unix_mode("file", false, None).is_ok());
+        assert!(validate_zip_unix_mode("file", false, Some(0o644)).is_ok());
+        assert!(validate_zip_unix_mode("file", false, Some(0o100644)).is_ok());
+        assert!(validate_zip_unix_mode("dir/", true, Some(0o040755)).is_ok());
+
+        for mode in [0o010644, 0o020644, 0o060644, 0o120777, 0o140777] {
+            assert!(
+                validate_zip_unix_mode("special", false, Some(mode)).is_err(),
+                "special Unix mode should be rejected: {mode:#o}"
+            );
+        }
+    }
+
+    #[test]
+    fn extract_zip_rejects_symlink_then_nested_file_bypass() {
+        let zip = build_zip(|writer| {
+            writer
+                .add_symlink("link", "../outside", SimpleFileOptions::default())
+                .unwrap();
+            add_zip_file(writer, "link/escaped.txt", b"escaped");
+        });
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target = temp_dir.path().join("target");
+        let outside = temp_dir.path().join("outside");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+
+        assert!(extract_zip(&zip, &target).is_err());
+        assert!(!outside.join("escaped.txt").exists());
+        assert!(!target.join("link").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extract_zip_rejects_preexisting_symlink_ancestry() {
+        let zip = build_zip(|writer| add_zip_file(writer, "link/escaped.txt", b"escaped"));
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target = temp_dir.path().join("target");
+        let outside = temp_dir.path().join("outside");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, target.join("link")).unwrap();
+
+        let error = extract_zip(&zip, &target).unwrap_err();
+        assert_eq!(error.to_string(), "zip entry parent resolves to a symlink");
+        assert!(!outside.join("escaped.txt").exists());
     }
 
     /// Test with the actual JSON shape returned by the ClawHub /api/v1/search endpoint.
