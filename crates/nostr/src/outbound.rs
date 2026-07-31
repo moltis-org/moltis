@@ -202,6 +202,85 @@ impl NostrOutbound {
         Ok(Arc::clone(&state.config))
     }
 
+    /// Take back a streamed reply that can no longer be completed.
+    ///
+    /// A Buzz reply is published early and revised as tokens arrive, so when
+    /// permission is withdrawn mid-answer the relay is left holding whatever
+    /// had been written by then — frequently a partial sentence. Leaving it is
+    /// not neutral: it stays in the channel as the bot's answer, and it is the
+    /// one message the operator can no longer have corrected.
+    ///
+    /// Withdrawing it is consistent with retracting an acknowledgement after
+    /// revocation ([`ChannelOutbound::remove_reaction`]): removing the bot's
+    /// own content is the opposite of speaking, so the send gate does not
+    /// apply. Best-effort — NIP-09 is advisory — and failure is logged rather
+    /// than surfaced, since the caller is already returning the refusal that
+    /// caused it.
+    async fn withdraw_partial_reply(
+        &self,
+        account_id: &str,
+        client: &Client,
+        group_id: &str,
+        published: EventId,
+    ) {
+        if let Err(e) = self
+            .retract_event(account_id, client, group_id, published)
+            .await
+        {
+            tracing::warn!(
+                account_id,
+                group = %group_id,
+                "truncated reply left in the channel, retraction failed: {e}"
+            );
+        }
+    }
+
+    /// Withdraw something we published into a group: a NIP-09 deletion, with
+    /// transient failures retried.
+    ///
+    /// Ungated on purpose, like the callers that use it. Taking the bot's own
+    /// content back out of a channel is the opposite of speaking in it, so a
+    /// revoked group must not block it — that is what leaves a stale 👀 or a
+    /// half-finished answer sitting there permanently.
+    ///
+    /// Retried here because nothing upstream will: the gateway's reaction
+    /// worker ends the turn right after these calls and never returns. Only
+    /// retryable failures are repeated — a relay *rejecting* a deletion has
+    /// made a decision, not stumbled.
+    ///
+    /// NIP-09 is advisory, so a published deletion is a request the relay may
+    /// still ignore. This maximises the chance the content goes away; it cannot
+    /// promise it.
+    async fn retract_event(
+        &self,
+        account_id: &str,
+        client: &Client,
+        group_id: &str,
+        event_id: EventId,
+    ) -> ChannelResult<()> {
+        let mut backoff = RETRACTION_RETRY_BACKOFF;
+        let mut last_error = None;
+        for attempt in 1..=RETRACTION_ATTEMPTS {
+            match crate::groups::delete_event(client, group_id, event_id).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    let retry = e.is_retryable() && attempt < RETRACTION_ATTEMPTS;
+                    tracing::debug!(account_id, attempt, retry, "retraction failed: {e}");
+                    last_error = Some(e);
+                    if !retry {
+                        break;
+                    }
+                    tokio::time::sleep(backoff).await;
+                    backoff *= 2;
+                },
+            }
+        }
+        Err(last_error.map_or_else(
+            || moltis_channels::Error::unavailable("retraction failed"),
+            Into::into,
+        ))
+    }
+
     /// Resolve `channel_id` to a group **without authorizing a send**, for the
     /// reaction paths.
     ///
@@ -405,10 +484,36 @@ impl ChannelOutbound for NostrOutbound {
             return Ok(());
         };
 
+        let glyph = crate::groups::ack_emoji_glyph(emoji);
+
+        // Clear any earlier acknowledgement whose retraction did not go
+        // through. This is the retry path for `remove_reaction`: nothing else
+        // revisits it, and we are about to talk to the relay anyway. Best
+        // effort — if it fails again the id stays for the next attempt.
+        let stale = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            accounts.get(account_id).map_or_else(Vec::new, |state| {
+                let ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+                ctxs.stale_reactions(target, glyph)
+            })
+        };
+        for (stale_glyph, stale_id) in stale {
+            if self
+                .retract_event(account_id, &client, &group_id, stale_id)
+                .await
+                .is_ok()
+            {
+                let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+                if let Some(state) = accounts.get(account_id) {
+                    let mut ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+                    ctxs.forget_reaction(target, &stale_glyph);
+                }
+            }
+        }
+
         // A reaction is a publish into the group like any other, so it goes
         // through the same authorization-holding gate rather than trusting the
         // decision `resolve` made.
-        let glyph = crate::groups::ack_emoji_glyph(emoji);
         let reaction = self
             .authorized_group_publish(account_id, &group_id, async || {
                 crate::groups::send_reaction(&client, &group_id, target, glyph).await
@@ -462,51 +567,17 @@ impl ChannelOutbound for NostrOutbound {
             return Ok(());
         };
 
-        // Retried here, because nothing else will: the gateway's reaction
-        // worker finishes the turn right after this call and never comes back,
-        // so a relay hiccup that goes unanswered leaves the 👀 sitting on the
-        // user's message for good. Only retryable failures are worth repeating
-        // — a rejection is a decision, not a hiccup.
-        let mut backoff = RETRACTION_RETRY_BACKOFF;
-        let mut last_error = None;
-        for attempt in 1..=RETRACTION_ATTEMPTS {
-            match crate::groups::delete_event(&client, &group_id, reaction).await {
-                Ok(()) => {
-                    // Forgotten only now: this is the sole record of the
-                    // reaction, so dropping it any earlier would leave a failed
-                    // retraction with nothing to retry from.
-                    let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-                    if let Some(state) = accounts.get(account_id) {
-                        let mut ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
-                        ctxs.forget_reaction(target, glyph);
-                    }
-                    return Ok(());
-                },
-                Err(e) => {
-                    let retry = e.is_retryable() && attempt < RETRACTION_ATTEMPTS;
-                    tracing::debug!(
-                        account_id,
-                        attempt,
-                        retry,
-                        "reaction retraction failed: {e}"
-                    );
-                    last_error = Some(e);
-                    if !retry {
-                        break;
-                    }
-                    tokio::time::sleep(backoff).await;
-                    backoff *= 2;
-                },
-            }
+        self.retract_event(account_id, &client, &group_id, reaction)
+            .await?;
+        // Forgotten only once the deletion is published: this is the sole
+        // record of the reaction, so dropping it any earlier would leave a
+        // failed retraction with nothing to retry from.
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accounts.get(account_id) {
+            let mut ctxs = state.reply_ctx.lock().unwrap_or_else(|e| e.into_inner());
+            ctxs.forget_reaction(target, glyph);
         }
-
-        // Out of attempts. The id is kept so a later call for the same
-        // acknowledgement can try again, and the failure is reported rather
-        // than dressed up as success — the 👀 is still on the message.
-        Err(last_error.map_or_else(
-            || moltis_channels::Error::unavailable("reaction retraction failed"),
-            Into::into,
-        ))
+        Ok(())
     }
 
     async fn send_media(
@@ -608,10 +679,6 @@ impl ChannelStreamOutbound for NostrOutbound {
                 // Throttle edits: every token would be an event on the relay.
                 Some(target) => {
                     if last_edit.elapsed() >= STREAM_EDIT_INTERVAL {
-                        // Revoked mid-stream: stop revising. The text already
-                        // published stays as it is — a NIP-09 deletion is only
-                        // a request the relay may ignore, so retracting it
-                        // would promise more than it delivers.
                         let result = self
                             .authorized_group_publish(account_id, &group_id, async || {
                                 crate::groups::edit_group_message(
@@ -622,6 +689,14 @@ impl ChannelStreamOutbound for NostrOutbound {
                             .await;
                         if let Err(ref e) = result {
                             tracing::warn!(account_id, "streamed edit not published: {e}");
+                            // Revoked mid-answer: the reply is frozen partway
+                            // through a sentence, and leaving it there is its
+                            // own kind of speech. Withdraw it and stop.
+                            self.withdraw_partial_reply(account_id, &client, &group_id, target)
+                                .await;
+                            return Err(result.err().unwrap_or_else(|| {
+                                moltis_channels::Error::unavailable("group send revoked")
+                            }));
                         }
                         last_edit = tokio::time::Instant::now();
                         // Keep the flag set when the edit failed: it means
@@ -656,6 +731,14 @@ impl ChannelStreamOutbound for NostrOutbound {
                 } else {
                     None
                 };
+                if revoked.is_some() {
+                    // The published text is missing everything after the last
+                    // successful edit, and no further edit is permitted, so it
+                    // can never be completed. Take it back rather than leave a
+                    // half-answer attributed to the bot.
+                    self.withdraw_partial_reply(account_id, &client, &group_id, target)
+                        .await;
+                }
                 // Counted here rather than after the match: the initial publish
                 // went through `send_group_message`, which records no metrics,
                 // and the edits that follow are all the same logical message.

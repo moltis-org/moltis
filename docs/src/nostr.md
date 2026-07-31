@@ -200,8 +200,9 @@ that a conversation happened.
 
 Withdrawing the bot from a group stops new reactions, but it can still take back
 one it already placed — otherwise its last 👀 would sit on someone's message
-permanently. A retraction that fails to reach the relay is retried a few times
-before the bot gives up, since nothing revisits the turn once it has finished.
+permanently. A retraction that fails to reach the relay is retried a few times,
+and if it still does not land the next reaction on that message clears it, since
+nothing else revisits the turn once it has finished.
 
 ### Message Kinds (kind:9 vs kind:40002)
 
@@ -247,8 +248,12 @@ already withdrawn the bot from.
 This is enforced at the publish itself, under the same lock the settings save
 takes. Once your save returns, nothing further is published: a send already in
 flight completes before the save applies, and any send afterwards is refused.
-A long streamed reply stops mid-answer rather than finishing; the text already
-posted stays, since a NIP-09 deletion is only a request the relay may ignore.
+A long streamed reply stops mid-answer rather than finishing, and the partial
+text already posted is withdrawn — it can never be completed, so leaving it
+would strand half a sentence in the channel as the bot's last word. Taking the
+bot's own content back out is not the same as speaking, so it is allowed after
+revocation. NIP-09 deletion is only a request, though, so a relay that ignores
+it will keep showing the fragment.
 
 ### Access Control
 

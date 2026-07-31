@@ -647,12 +647,23 @@ async fn revoking_the_group_mid_stream_publishes_no_further_events() {
             .is_empty(),
         "no edit may be published after group access was revoked"
     );
-    assert_eq!(
+
+    // The half-written reply is taken back rather than left standing. It can
+    // never be completed — no further edit is permitted — so leaving it would
+    // strand a partial sentence in the channel as the bot's final word.
+    let deletions = fetch_kind(&client, Kind::EventDeletion).await;
+    let deletion = deletions
+        .first()
+        .expect("the truncated reply must be withdrawn");
+    assert_eq!(tag_values(deletion, TagKind::e())[0], [
+        "e".to_string(),
+        published.id.to_hex()
+    ]);
+    assert!(
         fetch_kind(&client, groups::buzz_stream_message_kind())
             .await
-            .len(),
-        1,
-        "the message published while authorized is the only one"
+            .is_empty(),
+        "the relay honoured the withdrawal, so nothing of the reply remains"
     );
 }
 
@@ -764,7 +775,7 @@ async fn a_reaction_can_still_be_retracted_after_the_group_is_revoked() {
     // Operator withdraws the bot mid-turn.
     config.write().await.groups.clear();
 
-    // Publishing anything new is refused...
+    // The terminal ✅ is refused — nothing new may be published...
     assert!(
         outbound
             .add_reaction("acct", &chat_id, &target.to_hex(), "white_check_mark")
@@ -772,22 +783,14 @@ async fn a_reaction_can_still_be_retracted_after_the_group_is_revoked() {
             .is_err(),
         "a revoked group must not accept a new reaction"
     );
-    assert_eq!(
-        fetch_kind(&client, Kind::Reaction).await.len(),
-        1,
-        "no further reaction may reach the relay"
-    );
 
-    // ...but the acknowledgement already placed can still be taken back.
-    outbound
-        .remove_reaction("acct", &chat_id, &target.to_hex(), "eyes")
-        .await
-        .expect("retract");
-
+    // ...but that same attempt clears the 👀 on its way through, which is the
+    // retry path for a retraction nothing else revisits. The deletion carries
+    // the group's `h` tag and names the reaction, not the message.
     let deletions = fetch_kind(&client, Kind::EventDeletion).await;
     let deletion = deletions
         .first()
-        .expect("retraction must still be published after revocation");
+        .expect("the stale acknowledgement must be withdrawn after revocation");
     assert_eq!(tag_values(deletion, TagKind::e())[0], [
         "e".to_string(),
         reaction.to_hex()
@@ -796,6 +799,16 @@ async fn a_reaction_can_still_be_retracted_after_the_group_is_revoked() {
         "h".to_string(),
         "buzz-general".to_string()
     ]);
+    assert!(
+        fetch_kind(&client, Kind::Reaction).await.is_empty(),
+        "the relay honoured the withdrawal, so no acknowledgement is left behind"
+    );
+
+    // Retracting again is a no-op: it has already gone.
+    outbound
+        .remove_reaction("acct", &chat_id, &target.to_hex(), "eyes")
+        .await
+        .expect("second retraction is a no-op");
 }
 
 /// The property the async config lock exists for: a settings save that

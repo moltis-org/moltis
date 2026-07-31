@@ -130,6 +130,23 @@ impl ReplyContexts {
             .map(|(reaction, _)| *reaction)
     }
 
+    /// Every reaction still recorded for `target` other than `except`.
+    ///
+    /// The acknowledgement lifecycle is 👀, then ✅ or ❌ replacing it, so by
+    /// the time a new emoji is published anything else still recorded for that
+    /// message is a retraction that did not go through. Returning them lets the
+    /// next publish clear them while it is already talking to the relay —
+    /// otherwise nothing revisits a failed retraction, because the gateway's
+    /// reaction worker ends the turn immediately after it.
+    #[must_use]
+    pub fn stale_reactions(&self, target: EventId, except: &str) -> Vec<(String, EventId)> {
+        self.reactions
+            .iter()
+            .filter(|((event, emoji), _)| *event == target && emoji != except)
+            .map(|((_, emoji), (reaction, _))| (emoji.clone(), *reaction))
+            .collect()
+    }
+
     /// Drop a reaction mapping once its deletion has been published.
     pub fn forget_reaction(&mut self, target: EventId, emoji: &str) {
         self.reactions.remove(&(target, emoji.to_string()));
