@@ -635,6 +635,25 @@ mod tests {
     /// A mock outbound that records the reaction add/remove operations in order.
     struct RecordingOutbound {
         ops: Arc<StdMutex<Vec<String>>>,
+        /// Report every retraction as failed, like a channel whose own retries
+        /// are exhausted (Nostr, once a relay keeps refusing the deletion).
+        retraction_fails: bool,
+    }
+
+    impl RecordingOutbound {
+        fn new(ops: Arc<StdMutex<Vec<String>>>) -> Self {
+            Self {
+                ops,
+                retraction_fails: false,
+            }
+        }
+
+        fn failing_retractions(ops: Arc<StdMutex<Vec<String>>>) -> Self {
+            Self {
+                ops,
+                retraction_fails: true,
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -672,13 +691,16 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .push(format!("-{emoji}"));
+            if self.retraction_fails {
+                return Err(moltis_channels::Error::unavailable("retraction refused"));
+            }
             Ok(())
         }
     }
 
     async fn run_lifecycle(outcome: ChannelAckOutcome) -> Vec<String> {
         let ops = Arc::new(StdMutex::new(Vec::new()));
-        let outbound = Arc::new(RecordingOutbound { ops: ops.clone() });
+        let outbound = Arc::new(RecordingOutbound::new(ops.clone()));
         let controller =
             ChannelReactionController::start(outbound, "a".into(), "c".into(), "m".into());
         // Let the worker apply the initial 👀 before signalling completion.
@@ -710,10 +732,34 @@ mod tests {
         ]);
     }
 
+    /// A channel that cannot retract must not take the turn down with it.
+    ///
+    /// By the time a retraction is reported as failed the channel has exhausted
+    /// its own retries, so there is nothing left to attempt here — the worker
+    /// logs it and finishes. What matters is that the terminal ✅ still lands
+    /// (the run's outcome is reported even though the 👀 is stuck beside it) and
+    /// that the worker exits rather than hanging on the failure.
+    #[tokio::test]
+    async fn a_retraction_the_channel_refuses_still_leaves_the_terminal() {
+        let ops = Arc::new(StdMutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingOutbound::failing_retractions(ops.clone()));
+        let controller =
+            ChannelReactionController::start(outbound, "a".into(), "c".into(), "m".into());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        controller
+            .note(ChannelActivity::Finished(ChannelAckOutcome::Success))
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // The retraction was attempted and refused; 👀 stays on the message,
+        // which is why the failure is logged at `warn!` rather than swallowed.
+        assert_eq!(ops_of(&ops), vec!["+👀", "+✅", "-👀"]);
+    }
+
     #[tokio::test]
     async fn tool_phase_swaps_marker_then_terminal() {
         let ops = Arc::new(StdMutex::new(Vec::new()));
-        let outbound = Arc::new(RecordingOutbound { ops: ops.clone() });
+        let outbound = Arc::new(RecordingOutbound::new(ops.clone()));
         let controller =
             ChannelReactionController::start(outbound, "a".into(), "c".into(), "m".into());
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -735,7 +781,7 @@ mod tests {
     /// Build a registry with one parked acknowledgment; returns its ops log.
     async fn park(registry: &ReactionRegistry, key: &str) -> Arc<StdMutex<Vec<String>>> {
         let ops = Arc::new(StdMutex::new(Vec::new()));
-        let outbound = Arc::new(RecordingOutbound { ops: ops.clone() });
+        let outbound = Arc::new(RecordingOutbound::new(ops.clone()));
         let controller =
             ChannelReactionController::start(outbound, "a".into(), "c".into(), key.into());
         registry.register_pending(key.to_string(), controller).await;
@@ -925,9 +971,7 @@ mod tests {
         let registry = ReactionRegistry::default();
         let first = park(&registry, "msg-a").await;
         let second_ops = Arc::new(StdMutex::new(Vec::new()));
-        let outbound = Arc::new(RecordingOutbound {
-            ops: second_ops.clone(),
-        });
+        let outbound = Arc::new(RecordingOutbound::new(second_ops.clone()));
         let replacement =
             ChannelReactionController::start(outbound, "a".into(), "c".into(), "msg-a".into());
         registry
