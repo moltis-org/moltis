@@ -253,6 +253,10 @@ here as the operator list. An empty `allowed_pubkeys` means nobody may run
 them, so they fail closed. The refusal is posted in the channel rather than
 ignored.
 
+The same list authorizes the gateway's privileged commands (`/approve`,
+`/deny`, `/update`) from both DMs and groups. Entries may be written in either
+`npub1...` or hex form — they are compared as parsed keys, not as text.
+
 ### Setup
 
 1. Generate the bot's key pair (see [Prerequisites](#prerequisites)) and share

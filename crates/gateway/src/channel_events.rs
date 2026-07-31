@@ -131,18 +131,15 @@ async fn is_sender_on_allowlist(
     let Some(config) = registry.account_config(account_id).await else {
         return false;
     };
-    let allowlist = config.allowlist();
     // Empty allowlist = open policy → no explicit authorization.
-    if allowlist.is_empty() {
+    if config.allowlist().is_empty() {
         return false;
     }
-    // Check the full sender_id first, then try the user part before '@'
-    // (WhatsApp JIDs are e.g. "15551234567@s.whatsapp.net" but allowlists
-    // use plain phone numbers like "15551234567").
-    moltis_channels::gating::is_allowed(sender_id, allowlist)
-        || sender_id
-            .split_once('@')
-            .is_some_and(|(user, _)| moltis_channels::gating::is_allowed(user, allowlist))
+    // Delegated to the channel: matching an identity against the allowlist is
+    // the channel's own semantics, not a string comparison the gateway can do
+    // for every protocol (a Nostr key has two spellings, a WhatsApp JID carries
+    // a domain the allowlist omits).
+    config.sender_on_allowlist(sender_id)
 }
 
 fn is_attachable_session(entry: &SessionEntry) -> bool {

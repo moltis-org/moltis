@@ -6,6 +6,7 @@ use {
         gating::{DmPolicy, GroupPolicy, MentionMode},
     },
     moltis_common::secret_serde,
+    nostr_sdk::prelude::PublicKey,
     secrecy::Secret,
     serde::{Deserialize, Serialize, ser::SerializeStruct},
 };
@@ -219,6 +220,25 @@ impl ChannelConfigView for NostrAccountConfig {
     fn agent_id(&self) -> Option<&str> {
         self.agent_id.as_deref()
     }
+
+    /// A Nostr identity has two textual spellings — `npub1…` bech32 and 64-char
+    /// hex — and both are valid in `allowed_pubkeys`. The channel always reports
+    /// the sender as hex, so plain string comparison locks out every operator
+    /// who configured the npub form the docs and web UI show. Compare parsed
+    /// keys so the two are interchangeable, then fall back to the textual
+    /// default, which is what keeps glob entries working.
+    fn sender_on_allowlist(&self, sender_id: &str) -> bool {
+        if let Ok(sender) = PublicKey::parse(sender_id)
+            && self
+                .allowed_pubkeys
+                .iter()
+                .filter_map(|entry| PublicKey::parse(entry).ok())
+                .any(|allowed| allowed == sender)
+        {
+            return true;
+        }
+        moltis_channels::gating::sender_matches_allowlist(sender_id, &self.allowed_pubkeys)
+    }
 }
 
 #[cfg(test)]
@@ -267,6 +287,52 @@ mod tests {
         let parsed = parsed.unwrap_or_default();
         assert_eq!(parsed.dm_policy, DmPolicy::Open);
         assert_eq!(parsed.relays, vec!["wss://test.relay"]);
+    }
+
+    /// `/approve` and friends authorize against this, and the channel always
+    /// reports the sender as hex — so an operator who configured the npub form
+    /// (what the docs and the web UI show) must still be recognised.
+    #[test]
+    fn allowlist_accepts_either_spelling_of_the_same_key() {
+        use nostr_sdk::prelude::{Keys, ToBech32};
+
+        let operator = Keys::generate().public_key();
+        let hex = operator.to_hex();
+        let npub = operator.to_bech32().unwrap_or_default();
+        assert!(npub.starts_with("npub1"), "precondition: bech32 form");
+
+        for configured in [&hex, &npub] {
+            let cfg = NostrAccountConfig {
+                allowed_pubkeys: vec![configured.clone()],
+                ..Default::default()
+            };
+            assert!(
+                cfg.sender_on_allowlist(&hex),
+                "sender hex must match an allowlist written as {configured}"
+            );
+        }
+    }
+
+    #[test]
+    fn allowlist_rejects_a_different_key() {
+        let cfg = NostrAccountConfig {
+            allowed_pubkeys: vec![nostr_sdk::prelude::Keys::generate().public_key().to_hex()],
+            ..Default::default()
+        };
+        let stranger = nostr_sdk::prelude::Keys::generate().public_key().to_hex();
+        assert!(!cfg.sender_on_allowlist(&stranger));
+    }
+
+    /// Parsed comparison must not cost the textual features: a glob entry is
+    /// not a key, so it has to keep falling through to string matching.
+    #[test]
+    fn allowlist_still_honours_glob_entries() {
+        let cfg = NostrAccountConfig {
+            allowed_pubkeys: vec!["npub1abc*".into()],
+            ..Default::default()
+        };
+        assert!(cfg.sender_on_allowlist("npub1abcdef"));
+        assert!(!cfg.sender_on_allowlist("npub1zzz"));
     }
 
     #[test]
