@@ -117,24 +117,7 @@ impl ChannelPlugin for NostrPlugin {
             "starting Nostr account"
         );
 
-        // Build the nostr-sdk client with both trust-relevant options pinned
-        // explicitly rather than inherited from upstream defaults:
-        //
-        // * `verify_subscriptions` (off by default) makes the SDK drop events
-        //   that do not match the filters we asked for. Relays are untrusted
-        //   and can push anything down the socket, and an inbound event is
-        //   agent input — so this is a prompt-injection boundary, not a tidiness
-        //   knob. Group access is re-checked in `bus` regardless.
-        // * NIP-42 auto-authentication is already the upstream default, but
-        //   Buzz relays challenge every connection before granting NIP-29 group
-        //   scopes, so state it here to keep it from silently regressing.
-        let opts = ClientOptions::new()
-            .verify_subscriptions(true)
-            .automatic_authentication(true);
-        let client = Client::builder()
-            .signer(bot_keys.clone())
-            .opts(opts)
-            .build();
+        let client = crate::client::build_client(bot_keys.clone());
 
         // Add relays
         for relay_url in &nostr_config.relays {

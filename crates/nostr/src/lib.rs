@@ -1,5 +1,6 @@
 pub mod access;
 pub mod bus;
+pub mod client;
 pub mod config;
 pub mod error;
 pub mod gift_wrap;
