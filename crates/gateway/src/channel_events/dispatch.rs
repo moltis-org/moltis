@@ -11,17 +11,15 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         // does not delay channel feedback.
         let typing_done = start_channel_typing_loop(state, &reply_to);
 
-        // Acknowledge receipt with a reaction (👀) on the exact inbound message
-        // before any reply text arrives. No-op unless the channel populated
-        // `ack_message_id` (i.e. the bot was directly addressed and reactions
-        // are enabled). Finalized to ✅/❌ after the turn completes below.
-        channel_ack_received(state, &reply_to).await;
-
         let session_key = if let Some(ref sm) = state.services.session_metadata {
             resolve_channel_session(&reply_to, sm).await
         } else {
             default_channel_session_key(&reply_to)
         };
+        // Register before authorization so a directly addressed but denied turn
+        // still settles its per-message reaction instead of leaving 👀 behind.
+        let ack_key = register_channel_reaction_controller(state, &reply_to).await;
+
         // Privilege is resolved per inbound message, never per session:
         // command mode is shared by everyone in the chat, so an operator
         // enabling it must not hand the shell to the other participants.
@@ -42,7 +40,12 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             if let Some(done_tx) = typing_done {
                 let _ = done_tx.send(());
             }
-            channel_ack_finish(state, &reply_to, false).await;
+            if let Some(ref key) = ack_key {
+                state
+                    .channel_reaction_controllers
+                    .finalize_keys(std::slice::from_ref(key), ChannelAckOutcome::Failure)
+                    .await;
+            }
             if let Some(outbound) = state.services.channel_outbound_arc()
                 && let Err(send_err) = outbound
                     .send_text(
@@ -173,7 +176,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             "_session_key": &session_key,
             // Defer reply-target registration until chat.send() actually
             // starts executing this message (after semaphore acquire).
-            "_channel_reply_target": &reply_to,
+            moltis_chat::params::CHANNEL_REPLY_TARGET: &reply_to,
             "_native_channel_request": true,
         });
 
@@ -185,6 +188,13 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         // narrowing that guard would have silently opened this one.
         if !trusted_channel_turn {
             apply_untrusted_channel_context(&mut params);
+        }
+
+        // Carry this message's acknowledgment identity into the run so the
+        // reaction follows the message itself — through queueing and replay —
+        // rather than whatever else shares the session.
+        if let Some(ref key) = ack_key {
+            params[moltis_chat::params::ACK_KEYS] = serde_json::json!([key]);
         }
 
         // Attach thread context if available.
@@ -277,8 +287,10 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             let _ = done_tx.send(());
         }
 
-        // Swap the 👀 acknowledgment for ✅ (success) or ❌ (failure).
-        channel_ack_finish(state, &reply_to, send_result.is_ok()).await;
+        // Only finalize the reaction here for early returns where the run never
+        // executes (rejection/error before spawn). Normal runs finalize from the
+        // run's completion via `note_channel_activity`.
+        finalize_reaction_on_early_return(state, ack_key.as_ref(), &send_result).await;
 
         if let Err(e) = send_result {
             error!("channel dispatch_to_chat failed: {e}");

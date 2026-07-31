@@ -817,8 +817,9 @@ port = {port}                           # Port number (auto-generated for this i
 # allowlist = []
 # operators = []             # Exact sender IDs allowed to run privileged commands; empty means nobody.
 # thread_replies = true
-# ack_reactions = true       # 👀 on receipt, ✅/❌ on completion (DMs + @mentions)
+# ack_reactions = true       # 👀 on receipt, phase emoji while working, ✅/❌ on completion
 # reaction_triggers = false  # route user reactions into the agent (react ✅ to approve)
+# rich_blocks = false        # render replies as Block Kit blocks (fallback to plain text)
 # otp_self_approval = true
 # otp_cooldown_secs = 300
 

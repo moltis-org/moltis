@@ -17,8 +17,8 @@ use crate::{
     agent_loop::run_explicit_shell_command,
     channels::deliver_channel_error,
     message::{
-        apply_message_received_rewrite, infer_reply_medium, to_user_content,
-        user_audio_path_from_params, user_documents_for_persistence, user_documents_from_params,
+        apply_message_received_rewrite, to_user_content, user_audio_path_from_params,
+        user_documents_for_persistence, user_documents_from_params,
     },
     prompt::{
         apply_request_runtime_context, build_prompt_runtime_context, discover_skills_if_enabled,
@@ -31,8 +31,16 @@ use crate::{
 };
 
 use {
-    super::{queue_drain, *},
-    crate::service::build_persisted_assistant_message,
+    super::*,
+    crate::service::{
+        build_persisted_assistant_message,
+        types::{TurnAdmission, commit_successful_turn, commit_terminal_run},
+    },
+};
+
+use super::{
+    queue_drain,
+    send_params::{SendParams, parse, turn_result},
 };
 
 use {
@@ -48,81 +56,23 @@ impl LiveChatService {
         completion: Option<oneshot::Sender<ServiceResult>>,
         queue_if_busy: bool,
     ) -> ServiceResult {
-        let history_limits = params
-            .get("_history_limits")
-            .and_then(Value::as_object)
-            .and_then(|limits| {
-                let max_messages = usize::try_from(limits.get("max_messages")?.as_u64()?).ok()?;
-                let max_bytes = usize::try_from(limits.get("max_bytes")?.as_u64()?).ok()?;
-                Some((max_messages, max_bytes))
-            });
-        // Support both text-only and multimodal content.
-        // - "text": string → plain text message
-        // - "content": array → multimodal content (text + images)
-        //
-        // Note: `text` and `message_content` are `mut` because a
-        // `MessageReceived` hook may return `ModifyPayload` to rewrite the
-        // inbound message before the turn begins (see GH #639).
-        let (mut text, mut message_content) = if let Some(content) = params.get("content") {
-            // Multimodal content - extract text for logging/hooks, parse into typed blocks
-            let text_part = content
-                .as_array()
-                .and_then(|arr| {
-                    arr.iter()
-                        .find(|block| block.get("type").and_then(|t| t.as_str()) == Some("text"))
-                        .and_then(|block| block.get("text").and_then(|t| t.as_str()))
-                })
-                .unwrap_or("[Image]")
-                .to_string();
+        let SendParams {
+            history_limits,
+            mut text,
+            mut message_content,
+            desired_reply_medium,
+            conn_id,
+            explicit_model,
+            tool_controls,
+            request_tool_policy,
+            ephemeral,
+            stream_only,
+        } = parse(&params, self.has_tools_sync())?;
 
-            // Parse JSON blocks into typed ContentBlock structs
-            let blocks: Vec<ContentBlock> = content
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|block| {
-                            let block_type = block.get("type")?.as_str()?;
-                            match block_type {
-                                "text" => {
-                                    let text = block.get("text")?.as_str()?.to_string();
-                                    Some(ContentBlock::text(text))
-                                },
-                                "image_url" => {
-                                    let url = block.get("image_url")?.get("url")?.as_str()?;
-                                    Some(ContentBlock::ImageUrl {
-                                        image_url: moltis_sessions::message::ImageUrl {
-                                            url: url.to_string(),
-                                        },
-                                    })
-                                },
-                                _ => None,
-                            }
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            (text_part, MessageContent::Multimodal(blocks))
-        } else {
-            let text = params
-                .get("text")
-                .or_else(|| params.get("message"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "missing 'text', 'message', or 'content' parameter".to_string())?
-                .to_string();
-            (text.clone(), MessageContent::Text(text))
-        };
-        let desired_reply_medium = infer_reply_medium(&params, &text);
-
-        let conn_id = params
-            .get("_conn_id")
-            .and_then(|v| v.as_str())
-            .map(String::from);
         // Resolve session key from explicit overrides, public request params, or connection context.
         let session_key = self.resolve_session_key_from_params(&params).await;
-        // Must be the same predicate the gateway authorizes on and the runner
-        // executes on. A local variant would let a form one side treats as
-        // `/sh` (e.g. `/sh@bot ls`) skip the untrusted ceiling here while
-        // running as an ordinary agent turn with the full registry.
+        // Use exactly the gateway/runner predicate so authorized `/sh` forms
+        // cannot fall through into a less restricted agent turn.
         let explicit_shell_command = match &message_content {
             MessageContent::Text(raw) => moltis_agents::runner::explicit_shell_command(raw),
             MessageContent::Multimodal(_) => None,
@@ -137,9 +87,13 @@ impl LiveChatService {
             );
         }
 
-        // Request-scoped restrictions must be resolved after channel binding
-        // so web and native channel turns share the same execution boundary.
-        let request_tool_policy = tool_policy::parse_request_tool_policy(&params)?;
+        // Resolve request restrictions after channel binding, which can only
+        // narrow caller-supplied policy and private-context access.
+        let request_tool_policy = if channel_bound_web {
+            tool_policy::parse_request_tool_policy(&params)?
+        } else {
+            request_tool_policy
+        };
         let request_tool_audience = tool_policy::parse_request_tool_audience(&params)?;
         let private_context = tool_policy::allows_private_context(&params);
         if !private_context {
@@ -152,31 +106,15 @@ impl LiveChatService {
         )
         .await;
 
-        let explicit_model = params.get("model").and_then(|v| v.as_str());
-        let tool_controls =
-            moltis_config::schema::AgentToolControls::from_tool_context(Some(&params));
-        let ephemeral = params
-            .get("_ephemeral")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        // Use streaming-only mode if explicitly requested or if no tools are registered.
-        let explicit_stream_only = params
-            .get("stream_only")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let has_tools = self.has_tools_sync();
-        let stream_only = explicit_stream_only || !has_tools;
-        tracing::debug!(
-            explicit_stream_only,
-            has_tools,
-            stream_only,
-            "send() mode decision"
-        );
-
         let queued_replay = params
             .get("_queued_replay")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+
+        // Carried through queueing/replay so reactions follow the message.
+        let ack_keys = crate::channel_acks::ack_keys_from_params(&params);
+        // This identity owns all activity and cleanup for the admitted turn.
+        let run_id = uuid::Uuid::new_v4().to_string();
 
         // Track client-side sequence number for ordering diagnostics.
         // Note: seq resets to 1 on page reload, so a drop from a high value
@@ -240,44 +178,58 @@ impl LiveChatService {
         // session, queue immediately instead of letting a follow-up request
         // contend with the active run's locks.
         let message_queue_mode = self.config.chat.message_queue_mode;
-        let session_sem = self.session_semaphore(&session_key).await;
-        let permit: OwnedSemaphorePermit = match session_sem.clone().try_acquire_owned() {
-            Ok(p) => {
+        let admission = if queue_if_busy && explicit_shell_command.is_none() {
+            let mut queued_params = params.clone();
+            // Delayed channel turns cannot retain authorization that may be
+            // revoked before replay. The original params remain available if
+            // admission succeeds immediately.
+            if tool_policy::downgrade_queued_channel_request(&mut queued_params, private_context) {
+                public_context::mark_public_channel(&mut queued_params);
+            }
+            self.admit_turn(&session_key, queued_params, queued_replay)
+                .await
+        } else {
+            let session_sem = self.session_semaphore(&session_key).await;
+            let queues = self.message_queue.write().await;
+            if queues
+                .get(&session_key)
+                .is_some_and(|queue| queue.draining || !queue.messages.is_empty())
+            {
+                return Err(if explicit_shell_command.is_some() {
+                    "shell commands cannot be queued; retry when the active run finishes".into()
+                } else {
+                    "session already has an active turn".into()
+                });
+            }
+            let permit = match session_sem.try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    return Err(if explicit_shell_command.is_some() {
+                        "shell commands cannot be queued; retry when the active run finishes".into()
+                    } else {
+                        "session already has an active turn".into()
+                    });
+                },
+            };
+            drop(queues);
+            TurnAdmission::Acquired(permit)
+        };
+        let permit: OwnedSemaphorePermit = match admission {
+            TurnAdmission::Acquired(p) => {
                 info!(
                     session = %session_key,
                     client_seq = ?client_seq,
                     queued_replay,
                     "chat.send: acquired session permit"
                 );
+                // This call owns the session and will execute: claim its acks.
+                self.state
+                    .activate_channel_acks(&run_id, &session_key, ack_keys.clone())
+                    .await;
                 p
             },
-            Err(_) => {
-                if !queue_if_busy {
-                    return Err("session already has an active turn".into());
-                }
-                // Privileged shell requests must be authorized immediately
-                // before execution. Do not retain them for delayed replay after
-                // an operator may have been revoked.
-                if explicit_shell_command.is_some() {
-                    return Err(
-                        "shell commands cannot be queued; retry when the active run finishes"
-                            .into(),
-                    );
-                }
-                // Authorization can change before replay. Delayed channel
-                // turns always execute with no tools or private context.
-                if tool_policy::downgrade_queued_channel_request(&mut params, private_context) {
-                    public_context::mark_public_channel(&mut params);
-                }
+            TurnAdmission::Queued(position) => {
                 let queue_mode = message_queue_mode;
-                let position = {
-                    let mut q = self.message_queue.write().await;
-                    let entry = q.entry(session_key.clone()).or_default();
-                    entry.push(QueuedMessage {
-                        params: params.clone(),
-                    });
-                    entry.len()
-                };
                 info!(
                     session = %session_key,
                     mode = ?queue_mode,
@@ -311,10 +263,11 @@ impl LiveChatService {
                 .as_ref()
                 .is_some_and(|policy| !policy.is_allowed("exec"))
             {
+                self.finish_unstarted_turn(&run_id, &session_key, permit, queued_replay)
+                    .await;
                 return Err("exec tool is denied by the request tool policy".into());
             }
             // Generate run_id early so we can link the user message to this run.
-            let run_id = uuid::Uuid::new_v4().to_string();
             let run_id_clone = run_id.clone();
             let channel_meta = params.get("channel").cloned();
             let user_audio = user_audio_path_from_params(&params, &session_key);
@@ -332,7 +285,14 @@ impl LiveChatService {
                 run_id: Some(run_id.clone()),
             };
 
-            let history = self.load_turn_history(&session_key, history_limits).await?;
+            let history = match self.load_turn_history(&session_key, history_limits).await {
+                Ok(history) => history,
+                Err(error) => {
+                    self.finish_unstarted_turn(&run_id, &session_key, permit, queued_replay)
+                        .await;
+                    return Err(error);
+                },
+            };
             let user_message_index = history.len();
 
             // Ensure the session exists in metadata and counts are up to date.
@@ -348,23 +308,22 @@ impl LiveChatService {
             // Web turns on a channel-bound session were rejected above, and
             // `apply_channel_bound_public_context` is what derives a target from
             // the session's binding for every other request.
-            let deferred_channel_target =
-                params
-                    .get("_channel_reply_target")
-                    .cloned()
-                    .and_then(|value| {
-                        match serde_json::from_value::<moltis_channels::ChannelReplyTarget>(value) {
-                            Ok(target) => Some(target),
-                            Err(e) => {
-                                warn!(
-                                    session = %session_key,
-                                    error = %e,
-                                    "ignoring invalid _channel_reply_target for /sh"
-                                );
-                                None
-                            },
-                        }
-                    });
+            let deferred_channel_target = params
+                .get(crate::params::CHANNEL_REPLY_TARGET)
+                .cloned()
+                .and_then(|value| {
+                    match serde_json::from_value::<moltis_channels::ChannelReplyTarget>(value) {
+                        Ok(target) => Some(target),
+                        Err(e) => {
+                            warn!(
+                                session = %session_key,
+                                error = %e,
+                                "ignoring invalid _channel_reply_target for /sh"
+                            );
+                            None
+                        },
+                    }
+                });
 
             info!(
                 run_id = %run_id,
@@ -423,9 +382,9 @@ impl LiveChatService {
                 .await;
             let working_dir = working_dir.map(|directory| directory.display().to_string());
 
-            let (start_tx, start_rx) = oneshot::channel();
+            let (start_run, run_registered) = tokio::sync::oneshot::channel();
             let handle = tokio::spawn(async move {
-                if start_rx.await.is_err() {
+                if run_registered.await.is_err() {
                     return;
                 }
                 let permit = permit; // hold permit until command run completes
@@ -440,9 +399,9 @@ impl LiveChatService {
                 let assistant_output = run_explicit_shell_command(
                     &state,
                     &run_id_clone,
+                    &terminal_runs,
                     &tool_registry,
                     (!ephemeral).then_some(&session_store),
-                    &terminal_runs,
                     &session_key_clone,
                     &shell_command,
                     user_message_index,
@@ -453,25 +412,44 @@ impl LiveChatService {
                 )
                 .await;
 
+                let mut assistant_output = assistant_output;
                 let completion_result = Ok(turn_result(&assistant_output));
-                let assistant_msg = build_persisted_assistant_message(
-                    assistant_output,
-                    None,
-                    None,
-                    client_seq,
-                    Some(run_id_clone.clone()),
-                );
-                if !ephemeral {
-                    if let Err(e) = session_store
-                        .append(&session_key_clone, &assistant_msg.to_value())
-                        .await
-                    {
-                        warn!("failed to persist /sh assistant message: {e}");
-                    }
-                    if let Ok(count) = session_store.count(&session_key_clone).await {
-                        session_metadata.touch(&session_key_clone, count).await;
-                    }
-                }
+                let final_payload = assistant_output.final_broadcast.take();
+                let assistant_msg = (!ephemeral).then(|| {
+                    build_persisted_assistant_message(
+                        assistant_output,
+                        None,
+                        None,
+                        client_seq,
+                        Some(run_id_clone.clone()),
+                    )
+                });
+                commit_successful_turn(
+                    &terminal_runs,
+                    &run_id_clone,
+                    async {
+                        if let Some(assistant_msg) = assistant_msg {
+                            if let Err(e) = session_store
+                                .append(&session_key_clone, &assistant_msg.to_value())
+                                .await
+                            {
+                                warn!("failed to persist /sh assistant message: {e}");
+                            }
+                            if let Ok(count) = session_store.count(&session_key_clone).await {
+                                session_metadata.touch(&session_key_clone, count).await;
+                            }
+                        }
+
+                        // Explicit /sh runs never reach the model completion path.
+                        crate::channel_acks::note_turn_finished(&state, &run_id_clone, true).await;
+                    },
+                    async {
+                        if let Some(payload) = final_payload {
+                            broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
+                        }
+                    },
+                )
+                .await;
 
                 active_runs.write().await.remove(&run_id_clone);
                 let mut runs_by_session = active_runs_by_session.write().await;
@@ -495,23 +473,24 @@ impl LiveChatService {
                 if let Some(completion) = completion {
                     let _ = completion.send(completion_result);
                 }
-                let chat = state_for_drain.chat_service().await;
-                queue_drain::drain_queued_messages(
+                queue_drain::drain_and_replay(
                     &message_queue,
                     &session_key_clone,
                     message_queue_mode,
-                    &chat,
+                    &state_for_drain,
                 )
                 .await;
             });
 
-            {
-                let mut runs_by_session = self.active_runs_by_session.write().await;
-                let mut active_runs = self.active_runs.write().await;
-                active_runs.insert(run_id.clone(), handle.abort_handle());
-                runs_by_session.insert(session_key.clone(), run_id.clone());
-            }
-            let _ = start_tx.send(());
+            Self::register_run_handle(
+                &self.active_runs,
+                &self.active_runs_by_session,
+                &run_id,
+                &session_key,
+                handle.abort_handle(),
+            )
+            .await;
+            let _ = start_run.send(());
 
             info!(
                 run_id = %run_id,
@@ -532,48 +511,58 @@ impl LiveChatService {
         } else {
             None
         };
-        let model_id = explicit_model.or(session_model.as_deref());
+        let model_id = explicit_model.as_deref().or(session_model.as_deref());
 
-        let provider: Arc<dyn moltis_agents::model::LlmProvider> = {
+        let provider_result: Result<Arc<dyn moltis_agents::model::LlmProvider>, String> = {
             let reg = self.providers.read().await;
-            let primary = if let Some(id) = model_id {
+            let primary_result = if let Some(id) = model_id {
                 reg.get(id).ok_or_else(|| {
                     let available: Vec<_> =
                         reg.list_models().iter().map(|m| m.id.clone()).collect();
                     format!("model '{}' not found. available: {:?}", id, available)
-                })?
+                })
             } else if !stream_only {
                 reg.first_with_tools()
-                    .ok_or_else(|| "no LLM providers configured".to_string())?
+                    .ok_or_else(|| "no LLM providers configured".to_string())
             } else {
                 reg.first()
-                    .ok_or_else(|| "no LLM providers configured".to_string())?
+                    .ok_or_else(|| "no LLM providers configured".to_string())
             };
 
-            // When exact_model is set and the user explicitly selected a model,
-            // skip failover — use the chosen model or fail.
-            let user_selected = model_id.is_some();
-            let skip_failover = !self.failover_config.enabled
-                || (self.failover_config.exact_model && user_selected);
-
-            if skip_failover {
-                primary
-            } else {
-                let fallbacks = if self.failover_config.fallback_models.is_empty() {
-                    // Auto-build: same model on other providers first, then same
-                    // provider's other models, then everything else.
-                    reg.fallback_providers_for(primary.id(), primary.name())
-                } else {
-                    reg.providers_for_models(&self.failover_config.fallback_models)
-                };
-                if fallbacks.is_empty() {
-                    primary
-                } else {
-                    let mut chain = vec![primary];
-                    chain.extend(fallbacks);
-                    Arc::new(moltis_agents::provider_chain::ProviderChain::new(chain))
-                }
+            match primary_result {
+                Err(error) => Err(error),
+                Ok(primary) => {
+                    let user_selected = model_id.is_some();
+                    let skip_failover = !self.failover_config.enabled
+                        || (self.failover_config.exact_model && user_selected);
+                    if skip_failover {
+                        Ok(primary)
+                    } else {
+                        let fallbacks = if self.failover_config.fallback_models.is_empty() {
+                            reg.fallback_providers_for(primary.id(), primary.name())
+                        } else {
+                            reg.providers_for_models(&self.failover_config.fallback_models)
+                        };
+                        if fallbacks.is_empty() {
+                            Ok(primary)
+                        } else {
+                            let mut chain = vec![primary];
+                            chain.extend(fallbacks);
+                            Ok(Arc::new(moltis_agents::provider_chain::ProviderChain::new(
+                                chain,
+                            )))
+                        }
+                    }
+                },
             }
+        };
+        let provider = match provider_result {
+            Ok(provider) => provider,
+            Err(error) => {
+                self.finish_unstarted_turn(&run_id, &session_key, permit, queued_replay)
+                    .await;
+                return Err(error.into());
+            },
         };
         info!(
             session = %session_key,
@@ -598,6 +587,8 @@ impl LiveChatService {
                 "checking local model cache"
             );
             if let Err(e) = self.state.ensure_local_model_cached(&model_to_check).await {
+                self.finish_unstarted_turn(&run_id, &session_key, permit, queued_replay)
+                    .await;
                 return Err(format!("Failed to prepare local model: {}", e).into());
             }
             // Pre-load the model into RAM (broadcasts lifecycle events so the
@@ -615,12 +606,16 @@ impl LiveChatService {
             (None, None)
         };
 
-        // Generate run_id early so we can link the user message to its agent run.
-        let run_id = uuid::Uuid::new_v4().to_string();
-
         // Load conversation history (the current user message is NOT yet
         // persisted — run_streaming / run_agent_loop add it themselves).
-        let mut history = self.load_turn_history(&session_key, history_limits).await?;
+        let mut history = match self.load_turn_history(&session_key, history_limits).await {
+            Ok(history) => history,
+            Err(error) => {
+                self.finish_unstarted_turn(&run_id, &session_key, permit, queued_replay)
+                    .await;
+                return Err(error);
+            },
+        };
         let persisted_history_len = history.len();
         if !private_context {
             history = public_context::filter_public_history(history);
@@ -640,23 +635,22 @@ impl LiveChatService {
                 .await;
         }
 
-        let deferred_channel_target =
-            params
-                .get("_channel_reply_target")
-                .cloned()
-                .and_then(|value| {
-                    match serde_json::from_value::<moltis_channels::ChannelReplyTarget>(value) {
-                        Ok(target) => Some(target),
-                        Err(e) => {
-                            warn!(
-                                session = %session_key,
-                                error = %e,
-                                "ignoring invalid _channel_reply_target"
-                            );
-                            None
-                        },
-                    }
-                });
+        let deferred_channel_target = params
+            .get(crate::params::CHANNEL_REPLY_TARGET)
+            .cloned()
+            .and_then(|value| {
+                match serde_json::from_value::<moltis_channels::ChannelReplyTarget>(value) {
+                    Ok(target) => Some(target),
+                    Err(e) => {
+                        warn!(
+                            session = %session_key,
+                            error = %e,
+                            "ignoring invalid _channel_reply_target"
+                        );
+                        None
+                    },
+                }
+            });
 
         // Dispatch the `MessageReceived` hook before the turn starts. The
         // hook can:
@@ -748,6 +742,9 @@ impl LiveChatService {
                         BroadcastOpts::default(),
                     )
                     .await;
+
+                    self.finish_unstarted_turn(&run_id, &session_key, permit, queued_replay)
+                        .await;
 
                     return Ok(serde_json::json!({
                         "ok": false,
@@ -1013,7 +1010,19 @@ impl LiveChatService {
             match self.compact(compact_params).await {
                 Ok(_) => {
                     // Reload history after compaction.
-                    history = self.load_turn_history(&session_key, history_limits).await?;
+                    history = match self.load_turn_history(&session_key, history_limits).await {
+                        Ok(history) => history,
+                        Err(error) => {
+                            self.finish_unstarted_turn(
+                                &run_id,
+                                &session_key,
+                                permit,
+                                queued_replay,
+                            )
+                            .await;
+                            return Err(error);
+                        },
+                    };
                     // This `auto_compact done` event is a lifecycle
                     // signal for subscribers that pre-emptive
                     // auto-compact finished. The mode/token metadata
@@ -1116,9 +1125,9 @@ impl LiveChatService {
         let terminal_runs = Arc::clone(&self.terminal_runs);
         let deferred_channel_target = deferred_channel_target.clone();
 
-        let (start_tx, start_rx) = oneshot::channel();
+        let (start_run, run_registered) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn(async move {
-            if start_rx.await.is_err() {
+            if run_registered.await.is_err() {
                 return;
             }
             let permit = permit; // hold permit until agent run completes
@@ -1225,11 +1234,17 @@ impl LiveChatService {
             };
 
             let assistant_text = if outer_agent_timeout_secs > 0 {
-                match tokio::time::timeout(Duration::from_secs(outer_agent_timeout_secs), agent_fut)
-                    .await
-                {
-                    Ok(result) => result,
-                    Err(_) => {
+                tokio::pin!(agent_fut);
+                let deadline = tokio::time::sleep(Duration::from_secs(outer_agent_timeout_secs));
+                tokio::pin!(deadline);
+                tokio::select! {
+                    result = &mut agent_fut => result,
+                    () = &mut deadline => {
+                        // A committed run is only completing bounded final I/O;
+                        // do not replace an accepted channel final with timeout.
+                        if terminal_runs.read().await.contains(&run_id_clone) {
+                            agent_fut.await
+                        } else {
                         warn!(
                             run_id = %run_id_clone,
                             session = %session_key_clone,
@@ -1244,8 +1259,8 @@ impl LiveChatService {
                             "detail": detail,
                         });
                         state.set_run_error(&run_id_clone, detail.clone()).await;
+                        commit_terminal_run(&terminal_runs, &run_id_clone).await;
                         deliver_channel_error(&state, &session_key_clone, &error_obj).await;
-                        terminal_runs.write().await.insert(run_id_clone.clone());
                         broadcast(
                             &state,
                             "chat",
@@ -1259,7 +1274,8 @@ impl LiveChatService {
                         )
                         .await;
                         None
-                    },
+                        }
+                    }
                 }
             } else {
                 agent_fut.await
@@ -1274,23 +1290,43 @@ impl LiveChatService {
                     .into()),
             };
 
-            // Persist assistant response (even empty ones — needed for LLM history coherence).
-            if !ephemeral && let Some(assistant_output) = assistant_text {
-                let assistant_msg = build_persisted_assistant_message(
-                    assistant_output,
-                    Some(model_id.clone()),
-                    Some(provider_name.clone()),
-                    client_seq,
-                    Some(run_id_clone.clone()),
-                );
-                if let Err(e) = session_store
-                    .append(&session_key_clone, &assistant_msg.to_value())
-                    .await
-                {
-                    warn!("failed to persist assistant message: {e}");
-                }
+            // Channel delivery is complete when a successful output returns.
+            // Claim terminal ownership before persistence so abort cannot turn
+            // a committed assistant message into an aborted run.
+            if let Some(mut assistant_output) = assistant_text {
+                let final_payload = assistant_output.final_broadcast.take();
+                let assistant_msg = (!ephemeral).then(|| {
+                    build_persisted_assistant_message(
+                        assistant_output,
+                        Some(model_id.clone()),
+                        Some(provider_name.clone()),
+                        client_seq,
+                        Some(run_id_clone.clone()),
+                    )
+                });
+                commit_successful_turn(
+                    &terminal_runs,
+                    &run_id_clone,
+                    async {
+                        if let Some(assistant_msg) = assistant_msg
+                            && let Err(e) = session_store
+                                .append(&session_key_clone, &assistant_msg.to_value())
+                                .await
+                        {
+                            warn!("failed to persist assistant message: {e}");
+                        }
+                        crate::channel_acks::note_turn_finished(&state, &run_id_clone, true).await;
+                    },
+                    async {
+                        if let Some(payload) = final_payload {
+                            broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
+                        }
+                    },
+                )
+                .await;
+
                 // Update metadata counts.
-                if let Ok(count) = session_store.count(&session_key_clone).await {
+                if !ephemeral && let Ok(count) = session_store.count(&session_key_clone).await {
                     session_metadata.touch(&session_key_clone, count).await;
 
                     // ── Periodic background memory extraction ──────────────
@@ -1363,6 +1399,8 @@ impl LiveChatService {
                         }
                     }
                 }
+            } else {
+                crate::channel_acks::note_turn_finished(&state, &run_id_clone, false).await;
             }
 
             // ── Auto-title generation ──────────────────────────────
@@ -1380,11 +1418,9 @@ impl LiveChatService {
                 state.trigger_auto_title(&session_key_clone).await;
             }
 
-            let _ = LiveChatService::wait_for_event_forwarder(
-                &active_event_forwarders,
-                &session_key_clone,
-            )
-            .await;
+            let _ =
+                LiveChatService::wait_for_event_forwarder(&active_event_forwarders, &run_id_clone)
+                    .await;
 
             active_runs.write().await.remove(&run_id_clone);
             let mut runs_by_session = active_runs_by_session.write().await;
@@ -1411,23 +1447,24 @@ impl LiveChatService {
             if let Some(completion) = completion {
                 let _ = completion.send(completion_result);
             }
-            let chat = state_for_drain.chat_service().await;
-            queue_drain::drain_queued_messages(
+            queue_drain::drain_and_replay(
                 &message_queue,
                 &session_key_clone,
                 message_queue_mode,
-                &chat,
+                &state_for_drain,
             )
             .await;
         });
 
-        {
-            let mut runs_by_session = self.active_runs_by_session.write().await;
-            let mut active_runs = self.active_runs.write().await;
-            active_runs.insert(run_id.clone(), handle.abort_handle());
-            runs_by_session.insert(session_key.clone(), run_id.clone());
-        }
-        let _ = start_tx.send(());
+        Self::register_run_handle(
+            &self.active_runs,
+            &self.active_runs_by_session,
+            &run_id,
+            &session_key,
+            handle.abort_handle(),
+        )
+        .await;
+        let _ = start_run.send(());
 
         info!(
             run_id = %run_id,
@@ -1437,19 +1474,4 @@ impl LiveChatService {
         );
         Ok(serde_json::json!({ "ok": true, "runId": run_id }))
     }
-}
-
-fn turn_result(output: &AssistantTurnOutput) -> Value {
-    serde_json::json!({
-        "text": output.text,
-        "inputTokens": output.input_tokens,
-        "outputTokens": output.output_tokens,
-        "cacheReadTokens": output.cache_read_tokens,
-        "cacheWriteTokens": output.cache_write_tokens,
-        "durationMs": output.duration_ms,
-        "requestInputTokens": output.request_input_tokens,
-        "requestOutputTokens": output.request_output_tokens,
-        "requestCacheReadTokens": output.request_cache_read_tokens,
-        "requestCacheWriteTokens": output.request_cache_write_tokens,
-    })
 }

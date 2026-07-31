@@ -140,7 +140,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
         "_session_key": &session_key,
         // Defer reply-target registration until chat.send() actually
         // starts executing this message (after semaphore acquire).
-        "_channel_reply_target": &reply_to,
+        moltis_chat::params::CHANNEL_REPLY_TARGET: &reply_to,
         "_native_channel_request": true,
     });
     if let Some(ref documents) = meta.documents {

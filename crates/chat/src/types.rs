@@ -171,6 +171,9 @@ pub(crate) struct AssistantTurnOutput {
     pub audio_path: Option<String>,
     pub reasoning: Option<String>,
     pub llm_api_response: Option<Value>,
+    /// Prepared after abortable channel delivery and emitted by the run owner
+    /// only after the assistant message has been persisted.
+    pub final_broadcast: Option<Value>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -244,6 +247,7 @@ pub(crate) fn build_assistant_turn_output(
         audio_path,
         reasoning,
         llm_api_response,
+        final_broadcast: None,
     }
 }
 

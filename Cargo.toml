@@ -308,7 +308,9 @@ tower       = "0.5"
 tower-http  = "0.6"
 url         = "2"
 urlencoding = "2"
-web-push    = "0.11"
+# Form bodies (application/x-www-form-urlencoded)
+form_urlencoded = "1"
+web-push        = "0.11"
 # Metrics
 metrics                     = "0.24"
 metrics-exporter-prometheus = "0.16"

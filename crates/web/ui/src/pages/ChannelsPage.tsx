@@ -94,6 +94,7 @@ export interface ChannelConfig {
 	channel_allowlist?: string[];
 	ack_reactions?: boolean;
 	reaction_triggers?: boolean;
+	rich_blocks?: boolean;
 	// Matrix
 	homeserver?: string;
 	user_id?: string;

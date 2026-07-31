@@ -286,6 +286,7 @@ export function closeModelDropdown(): void {
 function buildModelItem(m: ModelInfo, currentId: string): HTMLDivElement {
 	const el = document.createElement("div");
 	el.className = "model-dropdown-item";
+	el.dataset.modelId = m.id;
 	if (m.id === currentId) el.classList.add("selected");
 	if (m.unsupported) el.classList.add("model-dropdown-item-unsupported");
 
@@ -330,6 +331,7 @@ function buildModelItem(m: ModelInfo, currentId: string): HTMLDivElement {
 function buildAcpItem(agent: ExternalAgentInfo, currentKind: string): HTMLDivElement {
 	const el = document.createElement("div");
 	el.className = "model-dropdown-item";
+	el.dataset.externalAgentKind = agent.kind;
 	if (agent.kind === currentKind) el.classList.add("selected");
 	el.title = `${agent.name} (${agent.kind})`;
 

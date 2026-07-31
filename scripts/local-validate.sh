@@ -250,7 +250,7 @@ package_name_for_path() {
   dir="$(crate_dir_for_path "$1")"
   [[ -n "$dir" ]] || return
 
-  sed -nE 's/^name[[:space:]]*=[[:space:]]*"([^"]+)"/\1/p' "$dir/Cargo.toml" \
+  sed -nE 's/^name[[:space:]]*=[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' "$dir/Cargo.toml" \
     | tr -d '\r' \
     | head -n1
 }

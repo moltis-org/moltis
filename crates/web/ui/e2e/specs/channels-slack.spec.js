@@ -48,6 +48,57 @@ async function installSlackChannelMock(page, channel) {
 }
 
 test.describe("Slack channel settings", () => {
+	test("setup guide lists required scopes, events, and Events API routes", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/channels");
+		await waitForWsConnected(page);
+
+		await page.getByRole("button", { name: "Connect Slack", exact: true }).click();
+		const guide = page.getByTestId("slack-setup-guide");
+		await expect(guide).toBeVisible();
+
+		const scopes = [
+			"app_mentions:read",
+			"chat:write",
+			"files:write",
+			"im:history",
+			"reactions:write",
+			"reactions:read",
+			"channels:history",
+			"groups:history",
+			"mpim:history",
+			"connections:write",
+		];
+		for (const scope of scopes) {
+			await expect(guide.getByText(scope, { exact: true })).toBeVisible();
+		}
+
+		const events = [
+			"app_mention",
+			"message.im",
+			"reaction_added",
+			"message.channels",
+			"message.groups",
+			"message.mpim",
+		];
+		for (const event of events) {
+			await expect(guide.getByText(event, { exact: true })).toBeVisible();
+		}
+
+		const routes = [
+			"https://your-host/api/channels/slack/<id>/events",
+			"https://your-host/api/channels/slack/<id>/interactions",
+			"https://your-host/api/channels/slack/<id>/commands",
+		];
+		for (const route of routes) {
+			await expect(guide.getByText(route, { exact: true })).toBeVisible();
+		}
+
+		await expect(guide).toContainText("mention_mode = always");
+		await expect(guide).toContainText("Each scope permits access; its paired event delivers messages");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("ack_reactions and reaction_triggers toggles round-trip through the edit modal", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/channels");
@@ -77,20 +128,25 @@ test.describe("Slack channel settings", () => {
 			.locator("label", { hasText: "Acknowledge with reactions" })
 			.locator('input[type="checkbox"]');
 		const triggerCheckbox = modal.locator("label", { hasText: "Reaction triggers" }).locator('input[type="checkbox"]');
+		const richBlocksCheckbox = modal
+			.locator("label", { hasText: "Rich Block Kit rendering" })
+			.locator('input[type="checkbox"]');
 
-		// Reflects current config: ack on, triggers off.
+		// Reflects current config: ack on, triggers off, rich blocks off.
 		await expect(ackCheckbox).toBeChecked();
 		await expect(triggerCheckbox).not.toBeChecked();
+		await expect(richBlocksCheckbox).not.toBeChecked();
 
-		// Flip both.
+		// Flip all three.
 		await ackCheckbox.uncheck();
 		await triggerCheckbox.check();
+		await richBlocksCheckbox.check();
 
 		await modal.getByRole("button", { name: "Save Changes", exact: true }).click();
 
 		await expect
 			.poll(() => page.evaluate(() => window.__slackUpdateRequest))
-			.toMatchObject({ config: { ack_reactions: false, reaction_triggers: true } });
+			.toMatchObject({ config: { ack_reactions: false, reaction_triggers: true, rich_blocks: true } });
 
 		expect(pageErrors).toEqual([]);
 	});
