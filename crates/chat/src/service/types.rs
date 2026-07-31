@@ -1,17 +1,25 @@
 //! `LiveChatService` struct, constructors, and helper methods.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
+    future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::Arc,
+    task::Poll,
+    time::Duration,
 };
 
 use {
+    futures::{
+        FutureExt,
+        future::{BoxFuture, Shared},
+    },
     serde::Serialize,
     serde_json::Value,
     tokio::{
-        sync::{RwLock, Semaphore},
-        task::AbortHandle,
+        sync::{AcquireError, OwnedSemaphorePermit, RwLock, Semaphore},
+        task::{AbortHandle, JoinHandle},
     },
     tracing::warn,
 };
@@ -35,6 +43,107 @@ use crate::{error, models::DisabledModelsStore, runtime::ChatRuntime, types::*};
 #[derive(Debug, Clone)]
 pub(in crate::service) struct QueuedMessage {
     pub(in crate::service) params: Value,
+}
+
+/// Per-session FIFO plus an in-progress replay reservation.
+#[derive(Debug, Default)]
+pub(in crate::service) struct SessionMessageQueue {
+    pub(in crate::service) messages: VecDeque<QueuedMessage>,
+    pub(in crate::service) draining: bool,
+}
+
+pub(in crate::service) enum TurnAdmission {
+    Acquired(OwnedSemaphorePermit),
+    Queued(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::service) enum RunHandleDisposition {
+    Aborted,
+    Stale,
+    Unavailable,
+}
+
+type CleanupPermitFuture =
+    Pin<Box<dyn Future<Output = Result<OwnedSemaphorePermit, AcquireError>> + Send>>;
+
+pub(in crate::service) enum CleanupPermitReservation {
+    Acquired(Result<OwnedSemaphorePermit, AcquireError>),
+    Waiting(CleanupPermitFuture),
+}
+
+impl CleanupPermitReservation {
+    pub(in crate::service) async fn acquire(self) -> Result<OwnedSemaphorePermit, AcquireError> {
+        match self {
+            Self::Acquired(result) => result,
+            Self::Waiting(future) => future.await,
+        }
+    }
+}
+
+pub(in crate::service) struct AbortRunClaim {
+    pub(in crate::service) disposition: RunHandleDisposition,
+    pub(in crate::service) cleanup: Option<CleanupPermitReservation>,
+}
+
+pub(crate) async fn commit_terminal_run(
+    terminal_runs: &Arc<RwLock<HashSet<String>>>,
+    run_id: &str,
+) {
+    terminal_runs.write().await.insert(run_id.to_string());
+}
+
+pub(in crate::service) async fn commit_successful_turn<P, B>(
+    terminal_runs: &Arc<RwLock<HashSet<String>>>,
+    run_id: &str,
+    persistence: P,
+    final_broadcast: B,
+) where
+    P: Future<Output = ()>,
+    B: Future<Output = ()>,
+{
+    commit_terminal_run(terminal_runs, run_id).await;
+    persistence.await;
+    final_broadcast.await;
+}
+
+#[derive(Clone)]
+pub(crate) struct EventForwarder {
+    completion: Shared<BoxFuture<'static, String>>,
+    abort_handle: AbortHandle,
+}
+
+impl EventForwarder {
+    pub(crate) fn new(task: JoinHandle<String>, session_key: String) -> Self {
+        let abort_handle = task.abort_handle();
+        let completion = async move {
+            match task.await {
+                Ok(reasoning) => reasoning,
+                Err(error) => {
+                    warn!(
+                        session = %session_key,
+                        error = %error,
+                        "runner event forwarder task failed"
+                    );
+                    String::new()
+                },
+            }
+        }
+        .boxed()
+        .shared();
+        Self {
+            completion,
+            abort_handle,
+        }
+    }
+
+    async fn wait(&self) -> String {
+        self.completion.clone().await
+    }
+
+    fn abort(&self) {
+        self.abort_handle.abort();
+    }
 }
 
 /// A tool call currently executing within an active agent run.
@@ -229,8 +338,7 @@ pub struct LiveChatService {
     pub(in crate::service) state: Arc<dyn ChatRuntime>,
     pub(in crate::service) active_runs: Arc<RwLock<HashMap<String, AbortHandle>>>,
     pub(in crate::service) active_runs_by_session: Arc<RwLock<HashMap<String, String>>>,
-    pub(in crate::service) active_event_forwarders:
-        Arc<RwLock<HashMap<String, tokio::task::JoinHandle<String>>>>,
+    pub(in crate::service) active_event_forwarders: Arc<RwLock<HashMap<String, EventForwarder>>>,
     pub(in crate::service) terminal_runs: Arc<RwLock<HashSet<String>>>,
     pub(in crate::service) tool_registry: Arc<RwLock<ToolRegistry>>,
     pub(in crate::service) session_tool_overlays:
@@ -242,7 +350,7 @@ pub struct LiveChatService {
     /// Per-session semaphore ensuring only one agent run executes per session at a time.
     pub(in crate::service) session_locks: Arc<RwLock<HashMap<String, Arc<Semaphore>>>>,
     /// Per-session message queue for messages arriving during an active run.
-    pub(in crate::service) message_queue: Arc<RwLock<HashMap<String, Vec<QueuedMessage>>>>,
+    pub(in crate::service) message_queue: Arc<RwLock<HashMap<String, SessionMessageQueue>>>,
     /// Per-session last-seen client sequence number for ordering diagnostics.
     pub(in crate::service) last_client_seq: Arc<RwLock<HashMap<String, u64>>>,
     /// Per-session accumulated thinking text for active runs, so it can be
@@ -423,45 +531,100 @@ impl LiveChatService {
         )
     }
 
-    pub(in crate::service) async fn abort_run_handle(
+    /// Arbitrate the permit and FIFO under one queue lock. Ordinary arrivals
+    /// cannot pass queued work, while the drainer's replay can consume its
+    /// reservation. If that replay cannot acquire, it returns to the front.
+    pub(in crate::service) async fn admit_turn(
+        &self,
+        session_key: &str,
+        params: Value,
+        queued_replay: bool,
+    ) -> TurnAdmission {
+        let session_sem = self.session_semaphore(session_key).await;
+        admit_queued_turn(
+            &self.message_queue,
+            session_sem,
+            session_key,
+            params,
+            queued_replay,
+        )
+        .await
+    }
+
+    pub(in crate::service) async fn claim_run_for_abort(
         active_runs: &Arc<RwLock<HashMap<String, AbortHandle>>>,
         active_runs_by_session: &Arc<RwLock<HashMap<String, String>>>,
         terminal_runs: &Arc<RwLock<HashSet<String>>>,
+        session_sem: Arc<Semaphore>,
         run_id: Option<&str>,
         session_key: Option<&str>,
-    ) -> (Option<String>, bool) {
-        let resolved_run_id = if let Some(id) = run_id {
-            Some(id.to_string())
-        } else if let Some(key) = session_key {
-            active_runs_by_session.read().await.get(key).cloned()
-        } else {
-            None
-        };
-
-        let Some(target_run_id) = resolved_run_id.clone() else {
-            return (None, false);
-        };
-
-        if terminal_runs.read().await.contains(&target_run_id) {
-            return (resolved_run_id, false);
-        }
-
-        let aborted = if let Some(handle) = active_runs.write().await.remove(&target_run_id) {
-            handle.abort();
-            true
-        } else {
-            false
-        };
-
+    ) -> (Option<String>, AbortRunClaim) {
+        let terminal = terminal_runs.read().await;
         let mut by_session = active_runs_by_session.write().await;
-        if let Some(key) = session_key
-            && by_session.get(key).is_some_and(|id| id == &target_run_id)
-        {
-            by_session.remove(key);
-        }
-        by_session.retain(|_, id| id != &target_run_id);
+        let target = match (run_id, session_key) {
+            (Some(id), Some(key)) if by_session.get(key).is_some_and(|active| active == id) => {
+                Some((id.to_string(), key.to_string()))
+            },
+            (Some(_), Some(_)) => None,
+            (Some(id), None) => by_session
+                .iter()
+                .find_map(|(key, active)| (active == id).then(|| (id.to_string(), key.clone()))),
+            (None, Some(key)) => by_session.get(key).cloned().map(|id| (id, key.to_string())),
+            (None, None) => None,
+        };
+        let Some((target_run_id, target_session_key)) = target else {
+            return (None, AbortRunClaim {
+                disposition: RunHandleDisposition::Unavailable,
+                cleanup: None,
+            });
+        };
 
-        (resolved_run_id, aborted)
+        let mut runs = active_runs.write().await;
+        if terminal.contains(&target_run_id) {
+            return (Some(target_run_id), AbortRunClaim {
+                disposition: RunHandleDisposition::Unavailable,
+                cleanup: None,
+            });
+        }
+
+        let disposition = match runs.get(&target_run_id) {
+            Some(handle) if handle.is_finished() => RunHandleDisposition::Stale,
+            None => RunHandleDisposition::Stale,
+            Some(_) => RunHandleDisposition::Aborted,
+        };
+
+        // Establish ownership before registering the fair waiter. Holding the
+        // terminal and run-map locks makes abort versus successful terminal
+        // transition a single-winner race; an unavailable request never
+        // reserves the session permit.
+        let mut cleanup_future: CleanupPermitFuture = Box::pin(session_sem.acquire_owned());
+        let mut immediate = None;
+        std::future::poll_fn(|cx| {
+            if let Poll::Ready(result) = cleanup_future.as_mut().poll(cx) {
+                immediate = Some(result);
+            }
+            Poll::Ready(())
+        })
+        .await;
+        let cleanup = match immediate {
+            Some(result) => CleanupPermitReservation::Acquired(result),
+            None => CleanupPermitReservation::Waiting(cleanup_future),
+        };
+
+        if disposition == RunHandleDisposition::Aborted
+            && let Some(handle) = runs.get(&target_run_id)
+        {
+            handle.abort();
+        }
+        runs.remove(&target_run_id);
+        if by_session.get(&target_session_key) == Some(&target_run_id) {
+            by_session.remove(&target_session_key);
+        }
+
+        (Some(target_run_id), AbortRunClaim {
+            disposition,
+            cleanup: Some(cleanup),
+        })
     }
 
     pub(in crate::service) async fn resolve_session_key_for_run(
@@ -469,48 +632,81 @@ impl LiveChatService {
         run_id: Option<&str>,
         session_key: Option<&str>,
     ) -> Option<String> {
-        if let Some(key) = session_key {
-            return Some(key.to_string());
+        let by_session = active_runs_by_session.read().await;
+        match (run_id, session_key) {
+            (Some(id), Some(key)) => by_session
+                .get(key)
+                .is_some_and(|active| active == id)
+                .then(|| key.to_string()),
+            (Some(id), None) => by_session
+                .iter()
+                .find_map(|(key, active)| (active == id).then(|| key.clone())),
+            (None, Some(key)) => by_session.contains_key(key).then(|| key.to_string()),
+            (None, None) => None,
         }
-        let target_run_id = run_id?;
-        active_runs_by_session
-            .read()
-            .await
-            .iter()
-            .find_map(|(key, active_run_id)| (active_run_id == target_run_id).then(|| key.clone()))
     }
 
     pub(crate) async fn wait_for_event_forwarder(
-        active_event_forwarders: &Arc<RwLock<HashMap<String, tokio::task::JoinHandle<String>>>>,
-        session_key: &str,
+        active_event_forwarders: &Arc<RwLock<HashMap<String, EventForwarder>>>,
+        run_id: &str,
     ) -> String {
-        let handle = active_event_forwarders.write().await.remove(session_key);
-        let Some(handle) = handle else {
+        let completion = active_event_forwarders.read().await.get(run_id).cloned();
+        let Some(completion) = completion else {
             return String::new();
         };
 
-        match handle.await {
-            Ok(reasoning) => reasoning,
-            Err(e) => {
-                warn!(
-                    session = %session_key,
-                    error = %e,
-                    "runner event forwarder task failed"
-                );
-                String::new()
-            },
+        let reasoning = completion.wait().await;
+        active_event_forwarders.write().await.remove(run_id);
+        reasoning
+    }
+
+    pub(in crate::service) async fn cancel_event_forwarder(
+        active_event_forwarders: &Arc<RwLock<HashMap<String, EventForwarder>>>,
+        run_id: &str,
+    ) {
+        let forwarder = active_event_forwarders.write().await.remove(run_id);
+        let Some(forwarder) = forwarder else {
+            return;
+        };
+        forwarder.abort();
+        if tokio::time::timeout(Duration::from_secs(1), forwarder.wait())
+            .await
+            .is_err()
+        {
+            warn!(run_id, "timed out waiting for cancelled event forwarder");
         }
+    }
+
+    pub(in crate::service) async fn register_run_handle(
+        active_runs: &Arc<RwLock<HashMap<String, AbortHandle>>>,
+        active_runs_by_session: &Arc<RwLock<HashMap<String, String>>>,
+        run_id: &str,
+        session_key: &str,
+        abort_handle: AbortHandle,
+    ) {
+        // Keep the same lock order as claim_run_for_abort so registration is atomic
+        // from an abort caller's perspective.
+        let mut by_session = active_runs_by_session.write().await;
+        let mut runs = active_runs.write().await;
+        by_session.insert(session_key.to_string(), run_id.to_string());
+        runs.insert(run_id.to_string(), abort_handle);
     }
 
     pub(in crate::service) async fn persist_partial_assistant_on_abort(
         &self,
         session_key: &str,
+        run_id: &str,
     ) -> Option<(Value, Option<u32>)> {
-        let partial = self
-            .active_partial_assistant
-            .write()
-            .await
-            .remove(session_key)?;
+        let partial = {
+            let mut partials = self.active_partial_assistant.write().await;
+            if !partials
+                .get(session_key)
+                .is_some_and(|partial| partial.run_id == run_id)
+            {
+                return None;
+            }
+            partials.remove(session_key)?
+        };
         if !partial.has_visible_content() {
             return None;
         }
@@ -695,6 +891,50 @@ impl LiveChatService {
     }
 }
 
+async fn admit_queued_turn(
+    queues: &Arc<RwLock<HashMap<String, SessionMessageQueue>>>,
+    session_sem: Arc<Semaphore>,
+    session_key: &str,
+    params: Value,
+    queued_replay: bool,
+) -> TurnAdmission {
+    let mut queues = queues.write().await;
+    let queue = queues.entry(session_key.to_string()).or_default();
+    let reserved_replay = queued_replay && queue.draining;
+
+    if !reserved_replay && (queue.draining || !queue.messages.is_empty()) {
+        queue.messages.push_back(QueuedMessage { params });
+        return TurnAdmission::Queued(queue.messages.len());
+    }
+
+    match session_sem.try_acquire_owned() {
+        Ok(permit) => TurnAdmission::Acquired(permit),
+        Err(_) => {
+            let message = QueuedMessage { params };
+            if reserved_replay {
+                queue.messages.push_front(message);
+            } else {
+                queue.messages.push_back(message);
+            }
+            TurnAdmission::Queued(queue.messages.len())
+        },
+    }
+}
+
+pub(in crate::service) fn cancel_queued_messages(
+    queues: &mut HashMap<String, SessionMessageQueue>,
+    session_key: &str,
+) -> Vec<QueuedMessage> {
+    match queues.get_mut(session_key) {
+        Some(queue) if queue.draining => queue.messages.drain(..).collect(),
+        Some(_) => queues
+            .remove(session_key)
+            .map(|queue| queue.messages.into_iter().collect())
+            .unwrap_or_default(),
+        None => Vec::new(),
+    }
+}
+
 pub(in crate::service) fn merge_context_sections(
     project_context: Option<String>,
     command_context: Option<String>,
@@ -712,11 +952,21 @@ pub(in crate::service) fn merge_context_sections(
 mod tests {
     use {
         super::{
-            ActiveAssistantDraft, build_persisted_assistant_message,
-            build_tool_call_assistant_message, merge_context_sections,
+            ActiveAssistantDraft, EventForwarder, LiveChatService, QueuedMessage,
+            RunHandleDisposition, SessionMessageQueue, TurnAdmission, admit_queued_turn,
+            build_persisted_assistant_message, build_tool_call_assistant_message,
+            cancel_queued_messages, commit_successful_turn, merge_context_sections,
         },
         crate::types::AssistantTurnOutput,
         moltis_sessions::PersistedMessage,
+        serde_json::json,
+        std::{
+            collections::{HashMap, HashSet},
+            future::Future,
+            sync::Arc,
+            task::Poll,
+        },
+        tokio::sync::{RwLock, Semaphore},
     };
 
     #[test]
@@ -768,6 +1018,352 @@ mod tests {
         assert_eq!(merge_context_sections(None, None), None);
     }
 
+    #[tokio::test]
+    async fn replay_reservation_prevents_new_arrival_overtaking_fifo() {
+        let queues = Arc::new(RwLock::new(HashMap::from([(
+            "s".to_string(),
+            SessionMessageQueue {
+                messages: [QueuedMessage {
+                    params: json!({"text": "second"}),
+                }]
+                .into_iter()
+                .collect(),
+                draining: true,
+            },
+        )])));
+        let semaphore = Arc::new(Semaphore::new(1));
+        let replay = admit_queued_turn(
+            &queues,
+            Arc::clone(&semaphore),
+            "s",
+            json!({"text": "first"}),
+            true,
+        )
+        .await;
+        let TurnAdmission::Acquired(permit) = replay else {
+            panic!("reserved replay should acquire");
+        };
+
+        let arrival =
+            admit_queued_turn(&queues, semaphore, "s", json!({"text": "third"}), false).await;
+        assert!(matches!(arrival, TurnAdmission::Queued(2)));
+        let queue = queues.read().await;
+        let texts: Vec<_> = queue["s"]
+            .messages
+            .iter()
+            .filter_map(|message| message.params["text"].as_str())
+            .collect();
+        assert_eq!(texts, ["second", "third"]);
+        drop(permit);
+    }
+
+    #[tokio::test]
+    async fn abort_mismatch_preserves_active_run_state() {
+        let task = tokio::spawn(std::future::pending::<()>());
+        let active_runs = Arc::new(RwLock::new(HashMap::from([(
+            "run-1".to_string(),
+            task.abort_handle(),
+        )])));
+        let by_session = Arc::new(RwLock::new(HashMap::from([(
+            "session-1".to_string(),
+            "run-1".to_string(),
+        )])));
+        let terminal = Arc::new(RwLock::new(HashSet::new()));
+
+        let semaphore = Arc::new(Semaphore::new(1));
+        let (resolved, claim) = LiveChatService::claim_run_for_abort(
+            &active_runs,
+            &by_session,
+            &terminal,
+            Arc::clone(&semaphore),
+            Some("run-2"),
+            Some("session-1"),
+        )
+        .await;
+        assert_eq!(resolved, None);
+        assert_eq!(claim.disposition, RunHandleDisposition::Unavailable);
+        assert!(claim.cleanup.is_none());
+        assert!(active_runs.read().await.contains_key("run-1"));
+        assert_eq!(
+            by_session.read().await.get("session-1").map(String::as_str),
+            Some("run-1")
+        );
+
+        let (_, claim) = LiveChatService::claim_run_for_abort(
+            &active_runs,
+            &by_session,
+            &terminal,
+            semaphore,
+            Some("run-1"),
+            Some("session-1"),
+        )
+        .await;
+        assert_eq!(claim.disposition, RunHandleDisposition::Aborted);
+        drop(claim.cleanup.unwrap().acquire().await.unwrap());
+        assert!(active_runs.read().await.is_empty());
+        assert!(by_session.read().await.is_empty());
+        assert!(task.await.is_err());
+    }
+
+    #[tokio::test]
+    async fn panicked_terminal_run_handle_is_removed_as_stale() {
+        let task = tokio::spawn(async { panic!("simulated run panic") });
+        let handle = task.abort_handle();
+        assert!(task.await.is_err());
+        let active_runs = Arc::new(RwLock::new(HashMap::from([("run-1".to_string(), handle)])));
+        let by_session = Arc::new(RwLock::new(HashMap::from([(
+            "session-1".to_string(),
+            "run-1".to_string(),
+        )])));
+        let terminal = Arc::new(RwLock::new(HashSet::new()));
+
+        let (resolved, claim) = LiveChatService::claim_run_for_abort(
+            &active_runs,
+            &by_session,
+            &terminal,
+            Arc::new(Semaphore::new(1)),
+            Some("run-1"),
+            Some("session-1"),
+        )
+        .await;
+
+        assert_eq!(resolved.as_deref(), Some("run-1"));
+        assert_eq!(claim.disposition, RunHandleDisposition::Stale);
+        drop(claim.cleanup.unwrap().acquire().await.unwrap());
+        assert!(active_runs.read().await.is_empty());
+        assert!(by_session.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn shared_success_commit_transitions_then_persists_before_final() {
+        let terminal = Arc::new(RwLock::new(HashSet::new()));
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let persist_events = Arc::clone(&events);
+        let final_events = Arc::clone(&events);
+        let terminal_at_persistence = Arc::clone(&terminal);
+        let terminal_at_broadcast = Arc::clone(&terminal);
+
+        commit_successful_turn(
+            &terminal,
+            "run-1",
+            async move {
+                assert!(terminal_at_persistence.read().await.contains("run-1"));
+                persist_events
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .push("persist");
+            },
+            async move {
+                assert!(terminal_at_broadcast.read().await.contains("run-1"));
+                final_events
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .push("final");
+            },
+        )
+        .await;
+
+        assert_eq!(*events.lock().unwrap_or_else(|error| error.into_inner()), [
+            "persist", "final"
+        ]);
+    }
+
+    #[tokio::test]
+    async fn abort_during_shared_delivery_prevents_persist_and_final() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
+        let terminal = Arc::new(RwLock::new(HashSet::new()));
+        let active_runs = Arc::new(RwLock::new(HashMap::new()));
+        let by_session = Arc::new(RwLock::new(HashMap::new()));
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let task_events = Arc::clone(&events);
+        let task_terminal = Arc::clone(&terminal);
+        let (delivery_started, started) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _permit = permit;
+            let _ = delivery_started.send(());
+            std::future::pending::<()>().await;
+            commit_successful_turn(
+                &task_terminal,
+                "run-1",
+                async {
+                    task_events
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .push("persist");
+                },
+                async {
+                    task_events
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .push("final");
+                },
+            )
+            .await;
+        });
+        LiveChatService::register_run_handle(
+            &active_runs,
+            &by_session,
+            "run-1",
+            "session-1",
+            task.abort_handle(),
+        )
+        .await;
+        assert!(started.await.is_ok());
+
+        let (_, claim) = LiveChatService::claim_run_for_abort(
+            &active_runs,
+            &by_session,
+            &terminal,
+            semaphore,
+            Some("run-1"),
+            Some("session-1"),
+        )
+        .await;
+        assert_eq!(claim.disposition, RunHandleDisposition::Aborted);
+        drop(claim.cleanup.unwrap().acquire().await.unwrap());
+        assert!(task.await.is_err());
+        assert!(
+            events
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_empty()
+        );
+        assert!(terminal.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_forwarder_waiters_share_run_scoped_completion() {
+        let (release, released) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _ = released.await;
+            "reasoning".to_string()
+        });
+        let completion = EventForwarder::new(task, "session-1".to_string());
+        let forwarders = Arc::new(RwLock::new(HashMap::from([(
+            "run-1".to_string(),
+            completion,
+        )])));
+        let first = LiveChatService::wait_for_event_forwarder(&forwarders, "run-1");
+        let second = LiveChatService::wait_for_event_forwarder(&forwarders, "run-1");
+        tokio::pin!(first, second);
+        std::future::poll_fn(|cx| {
+            assert!(matches!(first.as_mut().poll(cx), Poll::Pending));
+            assert!(matches!(second.as_mut().poll(cx), Poll::Pending));
+            Poll::Ready(())
+        })
+        .await;
+
+        release.send(()).unwrap();
+        let (first_result, second_result) = tokio::join!(&mut first, &mut second);
+        assert_eq!(first_result, "reasoning");
+        assert_eq!(second_result, "reasoning");
+        assert!(forwarders.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelling_forwarder_aborts_pending_delivery_work() {
+        struct DropNotice(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for DropNotice {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _notice = DropNotice(Some(dropped_tx));
+            let _ = started_tx.send(());
+            std::future::pending::<String>().await
+        });
+        let forwarders = Arc::new(RwLock::new(HashMap::from([(
+            "run-1".to_string(),
+            EventForwarder::new(task, "session-1".to_string()),
+        )])));
+        assert!(started_rx.await.is_ok());
+
+        LiveChatService::cancel_event_forwarder(&forwarders, "run-1").await;
+
+        assert!(forwarders.read().await.is_empty());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), dropped_rx)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn run_cannot_finish_before_abort_handle_registration() {
+        let active_runs = Arc::new(RwLock::new(HashMap::new()));
+        let by_session = Arc::new(RwLock::new(HashMap::new()));
+        let active_runs_for_task = Arc::clone(&active_runs);
+        let by_session_for_task = Arc::clone(&by_session);
+        let (start_run, run_registered) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            if run_registered.await.is_err() {
+                return;
+            }
+            active_runs_for_task.write().await.remove("run-1");
+            by_session_for_task.write().await.remove("session-1");
+        });
+        LiveChatService::register_run_handle(
+            &active_runs,
+            &by_session,
+            "run-1",
+            "session-1",
+            task.abort_handle(),
+        )
+        .await;
+        assert!(active_runs.read().await.contains_key("run-1"));
+        assert_eq!(
+            by_session.read().await.get("session-1").map(String::as_str),
+            Some("run-1")
+        );
+
+        assert!(start_run.send(()).is_ok());
+        assert!(task.await.is_ok());
+        assert!(active_runs.read().await.is_empty());
+        assert!(by_session.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn registered_abort_cleanup_waiter_blocks_try_acquire_race() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let active_permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
+        let cleanup_waiter = Arc::clone(&semaphore).acquire_owned();
+        tokio::pin!(cleanup_waiter);
+        std::future::poll_fn(|cx| {
+            assert!(matches!(cleanup_waiter.as_mut().poll(cx), Poll::Pending));
+            Poll::Ready(())
+        })
+        .await;
+
+        drop(active_permit);
+        assert!(Arc::clone(&semaphore).try_acquire_owned().is_err());
+        let cleanup_permit = cleanup_waiter.await.unwrap();
+        drop(cleanup_permit);
+        assert!(semaphore.try_acquire_owned().is_ok());
+    }
+
+    #[test]
+    fn cancellation_keeps_in_progress_replay_reserved() {
+        let mut queues = HashMap::from([("s".to_string(), SessionMessageQueue {
+            messages: [QueuedMessage {
+                params: json!({"text": "cancel"}),
+            }]
+            .into_iter()
+            .collect(),
+            draining: true,
+        })]);
+        let removed = cancel_queued_messages(&mut queues, "s");
+        assert_eq!(removed.len(), 1);
+        assert!(queues["s"].draining);
+        assert!(queues["s"].messages.is_empty());
+    }
+
     #[test]
     fn tool_call_assistant_message_omits_cache_usage_fields() {
         let message = build_tool_call_assistant_message(
@@ -815,6 +1411,7 @@ mod tests {
                 audio_path: None,
                 reasoning: Some("thinking".to_string()),
                 llm_api_response: None,
+                final_broadcast: None,
             },
             Some("gpt-4.1".to_string()),
             Some("openai".to_string()),

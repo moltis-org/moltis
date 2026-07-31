@@ -459,9 +459,21 @@ impl ChannelOutbound for DiscordOutbound {
         payload: &ReplyPayload,
         reply_to: Option<&str>,
     ) -> ChannelResult<()> {
+        self.send_media_reporting_ids(account_id, to, payload, reply_to)
+            .await?;
+        Ok(())
+    }
+
+    async fn send_media_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        payload: &ReplyPayload,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
         let Some(media) = payload.media.as_ref() else {
             return self
-                .send_text(account_id, to, &payload.text, reply_to)
+                .send_text_reporting_ids(account_id, to, &payload.text, reply_to)
                 .await;
         };
 
@@ -493,6 +505,7 @@ impl ChannelOutbound for DiscordOutbound {
             let http = self.resolve_http(account_id)?;
             let channel_id = Self::parse_channel_id(to)?;
             let reference = self.resolve_reference(account_id, reply_to);
+            let mut message_ids = Vec::new();
             if let Some((preview_bytes, preview_mime)) = preview {
                 let preview_filename = format!("preview.{}", extension_for_mime(&preview_mime));
                 info!(
@@ -511,20 +524,24 @@ impl ChannelOutbound for DiscordOutbound {
                     preview_msg = preview_msg.reference_message((channel_id, ref_id));
                 }
 
-                if let Err(e) = channel_id.send_message(&http, preview_msg).await {
-                    warn!(
-                        account_id,
-                        chat_id = to,
-                        error = %e,
-                        "failed to send discord image preview (continuing with full image)"
-                    );
-                } else {
-                    info!(
-                        account_id,
-                        chat_id = to,
-                        preview_mime = %preview_mime,
-                        "discord outbound media preview sent"
-                    );
+                match channel_id.send_message(&http, preview_msg).await {
+                    Ok(sent) => {
+                        message_ids.push(sent.id.to_string());
+                        info!(
+                            account_id,
+                            chat_id = to,
+                            preview_mime = %preview_mime,
+                            "discord outbound media preview sent"
+                        );
+                    },
+                    Err(e) => {
+                        warn!(
+                            account_id,
+                            chat_id = to,
+                            error = %e,
+                            "failed to send discord image preview (continuing with full image)"
+                        );
+                    },
                 }
             }
 
@@ -536,9 +553,10 @@ impl ChannelOutbound for DiscordOutbound {
             if let Some(ref_id) = reference {
                 msg = msg.reference_message((channel_id, ref_id));
             }
-            channel_id.send_message(&http, msg).await.map_err(|e| {
+            let sent = channel_id.send_message(&http, msg).await.map_err(|e| {
                 ChannelError::external("Discord send media", std::io::Error::other(e.to_string()))
             })?;
+            message_ids.push(sent.id.to_string());
 
             info!(
                 account_id,
@@ -546,7 +564,7 @@ impl ChannelOutbound for DiscordOutbound {
                 media_mime = %media.mime_type,
                 "discord outbound media sent"
             );
-            return Ok(());
+            return Ok(message_ids);
         }
 
         // Regular URL — include inline.
@@ -555,7 +573,8 @@ impl ChannelOutbound for DiscordOutbound {
             text.push_str("\n\n");
         }
         text.push_str(&media.url);
-        self.send_text(account_id, to, &text, reply_to).await
+        self.send_text_reporting_ids(account_id, to, &text, reply_to)
+            .await
     }
 
     async fn send_typing(&self, account_id: &str, to: &str) -> ChannelResult<()> {

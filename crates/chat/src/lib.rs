@@ -1,4 +1,5 @@
 mod agent_loop;
+pub(crate) mod channel_acks;
 mod channel_compaction;
 mod channel_feedback;
 #[cfg(any(feature = "push-notifications", test))]
@@ -10,6 +11,7 @@ mod compaction_run;
 mod memory_tools;
 mod message;
 mod models;
+pub mod params;
 mod prompt;
 mod run_with_tools;
 mod service;

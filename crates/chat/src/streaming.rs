@@ -17,8 +17,7 @@ use {
     moltis_agents::{
         ChatMessage, UserContent,
         model::{
-            AgentToolControls, ProviderAttemptEvent, ProviderIdentity, StreamEvent,
-            TrackedStreamEvent, push_capped_provider_raw_event,
+            StreamEvent, push_capped_provider_raw_event,
             values_to_chat_messages_with_tool_result_limit,
         },
         prompt::{PromptRuntimeContext, build_system_prompt_minimal_runtime_details},
@@ -27,7 +26,10 @@ use {
 };
 
 use crate::{
-    agent_loop::{ChannelStreamDispatcher, clear_unsupported_model, mark_unsupported_model},
+    agent_loop::{
+        ChannelStreamDispatcher, clear_unsupported_model,
+        commit_terminal_and_finish_channel_stream, mark_unsupported_model,
+    },
     channels::{
         deliver_channel_error, deliver_channel_replies, generate_tts_audio,
         send_retry_status_to_channels,
@@ -35,7 +37,7 @@ use crate::{
     chat_error::parse_chat_error,
     message::apply_voice_reply_suffix,
     models::DisabledModelsStore,
-    prompt::{channel_binding_from_runtime_context, prompt_build_limits_from_config},
+    prompt::prompt_build_limits_from_config,
     runtime::ChatRuntime,
     service::ActiveAssistantDraft,
     types::*,
@@ -227,459 +229,346 @@ pub(crate) async fn run_streaming(
     let mut rate_limit_retries_remaining: u8 = STREAM_RATE_LIMIT_MAX_RETRIES;
     let mut rate_limit_backoff_ms: Option<u64> = None;
     let mut channel_stream_dispatcher =
-        ChannelStreamDispatcher::for_session(state, session_key, run_id).await;
-    let turn_recorder = moltis_agents::runner::instrumentation::begin_turn(
-        session_key,
-        Some(run_id),
-        channel_binding_from_runtime_context(runtime_context).as_ref(),
-        provider_name,
-        model_id,
-        user_content,
-        moltis_agents::runner::instrumentation::recorder_settings(&persona.config.instrumentation),
-        persona.config.instrumentation.environment.clone(),
-        moltis_agents::runner::instrumentation::release(&persona.config.instrumentation),
-    );
+        ChannelStreamDispatcher::for_session(state, session_key).await;
 
     'attempts: loop {
         #[cfg(feature = "metrics")]
         let stream_start = Instant::now();
 
-        let mut generation_step: Option<moltis_observability::StepGuard> = None;
-        let mut selected_identity = ProviderIdentity::new(provider_name, model_id);
-        let mut stream = provider.stream_with_tools_and_options_tracked(
-            messages.clone(),
-            Vec::new(),
-            AgentToolControls::default(),
-        );
+        let mut stream = provider.stream(messages.clone());
         let mut accumulated = String::new();
         let mut accumulated_reasoning = String::new();
         let mut raw_llm_responses: Vec<Value> = Vec::new();
 
         while let Some(event) = stream.next().await {
             match event {
-                TrackedStreamEvent::Attempt(ProviderAttemptEvent::Started(identity)) => {
-                    if let Some(mut previous) = generation_step.take() {
-                        previous.fail("provider attempt superseded before completion");
-                        previous.finish();
+                StreamEvent::Delta(delta) => {
+                    accumulated.push_str(&delta);
+                    if let Some(ref map) = active_partial_assistant
+                        && let Some(draft) = map.write().await.get_mut(session_key)
+                    {
+                        draft.append_text(&delta);
                     }
-                    selected_identity = identity;
-                    if let Some(recorder) = turn_recorder.as_ref() {
-                        recorder.set_metadata(
-                            "provider",
-                            Value::String(selected_identity.provider.clone()),
-                        );
-                        recorder
-                            .set_metadata("model", Value::String(selected_identity.model.clone()));
-                        let mut step = recorder.step(
-                            moltis_observability::ObservationKind::Generation,
-                            moltis_agents::runner::instrumentation::generation_name(
-                                &selected_identity.provider,
-                                &selected_identity.model,
-                            ),
-                        );
-                        step.set_model(selected_identity.model.clone());
-                        step.set_metadata(
-                            "provider",
-                            Value::String(selected_identity.provider.clone()),
-                        );
-                        step.set_input(Value::Array(
-                            messages.iter().map(ChatMessage::to_openai_value).collect(),
-                        ));
-                        generation_step = Some(step);
+                    if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
+                        dispatcher.send_delta(&delta).await;
                     }
+                    broadcast(
+                        state,
+                        "chat",
+                        serde_json::json!({
+                            "runId": run_id,
+                            "sessionKey": session_key,
+                            "state": "delta",
+                            "text": delta,
+                        }),
+                        BroadcastOpts::default(),
+                    )
+                    .await;
                 },
-                TrackedStreamEvent::Attempt(ProviderAttemptEvent::Failed { error, .. }) => {
-                    if let Some(mut step) = generation_step.take() {
-                        step.fail(error);
-                        step.finish();
+                StreamEvent::ReasoningDelta(delta) => {
+                    accumulated_reasoning.push_str(&delta);
+                    if let Some(ref map) = active_partial_assistant
+                        && let Some(draft) = map.write().await.get_mut(session_key)
+                    {
+                        draft.set_reasoning(&accumulated_reasoning);
                     }
+                    broadcast(
+                        state,
+                        "chat",
+                        serde_json::json!({
+                            "runId": run_id,
+                            "sessionKey": session_key,
+                            "state": "thinking_text",
+                            "text": accumulated_reasoning.clone(),
+                        }),
+                        BroadcastOpts::default(),
+                    )
+                    .await;
                 },
-                TrackedStreamEvent::Event(event) => match event {
-                    StreamEvent::Delta(delta) => {
-                        if let Some(step) = generation_step.as_mut() {
-                            step.mark_first_token();
-                        }
-                        accumulated.push_str(&delta);
-                        if let Some(ref map) = active_partial_assistant
-                            && let Some(draft) = map.write().await.get_mut(session_key)
-                        {
-                            draft.append_text(&delta);
-                        }
-                        if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
-                            dispatcher.send_delta(&delta).await;
-                        }
-                        broadcast(
-                            state,
-                            "chat",
-                            serde_json::json!({
-                                "runId": run_id,
-                                "sessionKey": session_key,
-                                "state": "delta",
-                                "text": delta,
-                            }),
-                            BroadcastOpts::default(),
+                StreamEvent::ProviderRaw(raw) => {
+                    push_capped_provider_raw_event(&mut raw_llm_responses, raw);
+                },
+                StreamEvent::Done(usage) => {
+                    clear_unsupported_model(state, model_store, model_id).await;
+
+                    // Record streaming completion metrics (mirroring provider_chain.rs)
+                    #[cfg(feature = "metrics")]
+                    {
+                        let duration = stream_start.elapsed().as_secs_f64();
+                        counter!(
+                            llm_metrics::COMPLETIONS_TOTAL,
+                            labels::PROVIDER => provider_name.to_string(),
+                            labels::MODEL => model_id.to_string()
                         )
-                        .await;
-                    },
-                    StreamEvent::ReasoningDelta(delta) => {
-                        if let Some(step) = generation_step.as_mut() {
-                            step.mark_first_token();
-                        }
-                        accumulated_reasoning.push_str(&delta);
-                        if let Some(ref map) = active_partial_assistant
-                            && let Some(draft) = map.write().await.get_mut(session_key)
-                        {
-                            draft.set_reasoning(&accumulated_reasoning);
-                        }
-                        broadcast(
-                            state,
-                            "chat",
-                            serde_json::json!({
-                                "runId": run_id,
-                                "sessionKey": session_key,
-                                "state": "thinking_text",
-                                "text": accumulated_reasoning.clone(),
-                            }),
-                            BroadcastOpts::default(),
+                        .increment(1);
+                        counter!(
+                            llm_metrics::INPUT_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.to_string(),
+                            labels::MODEL => model_id.to_string()
                         )
-                        .await;
-                    },
-                    StreamEvent::ProviderRaw(raw) => {
-                        push_capped_provider_raw_event(&mut raw_llm_responses, raw);
-                    },
-                    StreamEvent::Done(usage) => {
-                        clear_unsupported_model(state, model_store, &selected_identity.model).await;
+                        .increment(u64::from(usage.input_tokens));
+                        counter!(
+                            llm_metrics::OUTPUT_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.to_string(),
+                            labels::MODEL => model_id.to_string()
+                        )
+                        .increment(u64::from(usage.output_tokens));
+                        counter!(
+                            llm_metrics::CACHE_READ_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.to_string(),
+                            labels::MODEL => model_id.to_string()
+                        )
+                        .increment(u64::from(usage.cache_read_tokens));
+                        counter!(
+                            llm_metrics::CACHE_WRITE_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.to_string(),
+                            labels::MODEL => model_id.to_string()
+                        )
+                        .increment(u64::from(usage.cache_write_tokens));
+                        histogram!(
+                            llm_metrics::COMPLETION_DURATION_SECONDS,
+                            labels::PROVIDER => provider_name.to_string(),
+                            labels::MODEL => model_id.to_string()
+                        )
+                        .record(duration);
+                    }
 
-                        // Record streaming completion metrics (mirroring provider_chain.rs)
-                        #[cfg(feature = "metrics")]
-                        {
-                            let duration = stream_start.elapsed().as_secs_f64();
-                            counter!(
-                                llm_metrics::COMPLETIONS_TOTAL,
-                                labels::PROVIDER => selected_identity.provider.clone(),
-                                labels::MODEL => selected_identity.model.clone()
-                            )
-                            .increment(1);
-                            counter!(
-                                llm_metrics::INPUT_TOKENS_TOTAL,
-                                labels::PROVIDER => selected_identity.provider.clone(),
-                                labels::MODEL => selected_identity.model.clone()
-                            )
-                            .increment(u64::from(usage.input_tokens));
-                            counter!(
-                                llm_metrics::OUTPUT_TOKENS_TOTAL,
-                                labels::PROVIDER => selected_identity.provider.clone(),
-                                labels::MODEL => selected_identity.model.clone()
-                            )
-                            .increment(u64::from(usage.output_tokens));
-                            counter!(
-                                llm_metrics::CACHE_READ_TOKENS_TOTAL,
-                                labels::PROVIDER => selected_identity.provider.clone(),
-                                labels::MODEL => selected_identity.model.clone()
-                            )
-                            .increment(u64::from(usage.cache_read_tokens));
-                            counter!(
-                                llm_metrics::CACHE_WRITE_TOKENS_TOTAL,
-                                labels::PROVIDER => selected_identity.provider.clone(),
-                                labels::MODEL => selected_identity.model.clone()
-                            )
-                            .increment(u64::from(usage.cache_write_tokens));
-                            histogram!(
-                                llm_metrics::COMPLETION_DURATION_SECONDS,
-                                labels::PROVIDER => selected_identity.provider.clone(),
-                                labels::MODEL => selected_identity.model.clone()
-                            )
-                            .record(duration);
-                        }
+                    let is_silent = accumulated.trim().is_empty();
+                    let reasoning = {
+                        let trimmed = accumulated_reasoning.trim();
+                        (!trimmed.is_empty()).then(|| trimmed.to_string())
+                    };
+                    info!(
+                        run_id,
+                        input_tokens = usage.input_tokens,
+                        output_tokens = usage.output_tokens,
+                        response_bytes = accumulated.len(),
+                        silent = is_silent,
+                        "chat stream done"
+                    );
 
-                        let is_silent = accumulated.trim().is_empty();
-                        let reasoning = {
-                            let trimmed = accumulated_reasoning.trim();
-                            (!trimmed.is_empty()).then(|| trimmed.to_string())
-                        };
-                        let streamed_target_keys =
-                            if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
-                                dispatcher.finish().await;
-                                dispatcher.completed_target_keys().await
-                            } else {
-                                HashSet::new()
-                            };
-
-                        info!(
+                    // Detect provider failures: silent stream with zero tokens
+                    // means the LLM never produced output (e.g. network_error).
+                    if is_silent && usage.output_tokens == 0 {
+                        warn!(
                             run_id,
-                            input_tokens = usage.input_tokens,
-                            output_tokens = usage.output_tokens,
-                            response_bytes = accumulated.len(),
-                            silent = is_silent,
-                            "chat stream done"
+                            "empty stream with zero tokens — treating as provider error"
                         );
-
-                        // Detect provider failures: silent stream with zero tokens
-                        // means the LLM never produced output (e.g. network_error).
-                        if is_silent && usage.output_tokens == 0 {
-                            warn!(
-                                run_id,
-                                "empty stream with zero tokens — treating as provider error"
-                            );
-                            let error_obj = parse_chat_error(
-                                "The provider returned an empty response (possible network error). Please try again.",
-                                Some(&selected_identity.provider),
-                            );
-                            let message =
-                                "provider returned an empty response with zero output tokens";
-                            if let Some(mut step) = generation_step.take() {
-                                step.set_usage(
-                                    moltis_agents::runner::instrumentation::to_token_usage(&usage),
-                                );
-                                step.fail(message);
-                                step.finish();
-                            }
-                            if let Some(recorder) = turn_recorder.as_ref() {
-                                recorder.finish_with_error(message);
-                            }
-                            deliver_channel_error(state, session_key, &error_obj).await;
-                            let error_payload = ChatErrorBroadcast {
-                                run_id: run_id.to_string(),
-                                session_key: session_key.to_string(),
-                                state: "error",
-                                error: error_obj,
-                                seq: client_seq,
-                            };
-                            #[allow(clippy::unwrap_used)] // serializing known-valid struct
-                            let payload_val = serde_json::to_value(&error_payload).unwrap();
-                            terminal_runs.write().await.insert(run_id.to_string());
-                            broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
-                            return None;
-                        }
-
-                        if let Some(mut step) = generation_step.take() {
-                            step.set_usage(moltis_agents::runner::instrumentation::to_token_usage(
-                                &usage,
-                            ));
-                            step.set_output(Value::String(accumulated.clone()));
-                            if !accumulated_reasoning.is_empty() {
-                                step.set_output_metadata(
-                                    "reasoning",
-                                    Value::String(accumulated_reasoning.clone()),
-                                );
-                            }
-                            step.finish();
-                        }
-                        if let Some(recorder) = turn_recorder.as_ref() {
-                            recorder.set_output(Value::String(accumulated.clone()));
-                            recorder.finish();
-                        }
-
-                        let assistant_message_index = user_message_index + 1;
-
-                        // Generate & persist TTS audio for voice-medium web UI replies.
-                        let mut audio_warning: Option<String> = None;
-                        let audio_path = if !is_silent && desired_reply_medium == ReplyMedium::Voice
-                        {
-                            match generate_tts_audio(state, session_key, &accumulated).await {
-                                Ok(bytes) => {
-                                    let filename = format!("{run_id}.ogg");
-                                    if let Some(store) = session_store {
-                                        match store.save_media(session_key, &filename, &bytes).await
-                                        {
-                                            Ok(path) => Some(path),
-                                            Err(e) => {
-                                                let warning = format!(
-                                                    "TTS audio generated but failed to save: {e}"
-                                                );
-                                                warn!(run_id, error = %warning, "failed to save TTS audio to media dir");
-                                                audio_warning = Some(warning);
-                                                None
-                                            },
-                                        }
-                                    } else {
-                                        audio_warning = Some(
-                                        "TTS audio generated but session media storage is unavailable"
-                                            .to_string(),
-                                    );
-                                        None
-                                    }
-                                },
-                                Err(error) => {
-                                    let error = error.to_string();
-                                    warn!(run_id, error = %error, "voice reply generation skipped");
-                                    audio_warning = Some(error);
-                                    None
-                                },
-                            }
-                        } else {
-                            None
-                        };
-
-                        let final_payload = build_chat_final_broadcast(
-                            run_id,
-                            session_key,
-                            accumulated.clone(),
-                            selected_identity.model.clone(),
-                            selected_identity.provider.clone(),
-                            UsageSnapshot::new(usage.clone(), Some(usage.clone())),
-                            run_started.elapsed().as_millis() as u64,
-                            assistant_message_index,
-                            desired_reply_medium,
-                            None,
-                            None,
-                            audio_path.clone(),
-                            audio_warning,
-                            reasoning.clone(),
-                            client_seq,
+                        let error_obj = parse_chat_error(
+                            "The provider returned an empty response (possible network error). Please try again.",
+                            Some(provider_name),
                         );
-                        #[allow(clippy::unwrap_used)] // serializing known-valid struct
-                        let payload_val = serde_json::to_value(&final_payload).unwrap();
-                        terminal_runs.write().await.insert(run_id.to_string());
-                        broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
-
-                        if !is_silent {
-                            // Send push notification when chat response completes
-                            #[cfg(feature = "push-notifications")]
-                            {
-                                tracing::info!("push: checking push notification");
-                                let push_state = Arc::clone(state);
-                                let push_session_key = session_key.to_string();
-                                let push_text = accumulated.clone();
-                                let push_order =
-                                    crate::channel_push::next_push_notification_order();
-                                tokio::spawn(async move {
-                                    send_chat_push_notification(
-                                        &push_state,
-                                        &push_session_key,
-                                        &push_text,
-                                        push_order,
-                                    )
-                                    .await;
-                                });
-                            }
-                            deliver_channel_replies(
-                                state,
-                                session_key,
-                                run_id,
-                                &accumulated,
-                                desired_reply_medium,
-                                &streamed_target_keys,
-                            )
-                            .await;
-                        }
-                        let llm_api_response = (!raw_llm_responses.is_empty())
-                            .then_some(Value::Array(raw_llm_responses));
-                        return Some(build_assistant_turn_output(
-                            accumulated,
-                            UsageSnapshot::new(usage.clone(), Some(usage)),
-                            run_started.elapsed().as_millis() as u64,
-                            audio_path,
-                            reasoning,
-                            llm_api_response,
-                        ));
-                    },
-                    StreamEvent::Error(msg) => {
-                        let error_obj = parse_chat_error(&msg, Some(&selected_identity.provider));
-                        let has_no_streamed_content = accumulated.trim().is_empty()
-                            && accumulated_reasoning.trim().is_empty()
-                            && raw_llm_responses.is_empty();
-                        if has_no_streamed_content
-                            && let Some(delay_ms) = next_stream_retry_delay_ms(
-                                &msg,
-                                &error_obj,
-                                &mut server_retries_remaining,
-                                &mut rate_limit_retries_remaining,
-                                &mut rate_limit_backoff_ms,
-                            )
-                        {
-                            if let Some(mut step) = generation_step.take() {
-                                step.fail(msg.clone());
-                                step.finish();
-                            }
-                            warn!(
-                                run_id,
-                                error = %msg,
-                                delay_ms,
-                                server_retries_remaining,
-                                rate_limit_retries_remaining,
-                                "chat stream transient error, retrying after delay"
-                            );
-                            if error_obj.get("type").and_then(Value::as_str)
-                                == Some("rate_limit_exceeded")
-                            {
-                                send_retry_status_to_channels(
-                                    state,
-                                    session_key,
-                                    &error_obj,
-                                    Duration::from_millis(delay_ms),
-                                )
-                                .await;
-                            }
-                            broadcast(
-                                state,
-                                "chat",
-                                serde_json::json!({
-                                    "runId": run_id,
-                                    "sessionKey": session_key,
-                                    "state": "retrying",
-                                    "error": error_obj,
-                                    "retryAfterMs": delay_ms,
-                                    "seq": client_seq,
-                                }),
-                                BroadcastOpts::default(),
-                            )
-                            .await;
-                            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                            continue 'attempts;
-                        }
-
-                        warn!(run_id, error = %msg, "chat stream error");
-                        if let Some(mut step) = generation_step.take() {
-                            step.fail(msg.clone());
-                            step.finish();
-                        }
-                        if let Some(recorder) = turn_recorder.as_ref() {
-                            recorder.finish_with_error(msg.clone());
-                        }
-                        if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
-                            dispatcher.finish().await;
-                        }
-                        state.set_run_error(run_id, msg.clone()).await;
-                        mark_unsupported_model(
-                            state,
-                            model_store,
-                            &selected_identity.model,
-                            &selected_identity.provider,
-                            &error_obj,
-                        )
-                        .await;
-                        deliver_channel_error(state, session_key, &error_obj).await;
                         let error_payload = ChatErrorBroadcast {
                             run_id: run_id.to_string(),
                             session_key: session_key.to_string(),
                             state: "error",
-                            error: error_obj,
+                            error: error_obj.clone(),
                             seq: client_seq,
                         };
                         #[allow(clippy::unwrap_used)] // serializing known-valid struct
                         let payload_val = serde_json::to_value(&error_payload).unwrap();
-                        terminal_runs.write().await.insert(run_id.to_string());
+                        commit_terminal_and_finish_channel_stream(
+                            terminal_runs,
+                            run_id,
+                            channel_stream_dispatcher.as_mut(),
+                        )
+                        .await;
+                        deliver_channel_error(state, session_key, &error_obj).await;
                         broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
                         return None;
-                    },
-                    // Tool events not expected in stream-only mode.
-                    StreamEvent::ToolCallStart { .. }
-                    | StreamEvent::ToolCallArgumentsDelta { .. }
-                    | StreamEvent::ToolCallComplete { .. } => {},
+                    }
+
+                    let assistant_message_index = user_message_index + 1;
+
+                    // Generate & persist TTS audio for voice-medium web UI replies.
+                    let mut audio_warning: Option<String> = None;
+                    let audio_path = if !is_silent && desired_reply_medium == ReplyMedium::Voice {
+                        match generate_tts_audio(state, session_key, &accumulated).await {
+                            Ok(bytes) => {
+                                let filename = format!("{run_id}.ogg");
+                                if let Some(store) = session_store {
+                                    match store.save_media(session_key, &filename, &bytes).await {
+                                        Ok(path) => Some(path),
+                                        Err(e) => {
+                                            let warning = format!(
+                                                "TTS audio generated but failed to save: {e}"
+                                            );
+                                            warn!(run_id, error = %warning, "failed to save TTS audio to media dir");
+                                            audio_warning = Some(warning);
+                                            None
+                                        },
+                                    }
+                                } else {
+                                    audio_warning = Some(
+                                        "TTS audio generated but session media storage is unavailable"
+                                            .to_string(),
+                                    );
+                                    None
+                                }
+                            },
+                            Err(error) => {
+                                let error = error.to_string();
+                                warn!(run_id, error = %error, "voice reply generation skipped");
+                                audio_warning = Some(error);
+                                None
+                            },
+                        }
+                    } else {
+                        None
+                    };
+
+                    let final_payload = build_chat_final_broadcast(
+                        run_id,
+                        session_key,
+                        accumulated.clone(),
+                        provider.id().to_string(),
+                        provider_name.to_string(),
+                        UsageSnapshot::new(usage.clone(), Some(usage.clone())),
+                        run_started.elapsed().as_millis() as u64,
+                        assistant_message_index,
+                        desired_reply_medium,
+                        None,
+                        None,
+                        audio_path.clone(),
+                        audio_warning,
+                        reasoning.clone(),
+                        client_seq,
+                    );
+                    #[allow(clippy::unwrap_used)] // serializing known-valid struct
+                    let payload_val = serde_json::to_value(&final_payload).unwrap();
+
+                    // Channel Done and fallback replies are irreversible. Claim
+                    // terminal ownership before either can be accepted.
+                    let streamed_target_keys = commit_terminal_and_finish_channel_stream(
+                        terminal_runs,
+                        run_id,
+                        channel_stream_dispatcher.as_mut(),
+                    )
+                    .await;
+
+                    if !is_silent {
+                        #[cfg(feature = "push-notifications")]
+                        {
+                            tracing::info!("push: checking push notification");
+                            let push_state = Arc::clone(state);
+                            let push_session_key = session_key.to_string();
+                            let push_text = accumulated.clone();
+                            let push_order = crate::channel_push::next_push_notification_order();
+                            tokio::spawn(async move {
+                                send_chat_push_notification(
+                                    &push_state,
+                                    &push_session_key,
+                                    &push_text,
+                                    push_order,
+                                )
+                                .await;
+                            });
+                        }
+                        deliver_channel_replies(
+                            state,
+                            run_id,
+                            session_key,
+                            &accumulated,
+                            desired_reply_medium,
+                            &streamed_target_keys,
+                        )
+                        .await;
+                    }
+                    let llm_api_response =
+                        (!raw_llm_responses.is_empty()).then_some(Value::Array(raw_llm_responses));
+                    let mut output = build_assistant_turn_output(
+                        accumulated,
+                        UsageSnapshot::new(usage.clone(), Some(usage)),
+                        run_started.elapsed().as_millis() as u64,
+                        audio_path,
+                        reasoning,
+                        llm_api_response,
+                    );
+                    output.final_broadcast = Some(payload_val);
+                    return Some(output);
                 },
+                StreamEvent::Error(msg) => {
+                    let error_obj = parse_chat_error(&msg, Some(provider_name));
+                    let has_no_streamed_content = accumulated.trim().is_empty()
+                        && accumulated_reasoning.trim().is_empty()
+                        && raw_llm_responses.is_empty();
+                    if has_no_streamed_content
+                        && let Some(delay_ms) = next_stream_retry_delay_ms(
+                            &msg,
+                            &error_obj,
+                            &mut server_retries_remaining,
+                            &mut rate_limit_retries_remaining,
+                            &mut rate_limit_backoff_ms,
+                        )
+                    {
+                        warn!(
+                            run_id,
+                            error = %msg,
+                            delay_ms,
+                            server_retries_remaining,
+                            rate_limit_retries_remaining,
+                            "chat stream transient error, retrying after delay"
+                        );
+                        if error_obj.get("type").and_then(Value::as_str)
+                            == Some("rate_limit_exceeded")
+                        {
+                            send_retry_status_to_channels(
+                                state,
+                                session_key,
+                                &error_obj,
+                                Duration::from_millis(delay_ms),
+                            )
+                            .await;
+                        }
+                        broadcast(
+                            state,
+                            "chat",
+                            serde_json::json!({
+                                "runId": run_id,
+                                "sessionKey": session_key,
+                                "state": "retrying",
+                                "error": error_obj,
+                                "retryAfterMs": delay_ms,
+                                "seq": client_seq,
+                            }),
+                            BroadcastOpts::default(),
+                        )
+                        .await;
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        continue 'attempts;
+                    }
+
+                    warn!(run_id, error = %msg, "chat stream error");
+                    state.set_run_error(run_id, msg.clone()).await;
+                    mark_unsupported_model(state, model_store, model_id, provider_name, &error_obj)
+                        .await;
+                    let error_payload = ChatErrorBroadcast {
+                        run_id: run_id.to_string(),
+                        session_key: session_key.to_string(),
+                        state: "error",
+                        error: error_obj.clone(),
+                        seq: client_seq,
+                    };
+                    #[allow(clippy::unwrap_used)] // serializing known-valid struct
+                    let payload_val = serde_json::to_value(&error_payload).unwrap();
+                    commit_terminal_and_finish_channel_stream(
+                        terminal_runs,
+                        run_id,
+                        channel_stream_dispatcher.as_mut(),
+                    )
+                    .await;
+                    deliver_channel_error(state, session_key, &error_obj).await;
+                    broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
+                    return None;
+                },
+                // Tool events not expected in stream-only mode.
+                StreamEvent::ToolCallStart { .. }
+                | StreamEvent::ToolCallArgumentsDelta { .. }
+                | StreamEvent::ToolCallComplete { .. } => {},
             }
         }
 
         // Stream ended unexpectedly without Done/Error.
-        let message = "provider stream ended without a terminal event";
-        if let Some(mut step) = generation_step.take() {
-            step.fail(message);
-            step.finish();
-        }
-        if let Some(recorder) = turn_recorder.as_ref() {
-            recorder.finish_with_error(message);
-        }
         return None;
     }
 }

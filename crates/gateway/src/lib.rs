@@ -18,6 +18,7 @@ pub mod broadcast;
 pub mod channel;
 pub mod channel_agent_tools;
 pub mod channel_events;
+pub mod channel_reactions;
 pub mod channel_store;
 pub mod channel_webhook_dedup;
 pub mod channel_webhook_middleware;

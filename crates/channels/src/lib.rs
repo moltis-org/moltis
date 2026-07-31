@@ -4,11 +4,13 @@
 //! ChannelPlugin trait with sub-traits for config, auth, inbound/outbound
 //! messaging, status, and gateway lifecycle.
 
+pub mod activity;
 pub mod channel_webhook_middleware;
 pub mod commands;
 pub mod config_view;
 pub mod contract;
 pub mod error;
+pub mod fair_queue;
 pub mod feedback;
 pub mod gating;
 pub mod media_download;
@@ -21,6 +23,7 @@ pub mod store;
 pub mod trace_link;
 
 pub use {
+    activity::{ChannelAckOutcome, ChannelActivity},
     channel_webhook_middleware::{
         ChannelWebhookDedupeResult, ChannelWebhookRatePolicy, ChannelWebhookRejection,
         ChannelWebhookVerifier, TimestampGuard, VerifiedChannelWebhook,

@@ -340,8 +340,9 @@ mod tests {
             event_sink: None,
             cancel: CancellationToken::new(),
             bot_user_id: Some("Ubot".into()),
-            pending_threads: HashMap::new(),
+            stream_recipients: Default::default(),
             otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(300)),
+            dedup: std::sync::Mutex::new(crate::state::EventDedup::default()),
         }
     }
 

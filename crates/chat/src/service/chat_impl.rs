@@ -1,7 +1,8 @@
 //! `ChatService` trait implementation for `LiveChatService`.
 
-mod queue;
+mod queue_drain;
 mod send;
+mod send_params;
 
 use std::{path::Path, sync::Arc};
 
@@ -23,8 +24,8 @@ use {
     },
     moltis_config::ToolMode,
     moltis_service_traits::{ChatService, ServiceError, ServiceResult},
-    moltis_sessions::{ContentBlock, MessageContent, PersistedMessage},
-    moltis_tools::policy::{PolicyContext, ToolPolicy},
+    moltis_sessions::{MessageContent, PersistedMessage},
+    moltis_tools::policy::PolicyContext,
 };
 
 use crate::{
@@ -41,7 +42,10 @@ use crate::{
     types::*,
 };
 
-use super::*;
+use super::{
+    types::{RunHandleDisposition, cancel_queued_messages},
+    *,
+};
 
 #[async_trait]
 impl ChatService for LiveChatService {
@@ -85,45 +89,122 @@ impl ChatService for LiveChatService {
         let resolved_session_key =
             Self::resolve_session_key_for_run(&self.active_runs_by_session, run_id, session_key)
                 .await;
+        let Some(resolved_session_key) = resolved_session_key else {
+            return Ok(serde_json::json!({
+                "aborted": false,
+                "runId": run_id,
+                "sessionKey": session_key,
+            }));
+        };
+        let resolved_run_id = match run_id {
+            Some(id) => id.to_string(),
+            None => {
+                let Some(id) = self
+                    .active_runs_by_session
+                    .read()
+                    .await
+                    .get(&resolved_session_key)
+                    .cloned()
+                else {
+                    return Ok(serde_json::json!({
+                        "aborted": false,
+                        "runId": null,
+                        "sessionKey": resolved_session_key,
+                    }));
+                };
+                id
+            },
+        };
 
-        let (resolved_run_id, aborted) = Self::abort_run_handle(
+        let session_sem = self.session_semaphore(&resolved_session_key).await;
+        let (_, claim) = Self::claim_run_for_abort(
             &self.active_runs,
             &self.active_runs_by_session,
             &self.terminal_runs,
-            run_id,
-            session_key,
+            session_sem,
+            Some(&resolved_run_id),
+            Some(&resolved_session_key),
         )
         .await;
+        let disposition = claim.disposition;
+        let aborted = disposition == RunHandleDisposition::Aborted;
+        let stale = disposition == RunHandleDisposition::Stale;
         info!(
             requested_run_id = ?run_id,
             session_key = ?session_key,
-            resolved_run_id = ?resolved_run_id,
+            resolved_run_id = %resolved_run_id,
             aborted,
+            stale,
             "chat.abort"
         );
 
-        if aborted && let Some(key) = resolved_session_key.as_deref() {
-            let _ = Self::wait_for_event_forwarder(&self.active_event_forwarders, key).await;
-            let partial = self.persist_partial_assistant_on_abort(key).await;
-            self.active_thinking_text.write().await.remove(key);
-            self.active_tool_calls.write().await.remove(key);
-            self.active_reply_medium.write().await.remove(key);
-            let mut payload = serde_json::json!({
-                "state": "aborted",
+        if disposition == RunHandleDisposition::Unavailable {
+            return Ok(serde_json::json!({
+                "aborted": false,
                 "runId": resolved_run_id,
-                "sessionKey": key,
-            });
-            if let Some((partial_message, message_index)) = partial {
-                payload["partialMessage"] = partial_message;
-                if let Some(index) = message_index {
-                    payload["messageIndex"] = serde_json::json!(index);
-                }
-            }
-            broadcast(&self.state, "chat", payload, BroadcastOpts::default()).await;
+                "sessionKey": resolved_session_key,
+            }));
         }
+
+        // The forwarder owns run-scoped channel delivery tasks. Cancel it before
+        // waiting for the run permit so abort cleanup cannot be held hostage by
+        // channel I/O.
+        Self::cancel_event_forwarder(&self.active_event_forwarders, &resolved_run_id).await;
+
+        let cleanup_permit = claim
+            .cleanup
+            .ok_or_else(|| ServiceError::message("abort cleanup reservation missing"))?
+            .acquire()
+            .await
+            .map_err(|_| ServiceError::message("session semaphore closed during abort"))?;
+
+        self.state
+            .finalize_active_channel_acks(
+                &resolved_run_id,
+                moltis_channels::ChannelAckOutcome::Cancelled,
+            )
+            .await;
+        let partial = self
+            .persist_partial_assistant_on_abort(&resolved_session_key, &resolved_run_id)
+            .await;
+        self.active_thinking_text
+            .write()
+            .await
+            .remove(&resolved_session_key);
+        self.active_tool_calls
+            .write()
+            .await
+            .remove(&resolved_session_key);
+        self.active_reply_medium
+            .write()
+            .await
+            .remove(&resolved_session_key);
+        self.terminal_runs.write().await.remove(&resolved_run_id);
+        let mut payload = serde_json::json!({
+            "state": "aborted",
+            "runId": resolved_run_id,
+            "sessionKey": resolved_session_key,
+        });
+        if let Some((partial_message, message_index)) = partial {
+            payload["partialMessage"] = partial_message;
+            if let Some(index) = message_index {
+                payload["messageIndex"] = serde_json::json!(index);
+            }
+        }
+        broadcast(&self.state, "chat", payload, BroadcastOpts::default()).await;
+
+        drop(cleanup_permit);
+        queue_drain::drain_and_replay(
+            &self.message_queue,
+            &resolved_session_key,
+            self.config.chat.message_queue_mode,
+            &self.state,
+        )
+        .await;
 
         Ok(serde_json::json!({
             "aborted": aborted,
+            "cleanedStale": stale,
             "runId": resolved_run_id,
             "sessionKey": resolved_session_key,
         }))
@@ -135,14 +216,25 @@ impl ChatService for LiveChatService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'sessionKey'".to_string())?;
 
-        let removed = self
-            .message_queue
-            .write()
-            .await
-            .remove(session_key)
-            .unwrap_or_default();
+        let removed: Vec<QueuedMessage> = {
+            let mut queues = self.message_queue.write().await;
+            cancel_queued_messages(&mut queues, session_key)
+        };
         let count = removed.len();
         info!(session = %session_key, count, "cancel_queued: cleared message queue");
+
+        // These messages will never be answered, so clear their channel
+        // acknowledgment markers rather than leaving them to expire.
+        let cancelled_acks =
+            crate::channel_acks::merged_ack_keys(removed.iter().map(|m| &m.params));
+        if !cancelled_acks.is_empty() {
+            self.state
+                .finalize_channel_acks(
+                    cancelled_acks,
+                    moltis_channels::ChannelAckOutcome::Cancelled,
+                )
+                .await;
+        }
 
         broadcast(
             &self.state,

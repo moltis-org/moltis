@@ -11,7 +11,7 @@ use tracing::warn;
 
 use crate::{
     agent_loop::ChannelReplyTargetKey,
-    channels::{build_tts_payload, format_logbook_html},
+    channels::{format_logbook_html, tts::build_tts_payload},
     runtime::ChatRuntime,
     types::ReplyMedium,
 };
