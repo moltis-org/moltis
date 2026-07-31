@@ -3,7 +3,7 @@
 //! Extracted from the gateway's `mcp_service` module. These are pure
 //! functions with no gateway state dependency.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use {
     secrecy::{ExposeSecret, Secret},
@@ -50,6 +50,12 @@ pub fn parse_server_config(
             .unwrap_or_default()
     } else {
         existing.map(|cfg| cfg.args.clone()).unwrap_or_default()
+    };
+
+    let cwd = match params.get("cwd") {
+        Some(value) if value.is_null() => None,
+        Some(value) => value.as_str().map(PathBuf::from),
+        None => existing.and_then(|cfg| cfg.cwd.clone()),
     };
 
     let enabled = params
@@ -178,6 +184,7 @@ pub fn parse_server_config(
     Ok(McpServerConfig {
         command,
         args,
+        cwd,
         env,
         enabled,
         request_timeout_secs,
@@ -193,6 +200,7 @@ pub fn parse_server_config(
         headers,
         oauth,
         display_name,
+        managed_origin: existing.and_then(|cfg| cfg.managed_origin.clone()),
     })
 }
 
@@ -279,6 +287,25 @@ mod tests {
     }
 
     #[test]
+    fn parse_server_config_accepts_and_clears_stdio_cwd() {
+        let cfg = parse_server_config(
+            &serde_json::json!({
+                "command": "mcp-server",
+                "cwd": "/tmp/repository"
+            }),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.cwd.as_deref(),
+            Some(PathBuf::from("/tmp/repository").as_path())
+        );
+
+        let cleared = parse_server_config(&serde_json::json!({"cwd": null}), Some(&cfg)).unwrap();
+        assert!(cleared.cwd.is_none());
+    }
+
+    #[test]
     fn parse_server_config_requires_url_for_sse() {
         let err = parse_server_config(
             &serde_json::json!({
@@ -324,6 +351,7 @@ mod tests {
         let existing = McpServerConfig {
             command: String::new(),
             args: vec![],
+            cwd: None,
             env: HashMap::new(),
             enabled: true,
             request_timeout_secs: None,
@@ -339,6 +367,7 @@ mod tests {
             },
             oauth: None,
             display_name: Some("My Server".to_string()),
+            managed_origin: None,
         };
 
         // Update only display_name, rest should be preserved
@@ -368,6 +397,7 @@ mod tests {
         let existing = McpServerConfig {
             command: String::new(),
             args: vec![],
+            cwd: None,
             env: HashMap::new(),
             enabled: true,
             request_timeout_secs: None,
@@ -382,6 +412,7 @@ mod tests {
                 scopes: vec!["read".to_string()],
             }),
             display_name: None,
+            managed_origin: None,
         };
 
         let cfg = parse_server_config(
@@ -439,6 +470,7 @@ mod tests {
         let existing = McpServerConfig {
             command: String::new(),
             args: vec![],
+            cwd: None,
             env: HashMap::new(),
             enabled: true,
             request_timeout_secs: None,
@@ -452,6 +484,7 @@ mod tests {
             },
             oauth: None,
             display_name: None,
+            managed_origin: None,
         };
 
         // Replace X-Replace, don't mention X-Keep
@@ -480,6 +513,7 @@ mod tests {
         let existing = McpServerConfig {
             command: String::new(),
             args: vec![],
+            cwd: None,
             env: HashMap::new(),
             enabled: true,
             request_timeout_secs: None,
@@ -495,6 +529,7 @@ mod tests {
             },
             oauth: None,
             display_name: None,
+            managed_origin: None,
         };
 
         let cfg = parse_server_config(
@@ -536,6 +571,7 @@ mod tests {
         let existing = McpServerConfig {
             command: "uvx".to_string(),
             args: vec!["mcp-server".to_string()],
+            cwd: None,
             env: HashMap::new(),
             enabled: true,
             request_timeout_secs: Some(60),
@@ -544,6 +580,7 @@ mod tests {
             headers: HashMap::new(),
             oauth: None,
             display_name: None,
+            managed_origin: None,
         };
 
         // Omit timeout — should preserve existing
@@ -582,6 +619,7 @@ mod tests {
         let existing = McpServerConfig {
             command: "uvx".to_string(),
             args: vec!["mcp-server".to_string()],
+            cwd: None,
             env: HashMap::from([
                 ("KEEP".to_string(), Secret::new("old-keep".to_string())),
                 (
@@ -596,6 +634,7 @@ mod tests {
             headers: HashMap::new(),
             oauth: None,
             display_name: None,
+            managed_origin: None,
         };
 
         let cfg = parse_server_config(
@@ -629,6 +668,7 @@ mod tests {
         let existing = McpServerConfig {
             command: "uvx".to_string(),
             args: vec!["mcp-server".to_string()],
+            cwd: None,
             env: HashMap::from([("TOKEN".to_string(), Secret::new("secret".to_string()))]),
             enabled: true,
             request_timeout_secs: None,
@@ -637,6 +677,7 @@ mod tests {
             headers: HashMap::new(),
             oauth: None,
             display_name: None,
+            managed_origin: None,
         };
 
         let cfg = parse_server_config(

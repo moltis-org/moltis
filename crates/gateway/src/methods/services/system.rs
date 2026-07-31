@@ -668,6 +668,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
 
+    register_mcp_repository_methods(reg);
+
     // Browser
     reg.register(
         "browser.request",
@@ -1246,4 +1248,40 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             })
         }),
     );
+}
+
+fn register_mcp_repository_methods(reg: &mut MethodRegistry) {
+    macro_rules! register_mcp_method {
+        ($name:literal, $method:ident) => {
+            reg.register(
+                $name,
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .mcp
+                            .$method(ctx.params.clone())
+                            .await
+                            .map_err(ErrorShape::from)
+                    })
+                }),
+            );
+        };
+    }
+
+    register_mcp_method!("mcp.repositories.list", repositories_list);
+    register_mcp_method!("mcp.repositories.preview", repositories_preview);
+    register_mcp_method!("mcp.repositories.install", repositories_install);
+    register_mcp_method!(
+        "mcp.repositories.update.preview",
+        repositories_update_preview
+    );
+    register_mcp_method!("mcp.repositories.update.apply", repositories_update_apply);
+    register_mcp_method!("mcp.repositories.rollback", repositories_rollback);
+    register_mcp_method!("mcp.repositories.remove", repositories_remove);
+    register_mcp_method!("mcp.managed.approve", managed_approve);
+    register_mcp_method!("mcp.git.credentials.list", git_credentials_list);
+    register_mcp_method!("mcp.git.credentials.create", git_credentials_create);
+    register_mcp_method!("mcp.git.credentials.update", git_credentials_update);
+    register_mcp_method!("mcp.git.credentials.remove", git_credentials_remove);
 }

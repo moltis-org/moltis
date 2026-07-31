@@ -8,6 +8,7 @@ import { onEvent } from "../events";
 import { sendRpc } from "../helpers";
 import { updateNavCount } from "../nav-counts";
 import { ConfirmDialog, requestConfirm } from "../ui";
+import { ManagedRepositories } from "./mcp/ManagedRepositories";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -31,6 +32,13 @@ interface McpServer {
 	auth_state?: string;
 	request_timeout_secs?: number | null;
 	configured_request_timeout_secs?: number;
+	managed?: {
+		repository_id: string;
+		repository_alias: string;
+		commit: string;
+		approved: boolean;
+		warning_kinds?: string[];
+	};
 }
 
 interface McpTool {
@@ -1116,14 +1124,15 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 }
 
 function ConfiguredServersSection(): VNode {
+	const manualServers = servers.value.filter((server) => !server.managed);
 	return (
 		<div>
-			<h3 className="text-sm font-medium text-[var(--text-strong)] mb-2">Configured MCP Servers</h3>
+			<h3 className="text-sm font-medium text-[var(--text-strong)] mb-2">Manual MCP Servers</h3>
 			<div>
-				{(!servers.value || servers.value.length === 0) && !loading.value && (
-					<div className="p-3 text-[var(--muted)] text-sm">No MCP tools configured.</div>
+				{manualServers.length === 0 && !loading.value && (
+					<div className="p-3 text-[var(--muted)] text-sm">No manual MCP tools configured.</div>
 				)}
-				{servers.value.map((s) => (
+				{manualServers.map((s) => (
 					<ServerCard key={s.name} server={s} />
 				))}
 			</div>
@@ -1222,6 +1231,7 @@ function McpPageComponent(): VNode {
 			<ConfigSection />
 			<InstallBox />
 			<FeaturedSection />
+			<ManagedRepositories onServersChanged={refreshServers} />
 			<ConfiguredServersSection />
 			{loading.value && servers.value.length === 0 && (
 				<div className="p-6 text-center text-[var(--muted)] text-sm">Loading MCP servers&hellip;</div>

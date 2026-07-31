@@ -1,0 +1,27 @@
+[package]
+description       = "Secure, immutable materialization of managed Git repository revisions"
+edition.workspace = true
+name              = "moltis-git-repositories"
+version.workspace = true
+
+[features]
+default = ["tracing"]
+metrics = ["dep:metrics"]
+tracing = ["dep:tracing"]
+
+[dependencies]
+gix        = { workspace = true }
+metrics    = { optional = true, workspace = true }
+secrecy    = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+tempfile   = { workspace = true }
+thiserror  = { workspace = true }
+tracing    = { optional = true, workspace = true }
+url        = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

@@ -526,6 +526,48 @@ pub trait McpService: Send + Sync {
     async fn reauth(&self, params: Value) -> ServiceResult;
     async fn oauth_start(&self, params: Value) -> ServiceResult;
     async fn oauth_complete(&self, params: Value) -> ServiceResult;
+    async fn repositories_list(&self, _params: Value) -> ServiceResult {
+        Err("managed MCP repositories not available".into())
+    }
+    async fn repositories_preview(&self, _params: Value) -> ServiceResult {
+        Err("managed MCP repositories not available".into())
+    }
+    async fn repositories_install(&self, _params: Value) -> ServiceResult {
+        Err("managed MCP repositories not available".into())
+    }
+    async fn repositories_update_preview(&self, _params: Value) -> ServiceResult {
+        Err("managed MCP repositories not available".into())
+    }
+    async fn repositories_update_apply(&self, _params: Value) -> ServiceResult {
+        Err("managed MCP repositories not available".into())
+    }
+    async fn repositories_rollback(&self, _params: Value) -> ServiceResult {
+        Err("managed MCP repositories not available".into())
+    }
+    async fn repositories_remove(&self, _params: Value) -> ServiceResult {
+        Err("managed MCP repositories not available".into())
+    }
+    async fn managed_approve(&self, _params: Value) -> ServiceResult {
+        Err("managed MCP repositories not available".into())
+    }
+    async fn git_credentials_list(&self, _params: Value) -> ServiceResult {
+        Err("managed Git credentials not available".into())
+    }
+    async fn git_credentials_create(&self, _params: Value) -> ServiceResult {
+        Err("managed Git credentials not available".into())
+    }
+    async fn git_credentials_update(&self, _params: Value) -> ServiceResult {
+        Err("managed Git credentials not available".into())
+    }
+    async fn git_credentials_remove(&self, _params: Value) -> ServiceResult {
+        Err("managed Git credentials not available".into())
+    }
+    async fn managed_ssh_key_remove(&self, _id: i64) -> ServiceResult {
+        Err("managed SSH credentials not available".into())
+    }
+    async fn managed_ssh_target_remove(&self, _id: i64) -> ServiceResult {
+        Err("managed SSH credentials not available".into())
+    }
 
     async fn update_request_timeout(&self, _request_timeout_secs: u64) -> ServiceResult {
         Ok(serde_json::json!({ "ok": true }))
@@ -581,6 +623,66 @@ impl McpService for NoopMcpService {
     }
 
     async fn oauth_complete(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn repositories_list(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "repositories": [] }))
+    }
+
+    async fn repositories_preview(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn repositories_install(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn repositories_update_preview(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn repositories_update_apply(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn repositories_rollback(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn repositories_remove(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn managed_approve(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn git_credentials_list(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({
+            "credentials": [],
+            "sshKeys": [],
+            "sshTargets": []
+        }))
+    }
+
+    async fn git_credentials_create(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn git_credentials_update(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn git_credentials_remove(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn managed_ssh_key_remove(&self, _id: i64) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn managed_ssh_target_remove(&self, _id: i64) -> ServiceResult {
         Err("MCP not configured".into())
     }
 }

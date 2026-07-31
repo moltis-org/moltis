@@ -22,6 +22,13 @@ use crate::detect::ClaudeDetection;
 
 /// Import MCP servers from all Claude sources into Moltis.
 pub fn import_mcp_servers(detection: &ClaudeDetection, dest_path: &Path) -> CategoryReport {
+    let all_servers = collect_mcp_servers(detection);
+
+    merge_mcp_servers(&all_servers, dest_path)
+}
+
+/// Collect MCP servers from all detected Claude sources without writing them.
+pub fn collect_mcp_servers(detection: &ClaudeDetection) -> HashMap<String, ImportMcpServer> {
     let mut all_servers: HashMap<String, ImportMcpServer> = HashMap::new();
 
     // Source 1: ~/.claude.json mcpServers
@@ -42,7 +49,7 @@ pub fn import_mcp_servers(detection: &ClaudeDetection, dest_path: &Path) -> Cate
         }
     }
 
-    merge_mcp_servers(&all_servers, dest_path)
+    all_servers
 }
 
 /// Extract MCP servers from a JSON config file (works for both `.claude.json`
@@ -212,9 +219,55 @@ mod tests {
         assert_eq!(report.items_imported, 2);
 
         let content = std::fs::read_to_string(&dest).unwrap();
-        let loaded: HashMap<String, serde_json::Value> = serde_json::from_str(&content).unwrap();
-        assert!(loaded.contains_key("server-a"));
-        assert!(loaded.contains_key("server-b"));
+        let loaded: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(loaded["servers"].get("server-a").is_some());
+        assert!(loaded["servers"].get("server-b").is_some());
+    }
+
+    #[test]
+    fn import_preserves_managed_registry_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join(".claude.json");
+        std::fs::write(
+            &source,
+            r#"{"mcpServers":{"imported":{"command":"new","args":[]}}}"#,
+        )
+        .unwrap();
+        let dest = tmp.path().join("mcp-servers.json");
+        let existing = serde_json::json!({
+            "servers": {
+                "managed": {
+                    "command": "managed",
+                    "managed_origin": {
+                        "approval": {"commit": "abc", "config_digest": "digest"}
+                    }
+                }
+            },
+            "repositories": {"repo-1": {"alias": "managed-tools"}},
+            "future_registry_field": {"version": 2}
+        });
+        std::fs::write(&dest, serde_json::to_string(&existing).unwrap()).unwrap();
+        let mut detection = make_detection();
+        detection.user_claude_json_path = Some(source);
+
+        let report = import_mcp_servers(&detection, &dest);
+
+        assert_eq!(
+            report.status,
+            moltis_import_core::report::ImportStatus::Success
+        );
+        let loaded: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&dest).unwrap()).unwrap();
+        assert_eq!(loaded["repositories"], existing["repositories"]);
+        assert_eq!(
+            loaded["future_registry_field"],
+            existing["future_registry_field"]
+        );
+        assert_eq!(
+            loaded["servers"]["managed"]["managed_origin"]["approval"],
+            existing["servers"]["managed"]["managed_origin"]["approval"]
+        );
+        assert_eq!(loaded["servers"]["imported"]["command"], "new");
     }
 
     #[test]

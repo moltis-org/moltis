@@ -426,6 +426,45 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_spawn_uses_configured_working_directory() {
+        let cwd = tempfile::tempdir().unwrap();
+        let output_dir = tempfile::tempdir().unwrap();
+        let output = output_dir.path().join("cwd.txt");
+        let args = vec![
+            "-c".to_string(),
+            "pwd > \"$1\"; while read line; do :; done".to_string(),
+            "sh".to_string(),
+            output.to_string_lossy().into_owned(),
+        ];
+        let transport = StdioTransport::spawn_with_timeout_in(
+            "sh",
+            &args,
+            &HashMap::new(),
+            Some(cwd.path()),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        let written_cwd = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(value) = tokio::fs::read_to_string(&output).await {
+                    break value;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            Path::new(written_cwd.trim()).canonicalize().unwrap(),
+            cwd.path().canonicalize().unwrap()
+        );
+        transport.kill().await;
+    }
+
     #[tokio::test]
     async fn test_request_uses_configured_timeout() {
         let args = vec!["-c".to_string(), "while read line; do :; done".to_string()];

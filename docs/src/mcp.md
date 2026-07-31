@@ -28,6 +28,142 @@ MCP is an open protocol that lets AI assistants connect to external tools and da
 
 After saving a remote server, Moltis only shows a sanitized URL plus header names/count in the UI and status views. Stored header values stay hidden.
 
+### Managed Git Repositories for Deployment
+
+The main `moltis` CLI can materialize MCP server definitions from Git before the gateway starts. These commands work directly against `MOLTIS_DATA_DIR` (or global `--data-dir`) and do not start MCP processes.
+
+Stop the gateway before offline mutations, or run these commands in the container init phase before gateway startup. Every mutation reports `restartRequired: true`; start or restart the gateway after it completes. An advisory lock rejects concurrent CLI and gateway repository writers.
+
+Public HTTPS repository in a container init script:
+
+```bash
+export MOLTIS_DATA_DIR=/home/moltis/.moltis
+
+moltis mcp repositories preview \
+  --alias company-tools \
+  --id company-tools-v1 \
+  --url https://github.com/example/company-tools.git \
+  --ref main \
+  --json
+
+moltis mcp repositories add \
+  --alias company-tools \
+  --id company-tools-v1 \
+  --url https://github.com/example/company-tools.git \
+  --ref main \
+  --approve all \
+  --enable \
+  --json
+```
+
+Use an explicit `--id` for deterministic deployment. Re-running `add` with the same id or alias, source, and ref succeeds as `alreadyInstalled` without duplicating servers. A conflicting source or ref fails.
+
+Existing local Git repository mounted into the container:
+
+```bash
+moltis --data-dir /home/moltis/.moltis mcp repositories add \
+  --alias mounted-tools \
+  --id mounted-tools-v1 \
+  --local /opt/mcp-tools \
+  --ref HEAD \
+  --json
+```
+
+The default import is disabled and unapproved. Approve and enable it after inspection:
+
+```bash
+moltis mcp repositories approve \
+  --id mounted-tools-v1 \
+  --all \
+  --enable \
+  --json
+```
+
+Private HTTPS uses an existing credential id from `moltis.db`; tokens are never accepted in shell arguments. A new container can provision one from an environment variable:
+
+```bash
+export MOLTIS_GIT_TOKEN="$(cat /run/secrets/mcp_git_token)"
+moltis mcp credentials add \
+  --host git.example.com \
+  --username deploy-token \
+  --token-env MOLTIS_GIT_TOKEN \
+  --json
+unset MOLTIS_GIT_TOKEN
+```
+
+The JSON response contains the generated credential `id`; pass that value to the repository command:
+
+```bash
+moltis mcp repositories add \
+  --alias private-tools \
+  --id private-tools-v1 \
+  --url https://git.example.com/platform/private-tools.git \
+  --private \
+  --https-credential-id 12 \
+  --ref refs/tags/v2.4.0 \
+  --json
+```
+
+Preprovision the credential through the authenticated web UI. Offline access supports plaintext managed credentials, but refuses to replace an existing vault-encrypted credential with plaintext. Plaintext credentials are migrated to vault encryption after the vault is unlocked. Vault-encrypted credentials require an unsealed running gateway; use the equivalent online command instead:
+
+```bash
+MOLTIS_API_KEY="$MOLTIS_API_KEY" moltis-ctl mcp repo add \
+  --alias private-tools \
+  --id private-tools-v1 \
+  --url https://git.example.com/platform/private-tools.git \
+  --private \
+  --https-credential-id 12 \
+  --approve-all \
+  --enable
+```
+
+SSH repositories use an existing managed SSH target with a private key and confirmed strict `known_host` pin. The target host and port must exactly match the repository remote. The official Docker image includes Git and the OpenSSH client required for this flow:
+
+```bash
+moltis mcp repositories add \
+  --alias ssh-tools \
+  --id ssh-tools-v1 \
+  --ssh git@git.example.com:platform/tools.git \
+  --ssh-target-id 7 \
+  --ref main \
+  --json
+```
+
+Lifecycle automation:
+
+```bash
+moltis mcp repositories list --json
+moltis mcp repositories update --id company-tools-v1 --json
+moltis mcp repositories update --id company-tools-v1 --apply --json
+moltis mcp repositories rollback --id company-tools-v1 --json
+moltis mcp repositories remove --id company-tools-v1 --json
+```
+
+`update` without `--apply` prints the reconciliation only. Applying a changed commit imports changed/new servers disabled and unapproved. Rollback only reads immutable revisions under `mcp-repositories/<id>/revisions`; remove deletes that owned directory after registry persistence and never deletes a local source checkout.
+
+Managed repositories are materialized sparsely from explicit MCP manifests, in this precedence order:
+
+1. `.moltis/mcp-repository.json` selects each declared plugin `root` recursively. Use this format when a server needs a broad repository subtree.
+2. `.claude-plugin/marketplace.json` selects only plugin roots containing `.mcp.json`, or a `.claude-plugin/plugin.json` / `.codex-plugin/plugin.json` with `mcpServers`. Inline marketplace servers need only the marketplace manifest.
+3. A root `.mcp.json` selects repository-relative files named by `command` or `args`, plus bounded root package manifests and lockfiles. It never implicitly selects the whole repository.
+
+Example native manifest:
+
+```json
+{
+  "version": 1,
+  "plugins": [
+    { "root": "servers/filesystem" },
+    { "root": "servers/database" }
+  ],
+  "mcpServers": {}
+}
+```
+
+Declared roots must be relative and cannot contain traversal. Materialization has bounds for plugin roots, manifests, depth, files, individual blobs, and total selected bytes. Git attributes and filters are not run, submodules are not initialized, and committed symlinks remain inert text files.
+
+Managed repository manifests cannot use Moltis' global environment-variable store implicitly. Candidates containing `$NAME`, `${NAME}`, or `${env:NAME}` in commands, arguments, environment values, URLs, or headers remain blocked until an explicit per-server managed secret binding exists. Literal secret-looking values are also blocked; keep secrets out of Git. Manual MCP configuration retains its existing environment placeholder behavior.
+
 ### Via Configuration
 
 Add servers to `moltis.toml`:

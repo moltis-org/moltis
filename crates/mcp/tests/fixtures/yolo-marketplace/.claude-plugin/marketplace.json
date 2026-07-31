@@ -1,0 +1,27 @@
+{
+  "name": "yolo-marketplace",
+  "plugins": [
+    { "name": "plugin-1", "source": "./plugins/plugin-1" },
+    { "name": "plugin-2", "source": "./plugins/plugin-2" },
+    { "name": "plugin-3", "source": "./plugins/plugin-3" },
+    { "name": "plugin-4", "source": "./plugins/plugin-4" },
+    { "name": "plugin-5", "source": "./plugins/plugin-5" },
+    { "name": "plugin-6", "source": "./plugins/plugin-6" },
+    { "name": "plugin-7", "source": "./plugins/plugin-7" },
+    { "name": "plugin-8", "source": "./plugins/plugin-8" },
+    {
+      "name": "inline-plugin",
+      "source": "./plugins/inline-plugin",
+      "mcpServers": {
+        "inline-stdio": {
+          "command": "node",
+          "args": ["$CLAUDE_PLUGIN_ROOT/inline.js"]
+        },
+        "inline-http": {
+          "type": "http",
+          "url": "https://example.test/mcp"
+        }
+      }
+    }
+  ]
+}

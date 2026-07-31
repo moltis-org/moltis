@@ -72,11 +72,15 @@ RUN apt-get update -qq && \
         ca-certificates \
         chromium \
         curl \
+        git \
         gnupg \
         libgomp1 \
+        openssh-client \
         sudo \
         tmux \
         vim-tiny && \
+    command -v git >/dev/null && \
+    command -v ssh >/dev/null && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 22 LTS via NodeSource (npm/npx bundled) for stdio-based MCP servers

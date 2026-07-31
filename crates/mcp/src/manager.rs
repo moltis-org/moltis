@@ -19,13 +19,33 @@ use crate::{
     auth::{McpAuthState, McpOAuthOverride, McpOAuthProvider, SharedAuthProvider},
     client::{McpClient, McpClientState},
     error::{Context, Error, Result},
+    managed_repositories::{
+        ManagedRepositoryId, managed_approval_block_reason, managed_config_is_current,
+        managed_runtime_env_overrides,
+    },
     registry::{McpOAuthConfig, McpRegistry, McpServerConfig, TransportType},
-    remote::{ResolvedRemoteConfig, header_names, sanitize_url_for_display},
+    remote::{
+        ResolvedRemoteConfig, header_names, sanitize_url_for_display, substitute_env_placeholders,
+    },
     tool_bridge::McpToolBridge,
     traits::McpClientTrait,
     transport::StdioLaunchOptions,
     types::{McpManagerError, McpToolDef, McpTransportError},
 };
+
+/// Secret-free repository provenance included with server status responses.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ManagedServerStatus {
+    pub repository_id: ManagedRepositoryId,
+    pub repository_alias: crate::ManagedRepositoryAlias,
+    pub commit: String,
+    pub approved: bool,
+    pub approval_blocked: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_block_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warning_kinds: Vec<String>,
+}
 
 /// Status of a managed MCP server.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -56,6 +76,8 @@ pub struct ServerStatus {
     /// Custom display name for the server (shown in UI).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub managed: Option<ManagedServerStatus>,
 }
 
 /// Mutable state behind the single `RwLock` on [`McpManager`].
@@ -66,6 +88,7 @@ pub struct McpManagerInner {
     /// OAuth auth providers for SSE servers, keyed by server name.
     pub auth_providers: HashMap<String, SharedAuthProvider>,
     pub env_overrides: HashMap<String, String>,
+    lifecycle_generations: HashMap<String, u64>,
 }
 
 /// Manages the lifecycle of multiple MCP server connections.
@@ -85,6 +108,47 @@ fn env_names(config: &McpServerConfig) -> Vec<String> {
     let mut names: Vec<String> = config.env.keys().cloned().collect();
     names.sort();
     names
+}
+
+fn sanitized_args(args: &[String]) -> Vec<String> {
+    let mut sanitized = args.to_vec();
+    let mut redact_next = false;
+    for arg in &mut sanitized {
+        if redact_next {
+            *arg = "[REDACTED]".to_string();
+            redact_next = false;
+            continue;
+        }
+        if let Some((flag, _)) = arg.split_once('=')
+            && likely_secret_flag(flag)
+        {
+            *arg = format!("{flag}=[REDACTED]");
+            continue;
+        }
+        redact_next = likely_secret_flag(arg);
+    }
+    sanitized
+}
+
+fn likely_secret_flag(value: &str) -> bool {
+    let upper = value
+        .trim_start_matches('-')
+        .replace('-', "_")
+        .to_ascii_uppercase();
+    upper.contains("TOKEN")
+        || upper.contains("SECRET")
+        || upper.contains("PASSWORD")
+        || upper.contains("API_KEY")
+        || upper.ends_with("_KEY")
+}
+
+fn managed_contains_literal_secret(config: &McpServerConfig) -> bool {
+    config.managed_origin.as_ref().is_some_and(|origin| {
+        origin
+            .warnings
+            .iter()
+            .any(|warning| warning.kind == crate::ManagedWarningKind::LikelyLiteralSecret)
+    })
 }
 
 impl McpManager {
@@ -109,6 +173,7 @@ impl McpManager {
                 registry,
                 auth_providers: HashMap::new(),
                 env_overrides,
+                lifecycle_generations: HashMap::new(),
             }),
             request_timeout_secs: AtomicU64::new(request_timeout_secs),
         }
@@ -169,6 +234,85 @@ impl McpManager {
         has_existing_auth_provider || has_oauth_override || has_stored_token
     }
 
+    fn config_matches(current: &McpServerConfig, supplied: &McpServerConfig) -> bool {
+        std::ptr::eq(current, supplied)
+            || match (serde_json::to_vec(current), serde_json::to_vec(supplied)) {
+                (Ok(current), Ok(supplied)) => current == supplied,
+                _ => false,
+            }
+    }
+
+    fn config_is_startable(
+        inner: &McpManagerInner,
+        name: &str,
+        supplied: &McpServerConfig,
+    ) -> bool {
+        let Some(current) = inner.registry.get(name) else {
+            return false;
+        };
+        if !current.enabled || !Self::config_matches(current, supplied) {
+            return false;
+        }
+        let Some(origin) = current.managed_origin.as_ref() else {
+            return true;
+        };
+        inner
+            .registry
+            .repositories
+            .get(&origin.repository_id)
+            .and_then(|repository| repository.active.as_ref())
+            .is_some_and(|revision| {
+                revision.commit == origin.discovered_commit
+                    && managed_config_is_current(current, revision)
+                    && origin.is_currently_approved()
+                    && managed_approval_block_reason(current).is_none()
+            })
+    }
+
+    pub(crate) fn invalidate_server(
+        inner: &mut McpManagerInner,
+        name: &str,
+        invalidate_auth: bool,
+    ) -> Option<Arc<RwLock<dyn McpClientTrait>>> {
+        let generation = inner
+            .lifecycle_generations
+            .entry(name.to_string())
+            .or_default();
+        *generation = generation.wrapping_add(1);
+        inner.tools.remove(name);
+        if invalidate_auth {
+            inner.auth_providers.remove(name);
+        }
+        inner.clients.remove(name)
+    }
+
+    fn start_is_current(
+        inner: &McpManagerInner,
+        name: &str,
+        config: &McpServerConfig,
+        generation: u64,
+    ) -> bool {
+        inner.lifecycle_generations.get(name).copied() == Some(generation)
+            && Self::config_is_startable(inner, name, config)
+    }
+
+    async fn store_auth_provider_if_current(
+        &self,
+        name: &str,
+        config: &McpServerConfig,
+        generation: u64,
+        auth_provider: SharedAuthProvider,
+    ) -> Result<()> {
+        let mut inner = self.inner.write().await;
+        if !Self::start_is_current(&inner, name, config, generation) {
+            return Err(Error::message(format!(
+                "MCP server '{name}' changed while it was starting"
+            )));
+        }
+        inner.auth_providers.insert(name.to_string(), auth_provider);
+        Ok(())
+    }
+
     /// Start all enabled servers from the registry.
     pub async fn start_enabled(&self) -> Vec<String> {
         let enabled: Vec<(String, McpServerConfig)> = {
@@ -196,8 +340,11 @@ impl McpManager {
     /// For SSE servers: attempts unauthenticated first. On 401 Unauthorized,
     /// stores auth context and returns `McpManagerError::OAuthRequired`.
     pub async fn start_server(&self, name: &str, config: &McpServerConfig) -> Result<()> {
-        self.start_server_with_options(name, config, &StdioLaunchOptions::default())
-            .await
+        let options = StdioLaunchOptions {
+            current_dir: config.cwd.clone(),
+            ..StdioLaunchOptions::default()
+        };
+        self.start_server_with_options(name, config, &options).await
     }
 
     pub async fn start_server_with_options(
@@ -206,15 +353,31 @@ impl McpManager {
         config: &McpServerConfig,
         stdio_options: &StdioLaunchOptions,
     ) -> Result<()> {
-        // Shut down existing connection if any.
-        self.stop_server(name).await;
+        let (generation, existing_client) = {
+            let mut inner = self.inner.write().await;
+            if !Self::config_is_startable(&inner, name, config) {
+                return Err(Error::message(format!(
+                    "MCP server '{name}' is no longer enabled with the supplied configuration"
+                )));
+            }
+            let existing_client = Self::invalidate_server(&mut inner, name, false);
+            let generation = inner
+                .lifecycle_generations
+                .get(name)
+                .copied()
+                .unwrap_or_default();
+            (generation, existing_client)
+        };
+        if let Some(existing_client) = existing_client {
+            existing_client.write().await.shutdown().await;
+        }
 
         // Network work happens outside the lock.
         let (client, auth_provider) = match config.transport {
             TransportType::Sse => {
                 let env_overrides = {
                     let inner = self.inner.read().await;
-                    inner.env_overrides.clone()
+                    managed_runtime_env_overrides(config, &inner.env_overrides)
                 };
                 let remote = ResolvedRemoteConfig::from_server_config(config, &env_overrides)
                     .with_context(|| format!("SSE transport for '{name}' requires a url"))?;
@@ -262,11 +425,13 @@ impl McpManager {
 
                                 // Store provider before retry so auth_state is
                                 // visible even if the retry also fails (GH-927).
-                                let mut inner = self.inner.write().await;
-                                inner
-                                    .auth_providers
-                                    .insert(name.to_string(), auth_provider.clone());
-                                drop(inner);
+                                self.store_auth_provider_if_current(
+                                    name,
+                                    config,
+                                    generation,
+                                    auth_provider.clone(),
+                                )
+                                .await?;
 
                                 if !auth_ok {
                                     return Err(McpManagerError::OAuthRequired {
@@ -310,11 +475,13 @@ impl McpManager {
 
                                 // Store provider before retry so auth_state is
                                 // visible even if the retry also fails (GH-927).
-                                let mut inner = self.inner.write().await;
-                                inner
-                                    .auth_providers
-                                    .insert(name.to_string(), auth_provider.clone());
-                                drop(inner);
+                                self.store_auth_provider_if_current(
+                                    name,
+                                    config,
+                                    generation,
+                                    auth_provider.clone(),
+                                )
+                                .await?;
 
                                 if !auth_ok {
                                     return Err(McpManagerError::OAuthRequired {
@@ -341,7 +508,7 @@ impl McpManager {
             TransportType::StreamableHttp => {
                 let env_overrides = {
                     let inner = self.inner.read().await;
-                    inner.env_overrides.clone()
+                    managed_runtime_env_overrides(config, &inner.env_overrides)
                 };
                 let remote = ResolvedRemoteConfig::from_server_config(config, &env_overrides)
                     .with_context(|| {
@@ -394,11 +561,13 @@ impl McpManager {
 
                                 // Store provider before retry so auth_state is
                                 // visible even if the retry also fails (GH-927).
-                                let mut inner = self.inner.write().await;
-                                inner
-                                    .auth_providers
-                                    .insert(name.to_string(), auth_provider.clone());
-                                drop(inner);
+                                self.store_auth_provider_if_current(
+                                    name,
+                                    config,
+                                    generation,
+                                    auth_provider.clone(),
+                                )
+                                .await?;
 
                                 if !auth_ok {
                                     return Err(McpManagerError::OAuthRequired {
@@ -441,11 +610,13 @@ impl McpManager {
 
                                 // Store provider before retry so auth_state is
                                 // visible even if the retry also fails (GH-927).
-                                let mut inner = self.inner.write().await;
-                                inner
-                                    .auth_providers
-                                    .insert(name.to_string(), auth_provider.clone());
-                                drop(inner);
+                                self.store_auth_provider_if_current(
+                                    name,
+                                    config,
+                                    generation,
+                                    auth_provider.clone(),
+                                )
+                                .await?;
 
                                 if !auth_ok {
                                     return Err(McpManagerError::OAuthRequired {
@@ -470,13 +641,53 @@ impl McpManager {
                 }
             },
             TransportType::Stdio => {
+                let runtime_overrides = {
+                    let inner = self.inner.read().await;
+                    managed_runtime_env_overrides(config, &inner.env_overrides)
+                };
+                let managed = config.managed_origin.is_some();
+                let command = if managed {
+                    substitute_env_placeholders(&config.command, &runtime_overrides)
+                } else {
+                    config.command.clone()
+                };
+                let args = if managed {
+                    config
+                        .args
+                        .iter()
+                        .map(|value| substitute_env_placeholders(value, &runtime_overrides))
+                        .collect()
+                } else {
+                    config.args.clone()
+                };
+                let env = if managed {
+                    config
+                        .env
+                        .iter()
+                        .map(|(name, value)| {
+                            (
+                                name.clone(),
+                                secrecy::Secret::new(substitute_env_placeholders(
+                                    value.expose_secret(),
+                                    &runtime_overrides,
+                                )),
+                            )
+                        })
+                        .collect()
+                } else {
+                    config.env.clone()
+                };
+                let mut options = stdio_options.clone();
+                if config.cwd.is_some() {
+                    options.current_dir = config.cwd.clone();
+                }
                 let client = McpClient::connect_with_options(
                     name,
-                    &config.command,
-                    &config.args,
-                    &config.env,
+                    &command,
+                    &args,
+                    &env,
                     self.effective_timeout_for(config),
-                    stdio_options,
+                    &options,
                 )
                 .await?;
                 (client, None)
@@ -485,7 +696,22 @@ impl McpManager {
 
         // Fetch tools.
         let mut client = client;
-        let tool_defs = client.list_tools().await?.to_vec();
+        if !{
+            let inner = self.inner.read().await;
+            Self::start_is_current(&inner, name, config, generation)
+        } {
+            client.shutdown().await;
+            return Err(Error::message(format!(
+                "MCP server '{name}' changed while it was starting"
+            )));
+        }
+        let tool_defs = match client.list_tools().await {
+            Ok(tools) => tools.to_vec(),
+            Err(error) => {
+                client.shutdown().await;
+                return Err(error);
+            },
+        };
         info!(
             server = %name,
             tools = tool_defs.len(),
@@ -495,6 +721,13 @@ impl McpManager {
         // Atomic insert of client, tools, and auth provider.
         let client: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(client));
         let mut inner = self.inner.write().await;
+        if !Self::start_is_current(&inner, name, config, generation) {
+            drop(inner);
+            client.write().await.shutdown().await;
+            return Err(Error::message(format!(
+                "MCP server '{name}' changed while it was starting"
+            )));
+        }
         inner.clients.insert(name.to_string(), client);
         inner.tools.insert(name.to_string(), tool_defs);
 
@@ -511,8 +744,7 @@ impl McpManager {
         // Keep auth_providers for potential reconnection.
         let client = {
             let mut inner = self.inner.write().await;
-            inner.tools.remove(name);
-            inner.clients.remove(name)
+            Self::invalidate_server(&mut inner, name, false)
         };
         if let Some(client) = client {
             let mut c = client.write().await;
@@ -535,15 +767,20 @@ impl McpManager {
 
     /// Start OAuth for an SSE server and return the browser authorization URL.
     pub async fn oauth_start_server(&self, name: &str, redirect_uri: &str) -> Result<String> {
-        let config =
-            {
-                let inner = self.inner.read().await;
-                inner.registry.get(name).cloned().ok_or_else(|| {
-                    McpManagerError::ServerNotFound {
-                        server: name.to_string(),
-                    }
-                })?
-            };
+        let (config, generation) = {
+            let inner = self.inner.read().await;
+            let config = inner.registry.get(name).cloned().ok_or_else(|| {
+                McpManagerError::ServerNotFound {
+                    server: name.to_string(),
+                }
+            })?;
+            let generation = inner
+                .lifecycle_generations
+                .get(name)
+                .copied()
+                .unwrap_or_default();
+            (config, generation)
+        };
 
         if !matches!(
             config.transport,
@@ -557,7 +794,7 @@ impl McpManager {
 
         let env_overrides = {
             let inner = self.inner.read().await;
-            inner.env_overrides.clone()
+            managed_runtime_env_overrides(&config, &inner.env_overrides)
         };
         let remote = ResolvedRemoteConfig::from_server_config(&config, &env_overrides)?;
 
@@ -571,6 +808,18 @@ impl McpManager {
 
         if !has_existing_auth_provider {
             let mut inner = self.inner.write().await;
+            if inner
+                .lifecycle_generations
+                .get(name)
+                .copied()
+                .unwrap_or_default()
+                != generation
+                || inner.registry.get(name).is_none()
+            {
+                return Err(Error::message(format!(
+                    "MCP server '{name}' changed while OAuth was starting"
+                )));
+            }
             inner
                 .auth_providers
                 .insert(name.to_string(), auth_provider.clone());
@@ -616,6 +865,7 @@ impl McpManager {
 
         let mut statuses = Vec::new();
         for (name, config) in &inner.registry.servers {
+            let redact_managed_literals = managed_contains_literal_secret(config);
             let state = if let Some(client) = inner.clients.get(name) {
                 let c = client.read().await;
                 match c.state() {
@@ -641,20 +891,51 @@ impl McpManager {
                 enabled: config.enabled,
                 tool_count: inner.tools.get(name).map_or(0, |t| t.len()),
                 server_info: None,
-                command: config.command.clone(),
-                args: config.args.clone(),
+                command: if redact_managed_literals {
+                    "[REDACTED]".to_string()
+                } else {
+                    config.command.clone()
+                },
+                args: if redact_managed_literals && !config.args.is_empty() {
+                    vec!["[REDACTED]".to_string()]
+                } else {
+                    sanitized_args(&config.args)
+                },
                 env_names: env_names(config),
                 request_timeout_secs: config.request_timeout_secs,
                 configured_request_timeout_secs: self.effective_timeout_secs_for(config),
                 transport: config.transport,
-                url: config
-                    .url
-                    .as_ref()
-                    .map(|raw| sanitize_url_for_display(raw.expose_secret())),
+                url: config.url.as_ref().map(|raw| {
+                    if redact_managed_literals {
+                        "[REDACTED]".to_string()
+                    } else {
+                        sanitize_url_for_display(raw.expose_secret())
+                    }
+                }),
                 header_names: header_names(&config.headers),
                 auth_state,
                 auth_url: None,
                 display_name: config.display_name.clone(),
+                managed: config.managed_origin.as_ref().map(|origin| {
+                    let approval_block_reason =
+                        managed_approval_block_reason(config).map(String::from);
+                    let mut warning_kinds: Vec<_> = origin
+                        .warnings
+                        .iter()
+                        .map(|warning| warning.kind.as_str().to_string())
+                        .collect();
+                    warning_kinds.sort();
+                    warning_kinds.dedup();
+                    ManagedServerStatus {
+                        repository_id: origin.repository_id.clone(),
+                        repository_alias: origin.repository_alias.clone(),
+                        commit: origin.discovered_commit.clone(),
+                        approved: origin.is_currently_approved(),
+                        approval_blocked: approval_block_reason.is_some(),
+                        approval_block_reason,
+                        warning_kinds,
+                    }
+                }),
             });
         }
         statuses
@@ -698,9 +979,13 @@ impl McpManager {
         start: bool,
     ) -> Result<()> {
         let enabled = config.enabled;
-        {
+        let client = {
             let mut inner = self.inner.write().await;
             inner.registry.add(name.clone(), config.clone())?;
+            Self::invalidate_server(&mut inner, &name, true)
+        };
+        if let Some(client) = client {
+            client.write().await.shutdown().await;
         }
         if start && enabled {
             self.start_server(&name, &config).await?;
@@ -708,12 +993,42 @@ impl McpManager {
         Ok(())
     }
 
+    /// Add a server only if its exact name is still unused.
+    pub async fn add_server_if_absent(
+        &self,
+        name: String,
+        config: McpServerConfig,
+        start: bool,
+    ) -> Result<bool> {
+        let enabled = config.enabled;
+        {
+            let mut inner = self.inner.write().await;
+            if inner.registry.servers.contains_key(&name) {
+                return Ok(false);
+            }
+            inner.registry.add(name.clone(), config.clone())?;
+            Self::invalidate_server(&mut inner, &name, true);
+        }
+        if start && enabled {
+            self.start_server(&name, &config).await?;
+        }
+        Ok(true)
+    }
+
     /// Remove a server from the registry and stop it.
     pub async fn remove_server(&self, name: &str) -> Result<bool> {
-        self.stop_server(name).await;
-        let mut inner = self.inner.write().await;
-        inner.auth_providers.remove(name);
-        inner.registry.remove(name)
+        let (removed, client) = {
+            let mut inner = self.inner.write().await;
+            let removed = inner.registry.remove(name)?;
+            let client = removed
+                .then(|| Self::invalidate_server(&mut inner, name, true))
+                .flatten();
+            (removed, client)
+        };
+        if let Some(client) = client {
+            client.write().await.shutdown().await;
+        }
+        Ok(removed)
     }
 
     /// Enable a server and start it.
@@ -733,9 +1048,18 @@ impl McpManager {
 
     /// Disable a server and stop it.
     pub async fn disable_server(&self, name: &str) -> Result<bool> {
-        self.stop_server(name).await;
-        let mut inner = self.inner.write().await;
-        inner.registry.disable(name)
+        let (disabled, client) = {
+            let mut inner = self.inner.write().await;
+            let disabled = inner.registry.disable(name)?;
+            let client = disabled
+                .then(|| Self::invalidate_server(&mut inner, name, false))
+                .flatten();
+            (disabled, client)
+        };
+        if let Some(client) = client {
+            client.write().await.shutdown().await;
+        }
+        Ok(disabled)
     }
 
     /// Get a snapshot of the registry for serialization.
@@ -745,16 +1069,18 @@ impl McpManager {
 
     /// Update a server's configuration and restart it if running.
     pub async fn update_server(&self, name: &str, config: McpServerConfig) -> Result<()> {
-        let was_running = {
-            let inner = self.inner.read().await;
-            inner.clients.contains_key(name)
-        };
-        {
+        let (was_running, client) = {
             let mut inner = self.inner.write().await;
+            let was_running = inner.clients.contains_key(name);
             let enabled = inner.registry.get(name).is_none_or(|c| c.enabled);
             let mut new_config = config;
             new_config.enabled = enabled;
             inner.registry.add(name.to_string(), new_config)?;
+            let client = Self::invalidate_server(&mut inner, name, true);
+            (was_running, client)
+        };
+        if let Some(client) = client {
+            client.write().await.shutdown().await;
         }
         if was_running {
             self.restart_server(name).await?;
@@ -770,6 +1096,9 @@ impl McpManager {
         }
     }
 }
+
+#[cfg(test)]
+mod lifecycle_tests;
 
 #[cfg(test)]
 mod tests {
@@ -874,6 +1203,28 @@ mod tests {
         assert!(statuses[0].env_names.is_empty());
     }
 
+    #[test]
+    fn manual_remote_configs_retain_global_environment_substitution() {
+        let config = McpServerConfig {
+            transport: TransportType::StreamableHttp,
+            url: Some(secrecy::Secret::new(
+                "https://example.test/mcp?token=${OPENAI_API_KEY}".to_string(),
+            )),
+            ..Default::default()
+        };
+        let overrides =
+            HashMap::from([("OPENAI_API_KEY".to_string(), "manual-secret".to_string())]);
+        assert_eq!(
+            managed_runtime_env_overrides(&config, &overrides),
+            overrides
+        );
+        let remote = ResolvedRemoteConfig::from_server_config(&config, &overrides).unwrap();
+        assert_eq!(
+            remote.request_url(),
+            "https://example.test/mcp?token=manual-secret"
+        );
+    }
+
     #[tokio::test]
     async fn test_status_exposes_stdio_env_names_without_values() {
         let mut reg = McpRegistry::new();
@@ -894,6 +1245,31 @@ mod tests {
         let serialized = serde_json::to_string(&statuses).unwrap();
         assert!(serialized.contains("API_TOKEN"));
         assert!(!serialized.contains("super-secret-token"));
+    }
+
+    #[tokio::test]
+    async fn test_status_redacts_secret_shaped_arguments() {
+        let mut reg = McpRegistry::new();
+        reg.servers.insert("stdio".into(), McpServerConfig {
+            command: "runner".into(),
+            args: vec![
+                "--token".into(),
+                "top-secret-token".into(),
+                "--api-key=another-secret".into(),
+            ],
+            ..Default::default()
+        });
+        let mgr = McpManager::new(reg);
+
+        let statuses = mgr.status_all().await;
+        assert_eq!(statuses[0].args, [
+            "--token",
+            "[REDACTED]",
+            "--api-key=[REDACTED]"
+        ]);
+        let serialized = serde_json::to_string(&statuses).unwrap();
+        assert!(!serialized.contains("top-secret-token"));
+        assert!(!serialized.contains("another-secret"));
     }
 
     #[tokio::test]

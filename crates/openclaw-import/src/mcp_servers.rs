@@ -3,107 +3,64 @@
 //! Merges OpenClaw's `mcp-servers.json` into Moltis's MCP registry,
 //! skipping servers with duplicate names.
 
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
-use tracing::debug;
+use moltis_import_core::mcp::{ImportMcpServer, merge_mcp_servers};
 
 use crate::{
     detect::OpenClawDetection,
     report::{CategoryReport, ImportCategory, ImportStatus},
-    types::OpenClawMcpServer,
 };
 
 /// Import MCP servers from OpenClaw into the Moltis MCP registry.
 ///
 /// `dest_mcp_path` is the path to Moltis's `mcp-servers.json`.
 pub fn import_mcp_servers(detection: &OpenClawDetection, dest_mcp_path: &Path) -> CategoryReport {
-    let src_path = detection.home_dir.join("mcp-servers.json");
-    if !src_path.is_file() {
-        return CategoryReport::skipped(ImportCategory::McpServers);
-    }
-
-    let src_servers = match load_mcp_servers(&src_path) {
-        Ok(s) => s,
-        Err(e) => {
+    let src_servers = match collect_mcp_servers(detection) {
+        Ok(servers) => servers,
+        Err(error) => {
             return CategoryReport::failed(
                 ImportCategory::McpServers,
-                format!("failed to parse OpenClaw mcp-servers.json: {e}"),
+                format!("failed to parse OpenClaw mcp-servers.json: {error}"),
             );
         },
     };
-
     if src_servers.is_empty() {
         return CategoryReport::skipped(ImportCategory::McpServers);
     }
-
-    // Load existing Moltis MCP servers
-    let mut existing = if dest_mcp_path.is_file() {
-        load_mcp_servers(dest_mcp_path).unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
-
-    let mut imported = 0;
-    let mut skipped = 0;
-
-    for (name, server) in &src_servers {
-        if existing.contains_key(name) {
-            debug!(name, "MCP server already exists, skipping");
-            skipped += 1;
-            continue;
-        }
-
-        debug!(name, command = %server.command, "importing MCP server");
-        existing.insert(name.clone(), server.clone());
-        imported += 1;
-    }
-
-    if imported > 0 {
-        if let Some(parent) = dest_mcp_path.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
-        {
-            return CategoryReport::failed(
-                ImportCategory::McpServers,
-                format!("failed to create directory: {e}"),
-            );
-        }
-        let json = match serde_json::to_string_pretty(&existing) {
-            Ok(j) => j,
-            Err(e) => {
-                return CategoryReport::failed(
-                    ImportCategory::McpServers,
-                    format!("failed to serialize MCP servers: {e}"),
-                );
-            },
-        };
-        if let Err(e) = std::fs::write(dest_mcp_path, json) {
-            return CategoryReport::failed(
-                ImportCategory::McpServers,
-                format!("failed to write mcp-servers.json: {e}"),
-            );
-        }
-    }
-
-    let status = if imported == 0 {
-        ImportStatus::Skipped
-    } else {
-        ImportStatus::Success
-    };
-
+    let report = merge_mcp_servers(&src_servers, dest_mcp_path);
     CategoryReport {
         category: ImportCategory::McpServers,
-        status,
-        items_imported: imported,
-        items_updated: 0,
-        items_skipped: skipped,
-        warnings: Vec::new(),
-        errors: Vec::new(),
+        status: match report.status {
+            moltis_import_core::report::ImportStatus::Success => ImportStatus::Success,
+            moltis_import_core::report::ImportStatus::Partial => ImportStatus::Partial,
+            moltis_import_core::report::ImportStatus::Skipped => ImportStatus::Skipped,
+            moltis_import_core::report::ImportStatus::Failed => ImportStatus::Failed,
+        },
+        items_imported: report.items_imported,
+        items_updated: report.items_updated,
+        items_skipped: report.items_skipped,
+        warnings: report.warnings,
+        errors: report.errors,
     }
 }
 
-fn load_mcp_servers(path: &Path) -> crate::error::Result<HashMap<String, OpenClawMcpServer>> {
+/// Collect OpenClaw MCP servers without writing them.
+pub fn collect_mcp_servers(
+    detection: &OpenClawDetection,
+) -> crate::error::Result<std::collections::HashMap<String, ImportMcpServer>> {
+    let src_path = detection.home_dir.join("mcp-servers.json");
+    if !src_path.is_file() {
+        return Ok(std::collections::HashMap::new());
+    }
+    load_mcp_servers(&src_path)
+}
+
+fn load_mcp_servers(
+    path: &Path,
+) -> crate::error::Result<std::collections::HashMap<String, ImportMcpServer>> {
     let content = std::fs::read_to_string(path)?;
-    let servers: HashMap<String, OpenClawMcpServer> = serde_json::from_str(&content)?;
+    let servers = serde_json::from_str(&content)?;
     Ok(servers)
 }
 
@@ -149,8 +106,8 @@ mod tests {
         assert!(dest.is_file());
 
         let content = std::fs::read_to_string(&dest).unwrap();
-        let loaded: HashMap<String, OpenClawMcpServer> = serde_json::from_str(&content).unwrap();
-        assert!(loaded.contains_key("my-server"));
+        let loaded: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(loaded["servers"].get("my-server").is_some());
     }
 
     #[test]
@@ -181,9 +138,51 @@ mod tests {
         assert_eq!(report.items_imported, 1);
 
         let content = std::fs::read_to_string(&dest).unwrap();
-        let loaded: HashMap<String, OpenClawMcpServer> = serde_json::from_str(&content).unwrap();
-        assert!(loaded.contains_key("existing-server"));
-        assert!(loaded.contains_key("new-server"));
+        let loaded: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(loaded["servers"].get("existing-server").is_some());
+        assert!(loaded["servers"].get("new-server").is_some());
+    }
+
+    #[test]
+    fn import_preserves_managed_registry_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        std::fs::write(
+            home.join("mcp-servers.json"),
+            r#"{"imported":{"command":"new","args":[],"env":{},"enabled":true}}"#,
+        )
+        .unwrap();
+        let dest = tmp.path().join("moltis").join("mcp-servers.json");
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        let existing = serde_json::json!({
+            "servers": {
+                "managed": {
+                    "command": "managed",
+                    "managed_origin": {
+                        "approval": {"commit": "abc", "config_digest": "digest"}
+                    }
+                }
+            },
+            "repositories": {"repo-1": {"alias": "managed-tools"}},
+            "future_registry_field": {"version": 2}
+        });
+        std::fs::write(&dest, serde_json::to_string(&existing).unwrap()).unwrap();
+
+        let report = import_mcp_servers(&make_detection(home), &dest);
+
+        assert_eq!(report.status, ImportStatus::Success);
+        let loaded: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&dest).unwrap()).unwrap();
+        assert_eq!(loaded["repositories"], existing["repositories"]);
+        assert_eq!(
+            loaded["future_registry_field"],
+            existing["future_registry_field"]
+        );
+        assert_eq!(
+            loaded["servers"]["managed"]["managed_origin"]["approval"],
+            existing["servers"]["managed"]["managed_origin"]["approval"]
+        );
+        assert_eq!(loaded["servers"]["imported"]["command"], "new");
     }
 
     #[test]

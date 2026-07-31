@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "root-ignored-by-marketplace": {
+      "command": "must-not-be-discovered"
+    }
+  }
+}

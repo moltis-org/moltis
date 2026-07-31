@@ -491,6 +491,150 @@ async fn test_update_ssh_target_known_host_round_trips() {
     assert!(cleared.known_host.is_none());
 }
 
+#[tokio::test]
+async fn test_git_https_credentials_crud_and_redaction() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let store = CredentialStore::new(pool).await.unwrap();
+    let initial_token = fixture_secret("git-https-initial-token");
+    let updated_token = fixture_secret("git-https-updated-token");
+
+    let credential_id = store
+        .create_git_https_credential(
+            " GitHub.COM ",
+            "octocat",
+            secrecy::Secret::new(initial_token.clone()),
+        )
+        .await
+        .unwrap();
+
+    let entries = store.list_git_https_credentials().await.unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id, credential_id);
+    assert_eq!(entries[0].host, "github.com");
+    assert_eq!(entries[0].username, "octocat");
+    assert!(!entries[0].encrypted);
+    let listing_json = serde_json::to_value(&entries[0]).unwrap();
+    assert!(listing_json.get("token").is_none());
+
+    let credential = store
+        .get_git_https_credential(credential_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(credential.token.expose_secret(), &initial_token);
+    let debug = format!("{credential:?}");
+    assert!(debug.contains("[REDACTED]"));
+    assert!(!debug.contains(&initial_token));
+
+    store
+        .update_git_https_credential(
+            credential_id,
+            "git.example.com",
+            "builder",
+            secrecy::Secret::new(updated_token.clone()),
+        )
+        .await
+        .unwrap();
+    let updated = store
+        .get_git_https_credential(credential_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.host, "git.example.com");
+    assert_eq!(updated.username, "builder");
+    assert_eq!(updated.token.expose_secret(), &updated_token);
+
+    let error = store
+        .delete_git_https_credential(credential_id, 1)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("still assigned"));
+    assert!(
+        store
+            .get_git_https_credential(credential_id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    store
+        .delete_git_https_credential(credential_id, 0)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .get_git_https_credential(credential_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn test_git_https_credentials_validate_host_and_secret_fields() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let store = CredentialStore::new(pool).await.unwrap();
+
+    for invalid_host in [
+        "",
+        "https://github.com",
+        "user@github.com",
+        "github.com/org",
+    ] {
+        assert!(
+            store
+                .create_git_https_credential(
+                    invalid_host,
+                    "octocat",
+                    secrecy::Secret::new("token".into()),
+                )
+                .await
+                .is_err()
+        );
+    }
+    assert!(
+        store
+            .create_git_https_credential("github.com", "", secrecy::Secret::new("token".into()),)
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .create_git_https_credential(
+                "github.com",
+                "octocat",
+                secrecy::Secret::new(String::new()),
+            )
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn test_reset_all_removes_git_https_credentials() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let store = CredentialStore::new(pool).await.unwrap();
+    let credential_id = store
+        .create_git_https_credential(
+            "github.com",
+            "octocat",
+            secrecy::Secret::new(fixture_secret("git-https-reset-token")),
+        )
+        .await
+        .unwrap();
+
+    store.reset_all().await.unwrap();
+
+    assert!(store.list_git_https_credentials().await.unwrap().is_empty());
+    assert!(
+        store
+            .get_git_https_credential(credential_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
 #[cfg(feature = "vault")]
 async fn vault_store(password: &str) -> (CredentialStore, Arc<Vault>) {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -546,6 +690,79 @@ async fn test_ssh_keys_encrypt_when_vault_is_unsealed() {
 
     let private_key = store.get_ssh_private_key(key_id).await.unwrap().unwrap();
     assert_eq!(private_key.expose_secret(), "TOP SECRET KEY");
+}
+
+#[cfg(feature = "vault")]
+#[tokio::test]
+async fn test_git_https_credentials_encrypt_and_update_when_vault_is_unsealed() {
+    let vault_password = fixture_secret("vault-git-https-password");
+    let initial_token = fixture_secret("vault-git-https-initial-token");
+    let updated_token = fixture_secret("vault-git-https-updated-token");
+    let (store, _vault) = vault_store(&vault_password).await;
+
+    let credential_id = store
+        .create_git_https_credential(
+            "github.com",
+            "octocat",
+            secrecy::Secret::new(initial_token.clone()),
+        )
+        .await
+        .unwrap();
+    let row: (String, i64) =
+        sqlx::query_as("SELECT token, encrypted FROM git_https_credentials WHERE id = ?")
+            .bind(credential_id)
+            .fetch_one(store.db_pool())
+            .await
+            .unwrap();
+    assert_eq!(row.1, 1);
+    assert_ne!(row.0, initial_token);
+
+    store
+        .update_git_https_credential(
+            credential_id,
+            "git.example.com",
+            "builder",
+            secrecy::Secret::new(updated_token.clone()),
+        )
+        .await
+        .unwrap();
+    let updated_row: (String, i64) =
+        sqlx::query_as("SELECT token, encrypted FROM git_https_credentials WHERE id = ?")
+            .bind(credential_id)
+            .fetch_one(store.db_pool())
+            .await
+            .unwrap();
+    assert_eq!(updated_row.1, 1);
+    assert_ne!(updated_row.0, updated_token);
+
+    let credential = store
+        .get_git_https_credential(credential_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(credential.token.expose_secret(), &updated_token);
+}
+
+#[cfg(feature = "vault")]
+#[tokio::test]
+async fn test_git_https_credentials_use_plaintext_when_vault_is_sealed() {
+    let vault_password = fixture_secret("vault-git-https-sealed-password");
+    let token = fixture_secret("vault-git-https-sealed-token");
+    let (store, vault) = vault_store(&vault_password).await;
+    vault.seal().await;
+
+    let credential_id = store
+        .create_git_https_credential("github.com", "octocat", secrecy::Secret::new(token.clone()))
+        .await
+        .unwrap();
+    let row: (String, i64) =
+        sqlx::query_as("SELECT token, encrypted FROM git_https_credentials WHERE id = ?")
+            .bind(credential_id)
+            .fetch_one(store.db_pool())
+            .await
+            .unwrap();
+
+    assert_eq!(row, (token, 0));
 }
 
 #[tokio::test]

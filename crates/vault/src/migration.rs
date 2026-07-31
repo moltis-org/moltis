@@ -3,6 +3,7 @@
 //! On the first vault unseal, plaintext secrets are encrypted in-place:
 //! - Env vars: rows with `encrypted = 0` are encrypted and flagged.
 //! - Managed SSH keys: rows with `encrypted = 0` are encrypted and flagged.
+//! - Git HTTPS credentials: rows with `encrypted = 0` are encrypted and flagged.
 //! - `provider_keys.json` → encrypt → write `.enc` → rename `.json` to `.bak`.
 //! - `oauth_tokens.json` → same pattern.
 
@@ -72,6 +73,43 @@ pub async fn migrate_ssh_keys<C: Cipher>(
     if count > 0 {
         #[cfg(feature = "tracing")]
         tracing::info!(count, "migrated ssh keys to encrypted storage");
+    }
+
+    Ok(count)
+}
+
+/// Encrypt all plaintext Git HTTPS credential tokens (where `encrypted = 0`).
+///
+/// Each token is encrypted with AAD `"git-https-credential:<id>"` for domain
+/// separation.
+pub async fn migrate_git_https_credentials<C: Cipher>(
+    vault: &Vault<C>,
+    pool: &sqlx::SqlitePool,
+) -> Result<usize, VaultError> {
+    let rows: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, token FROM git_https_credentials WHERE encrypted = 0")
+            .fetch_all(pool)
+            .await?;
+
+    let mut count = 0;
+    for (id, plaintext) in rows {
+        let encrypted = vault
+            .encrypt_string(&plaintext, &format!("git-https-credential:{id}"))
+            .await?;
+        let updated = sqlx::query(
+            "UPDATE git_https_credentials SET token = ?, encrypted = 1, updated_at = datetime('now') WHERE id = ? AND token = ? AND encrypted = 0",
+        )
+        .bind(encrypted)
+        .bind(id)
+        .bind(&plaintext)
+        .execute(pool)
+        .await?;
+        count += usize::try_from(updated.rows_affected()).unwrap_or_default();
+    }
+
+    if count > 0 {
+        #[cfg(feature = "tracing")]
+        tracing::info!(count, "migrated Git HTTPS credentials to encrypted storage");
     }
 
     Ok(count)
@@ -297,6 +335,21 @@ mod tests {
         .await
         .unwrap();
 
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS git_https_credentials (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                host       TEXT    NOT NULL,
+                username   TEXT    NOT NULL,
+                token      TEXT    NOT NULL,
+                encrypted  INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
         let vault = Vault::with_cipher(pool.clone(), XChaCha20Poly1305Cipher)
             .await
             .unwrap();
@@ -374,6 +427,44 @@ mod tests {
 
         let count2 = migrate_ssh_keys(&vault, &pool).await.unwrap();
         assert_eq!(count2, 0);
+    }
+
+    #[tokio::test]
+    async fn migrate_git_https_credentials_uses_id_aad() {
+        let (pool, vault) = setup_vault().await;
+        sqlx::query(
+            "INSERT INTO git_https_credentials (id, host, username, token) VALUES (42, 'git.example.com', 'deploy', 'secret-token')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let count = migrate_git_https_credentials(&vault, &pool).await.unwrap();
+        assert_eq!(count, 1);
+        let row: (String, i64) =
+            sqlx::query_as("SELECT token, encrypted FROM git_https_credentials WHERE id = 42")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.1, 1);
+        assert_ne!(row.0, "secret-token");
+        assert_eq!(
+            vault
+                .decrypt_string(&row.0, "git-https-credential:42")
+                .await
+                .unwrap(),
+            "secret-token"
+        );
+        assert!(
+            vault
+                .decrypt_string(&row.0, "git-https-credential:41")
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            migrate_git_https_credentials(&vault, &pool).await.unwrap(),
+            0
+        );
     }
 
     #[tokio::test]

@@ -1,17 +1,25 @@
 //! Live MCP service implementation backed by `McpManager`.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use {
     async_trait::async_trait,
     serde_json::Value,
-    tokio::sync::RwLock,
+    tokio::sync::{Mutex as AsyncMutex, MutexGuard, RwLock},
     tracing::{info, warn},
 };
 
 use moltis_agents::tool_registry::ToolRegistry;
 
 use crate::services::{McpService, ServiceError, ServiceResult};
+
+mod repositories;
+
+const MAX_CONCURRENT_MANAGED_REPOSITORY_OPERATIONS: usize = 4;
 
 // Re-export pure parsing functions that now live in moltis-mcp.
 pub(crate) use moltis_mcp::{merge_env_overrides, parse_server_config};
@@ -32,6 +40,11 @@ pub struct LiveMcpService {
     tool_registry: RwLock<Option<Arc<RwLock<ToolRegistry>>>>,
     config_env_overrides: HashMap<String, String>,
     credential_store: RwLock<Option<Arc<crate::auth::CredentialStore>>>,
+    data_dir: PathBuf,
+    materializer: moltis_git_repositories::Materializer,
+    repository_operations: Arc<Mutex<HashSet<moltis_mcp::ManagedRepositoryId>>>,
+    managed_repository_mutations: AsyncMutex<u64>,
+    _repository_lock: moltis_mcp::ManagedRepositoryLock,
 }
 
 impl LiveMcpService {
@@ -39,12 +52,37 @@ impl LiveMcpService {
         manager: Arc<moltis_mcp::McpManager>,
         config_env_overrides: HashMap<String, String>,
         credential_store: Option<Arc<crate::auth::CredentialStore>>,
+        data_dir: PathBuf,
+        repository_lock: moltis_mcp::ManagedRepositoryLock,
+    ) -> Self {
+        Self::new_with_materializer(
+            manager,
+            config_env_overrides,
+            credential_store,
+            data_dir,
+            moltis_git_repositories::Materializer::default(),
+            repository_lock,
+        )
+    }
+
+    fn new_with_materializer(
+        manager: Arc<moltis_mcp::McpManager>,
+        config_env_overrides: HashMap<String, String>,
+        credential_store: Option<Arc<crate::auth::CredentialStore>>,
+        data_dir: PathBuf,
+        materializer: moltis_git_repositories::Materializer,
+        repository_lock: moltis_mcp::ManagedRepositoryLock,
     ) -> Self {
         Self {
             manager,
             tool_registry: RwLock::new(None),
             config_env_overrides,
             credential_store: RwLock::new(credential_store),
+            data_dir,
+            materializer,
+            repository_operations: Arc::new(Mutex::new(HashSet::new())),
+            managed_repository_mutations: AsyncMutex::new(0),
+            _repository_lock: repository_lock,
         }
     }
 
@@ -87,6 +125,12 @@ impl LiveMcpService {
 
         self.manager.set_env_overrides(env_overrides).await;
     }
+
+    async fn begin_managed_repository_mutation(&self) -> MutexGuard<'_, u64> {
+        let mut generation = self.managed_repository_mutations.lock().await;
+        *generation = generation.wrapping_add(1);
+        generation
+    }
 }
 
 #[async_trait]
@@ -111,56 +155,54 @@ impl McpService for LiveMcpService {
             parse_server_config(&params, None).map_err(|e| ServiceError::message(e.to_string()))?;
         self.refresh_manager_env_overrides().await;
 
-        // If a server with this name already exists, append a numeric suffix.
-        let final_name = {
-            let reg = self.manager.registry_snapshot().await;
-            let mut candidate = name.to_string();
-            let mut n = 2u32;
-            while reg.servers.contains_key(&candidate) {
-                candidate = format!("{name}-{n}");
-                n += 1;
+        let mut suffix = 1_u32;
+        let (final_name, add_result) = loop {
+            let candidate = if suffix == 1 {
+                name.to_string()
+            } else {
+                format!("{name}-{suffix}")
+            };
+            let result = self
+                .manager
+                .add_server_if_absent(candidate.clone(), config.clone(), true)
+                .await;
+            if !matches!(result, Ok(false)) {
+                break (candidate, result);
             }
-            candidate
+            suffix = suffix.saturating_add(1);
         };
 
-        info!(server = %final_name, "adding MCP server via API");
-        match self
-            .manager
-            .add_server(final_name.clone(), config, true)
-            .await
-        {
-            Ok(_) => {
+        match add_result {
+            Ok(true) => {
+                info!(server = %final_name, "added MCP server via API");
                 self.sync_tools_if_ready().await;
                 Ok(serde_json::json!({ "ok": true, "name": final_name }))
             },
-            Err(e) => {
-                if matches!(
-                    e,
-                    moltis_mcp::Error::Manager(moltis_mcp::McpManagerError::OAuthRequired { .. })
-                ) {
-                    if let Some(uri) = redirect_uri {
-                        let auth_url = self
-                            .manager
-                            .oauth_start_server(&final_name, &uri)
-                            .await
-                            .map_err(ServiceError::message)?;
-                        Ok(serde_json::json!({
-                            "ok": true,
-                            "name": final_name,
-                            "oauthPending": true,
-                            "authUrl": auth_url
-                        }))
-                    } else {
-                        Ok(serde_json::json!({
-                            "ok": true,
-                            "name": final_name,
-                            "oauthPending": true
-                        }))
-                    }
+            Ok(false) => Err(ServiceError::message("MCP server name allocation failed")),
+            Err(moltis_mcp::Error::Manager(moltis_mcp::McpManagerError::OAuthRequired {
+                ..
+            })) => {
+                if let Some(uri) = redirect_uri {
+                    let auth_url = self
+                        .manager
+                        .oauth_start_server(&final_name, &uri)
+                        .await
+                        .map_err(ServiceError::message)?;
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "name": final_name,
+                        "oauthPending": true,
+                        "authUrl": auth_url
+                    }))
                 } else {
-                    Err(ServiceError::message(e))
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "name": final_name,
+                        "oauthPending": true
+                    }))
                 }
             },
+            Err(error) => Err(ServiceError::message(error)),
         }
     }
 
@@ -388,6 +430,62 @@ impl McpService for LiveMcpService {
             "ok": true,
             "name": server_name
         }))
+    }
+
+    async fn repositories_list(&self, params: Value) -> ServiceResult {
+        self.repositories_list_impl(params).await
+    }
+
+    async fn repositories_preview(&self, params: Value) -> ServiceResult {
+        self.repositories_preview_impl(params).await
+    }
+
+    async fn repositories_install(&self, params: Value) -> ServiceResult {
+        self.repositories_install_impl(params).await
+    }
+
+    async fn repositories_update_preview(&self, params: Value) -> ServiceResult {
+        self.repositories_update_preview_impl(params).await
+    }
+
+    async fn repositories_update_apply(&self, params: Value) -> ServiceResult {
+        self.repositories_update_apply_impl(params).await
+    }
+
+    async fn repositories_rollback(&self, params: Value) -> ServiceResult {
+        self.repositories_rollback_impl(params).await
+    }
+
+    async fn repositories_remove(&self, params: Value) -> ServiceResult {
+        self.repositories_remove_impl(params).await
+    }
+
+    async fn managed_approve(&self, params: Value) -> ServiceResult {
+        self.managed_approve_impl(params).await
+    }
+
+    async fn git_credentials_list(&self, params: Value) -> ServiceResult {
+        self.git_credentials_list_impl(params).await
+    }
+
+    async fn git_credentials_create(&self, params: Value) -> ServiceResult {
+        self.git_credentials_create_impl(params).await
+    }
+
+    async fn git_credentials_update(&self, params: Value) -> ServiceResult {
+        self.git_credentials_update_impl(params).await
+    }
+
+    async fn git_credentials_remove(&self, params: Value) -> ServiceResult {
+        self.git_credentials_remove_impl(params).await
+    }
+
+    async fn managed_ssh_key_remove(&self, id: i64) -> ServiceResult {
+        self.managed_ssh_key_remove_impl(id).await
+    }
+
+    async fn managed_ssh_target_remove(&self, id: i64) -> ServiceResult {
+        self.managed_ssh_target_remove_impl(id).await
     }
 
     async fn update_request_timeout(&self, request_timeout_secs: u64) -> ServiceResult {

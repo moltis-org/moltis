@@ -118,6 +118,8 @@ const READ_METHODS: &[&str] = &[
     "mcp.status",
     "mcp.tools",
     "mcp.config.get",
+    "mcp.repositories.list",
+    "mcp.git.credentials.list",
     "tts.generate_phrase",
     "voice.config.get",
     "voice.config.voxtral_requirements",
@@ -249,6 +251,16 @@ const WRITE_METHODS: &[&str] = &[
     "mcp.config.update",
     "mcp.oauth.start",
     "mcp.oauth.complete",
+    "mcp.repositories.preview",
+    "mcp.repositories.install",
+    "mcp.repositories.update.preview",
+    "mcp.repositories.update.apply",
+    "mcp.repositories.rollback",
+    "mcp.repositories.remove",
+    "mcp.managed.approve",
+    "mcp.git.credentials.create",
+    "mcp.git.credentials.update",
+    "mcp.git.credentials.remove",
     "cron.add",
     "cron.update",
     "cron.remove",
@@ -700,6 +712,41 @@ mod tests {
     #[test]
     fn cron_write_methods_require_write() {
         for method in &["cron.add", "cron.update", "cron.remove", "cron.run"] {
+            assert!(
+                authorize_method(method, "operator", &scopes(&["operator.write"])).is_none(),
+                "write scope should authorize {method}"
+            );
+            assert_error_code(
+                authorize_method(method, "operator", &scopes(&["operator.read"])),
+                "UNAUTHORIZED",
+            );
+        }
+    }
+
+    #[test]
+    fn managed_mcp_methods_have_correct_scope_classification() {
+        for method in ["mcp.repositories.list", "mcp.git.credentials.list"] {
+            assert!(
+                authorize_method(method, "operator", &scopes(&["operator.read"])).is_none(),
+                "read scope should authorize {method}"
+            );
+            assert_error_code(
+                authorize_method(method, "operator", &scopes(&[])),
+                "UNAUTHORIZED",
+            );
+        }
+        for method in [
+            "mcp.repositories.preview",
+            "mcp.repositories.install",
+            "mcp.repositories.update.preview",
+            "mcp.repositories.update.apply",
+            "mcp.repositories.rollback",
+            "mcp.repositories.remove",
+            "mcp.managed.approve",
+            "mcp.git.credentials.create",
+            "mcp.git.credentials.update",
+            "mcp.git.credentials.remove",
+        ] {
             assert!(
                 authorize_method(method, "operator", &scopes(&["operator.write"])).is_none(),
                 "write scope should authorize {method}"

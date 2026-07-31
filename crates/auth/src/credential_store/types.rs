@@ -1,4 +1,7 @@
-use serde::{Deserialize, Serialize};
+use {
+    secrecy::Secret,
+    serde::{Deserialize, Serialize},
+};
 
 /// Authentication method used to verify an identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +78,37 @@ pub struct EnvVarEntry {
     pub created_at: String,
     pub updated_at: String,
     pub encrypted: bool,
+}
+
+/// An HTTPS Git credential entry for listing, without its token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitHttpsCredentialEntry {
+    pub id: i64,
+    pub host: String,
+    pub username: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub encrypted: bool,
+}
+
+/// A resolved HTTPS Git credential, including its secret token.
+pub struct GitHttpsCredential {
+    pub id: i64,
+    pub host: String,
+    pub username: String,
+    pub token: Secret<String>,
+}
+
+impl std::fmt::Debug for GitHttpsCredential {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GitHttpsCredential")
+            .field("id", &self.id)
+            .field("host", &self.host)
+            .field("username", &self.username)
+            .field("token", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

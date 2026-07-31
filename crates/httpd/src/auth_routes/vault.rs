@@ -181,6 +181,7 @@ pub(super) async fn vault_disable_handler(
         }
     }
 
+    let _git_credential_mutation = moltis_gateway::auth::git_credential_mutation_guard().await;
     match moltis_gateway::vault_lifecycle::disable_vault_and_decrypt_all(
         vault,
         state.credential_store.db_pool(),
@@ -195,6 +196,7 @@ pub(super) async fn vault_disable_handler(
                 "report": {
                     "env_vars": report.env_vars,
                     "ssh_keys": report.ssh_keys,
+                    "git_https_credentials": report.git_https_credentials,
                     "channels": report.channels,
                     "webhooks": report.webhooks,
                     "provider_keys": report.provider_keys,

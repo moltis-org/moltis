@@ -1,6 +1,6 @@
 //! Gateway adapter: wraps `LiveOnboardingService` to implement `OnboardingService`.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use {async_trait::async_trait, serde_json::Value};
 
@@ -16,6 +16,23 @@ pub struct GatewayOnboardingService {
     gateway_state: Arc<tokio::sync::OnceCell<Arc<crate::state::GatewayState>>>,
 }
 
+fn live_import_status(
+    imported: usize,
+    errors: &[String],
+) -> moltis_import_core::report::ImportStatus {
+    if errors.is_empty() {
+        if imported == 0 {
+            moltis_import_core::report::ImportStatus::Skipped
+        } else {
+            moltis_import_core::report::ImportStatus::Success
+        }
+    } else if imported == 0 {
+        moltis_import_core::report::ImportStatus::Failed
+    } else {
+        moltis_import_core::report::ImportStatus::Partial
+    }
+}
+
 impl GatewayOnboardingService {
     pub fn new(
         inner: moltis_onboarding::service::LiveOnboardingService,
@@ -29,6 +46,60 @@ impl GatewayOnboardingService {
             agent_persona_store,
             gateway_state,
         }
+    }
+
+    async fn import_live_mcp_servers(
+        &self,
+        servers: HashMap<String, moltis_import_core::mcp::ImportMcpServer>,
+    ) -> (usize, usize, Vec<String>) {
+        let Some(state) = self.gateway_state.get() else {
+            return (0, 0, vec![
+                "gateway state is not ready for MCP import".into(),
+            ]);
+        };
+        let existing = state
+            .services
+            .mcp
+            .list()
+            .await
+            .ok()
+            .and_then(|value| value.as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|status| {
+                status
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<std::collections::HashSet<_>>();
+        let mut imported = 0;
+        let mut skipped = 0;
+        let mut errors = Vec::new();
+        for (name, server) in servers {
+            if existing.contains(&name) {
+                skipped += 1;
+                continue;
+            }
+            let mut params = match serde_json::to_value(server) {
+                Ok(Value::Object(params)) => params,
+                Ok(_) => {
+                    errors.push(format!("failed to serialize MCP server '{name}'"));
+                    continue;
+                },
+                Err(error) => {
+                    errors.push(format!("failed to serialize MCP server '{name}': {error}"));
+                    continue;
+                },
+            };
+            params.insert("name".into(), Value::String(name.clone()));
+            params.insert("enabled".into(), Value::Bool(false));
+            match state.services.mcp.add(Value::Object(params)).await {
+                Ok(_) => imported += 1,
+                Err(error) => errors.push(format!("failed to import MCP server '{name}': {error}")),
+            }
+        }
+        (imported, skipped, errors)
     }
 
     /// Create imported agents as Moltis agent personas.
@@ -309,6 +380,10 @@ impl OnboardingService for GatewayOnboardingService {
         let detection = moltis_openclaw_import::detect()
             .ok_or_else(|| "no OpenClaw installation found".to_string())?;
 
+        let import_mcp_servers = params
+            .get("mcp_servers")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
         let selection = moltis_openclaw_import::ImportSelection {
             identity: params
                 .get("identity")
@@ -338,17 +413,51 @@ impl OnboardingService for GatewayOnboardingService {
                 .get("workspace_files")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
-            mcp_servers: params
-                .get("mcp_servers")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
+            mcp_servers: false,
         };
 
         let config_dir = moltis_config::config_dir()
             .ok_or_else(|| "could not determine config directory".to_string())?;
         let data_dir = moltis_config::data_dir();
 
-        let report = moltis_openclaw_import::import(&detection, &selection, &config_dir, &data_dir);
+        let mut report =
+            moltis_openclaw_import::import(&detection, &selection, &config_dir, &data_dir);
+        if import_mcp_servers {
+            let mcp_report =
+                match moltis_openclaw_import::mcp_servers::collect_mcp_servers(&detection) {
+                    Ok(servers) => {
+                        let (imported, skipped, errors) =
+                            self.import_live_mcp_servers(servers).await;
+                        moltis_openclaw_import::report::CategoryReport {
+                            category: moltis_openclaw_import::report::ImportCategory::McpServers,
+                            status: match live_import_status(imported, &errors) {
+                                moltis_import_core::report::ImportStatus::Success => {
+                                    moltis_openclaw_import::report::ImportStatus::Success
+                                },
+                                moltis_import_core::report::ImportStatus::Partial => {
+                                    moltis_openclaw_import::report::ImportStatus::Partial
+                                },
+                                moltis_import_core::report::ImportStatus::Skipped => {
+                                    moltis_openclaw_import::report::ImportStatus::Skipped
+                                },
+                                moltis_import_core::report::ImportStatus::Failed => {
+                                    moltis_openclaw_import::report::ImportStatus::Failed
+                                },
+                            },
+                            items_imported: imported,
+                            items_updated: 0,
+                            items_skipped: skipped,
+                            warnings: Vec::new(),
+                            errors,
+                        }
+                    },
+                    Err(error) => moltis_openclaw_import::report::CategoryReport::failed(
+                        moltis_openclaw_import::report::ImportCategory::McpServers,
+                        error.to_string(),
+                    ),
+                };
+            report.add_category(mcp_report);
+        }
 
         // Create imported agent personas (non-default agents)
         if let Some(ref agents) = report.imported_agents
@@ -430,7 +539,6 @@ impl OnboardingService for GatewayOnboardingService {
             .ok_or_else(|| "no Claude Code installation found".to_string())?;
 
         let data_dir = moltis_config::data_dir();
-        let mcp_path = data_dir.join("mcp-servers.json");
         let skills_dir = data_dir.join("skills");
 
         let import_mcp = params
@@ -449,9 +557,17 @@ impl OnboardingService for GatewayOnboardingService {
         let mut categories = Vec::new();
 
         if import_mcp {
-            categories.push(moltis_claude_import::mcp_servers::import_mcp_servers(
-                &detection, &mcp_path,
-            ));
+            let servers = moltis_claude_import::mcp_servers::collect_mcp_servers(&detection);
+            let (imported, skipped, errors) = self.import_live_mcp_servers(servers).await;
+            categories.push(moltis_import_core::report::CategoryReport {
+                category: moltis_import_core::report::ImportCategory::McpServers,
+                status: live_import_status(imported, &errors),
+                items_imported: imported,
+                items_updated: 0,
+                items_skipped: skipped,
+                warnings: Vec::new(),
+                errors,
+            });
         }
         if import_skills {
             categories.push(moltis_claude_import::skills::import_skills(
@@ -520,7 +636,6 @@ impl OnboardingService for GatewayOnboardingService {
             .ok_or_else(|| "no Codex CLI installation found".to_string())?;
 
         let data_dir = moltis_config::data_dir();
-        let mcp_path = data_dir.join("mcp-servers.json");
 
         let import_mcp = params
             .get("mcp_servers")
@@ -534,9 +649,17 @@ impl OnboardingService for GatewayOnboardingService {
         let mut categories = Vec::new();
 
         if import_mcp {
-            categories.push(moltis_codex_import::mcp_servers::import_mcp_servers(
-                &detection, &mcp_path,
-            ));
+            let servers = moltis_codex_import::mcp_servers::collect_mcp_servers(&detection);
+            let (imported, skipped, errors) = self.import_live_mcp_servers(servers).await;
+            categories.push(moltis_import_core::report::CategoryReport {
+                category: moltis_import_core::report::ImportCategory::McpServers,
+                status: live_import_status(imported, &errors),
+                items_imported: imported,
+                items_updated: 0,
+                items_skipped: skipped,
+                warnings: Vec::new(),
+                errors,
+            });
         }
         if import_memory {
             categories.push(moltis_codex_import::memory::import_memory(

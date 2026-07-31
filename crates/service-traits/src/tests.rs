@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::{
-    BrowserService, ChatService, NoopBrowserService, ServiceResult,
+    BrowserService, ChatService, McpService, NoopBrowserService, NoopMcpService, ServiceResult,
     interfaces::model_service_not_configured_error,
 };
 
@@ -50,6 +50,22 @@ impl ChatService for DefaultRefreshChatService {
     async fn full_context(&self, _params: serde_json::Value) -> ServiceResult {
         Ok(json!({}))
     }
+}
+
+#[tokio::test]
+#[allow(clippy::unwrap_used)]
+async fn noop_mcp_managed_reads_are_empty_and_writes_are_unavailable() {
+    let service = NoopMcpService;
+    assert_eq!(
+        service.repositories_list(json!({})).await.unwrap(),
+        json!({ "repositories": [] })
+    );
+    assert_eq!(
+        service.git_credentials_list(json!({})).await.unwrap(),
+        json!({ "credentials": [], "sshKeys": [], "sshTargets": [] })
+    );
+    assert!(service.repositories_install(json!({})).await.is_err());
+    assert!(service.git_credentials_create(json!({})).await.is_err());
 }
 
 #[async_trait::async_trait]

@@ -334,12 +334,15 @@ pub async fn ssh_delete_key(
     State(state): State<crate::server::AppState>,
     Path(id): Path<i64>,
 ) -> Result<SshMutationResponse, ApiError> {
-    let store = state.gateway.credential_store.as_ref().ok_or_else(|| {
+    state.gateway.credential_store.as_ref().ok_or_else(|| {
         ApiError::service_unavailable(SSH_STORE_UNAVAILABLE, "no credential store")
     })?;
 
-    store
-        .delete_ssh_key(id)
+    state
+        .gateway
+        .services
+        .mcp
+        .managed_ssh_key_remove(id)
         .await
         .map_err(|err| ApiError::bad_request(SSH_KEY_DELETE_FAILED, err.to_string()))?;
     Ok(SshMutationResponse::success(None))
@@ -392,14 +395,17 @@ pub async fn ssh_delete_target(
     State(state): State<crate::server::AppState>,
     Path(id): Path<i64>,
 ) -> Result<SshMutationResponse, ApiError> {
-    let store = state.gateway.credential_store.as_ref().ok_or_else(|| {
+    state.gateway.credential_store.as_ref().ok_or_else(|| {
         ApiError::service_unavailable(SSH_STORE_UNAVAILABLE, "no credential store")
     })?;
 
-    store
-        .delete_ssh_target(id)
+    state
+        .gateway
+        .services
+        .mcp
+        .managed_ssh_target_remove(id)
         .await
-        .map_err(|err| ApiError::internal(SSH_TARGET_DELETE_FAILED, err))?;
+        .map_err(|err| ApiError::bad_request(SSH_TARGET_DELETE_FAILED, err.to_string()))?;
     refresh_ssh_target_count(&state).await;
 
     Ok(SshMutationResponse::success(None))
