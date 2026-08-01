@@ -679,7 +679,7 @@ export function SessionHeader({
 						<span className="hidden md:inline">Save .md</span>
 					</button>
 				)}
-				{showDelete && !isMain && (
+				{showDelete && (
 					<button
 						className={`${actionButtonClass} chat-session-btn-danger inline-flex items-center gap-1.5`}
 						onClick={onDelete}

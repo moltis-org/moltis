@@ -108,10 +108,13 @@ leaving them in the main sidebar list.
 - Archived sessions are hidden from the default sidebar list.
 - Enable **Show archived sessions** in the sidebar to reveal and restore them.
 
-Archive is available for any non-`main` session, including cron and
-channel-bound chats, except when the session is the current active session for
+Archive is available for any session — including `main`, cron, and
+channel-bound chats — except when the session is the current active session for
 its bound channel chat. That prevents hiding the live Telegram, Discord, or
-similar chat out from under the channel router.
+similar chat out from under the channel router. Deleting `main` is safe: an
+empty `main` session is recreated as soon as it is opened or receives a
+message. Archiving `main` just hides it from the default sidebar list like any
+other archived session — restore it with the **Show archived sessions** toggle.
 
 ```admonish info title="Independence"
 A forked session is fully independent after creation. Changes to the parent

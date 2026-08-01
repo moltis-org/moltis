@@ -439,10 +439,7 @@ newSessionBtn.addEventListener("click", () => {
 });
 
 export function isArchivableSession(session: SessionMeta): boolean {
-	return (
-		session.key !== "main" &&
-		((session as SessionMeta & { activeChannel?: boolean }).activeChannel !== true || session.archived === true)
-	);
+	return (session as SessionMeta & { activeChannel?: boolean }).activeChannel !== true || session.archived === true;
 }
 
 /** The reply target stored in `SessionMeta.channelBinding`, JSON or already parsed. */

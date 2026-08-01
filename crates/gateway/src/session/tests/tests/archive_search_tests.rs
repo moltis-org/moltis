@@ -35,19 +35,23 @@ async fn patch_archived_rejection_does_not_partially_mutate_session() {
     let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
     let pool = sqlite_pool().await;
     let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+    let binding = r#"{"channel_type":"telegram","account_id":"bot1","chat_id":"123"}"#.to_string();
     metadata
-        .upsert("main", Some("Main".to_string()))
+        .upsert("telegram:bot1:123", Some("Telegram current".to_string()))
         .await
         .unwrap();
     metadata
-        .set_model("main", Some("claude-sonnet".to_string()))
+        .set_channel_binding("telegram:bot1:123", Some(binding))
+        .await;
+    metadata
+        .set_model("telegram:bot1:123", Some("claude-sonnet".to_string()))
         .await;
 
     let svc = LiveSessionService::new(Arc::clone(&store), Arc::clone(&metadata));
 
     let error = svc
         .patch(serde_json::json!({
-            "key": "main",
+            "key": "telegram:bot1:123",
             "label": "Mutated?",
             "model": "gpt-5",
             "archived": true
@@ -57,8 +61,8 @@ async fn patch_archived_rejection_does_not_partially_mutate_session() {
 
     assert!(error.to_string().contains("cannot be archived"));
 
-    let entry = metadata.get("main").await.unwrap();
-    assert_eq!(entry.label.as_deref(), Some("Main"));
+    let entry = metadata.get("telegram:bot1:123").await.unwrap();
+    assert_eq!(entry.label.as_deref(), Some("Telegram current"));
     assert_eq!(entry.model.as_deref(), Some("claude-sonnet"));
     assert!(!entry.archived);
 }

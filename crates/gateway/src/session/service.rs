@@ -32,7 +32,7 @@ async fn is_archivable_entry(
     metadata: &SqliteSessionMetadata,
     entry: &moltis_sessions::metadata::SessionEntry,
 ) -> bool {
-    entry.key != "main" && !is_current_channel_session(metadata, entry).await
+    !is_current_channel_session(metadata, entry).await
 }
 
 /// Why a session's channel binding cannot be cleared, if it cannot.
