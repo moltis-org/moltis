@@ -445,6 +445,50 @@ export function isArchivableSession(session: SessionMeta): boolean {
 	);
 }
 
+/** The reply target stored in `SessionMeta.channelBinding`, JSON or already parsed. */
+interface ParsedChannelBinding {
+	channel_type?: string;
+	account_id?: string;
+	chat_id?: string;
+	thread_id?: string;
+}
+
+export function parseChannelBinding(session: SessionMeta): ParsedChannelBinding | null {
+	const binding = session.channelBinding;
+	if (!binding) return null;
+	if (typeof binding !== "string") return binding as ParsedChannelBinding;
+	try {
+		return JSON.parse(binding) as ParsedChannelBinding;
+	} catch (_error) {
+		return null;
+	}
+}
+
+/** Human-readable "telegram · bot1 · -100123" label for a bound session. */
+export function channelBindingLabel(session: SessionMeta): string {
+	const binding = parseChannelBinding(session);
+	if (!binding) return "";
+	return [binding.channel_type, binding.account_id, binding.chat_id].filter(Boolean).join(" · ");
+}
+
+/**
+ * Whether this session's channel binding can be cleared.
+ *
+ * A session created by a channel is that chat's own conversation — its history
+ * is the room's history, and the next inbound message would re-bind it, so the
+ * server refuses to unbind it. A session that was *attached* to a chat has its
+ * own key and can be released, which is what restores tools and private context
+ * to it in the web UI. Mirrors `channel_binding_clear_refusal` in
+ * `crates/gateway/src/session/service.rs`.
+ */
+export function isChannelUnbindableSession(session: SessionMeta): boolean {
+	const binding = parseChannelBinding(session);
+	if (!(binding?.channel_type && binding.account_id && binding.chat_id)) return false;
+	const parts = [binding.channel_type, binding.account_id, binding.chat_id];
+	if (binding.thread_id) parts.push(binding.thread_id);
+	return session.key !== parts.join(":");
+}
+
 function isClearableSession(session: SessionMeta): boolean {
 	const isChannelSessionKey =
 		session.key.startsWith("telegram:") ||

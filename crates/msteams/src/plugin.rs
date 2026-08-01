@@ -140,14 +140,14 @@ impl MsTeamsPlugin {
         accounts.contains_key(account_id)
     }
 
-    pub fn account_config(&self, account_id: &str) -> Option<serde_json::Value> {
+    pub async fn account_config(&self, account_id: &str) -> Option<serde_json::Value> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .and_then(|s| serde_json::to_value(&s.config).ok())
     }
 
-    pub fn update_account_config(
+    pub async fn update_account_config(
         &self,
         account_id: &str,
         config: serde_json::Value,
@@ -959,21 +959,21 @@ impl ChannelPlugin for MsTeamsPlugin {
         accounts.keys().cloned().collect()
     }
 
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .map(|s| Box::new(s.config.clone()) as Box<dyn ChannelConfigView>)
     }
 
-    fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
+    async fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .and_then(|s| serde_json::to_value(crate::config::RedactedConfig(&s.config)).ok())
     }
 
-    fn update_account_config(
+    async fn update_account_config(
         &self,
         account_id: &str,
         config: serde_json::Value,

@@ -670,6 +670,7 @@ function mountSessionHeaderControls(): void {
 			<SessionHeader
 				showSelectors={false}
 				showName={false}
+				showSaveMarkdown={true}
 				showStop={false}
 				actionButtonClass={
 					"text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] text-[var(--muted)]"

@@ -128,6 +128,11 @@ pub struct MatrixAccountConfig {
     /// User allowlist (Matrix user IDs).
     pub user_allowlist: Vec<String>,
 
+    /// Exact sender IDs allowed to run privileged channel commands.
+    /// Empty grants nobody privileged access.
+    #[serde(default)]
+    pub operators: Vec<String>,
+
     /// Auto-join rooms on invite.
     pub auto_join: AutoJoinPolicy,
 
@@ -191,6 +196,7 @@ impl Default for MatrixAccountConfig {
             mention_mode: MentionMode::Mention,
             room_allowlist: Vec::new(),
             user_allowlist: Vec::new(),
+            operators: Vec::new(),
             auto_join: AutoJoinPolicy::Always,
             model: None,
             model_provider: None,
@@ -224,6 +230,7 @@ impl std::fmt::Debug for MatrixAccountConfig {
             .field("mention_mode", &self.mention_mode)
             .field("room_allowlist", &self.room_allowlist)
             .field("user_allowlist", &self.user_allowlist)
+            .field("operators", &self.operators)
             .field("auto_join", &self.auto_join)
             .field("model", &self.model)
             .field("model_provider", &self.model_provider)
@@ -247,7 +254,7 @@ pub struct RedactedConfig<'a>(pub &'a MatrixAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 16;
+        let mut count = 17;
         count += c.auth_mode.is_some() as usize;
         count += c.password.is_some() as usize;
         count += c.user_id.is_some() as usize;
@@ -284,6 +291,7 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("mention_mode", &c.mention_mode)?;
         s.serialize_field("room_allowlist", &c.room_allowlist)?;
         s.serialize_field("user_allowlist", &c.user_allowlist)?;
+        s.serialize_field("operators", &c.operators)?;
         s.serialize_field("auto_join", &c.auto_join)?;
         if c.model.is_some() {
             s.serialize_field("model", &c.model)?;
@@ -316,6 +324,10 @@ impl Serialize for RedactedConfig<'_> {
 impl ChannelConfigView for MatrixAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.user_allowlist
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {

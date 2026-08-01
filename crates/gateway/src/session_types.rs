@@ -40,6 +40,11 @@ pub struct PatchParams {
     pub sandbox_enabled: Option<Option<bool>>,
     #[serde(default, deserialize_with = "double_option", alias = "sandbox_backend")]
     pub sandbox_backend: Option<Option<String>>,
+    /// Channel binding. Only clearing (`null`) is accepted — see
+    /// `SessionService::patch`. A non-null value is rejected rather than
+    /// ignored, so a caller cannot believe it bound a session that it did not.
+    #[serde(default, deserialize_with = "double_option", alias = "channel_binding")]
+    pub channel_binding: Option<Option<serde_json::Value>>,
 }
 
 /// Deserialize a field as `Some(inner)` when present (even if null),

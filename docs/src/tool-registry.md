@@ -1,8 +1,8 @@
 # Tool Registry
 
 The tool registry manages all tools available to the agent during a
-conversation. It tracks where each tool comes from and supports filtering by
-source.
+conversation. It tracks where each tool comes from, which audience may use it,
+and supports filtering by both properties.
 
 ## Tool Sources
 
@@ -11,19 +11,41 @@ Every registered tool has a `ToolSource` that identifies its origin:
 - **`Builtin`** — tools shipped with the binary (exec, web_fetch, etc.)
 - **`Mcp { server }`** — tools provided by an MCP server, tagged with the
   server name
+- **`Wasm { component_hash }`** — tools provided by a WASM component
 
 This replaces the previous convention of identifying MCP tools by their
 `mcp__` name prefix, providing type-safe filtering instead of string matching.
 
 ## Registration
 
+Every entry also has a `ToolAudience`:
+
+- **`Trusted`** — authenticated owner and authorized operator turns
+- **`Public`** — eligible for explicitly configured untrusted origins such as
+  webhook payloads
+
+Registration is fail-closed. Built-in tools are trusted-only by default, and
+all MCP and WASM tools are trusted-only. A reviewed built-in must explicitly use
+`register_public` to become public. Tool descriptions and third-party metadata
+cannot grant public access.
+
+Public registration does not grant a tool to messaging-channel guests or
+shared rooms. Those turns receive an additional deny-all request policy. A
+webhook also receives no tools unless its configuration explicitly opts in.
+
 ```rust
-// Built-in tool
+// Trusted-only built-in tool (the default)
 registry.register(Box::new(MyTool::new()));
 
-// MCP tool — tagged with server name
-registry.register_mcp(Box::new(adapter), "github".to_string());
+// Built-in reviewed as safe for untrusted input
+registry.register_public(Box::new(PublicTool::new()));
+
+// Trusted-only MCP tool, tagged with server name
+registry.register_mcp(Box::new(adapter), "github".into());
 ```
+
+Duplicate names are rejected rather than overwritten. Intentional wrappers use
+`replace`, which preserves the original source and audience metadata.
 
 ## Filtering
 
@@ -36,6 +58,9 @@ let no_mcp = registry.clone_without_mcp();
 
 // Remove all MCP tools in-place (used during sync)
 let removed_count = registry.unregister_mcp();
+
+// Keep only tools explicitly reviewed for public use
+let public = registry.clone_for_audience(ToolAudience::Public);
 ```
 
 ## Schema Output
@@ -47,7 +72,8 @@ let removed_count = registry.unregister_mcp();
   "name": "exec",
   "description": "Execute a command",
   "parameters": { ... },
-  "source": "builtin"
+  "source": "builtin",
+  "audience": "trusted"
 }
 ```
 
@@ -57,12 +83,14 @@ let removed_count = registry.unregister_mcp();
   "description": "Search GitHub",
   "parameters": { ... },
   "source": "mcp",
-  "mcpServer": "github"
+  "mcpServer": "github",
+  "audience": "trusted"
 }
 ```
 
-The `source` and `mcpServer` fields are available to the UI for rendering
-tools grouped by origin.
+The source and audience fields are available to the UI for diagnostics. The
+audience is enforced by registry filtering before model tool schemas are built;
+it is not an instruction that the model is expected to follow.
 
 ## Lazy Registry Mode
 

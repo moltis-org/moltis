@@ -13,9 +13,10 @@ Type `/` in the chat input to see the autocomplete popup.
 | `/new` | Start a new session |
 | `/clear` | Clear session history |
 | `/compact` | Summarize conversation to save tokens |
-| `/context` | Show session context and project info |
-| `/sessions` | List and switch sessions (channels only) |
-| `/attach` | Attach an existing session to this channel (channels only) |
+| `/title` | Generate a title from session history |
+| `/context` | Show session context and project info — **operator DMs only on channels** |
+| `/sessions` | List and switch sessions (channels only) — **operator DMs only** |
+| `/attach` | Attach an existing session to this channel (channels only) — **operator DMs only** |
 | `/fork [label]` | Fork the current session into a new branch |
 
 ### /fork
@@ -35,25 +36,40 @@ Available in web UI, all channels, and via the `sessions.fork` RPC. See
 
 | Command | Description |
 |---------|-------------|
-| `/agent [N]` | Switch session agent |
+| `/agent [N]` | Switch session agent — **operator DMs only on channels** |
 | `/mode [N\|name\|none]` | Switch session mode |
 | `/model [N]` | Switch provider/model |
-| `/sandbox [on\|off\|image N]` | Toggle sandbox and choose image |
-| `/sh [on\|off]` | Enter command mode (passthrough to shell) |
+| `/sandbox [on\|off\|image N]` | Toggle sandbox and choose image — **operator DMs only on channels** |
+| `/sh [on\|off]` | Enter command mode (passthrough to shell) — **operator DMs only on channels** |
 | `/stop` | Abort the current running agent |
-| `/peek` | Show current thinking/tool status |
-| `/update [version]` | Update moltis (owner-only) |
+| `/peek` | Show current thinking/tool status — **operator DMs only on channels** |
+| `/update [version]` | Update moltis — **operator DMs only on channels** |
+
+```admonish warning title="Some commands are restricted on channels"
+Commands scoped to the current conversation — `/help`, `/new`, `/clear`,
+`/compact`, `/title`, `/fork`, `/stop`, `/model`, `/mode`, `/fast` — are open to
+any sender who clears the channel's access gate.
+
+Commands that reach the host, act on the owner's behalf, or read state outside
+the current chat require the sender to be an **operator in a proven direct
+chat**. An empty `operators` list means nobody, so these are disabled until you
+configure it. Non-operators can still chat normally.
+
+Shared-room, unknown-topology, and guest turns receive no tools or owner-private
+context. `/sh` and other privileged commands are also denied there. See
+[Channels → Operators](channels.md#operators-privileged-senders).
+```
 
 ## Quick Actions
 
 | Command | Description |
 |---------|-------------|
-| `/btw <question>` | Quick side question (no tools, not persisted) |
+| `/btw <question>` | Quick side question (no tools, not persisted) — **operator DMs only on channels** |
 | `/fast [on\|off\|status]` | Toggle fast/priority mode |
-| `/insights [days]` | Show usage analytics (tokens, providers) |
-| `/steer <text>` | Inject guidance into the current agent run |
-| `/queue <message>` | Queue a message for the next agent turn |
-| `/rollback [N\|diff N]` | List or restore file checkpoints |
+| `/insights [days]` | Show usage analytics (tokens, providers) — **operator DMs only on channels** |
+| `/steer <text>` | Inject guidance into the current agent run — **operator DMs only on channels** |
+| `/queue <message>` | Queue a message for the next agent turn — **operator DMs only on channels** |
+| `/rollback [N\|diff N]` | List or restore file checkpoints — **operator DMs only on channels** |
 
 ### /btw
 
@@ -143,12 +159,12 @@ system.
 
 | Command | Description |
 |---------|-------------|
-| `/approvals` | List pending exec approvals |
-| `/approve [N]` | Approve a pending exec request |
-| `/deny [N]` | Deny a pending exec request |
+| `/approvals` | List pending exec approvals — **operator DMs only on channels** |
+| `/approve [N]` | Approve a pending exec request — **operator DMs only on channels** |
+| `/deny [N]` | Deny a pending exec request — **operator DMs only on channels** |
 
 ## Help
 
 | Command | Description |
 |---------|-------------|
-| `/help` | Show available commands (handled locally by each channel) |
+| `/help` | Show available commands, marking which need an operator |

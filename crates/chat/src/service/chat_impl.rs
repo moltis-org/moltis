@@ -1,8 +1,11 @@
 //! `ChatService` trait implementation for `LiveChatService`.
 
+mod channel_security;
+mod public_context;
 mod queue_drain;
 mod send;
 mod send_params;
+mod tool_policy;
 
 use std::{path::Path, sync::Arc};
 

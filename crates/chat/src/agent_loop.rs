@@ -496,13 +496,17 @@ pub(crate) async fn run_explicit_shell_command(
                 client_seq,
                 Some(run_id),
             );
-            let tool_result_msg = PersistedMessage::tool_result(
+            // Both halves of the pair must carry the run id: run-scoped history
+            // filtering keeps or drops a run as a unit, and a result without one
+            // would be dropped on its own, orphaning the tool call above.
+            let tool_result_msg = PersistedMessage::tool_result_with_run_id(
                 tool_call_id.clone(),
                 "exec",
                 Some(serde_json::json!({ "command": command })),
                 true,
                 Some(capped.clone()),
                 None,
+                run_id,
             );
             if let Some(session_store) = session_store {
                 persist_tool_history_pair(
@@ -551,13 +555,14 @@ pub(crate) async fn run_explicit_shell_command(
                 client_seq,
                 Some(run_id),
             );
-            let tool_result_msg = PersistedMessage::tool_result(
+            let tool_result_msg = PersistedMessage::tool_result_with_run_id(
                 tool_call_id.clone(),
                 "exec",
                 Some(serde_json::json!({ "command": command })),
                 false,
                 None,
                 Some(error_text.clone()),
+                run_id,
             );
             if let Some(session_store) = session_store {
                 persist_tool_history_pair(

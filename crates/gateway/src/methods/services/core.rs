@@ -1,5 +1,11 @@
 use super::*;
 
+/// Strip gateway-owned routing and trust markers from RPC-supplied params.
+///
+/// The list is owned by `moltis-chat` (the crate that reads these) so it cannot
+/// drift from what the chat service treats as a gateway assertion.
+use moltis_chat::request_params::strip_gateway_owned_params as strip_internal_channel_fields;
+
 /// Prepare client-supplied `chat.send`/`chat.send_sync` params for the chat
 /// service: drop anything the client must not be able to claim, then inject the
 /// connection's own context.
@@ -7,8 +13,9 @@ use super::*;
 /// The `_`-prefixed params are internal plumbing, and some of them are set
 /// legitimately by the web UI (`_session_key`, `_audio_filename`,
 /// `_document_files`), so this is a targeted removal rather than a blanket
-/// strip. See [`moltis_chat::params::SERVER_ONLY`] for which keys are dropped
-/// and why; the server re-derives each of them from state it trusts.
+/// strip. See [`moltis_chat::params::SERVER_ONLY`] and
+/// [`moltis_chat::request_params::GATEWAY_OWNED_REQUEST_PARAMS`] for which keys
+/// are dropped and why; the server re-derives each of them from state it trusts.
 ///
 /// Only the channel dispatch path sets those keys, and it calls the chat service
 /// directly rather than through this registry, so stripping here cannot affect
@@ -16,6 +23,7 @@ use super::*;
 async fn prepare_chat_send_params(ctx: &MethodContext) -> serde_json::Value {
     let mut params = ctx.params.clone();
     moltis_chat::params::strip_server_only(&mut params);
+    strip_internal_channel_fields(&mut params);
     params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
 
     // Forward client Accept-Language, public remote IP, and timezone.
@@ -1348,6 +1356,8 @@ mod tests {
         // Both are re-derived server-side from state the server trusts.
         let params = prepare_chat_send_params(&context(serde_json::json!({
             "text": "hi",
+            "channel": {"sender_id": "forged"},
+            "_native_channel_request": true,
             moltis_chat::params::ACK_KEYS: ["slack-acct:C123:1700000000.1"],
             moltis_chat::params::CHANNEL_REPLY_TARGET: {
                 "channel_type": "slack",
@@ -1359,6 +1369,9 @@ mod tests {
 
         for key in moltis_chat::params::SERVER_ONLY {
             assert!(params.get(*key).is_none(), "{key} was not stripped");
+        }
+        for key in moltis_chat::request_params::GATEWAY_OWNED_REQUEST_PARAMS {
+            assert!(params.get(key).is_none(), "{key} was not stripped");
         }
         assert_eq!(params["text"], "hi");
     }
@@ -1383,11 +1396,17 @@ mod tests {
             "_session_key": "session:42",
             "_audio_filename": "voice.ogg",
             "_document_files": [{ "name": "a.pdf" }],
+            "_tool_audience": "public",
+            "_tool_policy": {"deny": ["*"]},
+            "_private_context": false,
         })))
         .await;
 
         assert_eq!(params["_session_key"], "session:42");
         assert_eq!(params["_audio_filename"], "voice.ogg");
         assert_eq!(params["_document_files"][0]["name"], "a.pdf");
+        assert_eq!(params["_tool_audience"], "public");
+        assert_eq!(params["_tool_policy"]["deny"][0], "*");
+        assert_eq!(params["_private_context"], false);
     }
 }

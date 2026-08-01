@@ -9,15 +9,18 @@ import { onEvent } from "../events";
 import * as gon from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
 import {
+	channelBindingLabel,
 	clearActiveSession,
 	clearSessionHistoryCache,
 	fetchSessions,
 	isArchivableSession,
+	isChannelUnbindableSession,
 	removeSessionFromClientState,
 	setSessionActiveRunId,
 	setSessionReplying,
 	switchSession,
 } from "../sessions";
+import { saveSessionAsMarkdown } from "../sessions/session-markdown";
 import { sessionStore } from "../stores/session-store";
 import { ComboSelect, confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui";
 
@@ -52,6 +55,7 @@ export interface SessionHeaderProps {
 	showSelectors?: boolean;
 	showName?: boolean;
 	showShare?: boolean;
+	showSaveMarkdown?: boolean;
 	showFork?: boolean;
 	showStop?: boolean;
 	showClear?: boolean;
@@ -118,6 +122,7 @@ export function SessionHeader({
 	showSelectors = true,
 	showName = true,
 	showShare = true,
+	showSaveMarkdown = false,
 	showFork = true,
 	showStop = true,
 	showClear = true,
@@ -141,6 +146,7 @@ export function SessionHeader({
 
 	const [renaming, setRenaming] = useState(false);
 	const [clearing, setClearing] = useState(false);
+	const [savingMarkdown, setSavingMarkdown] = useState(false);
 	const [stopping, setStopping] = useState(false);
 	const [switchingAgent, setSwitchingAgent] = useState(false);
 	const [agentOptions, setAgentOptions] = useState<AgentOption[]>(initialAgentOptions);
@@ -160,6 +166,8 @@ export function SessionHeader({
 	const canRename = !(isMain || isCron);
 	const canStop = !isCron && replying;
 	const canArchive = !!session && isArchivableSession(session.toMeta());
+	const canUnbindChannel = !!session && isChannelUnbindableSession(session.toMeta());
+	const boundChannelLabel = session ? channelBindingLabel(session.toMeta()) : "";
 	const showArchivedSessions = sessionStore.showArchivedSessions.value;
 	const currentAgentId = session?.agent_id || defaultAgentId || "main";
 	const currentNodeId = session?.node_id || "";
@@ -374,6 +382,18 @@ export function SessionHeader({
 		});
 	}, [onBeforeShare, shareSnapshot]);
 
+	const onSaveMarkdown = useCallback(() => {
+		if (savingMarkdown) return;
+		setSavingMarkdown(true);
+		saveSessionAsMarkdown(currentKey, fullName)
+			.then(() => showToast("Session saved as Markdown", "success"))
+			.catch((error: unknown) => {
+				const message = error instanceof Error ? error.message : "Failed to save session as Markdown";
+				showToast(message, "error");
+			})
+			.finally(() => setSavingMarkdown(false));
+	}, [currentKey, fullName, savingMarkdown]);
+
 	const onArchive = useCallback(() => {
 		if (!(session && canArchive)) return;
 		if (typeof onBeforeArchive === "function") {
@@ -395,6 +415,35 @@ export function SessionHeader({
 			fetchSessions();
 		});
 	}, [canArchive, currentKey, onBeforeArchive, session, showArchivedSessions]);
+
+	// A session attached to a chat runs every turn as an untrusted public turn:
+	// no tools, no memory, no project context, because the chat's history holds
+	// other people's messages. Releasing it is the only way back, so the control
+	// says what it restores rather than just "Unbind".
+	//
+	// No confirmation: this is reversible with `/attach` from the chat, and the
+	// shared confirm dialog labels its action button "Delete", which reads far
+	// more destructive than what happens.
+	const [unbinding, setUnbinding] = useState(false);
+	const onUnbindChannel = useCallback(() => {
+		if (!(session && canUnbindChannel)) return;
+		setUnbinding(true);
+		sendRpc("sessions.patch", { key: currentKey, channelBinding: null })
+			.then((res) => {
+				if (!res?.ok) {
+					showToast((res?.error as { message?: string })?.message || "Failed to release channel", "error");
+					return;
+				}
+				showToast(
+					boundChannelLabel
+						? `Released from ${boundChannelLabel}. Tools and private context are available here again.`
+						: "Released from its channel. Tools and private context are available here again.",
+					"success",
+				);
+				fetchSessions();
+			})
+			.finally(() => setUnbinding(false));
+	}, [boundChannelLabel, canUnbindChannel, currentKey, session]);
 
 	const onAgentChange = useCallback(
 		(nextAgentId: string) => {
@@ -581,6 +630,21 @@ export function SessionHeader({
 						{session?.archived ? "Unarchive" : "Archive"}
 					</button>
 				)}
+				{canUnbindChannel && (
+					<button
+						className={actionButtonClass}
+						onClick={onUnbindChannel}
+						disabled={unbinding}
+						data-testid="session-unbind-channel"
+						title={
+							boundChannelLabel
+								? `Attached to ${boundChannelLabel}. Runs without tools or private context until released.`
+								: "Attached to a channel. Runs without tools or private context until released."
+						}
+					>
+						{unbinding ? "Releasing…" : "Release channel"}
+					</button>
+				)}
 				{showFork && !isCron && (
 					<button
 						className={`${actionButtonClass} inline-flex items-center gap-1.5`}
@@ -599,6 +663,20 @@ export function SessionHeader({
 					>
 						<span className="icon icon-sm icon-share shrink-0" />
 						Share
+					</button>
+				)}
+				{showSaveMarkdown && (
+					<button
+						type="button"
+						className={`${actionButtonClass} inline-flex items-center gap-1.5`}
+						onClick={onSaveMarkdown}
+						title="Save as Markdown"
+						aria-label="Save as Markdown"
+						aria-busy={savingMarkdown}
+						disabled={savingMarkdown}
+					>
+						<span className="icon icon-sm icon-document shrink-0" />
+						<span className="hidden md:inline">Save .md</span>
 					</button>
 				)}
 				{showDelete && !isMain && (

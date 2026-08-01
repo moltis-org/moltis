@@ -6,11 +6,14 @@ use moltis_channels::ChannelReplyTarget;
 
 use crate::state::GatewayState;
 
-use super::super::{default_channel_session_key, resolve_channel_session};
+use super::super::{
+    default_channel_session_key, is_sender_authorized_for_target, resolve_channel_session,
+};
 
 pub(in crate::channel_events) async fn update_location(
     state: &Arc<tokio::sync::OnceCell<Arc<GatewayState>>>,
     reply_to: &ChannelReplyTarget,
+    sender_id: Option<&str>,
     latitude: f64,
     longitude: f64,
 ) -> bool {
@@ -18,6 +21,14 @@ pub(in crate::channel_events) async fn update_location(
         warn!("update_location: gateway not ready");
         return false;
     };
+    if !is_sender_authorized_for_target(state, reply_to, sender_id).await {
+        warn!(
+            account_id = %reply_to.account_id,
+            sender_id,
+            "ignored location update outside an operator direct chat"
+        );
+        return false;
+    }
 
     let session_key = if let Some(ref sm) = state.services.session_metadata {
         resolve_channel_session(reply_to, sm).await
@@ -67,6 +78,7 @@ pub(in crate::channel_events) async fn update_location(
 pub(in crate::channel_events) async fn resolve_pending_location(
     state: &Arc<tokio::sync::OnceCell<Arc<GatewayState>>>,
     reply_to: &ChannelReplyTarget,
+    sender_id: Option<&str>,
     latitude: f64,
     longitude: f64,
 ) -> bool {
@@ -74,6 +86,14 @@ pub(in crate::channel_events) async fn resolve_pending_location(
         warn!("resolve_pending_location: gateway not ready");
         return false;
     };
+    if !is_sender_authorized_for_target(state, reply_to, sender_id).await {
+        warn!(
+            account_id = %reply_to.account_id,
+            sender_id,
+            "ignored pending location response outside an operator direct chat"
+        );
+        return false;
+    }
 
     let session_key = if let Some(ref sm) = state.services.session_metadata {
         resolve_channel_session(reply_to, sm).await

@@ -426,9 +426,20 @@ pub(crate) fn explicit_shell_command_from_user_content(
     user_content: &UserContent,
 ) -> Option<String> {
     let text = match user_content {
-        UserContent::Text(text) => text.trim(),
+        UserContent::Text(text) => text,
         UserContent::Multimodal(_) => return None,
     };
+    explicit_shell_command(text)
+}
+
+/// Detect an explicit `/sh ...` shell request in raw message text.
+///
+/// Callers that gate shell access (e.g. the gateway's channel dispatch) must
+/// use this exact predicate so authorization and execution agree on what
+/// counts as a shell request.
+#[must_use]
+pub fn explicit_shell_command(text: &str) -> Option<String> {
+    let text = text.trim();
 
     if text.is_empty() || text.len() > 4096 || text.contains('\n') || text.contains('\r') {
         return None;

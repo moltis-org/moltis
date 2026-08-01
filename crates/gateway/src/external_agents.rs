@@ -2,10 +2,11 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
-    time::SystemTime,
 };
 
+mod helpers;
 mod permissions;
+mod security;
 
 use {
     async_trait::async_trait,
@@ -34,7 +35,10 @@ use moltis_tools::approval::ApprovalManager;
 
 use crate::{broadcast::BroadcastOpts, state::GatewayState};
 
-use self::permissions::GatewayAcpPermissionHandler;
+use self::{
+    helpers::{message_content_text, now_ms},
+    permissions::GatewayAcpPermissionHandler,
+};
 
 pub struct GatewayExternalAgentService {
     registry: ExternalAgentRegistry,
@@ -424,9 +428,17 @@ impl ExternalAgentChatService {
         if !self.external_agents.config.enabled {
             return None;
         }
+        if security::is_explicit_shell_request(params) {
+            return None;
+        }
         let session_key = resolve_session_key(params, &self.state).await;
         let entry = self.session_metadata.get(&session_key).await?;
         let kind = entry.external_agent_kind?;
+        if !security::allows_external_agent_request(params, entry.channel_binding.is_some()) {
+            return Some(Err(
+                "external agents are unavailable for public or tool-restricted turns".into(),
+            ));
+        }
         Some(self.send_external(params.clone(), session_key, kind).await)
     }
 
@@ -894,30 +906,6 @@ fn session_key_param(params: &Value) -> Option<String> {
         .or_else(|| params.get("_session_key"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
-}
-
-fn message_content_text(content: &MessageContent) -> String {
-    match content {
-        MessageContent::Text(text) => text.clone(),
-        MessageContent::Multimodal(blocks) => blocks
-            .iter()
-            .filter_map(|block| match block {
-                moltis_sessions::ContentBlock::Text { text } => Some(text.as_str()),
-                moltis_sessions::ContentBlock::ImageUrl { .. } => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-    }
-}
-
-fn now_ms() -> u64 {
-    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(duration) => duration.as_millis() as u64,
-        Err(error) => {
-            warn!(%error, "system clock is before UNIX_EPOCH");
-            0
-        },
-    }
 }
 
 #[cfg(test)]

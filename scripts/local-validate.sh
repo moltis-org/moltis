@@ -240,18 +240,46 @@ changed_files() {
   fi
 }
 
-package_name_for_path() {
+crate_dir_for_path() {
   local path="$1"
   local dir
   dir="$(dirname "$path")"
 
   while [[ "$dir" != "." && "$dir" != "/" ]]; do
     if [[ -f "$dir/Cargo.toml" ]]; then
-      sed -nE 's/^name[[:space:]]*=[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' "$dir/Cargo.toml" | head -n1
+      printf '%s' "$dir"
       return
     fi
     dir="$(dirname "$dir")"
   done
+}
+
+package_name_for_path() {
+  local dir
+  dir="$(crate_dir_for_path "$1")"
+  [[ -n "$dir" ]] || return
+
+  sed -nE 's/^name[[:space:]]*=[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' "$dir/Cargo.toml" \
+    | tr -d '\r' \
+    | head -n1
+}
+
+# Whether a path is a Cargo integration test target (`--test <name>`).
+#
+# Only `.rs` files directly under a crate's own `tests/` directory are separate
+# test binaries. A `tests/` directory nested inside `src/` — e.g.
+# `src/session/tests/tests/channel_binding_tests.rs` — is an ordinary inline
+# module compiled into the lib, and asking nextest for `--test` on it fails with
+# "no test target named ...".
+is_integration_test_target() {
+  local file="$1"
+  local crate_dir
+  crate_dir="$(crate_dir_for_path "$file")"
+  [[ -n "$crate_dir" ]] || return 1
+  [[ "$file" == "$crate_dir"/tests/*.rs ]] || return 1
+  # Reject anything deeper than `tests/<name>.rs`.
+  local rest="${file#"$crate_dir"/tests/}"
+  [[ "$rest" != */* ]]
 }
 
 nextest_base_cmd_for_package() {
@@ -283,7 +311,7 @@ build_targeted_rust_test_cmd() {
 
     local base_cmd
     base_cmd="$(nextest_base_cmd_for_package "$package")"
-    if [[ "$file" =~ ^crates/[^/]+/tests/[^/]+\.rs$ ]]; then
+    if is_integration_test_target "$file"; then
       local test_name
       test_name="$(basename "$file" .rs)"
       commands+=("$base_cmd --test $test_name")

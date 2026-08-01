@@ -17,7 +17,10 @@ mod tests_legacy;
 // ── Re-exports (preserve public API) ────────────────────────────────────
 
 pub use {
-    helpers::{AgentLoopLimits, AgentRunError, AgentRunResult, OnEvent, RunnerEvent},
+    helpers::{
+        AgentLoopLimits, AgentRunError, AgentRunResult, OnEvent, RunnerEvent,
+        explicit_shell_command,
+    },
     non_streaming::{
         run_agent, run_agent_loop, run_agent_loop_with_context,
         run_agent_loop_with_context_and_limits,

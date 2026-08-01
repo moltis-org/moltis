@@ -32,6 +32,7 @@ export function EditChannelModal(): VNode | null {
 	const editAgent = useSignal("");
 	const agentsList = useSignal<Array<{ id: string; name: string; emoji?: string }>>([]);
 	const allowlistItems = useSignal<string[]>([]);
+	const operatorItems = useSignal<string[]>([]);
 	const roomAllowlistItems = useSignal<string[]>([]);
 	const editCredential = useSignal("");
 	const editWebhookSecret = useSignal("");
@@ -61,6 +62,7 @@ export function EditChannelModal(): VNode | null {
 			ch?.config?.user_allowlist ||
 			ch?.config?.allowed_pubkeys ||
 			[]) as string[];
+		operatorItems.value = (ch?.config?.operators || []) as string[];
 		roomAllowlistItems.value = (ch?.config?.room_allowlist || ch?.config?.group_allowlist || []) as string[];
 		editCredential.value = "";
 		editWebhookSecret.value = (ch?.config?.webhook_secret as string) || "";
@@ -163,6 +165,7 @@ export function EditChannelModal(): VNode | null {
 		const dmFallback = isWhatsApp ? "open" : "allowlist";
 		updateConfig.dm_policy = (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement)?.value || dmFallback;
 		updateConfig.allowlist = allowlistItems.value;
+		updateConfig.operators = operatorItems.value;
 		if (isMatrix) {
 			updateConfig.user_allowlist = allowlistItems.value;
 			updateConfig.room_policy =
@@ -745,6 +748,25 @@ export function EditChannelModal(): VNode | null {
 						allowlistItems.value = v;
 					}}
 				/>
+				<label className="text-xs text-[var(--muted)]">Operators</label>
+				<p className="text-xs text-[var(--muted)]" data-testid="operators-description">
+					Senders who may run <code>/sh</code> and other commands on <strong>this machine</strong>, and read this
+					instance's sessions and memory. This is equivalent to giving someone your terminal — add yourself, or someone
+					you trust with the host. Entries are exact, case-sensitive platform sender IDs.
+				</p>
+				<AllowlistInput
+					value={operatorItems.value}
+					preserveAt={true}
+					placeholder="Type a user ID and press Enter"
+					onChange={(v) => {
+						operatorItems.value = v;
+					}}
+				/>
+				<p className="text-xs text-[var(--muted)]" data-testid="operators-hint">
+					{operatorItems.value.length > 0
+						? "Only these exact sender IDs can use privileged commands. Shared-room agent turns remain restricted for everyone."
+						: "No operators set — privileged commands and private host access are disabled for every sender on this channel."}
+				</p>
 				{isMatrix && (
 					<>
 						<label className="text-xs text-[var(--muted)]">Room Allowlist</label>

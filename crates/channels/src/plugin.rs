@@ -225,6 +225,7 @@ pub trait ChannelEventSink: Send + Sync {
     async fn update_location(
         &self,
         _reply_to: &ChannelReplyTarget,
+        _sender_id: Option<&str>,
         _latitude: f64,
         _longitude: f64,
     ) -> bool {
@@ -239,6 +240,7 @@ pub trait ChannelEventSink: Send + Sync {
     async fn resolve_pending_location(
         &self,
         _reply_to: &ChannelReplyTarget,
+        _sender_id: Option<&str>,
         _latitude: f64,
         _longitude: f64,
     ) -> bool {
@@ -252,6 +254,7 @@ pub trait ChannelEventSink: Send + Sync {
         &self,
         _callback_data: &str,
         _reply_to: ChannelReplyTarget,
+        _sender_id: Option<&str>,
     ) -> Result<String> {
         Err(Error::unavailable("interactions not supported"))
     }
@@ -378,6 +381,18 @@ pub struct ChannelReplyTarget {
 }
 
 impl ChannelReplyTarget {
+    /// Deterministic session key used when a channel has no explicit active
+    /// session override.
+    pub fn default_session_key(&self) -> String {
+        match &self.thread_id {
+            Some(thread_id) => format!(
+                "{}:{}:{}:{}",
+                self.channel_type, self.account_id, self.chat_id, thread_id
+            ),
+            None => format!("{}:{}:{}", self.channel_type, self.account_id, self.chat_id),
+        }
+    }
+
     /// Returns the address string for outbound sends.
     ///
     /// For Telegram forum topics this encodes both chat and thread as
@@ -533,13 +548,17 @@ pub trait ChannelPlugin: Send + Sync {
     fn account_ids(&self) -> Vec<String>;
 
     /// Get the typed config view for a specific account.
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>>;
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>>;
 
     /// Update the in-memory config for an account without restarting.
     ///
     /// Accepts raw JSON because the store persists `Value`. Each plugin
     /// deserializes into its concrete config type internally.
-    fn update_account_config(&self, account_id: &str, config: serde_json::Value) -> Result<()>;
+    async fn update_account_config(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> Result<()>;
 
     /// Get a shared outbound sender for routing outside the plugin.
     fn shared_outbound(&self) -> Arc<dyn ChannelOutbound>;
@@ -551,7 +570,7 @@ pub trait ChannelPlugin: Send + Sync {
     ///
     /// Each plugin serializes its concrete config type. Returns `None` if the
     /// account is not found.
-    fn account_config_json(&self, _account_id: &str) -> Option<serde_json::Value> {
+    async fn account_config_json(&self, _account_id: &str) -> Option<serde_json::Value> {
         None
     }
 
@@ -949,7 +968,11 @@ mod tests {
             message_id: None,
             thread_id: None,
         };
-        assert!(!sink.update_location(&target, 48.8566, 2.3522).await);
+        assert!(
+            !sink
+                .update_location(&target, Some("sender"), 48.8566, 2.3522)
+                .await
+        );
     }
 
     #[test]

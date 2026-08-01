@@ -6,6 +6,7 @@
 
 pub mod activity;
 pub mod channel_webhook_middleware;
+mod chat_classification;
 pub mod commands;
 pub mod config_view;
 pub mod contract;
@@ -15,6 +16,7 @@ pub mod feedback;
 pub mod gating;
 pub mod media_download;
 pub mod message_log;
+pub mod operators;
 pub mod otp;
 pub mod plugin;
 pub mod registry;

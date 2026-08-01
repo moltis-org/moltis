@@ -175,7 +175,11 @@ async fn handle_component_interaction(
         thread_id: None,
     };
 
-    match sink.dispatch_interaction(callback_data, reply_to).await {
+    let sender_id = component.user.id.to_string();
+    match sink
+        .dispatch_interaction(callback_data, reply_to, Some(&sender_id))
+        .await
+    {
         Ok(_response) => {
             // Response already sent by the gateway.
         },

@@ -16,20 +16,57 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         } else {
             default_channel_session_key(&reply_to)
         };
-
-        // Acknowledge receipt with a reaction (👀) on the exact inbound message
-        // before any reply text arrives, and register a per-turn controller that
-        // the agent run drives through phase emojis and finalizes to ✅/❌ (or
-        // nothing on cancel). No-op unless the channel populated `ack_message_id`
-        // (bot directly addressed and reactions enabled). Because the run is
-        // fire-and-forget, the terminal is applied from the run's completion —
-        // NOT from `chat.send` returning below.
+        // Register before authorization so a directly addressed but denied turn
+        // still settles its per-message reaction instead of leaving 👀 behind.
         let ack_key = register_channel_reaction_controller(state, &reply_to).await;
-        let effective_text = if state.is_channel_command_mode_enabled(&session_key).await {
-            rewrite_for_shell_mode(text).unwrap_or_else(|| text.to_string())
-        } else {
-            text.to_string()
-        };
+
+        // Privilege is resolved per inbound message, never per session:
+        // command mode is shared by everyone in the chat, so an operator
+        // enabling it must not hand the shell to the other participants.
+        let sender_role =
+            resolve_sender_role(state, &reply_to.account_id, meta.sender_id.as_deref()).await;
+
+        // `/sh <cmd>` is deliberately not a registered channel command — it
+        // falls through to the agent, which force-executes it. Stop it here
+        // for guests, before it reaches the runner.
+        let trusted_channel_turn = is_trusted_channel_turn(sender_role, &reply_to);
+        if !trusted_channel_turn && moltis_agents::runner::explicit_shell_command(text).is_some() {
+            warn!(
+                account_id = %reply_to.account_id,
+                chat_id = %reply_to.chat_id,
+                sender_id = ?meta.sender_id,
+                "denied /sh outside an operator direct chat"
+            );
+            if let Some(done_tx) = typing_done {
+                let _ = done_tx.send(());
+            }
+            if let Some(ref key) = ack_key {
+                state
+                    .channel_reaction_controllers
+                    .finalize_keys(std::slice::from_ref(key), ChannelAckOutcome::Failure)
+                    .await;
+            }
+            if let Some(outbound) = state.services.channel_outbound_arc()
+                && let Err(send_err) = outbound
+                    .send_text(
+                        &reply_to.account_id,
+                        &reply_to.outbound_to(),
+                        &operator_denied_message("/sh", meta.sender_id.as_deref()),
+                        reply_to.message_id.as_deref(),
+                    )
+                    .await
+            {
+                warn!("failed to send shell denial back to channel: {send_err}");
+            }
+            return;
+        }
+
+        let effective_text =
+            if trusted_channel_turn && state.is_channel_command_mode_enabled(&session_key).await {
+                rewrite_for_shell_mode(text).unwrap_or_else(|| text.to_string())
+            } else {
+                text.to_string()
+            };
 
         // Broadcast a "chat" event so the web UI shows the user message
         // in real-time (like typing from the UI).
@@ -140,7 +177,18 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             // Defer reply-target registration until chat.send() actually
             // starts executing this message (after semaphore acquire).
             moltis_chat::params::CHANNEL_REPLY_TARGET: &reply_to,
+            "_native_channel_request": true,
         });
+
+        // Only an operator in a proven direct chat receives tools and private
+        // context. This is the single condition on purpose: an earlier version
+        // also skipped the ceiling for anything that parsed as `/sh`, on the
+        // assumption that the guard above had already rejected every untrusted
+        // `/sh`. That made the ceiling depend on a rejection 60 lines away, so
+        // narrowing that guard would have silently opened this one.
+        if !trusted_channel_turn {
+            apply_untrusted_channel_context(&mut params);
+        }
 
         // Carry this message's acknowledgment identity into the run so the
         // reaction follows the message itself — through queueing and replay —

@@ -246,6 +246,7 @@ pub(super) async fn interaction_events_callback(
                 sink,
                 action_id,
                 reply_to,
+                sender_id: user_id,
                 response_url,
             },
         ) {

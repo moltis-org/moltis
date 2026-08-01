@@ -59,27 +59,14 @@ impl ChannelType {
     /// Best-effort chat classification for hook and prompt context.
     #[must_use]
     pub fn classify_chat(&self, chat_id: &str) -> Option<String> {
-        match self {
-            Self::Telegram => {
-                if chat_id.starts_with("-100") {
-                    Some("channel_or_supergroup".to_string())
-                } else if chat_id.starts_with('-') {
-                    Some("group".to_string())
-                } else {
-                    Some("private".to_string())
-                }
-            },
-            Self::Signal => {
-                if chat_id.starts_with("group:") {
-                    Some("group".to_string())
-                } else {
-                    Some("direct".to_string())
-                }
-            },
-            Self::Nostr => Some("dm".to_string()),
-            Self::Telephony => Some("call".to_string()),
-            _ => None,
-        }
+        crate::chat_classification::classify_chat(*self, chat_id)
+    }
+
+    /// Whether a chat can contain messages from multiple principals.
+    /// Unknown platform chat kinds fail closed as shared.
+    #[must_use]
+    pub fn is_shared_chat(&self, chat_id: &str) -> bool {
+        crate::chat_classification::is_shared_chat(*self, chat_id)
     }
 
     /// Top-level config fields that must be treated as persisted secrets.

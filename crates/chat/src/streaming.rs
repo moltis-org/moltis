@@ -138,12 +138,13 @@ pub(crate) async fn run_streaming(
     client_seq: Option<u64>,
     active_partial_assistant: Option<Arc<RwLock<HashMap<String, ActiveAssistantDraft>>>>,
     terminal_runs: &Arc<RwLock<HashSet<String>>>,
+    private_context: bool,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
 
     // ── Memory prefetch (same logic as run_with_tools) ───────────
     let mut memory_text_with_prefetch: Option<String> = None;
-    if persona.config.memory.enable_prefetch {
+    if private_context && persona.config.memory.enable_prefetch {
         let query_text = match user_content {
             UserContent::Text(t) => Some(t.as_str()),
             UserContent::Multimodal(parts) => parts.iter().find_map(|p| match p {
@@ -183,22 +184,37 @@ pub(crate) async fn run_streaming(
             }
         }
     }
-    let effective_memory_text = memory_text_with_prefetch
-        .as_deref()
-        .or(persona.memory_text.as_deref());
+    let effective_memory_text = private_context
+        .then(|| {
+            memory_text_with_prefetch
+                .as_deref()
+                .or(persona.memory_text.as_deref())
+        })
+        .flatten();
+    let prompt_runtime_context = private_context.then_some(runtime_context).flatten();
 
     let system_prompt = build_system_prompt_minimal_runtime_details(
-        project_context,
+        private_context.then_some(project_context).flatten(),
         Some(&persona.identity),
-        Some(&persona.user),
-        persona.soul_text.as_deref(),
-        persona.boot_text.as_deref(),
-        persona.agents_text.as_deref(),
-        persona.tools_text.as_deref(),
-        runtime_context,
+        private_context.then_some(&persona.user),
+        private_context
+            .then_some(persona.soul_text.as_deref())
+            .flatten(),
+        private_context
+            .then_some(persona.boot_text.as_deref())
+            .flatten(),
+        private_context
+            .then_some(persona.agents_text.as_deref())
+            .flatten(),
+        private_context
+            .then_some(persona.tools_text.as_deref())
+            .flatten(),
+        prompt_runtime_context,
         effective_memory_text,
         prompt_build_limits_from_config(&persona.config),
-        persona.guidelines_text.as_deref(),
+        private_context
+            .then_some(persona.guidelines_text.as_deref())
+            .flatten(),
     )
     .prompt;
 
@@ -209,9 +225,11 @@ pub(crate) async fn run_streaming(
     // it stays positionally stable, preserving KV cache prefix matching for
     // local LLMs (llama.cpp, Ollama, LM Studio) and prompt-cache hits for
     // cloud providers.
-    let effective_user_content =
-        moltis_agents::prompt::prepend_datetime_to_user_content(user_content, runtime_context)
-            .unwrap_or_else(|| user_content.clone());
+    let effective_user_content = moltis_agents::prompt::prepend_datetime_to_user_content(
+        user_content,
+        prompt_runtime_context,
+    )
+    .unwrap_or_else(|| user_content.clone());
 
     let mut messages: Vec<ChatMessage> = Vec::new();
     messages.push(ChatMessage::system(system_prompt));

@@ -1408,6 +1408,9 @@ mod tests {
     #[path = "archive_search_tests.rs"]
     mod archive_search_tests;
 
+    #[path = "channel_binding_tests.rs"]
+    mod channel_binding_tests;
+
     #[cfg(feature = "fs-tools")]
     #[tokio::test]
     async fn delete_clears_fs_state_for_session() {
