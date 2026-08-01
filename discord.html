@@ -187,7 +187,13 @@ offered = [&#x22;telegram&#x22;, &#x22;discord&#x22;]"><code><span class="line">
 
 
 
-<table><thead><tr><th>Field</th><th>Required</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>token</code></td><td><strong>yes</strong></td><td>—</td><td>Discord bot token from the Developer Portal</td></tr><tr><td><code>dm_policy</code></td><td>no</td><td><code>"allowlist"</code></td><td>Who can DM the bot: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>group_policy</code></td><td>no</td><td><code>"open"</code></td><td>Who can talk to the bot in guild channels: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>mention_mode</code></td><td>no</td><td><code>"mention"</code></td><td>When the bot responds in guilds: <code>"always"</code>, <code>"mention"</code> (only when @mentioned), or <code>"none"</code></td></tr><tr><td><code>allowlist</code></td><td>no</td><td><code>[]</code></td><td>Discord usernames allowed to DM the bot (when <code>dm_policy = "allowlist"</code>)</td></tr><tr><td><code>guild_allowlist</code></td><td>no</td><td><code>[]</code></td><td>Guild (server) IDs allowed to interact with the bot</td></tr><tr><td><code>model</code></td><td>no</td><td>—</td><td>Override the default model for this channel</td></tr><tr><td><code>model_provider</code></td><td>no</td><td>—</td><td>Provider for the overridden model</td></tr><tr><td><code>agent_id</code></td><td>no</td><td>—</td><td>Default agent ID for this Discord bot</td></tr><tr><td><code>reply_to_message</code></td><td>no</td><td><code>false</code></td><td>Send bot responses as Discord replies to the user’s message</td></tr><tr><td><code>ack_reaction</code></td><td>no</td><td>—</td><td>Emoji reaction added while processing (e.g. <code>"👀"</code>); omit to disable</td></tr><tr><td><code>activity</code></td><td>no</td><td>—</td><td>Bot activity status text (e.g. <code>"with AI"</code>)</td></tr><tr><td><code>activity_type</code></td><td>no</td><td><code>"custom"</code></td><td>Activity type: <code>"playing"</code>, <code>"listening"</code>, <code>"watching"</code>, <code>"competing"</code>, or <code>"custom"</code></td></tr><tr><td><code>status</code></td><td>no</td><td><code>"online"</code></td><td>Bot online status: <code>"online"</code>, <code>"idle"</code>, <code>"dnd"</code>, or <code>"invisible"</code></td></tr><tr><td><code>otp_self_approval</code></td><td>no</td><td><code>true</code></td><td>Enable OTP self-approval for non-allowlisted DM users</td></tr><tr><td><code>otp_cooldown_secs</code></td><td>no</td><td><code>300</code></td><td>Cooldown in seconds after 3 failed OTP attempts</td></tr></tbody></table>
+
+
+
+
+
+
+<table><thead><tr><th>Field</th><th>Required</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>token</code></td><td><strong>yes</strong></td><td>—</td><td>Discord bot token from the Developer Portal</td></tr><tr><td><code>dm_policy</code></td><td>no</td><td><code>"allowlist"</code></td><td>Who can DM the bot: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>group_policy</code></td><td>no</td><td><code>"open"</code></td><td>Who can talk to the bot in guild channels: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>mention_mode</code></td><td>no</td><td><code>"mention"</code></td><td>When the bot responds in guilds: <code>"always"</code>, <code>"mention"</code> (only when @mentioned), or <code>"none"</code></td></tr><tr><td><code>allowlist</code></td><td>no</td><td><code>[]</code></td><td>Discord usernames allowed to DM the bot (when <code>dm_policy = "allowlist"</code>)</td></tr><tr><td><code>guild_allowlist</code></td><td>no</td><td><code>[]</code></td><td>Guild (server) IDs allowed to interact with the bot</td></tr><tr><td><code>operators</code></td><td>no</td><td><code>[]</code></td><td>Exact sender IDs eligible for privileged channel commands. Empty means nobody. Discord currently fails closed as shared even in DMs; see <a href="/channels.html#operators-privileged-senders">Operators</a></td></tr><tr><td><code>model</code></td><td>no</td><td>—</td><td>Override the default model for this channel</td></tr><tr><td><code>model_provider</code></td><td>no</td><td>—</td><td>Provider for the overridden model</td></tr><tr><td><code>agent_id</code></td><td>no</td><td>—</td><td>Default agent ID for this Discord bot</td></tr><tr><td><code>reply_to_message</code></td><td>no</td><td><code>false</code></td><td>Send bot responses as Discord replies to the user’s message</td></tr><tr><td><code>ack_reaction</code></td><td>no</td><td>—</td><td>Emoji reaction added while processing (e.g. <code>"👀"</code>); omit to disable</td></tr><tr><td><code>activity</code></td><td>no</td><td>—</td><td>Bot activity status text (e.g. <code>"with AI"</code>)</td></tr><tr><td><code>activity_type</code></td><td>no</td><td><code>"custom"</code></td><td>Activity type: <code>"playing"</code>, <code>"listening"</code>, <code>"watching"</code>, <code>"competing"</code>, or <code>"custom"</code></td></tr><tr><td><code>status</code></td><td>no</td><td><code>"online"</code></td><td>Bot online status: <code>"online"</code>, <code>"idle"</code>, <code>"dnd"</code>, or <code>"invisible"</code></td></tr><tr><td><code>otp_self_approval</code></td><td>no</td><td><code>true</code></td><td>Enable OTP self-approval for non-allowlisted DM users</td></tr><tr><td><code>otp_cooldown_secs</code></td><td>no</td><td><code>300</code></td><td>Cooldown in seconds after 3 failed OTP attempts</td></tr></tbody></table>
 <h3 id="full-example">Full Example</h3>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels]
 offered = [&#x22;telegram&#x22;, &#x22;discord&#x22;]
@@ -197,8 +203,10 @@ token = &#x22;MTIzNDU2Nzg5.example.bot-token&#x22;
 dm_policy = &#x22;allowlist&#x22;
 group_policy = &#x22;open&#x22;
 mention_mode = &#x22;mention&#x22;
-allowlist = [&#x22;alice&#x22;, &#x22;bob&#x22;]
+allowlist = [&#x22;111111111111111111&#x22;, &#x22;222222222222222222&#x22;]
 guild_allowlist = [&#x22;123456789012345678&#x22;]
+# Records operator identity for future proven-direct topology support.
+operators = [&#x22;111111111111111111&#x22;]
 reply_to_message = true
 ack_reaction = &#x22;👀&#x22;
 model = &#x22;gpt-4o&#x22;
@@ -215,8 +223,10 @@ otp_self_approval = true"><code><span class="line"><span style="color:#24292EFF;
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">dm_policy </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "allowlist"</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">group_policy </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "open"</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">mention_mode </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "mention"</span></span>
-<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">allowlist </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"alice"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "bob"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">allowlist </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"111111111111111111"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "222222222222222222"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">guild_allowlist </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"123456789012345678"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Records operator identity for future proven-direct topology support.</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">operators </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"111111111111111111"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">reply_to_message </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">ack_reaction </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "👀"</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">model </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "gpt-4o"</span></span>
@@ -383,6 +393,10 @@ or status is configured, the bot uses Discord’s default (online, no activity).
 <p>Slash commands appear in Discord’s command palette (type <code>/</code> in any channel where
 the bot is present). Responses are ephemeral — only visible to the user who
 invoked the command.</p>
+<p>Commands that require an operator direct chat, including <code>/context</code>,
+<code>/sessions</code>, and <code>/agent</code>, currently fail closed on Discord because the gateway
+cannot yet prove Discord conversation topology from its channel ID. Use the
+authenticated web UI for those commands.</p>
 <aside class="admonition admonition-note"><div class="admonition-title">Note</div><div class="admonition-body"><p>Text-based <code>/</code> commands (e.g. typing <code>/model</code> as a regular message) continue to<br>work alongside native slash commands. The native commands provide autocomplete and<br>a better Discord-native experience.</p></div></aside>
 <h2 id="web-ui-setup">Web UI Setup</h2>
 <p>You can also configure Discord through the web interface:</p>
@@ -419,6 +433,9 @@ response (assuming <code>mention_mode = "mention"</code>, the default). If you s
 <li>Send a message</li>
 </ol>
 <aside class="admonition admonition-note"><div class="admonition-title">Note</div><div class="admonition-body"><p>If <code>dm_policy</code> is set to <code>"allowlist"</code> (the default), make sure your Discord<br>username is listed in the <code>allowlist</code> array — otherwise the bot will ignore your<br>DMs. Set <code>dm_policy = "open"</code> to allow anyone to DM the bot.</p></div></aside>
+<p>Discord DMs currently support normal tool-free chat only. Privileged commands,
+agent tools, private owner context, and <code>/sh</code> fail closed until direct-chat
+topology is carried into the gateway.</p>
 <h3 id="without-a-shared-server">Without a Shared Server</h3>
 <p>DMs work even if you and the bot don’t share a server. Discord bots are
 reachable by username from any account. This makes DMs the simplest way to

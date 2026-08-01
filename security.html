@@ -98,13 +98,76 @@ Moltis agent. This requires careful access control.</p>
 pending queue. You must explicitly approve or deny each sender before they can
 interact with the agent.</p>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext" data-code="UI: Settings > Channels > Pending Senders"><code><span class="line"><span>UI: Settings > Channels > Pending Senders</span></span></code></pre>
-<h3 id="per-channel-permissions">Per-Channel Permissions</h3>
-<p>Each channel can have different permission levels:</p>
-<ul>
-<li><strong>Read-only</strong>: Sender can ask questions, agent responds</li>
-<li><strong>Execute</strong>: Sender can trigger actions (with approval still required)</li>
-<li><strong>Admin</strong>: Full access including configuration changes</li>
-</ul>
+<h3 id="operators-vs-allowed-senders">Operators vs. Allowed Senders</h3>
+<p>Being allowed to message the bot is <strong>not</strong> permission to run commands on the
+host. Shell access is gated separately by each account’s <code>operators</code> list:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th></th><th>Guest</th><th>Operator in proven DM</th><th>Operator in shared/unknown chat</th></tr></thead><tbody><tr><td>Chat with the agent</td><td>yes</td><td>yes</td><td>yes</td></tr><tr><td>Room-local slash commands</td><td>yes</td><td>yes</td><td>yes</td></tr><tr><td>Privileged slash commands</td><td>no</td><td>yes</td><td>no</td></tr><tr><td><code>/sh</code>, shell command mode</td><td>no</td><td>yes</td><td>no</td></tr><tr><td>Agent tools and external agents</td><td>no</td><td>yes</td><td>no</td></tr><tr><td>Owner memory, profile, project context</td><td>no</td><td>yes</td><td>no</td></tr></tbody></table>
+<p>Denial is enforced before command dispatch, before shell command-mode rewrite,
+and with a deny-all request policy. Host-owned tool audience metadata provides
+an additional ceiling, and name-based configuration cannot widen the deny-all
+channel policy. Untrusted turns also omit private prompt and memory context.</p>
+<p>With no <code>operators</code> list, <strong>no one</strong> has privileged channel access. Configure it under
+<strong>Settings → Channels → Edit → Operators</strong>, or see
+<a href="/channels.html#operators-privileged-senders">Channels → Operators</a>.</p>
+<aside class="admonition admonition-danger"><div class="admonition-title">Public channels</div><div class="admonition-body"><p>On a public Discord guild or any shared group chat, every member may clear the<br>access gate. Every turn therefore runs without tools or owner-private context,<br>even when an operator sends it. <code>/sh</code> and privileged commands are also denied;<br>move privileged work to an operator DM or the authenticated web UI. Adapters<br>that cannot prove a chat is direct treat it as shared.</p></div></aside>
+<p>Discord, Microsoft Teams, and Matrix currently fall into that conservative
+category even for actual DMs. Their normal chat remains available, but tools,
+private context, <code>/sh</code>, location updates, and privileged commands are denied.</p>
+<p>Telephony is in that category permanently: a call’s only identifier is the
+caller number, and caller ID is spoofable, so it can never authenticate an
+operator. Adding a phone number to <code>operators</code> grants nothing.</p>
+<p>Sessions bound to a chat — including a working session an operator moved there
+with <code>/attach</code> — are untrusted for <em>every</em> non-gateway caller, so cron jobs,
+webhooks, and <code>sessions_send</code> also run tool-free against them. Release the
+binding to restore full access; see
+<a href="/channels.html#channel-bound-sessions">Channels → Channel-bound sessions</a>.</p>
 <h3 id="channel-isolation">Channel Isolation</h3>
 <p>Channels run in isolated sessions by default. A malicious message from one
 channel cannot affect another channel’s session or the main UI session.</p>

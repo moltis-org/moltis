@@ -473,8 +473,25 @@ payload:</p>
 <li><strong>Model</strong> — use a different LLM for webhook processing.</li>
 <li><strong>System prompt suffix</strong> — append extra instructions (e.g., “Focus on security
 issues” for a code review webhook).</li>
-<li><strong>Tool policy</strong> — restrict which tools the agent can use.</li>
+<li><strong>Tool policy</strong> — webhook turns have no tools by default. An explicit policy
+may opt into tools registered for the public audience, currently <code>calc</code>,
+<code>web_search</code>, and <code>web_fetch</code>. Even <code>allow = ["*"]</code> cannot widen beyond this
+ceiling. Webhook payloads are untrusted input and never inherit trusted-only
+tools.</li>
 </ul>
+<p>For example, the webhook create/update payload can opt into search only:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="json" data-code="{
+  &#x22;toolPolicy&#x22;: {
+    &#x22;allow&#x22;: [&#x22;web_search&#x22;]
+  }
+}"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">{</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "toolPolicy"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">    "allow"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"web_search"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+<p>Omitting <code>toolPolicy</code> denies every tool. Supplying an empty policy or only a
+<code>deny</code> list permits every public tool not denied, so prefer a narrow, non-empty
+<code>allow</code> list.</p>
 <h3 id="delivery-message-format">Delivery Message Format</h3>
 <p>The agent receives a structured message with three layers:</p>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext" data-code="Webhook delivery received.

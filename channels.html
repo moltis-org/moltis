@@ -346,6 +346,137 @@ WhatsApp, MS Teams), <code>guild_allowlist</code> (Discord), <code>channel_allow
 <li><strong>Glob wildcards</strong> — <code>"admin_*"</code>, <code>"*@example.com"</code>, <code>"user_*_vip"</code></li>
 <li><strong>Multiple identifiers</strong> — both the user’s numeric ID and username are checked (where applicable)</li>
 </ul>
+<h3 id="operators-privileged-senders">Operators (Privileged Senders)</h3>
+<p>Passing the access gate lets someone <em>talk</em> to the bot. It does not let them
+run commands on your machine. That is a separate list:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels.telegram.my-bot]
+allowlist = [&#x22;owner-id&#x22;]        # who may DM the bot
+operators = [&#x22;owner-id&#x22;]        # who may use privileged access in proven DMs"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channels</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">telegram</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">my-bot</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">allowlist </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"owner-id"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]        </span><span style="color:#C2C3C5;--shiki-dark:#6A737D"># who may DM the bot</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">operators </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"owner-id"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]        </span><span style="color:#C2C3C5;--shiki-dark:#6A737D"># who may use privileged access in proven DMs</span></span></code></pre>
+<p>```admonish warning title=“Upgrading: privileged commands are off until you set <code>operators</code>”
+Earlier versions treated the DM <code>allowlist</code> as the privileged list, so anyone
+allowed to DM the bot could run <code>/sh</code>, <code>/approve</code>, and <code>/update</code>. That fallback
+is gone: <strong>an empty <code>operators</code> list means nobody</strong>, including you.</p>
+<p>After upgrading, add your own exact platform sender ID to <code>operators</code> for each
+account, or those commands will refuse everyone. If you do not know your ID,
+run <code>/sh</code> — the refusal message tells you what yours is on that channel.</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext" data-code="
+&#x60;&#x60;&#x60;admonish warning title=&#x22;Upgrading: shared chats start from an empty history once&#x22;
+An untrusted turn only sees history from runs that were themselves untrusted, and
+messages written before this change carry no such marker. The first turn after
+upgrading in a group chat, guild, or channel-bound session therefore starts with
+no prior context. This happens once per session; everything written from then on
+accumulates normally."><code><span class="line"><span></span></span>
+<span class="line"><span>```admonish warning title="Upgrading: shared chats start from an empty history once"</span></span>
+<span class="line"><span>An untrusted turn only sees history from runs that were themselves untrusted, and</span></span>
+<span class="line"><span>messages written before this change carry no such marker. The first turn after</span></span>
+<span class="line"><span>upgrading in a group chat, guild, or channel-bound session therefore starts with</span></span>
+<span class="line"><span>no prior context. This happens once per session; everything written from then on</span></span>
+<span class="line"><span>accumulates normally.</span></span></code></pre>
+<p>A command requires an operator DM when the worst case reaches beyond the
+current chat. Everything scoped to the conversation you are already in stays
+open to any sender who clears the access gate:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th></th><th>Commands</th></tr></thead><tbody><tr><td><strong>Anyone who may chat</strong></td><td><code>/help</code>, <code>/new</code>, <code>/clear</code>, <code>/compact</code>, <code>/title</code>, <code>/fork</code>, <code>/stop</code>, <code>/model</code>, <code>/mode</code>, <code>/fast</code></td></tr><tr><td><strong>Operators in proven direct chats only</strong></td><td><code>/sh</code>, <code>/update</code>, <code>/approve</code>, <code>/deny</code>, <code>/approvals</code>, <code>/sandbox</code>, <code>/attach</code>, <code>/sessions</code>, <code>/context</code>, <code>/insights</code>, <code>/peek</code>, <code>/btw</code>, <code>/rollback</code>, <code>/agent</code>, <code>/steer</code>, <code>/queue</code></td></tr></tbody></table>
+<p>The public set can only disrupt the room’s own conversation — something any
+member can already do by talking. The operator set runs host commands (<code>/sh</code>,
+<code>/update</code>), acts on the owner’s behalf (<code>/approve</code> and <code>/deny</code> resolve the
+<em>owner’s</em> pending exec requests, which is code execution by proxy), weakens
+isolation (<code>/sandbox</code> can turn the sandbox off), or reads state outside the
+current chat (<code>/attach</code>, <code>/sessions</code>, <code>/context</code>, <code>/insights</code>, <code>/peek</code>, <code>/btw</code>).</p>
+<p>New commands default to operator direct-chat only, so adding one is safe until
+it is deliberately reviewed.</p>
+<p>Guest, shared-room, and unknown-topology channel turns receive no tools. The
+gateway applies both the registry’s public audience ceiling and a deny-all name
+policy, so account, group, and per-sender tool policies cannot restore even a
+tool reviewed for other untrusted origins.</p>
+<p>Every normal turn in a shared room is untrusted, including turns sent by an
+operator, because the shared history contains messages from other people.
+<code>/sh</code>, shell command mode, and every privileged command are denied there. In an
+operator’s conversation that the adapter can prove is direct, normal agent
+turns may use the full configured tool set. Unknown chat kinds fail closed as
+shared.</p>
+<aside class="admonition admonition-note"><div class="admonition-title">Conservative DM detection</div><div class="admonition-body"><p>Discord, Microsoft Teams, and Matrix chat IDs do not encode whether the<br>conversation is direct, and that topology is not yet carried into the gateway.<br>Those integrations currently fail closed as shared even for actual DMs, so use<br>the authenticated web UI or a supported proven-direct channel for privileged<br>work. Normal tool-free chat still works.</p>
+<p>Phone calls are also treated as shared, for a different reason: the only<br>identifier a call carries is the caller number, and caller ID is trivially<br>spoofable. There is nothing there to authenticate an operator against, so<br>telephony never grants privileged access no matter what <code>operators</code> contains.</p>
+<p>Chat kinds are matched as an <strong>allowlist of shapes known to be one-to-one</strong><br>(Telegram positive chat IDs, Slack <code>D…</code> conversations, WhatsApp<br><code>@s.whatsapp.net</code> and <code>@lid</code> JIDs, Signal non-<code>group:</code> identifiers, Nostr DMs).<br>An ID whose form is not recognised is shared.</p></div></aside>
+<p>Untrusted turns also omit owner-private prompt context: user profile, project
+context, long-term memory, skills, and automatic memory extraction.</p>
+<h3 id="channel-bound-sessions">Channel-bound sessions</h3>
+<p>A session is <em>bound</em> to a chat when the chat created it, or when an operator ran
+<code>/attach</code> to move an existing session into that chat. Binding is what makes the
+chat’s replies land in the right place — and it also means the session’s history
+contains messages the bot did not author.</p>
+<p>Every request into a bound session that does not come from the channel gateway
+is therefore treated as untrusted, whoever made it: web UI turns, cron jobs,
+webhooks, and the <code>sessions_send</code> tool all run with no tools and no private
+context. The downgrade is logged (<code>session is bound to a channel; running this turn without tools or private context</code>), because otherwise an affected cron job
+simply answers as though it had no tools.</p>
+<aside class="admonition admonition-tip"><div class="admonition-title">Getting a session back</div><div class="admonition-body"><p>If you attached a working session to a chat and now want it back, open it in the<br>web UI and press <strong>Release channel</strong> in the session header (or call<br><code>sessions.patch</code> with <code>channelBinding: null</code>). Messages from that chat return to<br>the chat's own session, and the released session regains tools, memory, and<br>project context.</p>
+<p>A chat's *own* session cannot be released — its history is the room's history,<br>and the next inbound message would re-create the binding. Attach a different<br>session to that chat instead.</p></div></aside>
+<h3 id="granting-operator">Granting operator</h3>
+<p>Two places, and both state what it means:</p>
+<ul>
+<li><strong>When approving a sender.</strong> Approving asks for a role: <em>Guest</em> (may chat) or
+<em>Operator</em> (may run commands on this machine). While an account has no
+operators at all, Operator is pre-selected — on a fresh install the person
+holding the OTP code read it off this very UI, so they are almost certainly
+the owner. Once one operator exists, Guest is the default.</li>
+<li><strong>Settings → Channels → Edit → Operators</strong>, to add or remove IDs directly.</li>
+</ul>
+<p>Approving as operator records the sender’s exact platform ID, not their
+username, because operator matching is exact.</p>
+<aside class="admonition admonition-tip"><div class="admonition-title">Locked out of your own bot?</div><div class="admonition-body"><p>Send <code>/sh</code>. The refusal tells you your sender ID on that channel, which is what<br><code>operators</code> needs.</p></div></aside>
+<aside class="admonition admonition-warning"><div class="admonition-title">This matters most in group and guild chats</div><div class="admonition-body"><p>In a Discord guild or a group chat, every member who passes the group policy<br>clears the access gate. Without an <code>operators</code> list, anything gated only on<br>"can this person talk to the bot" is open to the whole room.</p></div></aside>
+<p>Resolution is <strong>fail-closed</strong>:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th><code>operators</code></th><th><code>allowlist</code></th><th>Who is an operator</th></tr></thead><tbody><tr><td>non-empty</td><td>anything</td><td>only exact sender IDs in <code>operators</code></td></tr><tr><td>empty</td><td>anything</td><td><strong>nobody</strong> — privileged commands are disabled</td></tr></tbody></table>
+<p>A sender with no identifier (for example an unattributed button callback) is
+never an operator.</p>
+<p><code>operators</code> contains exact, case-sensitive platform sender IDs. Globs,
+usernames, and partial IDs do not grant privilege. For WhatsApp use the full
+JID; for Matrix use the full Matrix user ID.</p>
+<aside class="admonition admonition-note"><div class="admonition-title">Interaction with OTP self-approval</div><div class="admonition-body"><p>OTP self-approval appends the approved sender to <code>allowlist</code> only. It never<br>promotes the sender to operator; privileged access must be configured<br>separately.</p></div></aside>
+<p>Untrusted tool restrictions stack with the per-channel tool policy
+(<code>channels.&#x3C;type>.&#x3C;account>.tools.groups.&#x3C;chat_type></code>). Those policies can
+further restrict an operator DM, but cannot enable tools for a guest, shared
+room, or unknown chat. Grant eligibility for privileged access by adding the
+sender to <code>operators</code>; the sender must still use a proven direct chat.</p>
 <h3 id="otp-self-approval">OTP Self-Approval</h3>
 <p>Channels that support OTP (Telegram, Microsoft Teams, Slack, Discord, Matrix, WhatsApp) allow non-allowlisted
 users to self-approve by entering a 6-digit code. The code appears in the web UI
