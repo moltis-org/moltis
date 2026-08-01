@@ -10,7 +10,10 @@
 <a href="https://nostr.com">Nostr</a>, the decentralized social protocol. The integration
 uses <a href="https://github.com/nostr-protocol/nips/blob/master/04.md">NIP-04</a>
 encrypted DMs (kind:4) and connects to relays via <code>nostr-sdk</code> — no public URL
-or server infrastructure is required.</p>
+or server infrastructure is required. It can also join
+<a href="https://github.com/nostr-protocol/nips/blob/master/29.md">NIP-29</a> group chats,
+including Block’s <a href="https://github.com/block/buzz">Buzz</a> channels — see
+<a href="#buzz--nip-29-groups">Buzz &#x26; NIP-29 Groups</a>.</p>
 <h2 id="how-it-works">How It Works</h2>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext" data-code="┌──────────────────────────────────────────────────────┐
 │              Nostr Relay Network                      │
@@ -175,7 +178,31 @@ offered = [&#x22;telegram&#x22;, &#x22;discord&#x22;, &#x22;slack&#x22;, &#x22;m
 
 
 
-<table><thead><tr><th>Field</th><th>Required</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>secret_key</code></td><td><strong>yes</strong></td><td>—</td><td>Nostr secret key (<code>nsec1...</code> bech32 or 64-char hex)</td></tr><tr><td><code>relays</code></td><td>no</td><td><code>["wss://relay.damus.io", "wss://relay.nostr.band", "wss://nos.lol"]</code></td><td>Relay WebSocket URLs to connect to</td></tr><tr><td><code>dm_policy</code></td><td>no</td><td><code>"allowlist"</code></td><td>Who can DM the bot: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>allowed_pubkeys</code></td><td>no</td><td><code>[]</code></td><td>Public keys allowed to DM (<code>npub1...</code> or hex, when <code>dm_policy = "allowlist"</code>)</td></tr><tr><td><code>enabled</code></td><td>no</td><td><code>true</code></td><td>Whether this account is active</td></tr><tr><td><code>model</code></td><td>no</td><td>—</td><td>Override the default model for this channel</td></tr><tr><td><code>model_provider</code></td><td>no</td><td>—</td><td>Provider for the overridden model</td></tr><tr><td><code>otp_self_approval</code></td><td>no</td><td><code>true</code></td><td>Allow non-allowlisted senders to self-approve via OTP code</td></tr><tr><td><code>otp_cooldown_secs</code></td><td>no</td><td><code>300</code></td><td>Cooldown after 3 failed OTP attempts</td></tr><tr><td><code>profile.name</code></td><td>no</td><td>—</td><td>NIP-01 profile display name</td></tr><tr><td><code>profile.display_name</code></td><td>no</td><td>—</td><td>NIP-01 longer display name</td></tr><tr><td><code>profile.about</code></td><td>no</td><td>—</td><td>NIP-01 bio / about text</td></tr><tr><td><code>profile.picture</code></td><td>no</td><td>—</td><td>NIP-01 avatar URL (HTTPS)</td></tr><tr><td><code>profile.nip05</code></td><td>no</td><td>—</td><td>NIP-05 identifier (e.g. <code>bot@example.com</code>)</td></tr></tbody></table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Field</th><th>Required</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>secret_key</code></td><td><strong>yes</strong></td><td>—</td><td>Nostr secret key (<code>nsec1...</code> bech32 or 64-char hex)</td></tr><tr><td><code>relays</code></td><td>no</td><td><code>["wss://relay.damus.io", "wss://relay.nostr.band", "wss://nos.lol"]</code></td><td>Relay WebSocket URLs to connect to</td></tr><tr><td><code>dm_policy</code></td><td>no</td><td><code>"allowlist"</code></td><td>Who can DM the bot: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>allowed_pubkeys</code></td><td>no</td><td><code>[]</code></td><td>Public keys allowed to DM (<code>npub1...</code> or hex, when <code>dm_policy = "allowlist"</code>)</td></tr><tr><td><code>enabled</code></td><td>no</td><td><code>true</code></td><td>Whether this account is active</td></tr><tr><td><code>model</code></td><td>no</td><td>—</td><td>Override the default model for this channel</td></tr><tr><td><code>model_provider</code></td><td>no</td><td>—</td><td>Provider for the overridden model</td></tr><tr><td><code>otp_self_approval</code></td><td>no</td><td><code>true</code></td><td>Allow non-allowlisted senders to self-approve via OTP code</td></tr><tr><td><code>otp_cooldown_secs</code></td><td>no</td><td><code>300</code></td><td>Cooldown after 3 failed OTP attempts</td></tr><tr><td><code>groups</code></td><td>no</td><td><code>[]</code></td><td>NIP-29 group ids (<code>h</code> tags) to join — see <a href="#buzz--nip-29-groups">Buzz &#x26; NIP-29 Groups</a>. Empty = DM-only</td></tr><tr><td><code>group_mention_mode</code></td><td>no</td><td><code>"mention"</code></td><td>When to respond in groups: <code>"mention"</code> (p-tagged only), <code>"always"</code>, or <code>"none"</code></td></tr><tr><td><code>group_message_kind</code></td><td>no</td><td><code>"nip29"</code></td><td>Dialect for bot-initiated group messages: <code>"nip29"</code> (kind:9) or <code>"buzz_v2"</code> (kind:40002)</td></tr><tr><td><code>group_ack_reactions</code></td><td>no</td><td><code>true</code></td><td>React 👀 on receipt and ✅/❌ on completion in groups (NIP-25)</td></tr><tr><td><code>profile.name</code></td><td>no</td><td>—</td><td>NIP-01 profile display name</td></tr><tr><td><code>profile.display_name</code></td><td>no</td><td>—</td><td>NIP-01 longer display name</td></tr><tr><td><code>profile.about</code></td><td>no</td><td>—</td><td>NIP-01 bio / about text</td></tr><tr><td><code>profile.picture</code></td><td>no</td><td>—</td><td>NIP-01 avatar URL (HTTPS)</td></tr><tr><td><code>profile.nip05</code></td><td>no</td><td>—</td><td>NIP-05 identifier (e.g. <code>bot@example.com</code>)</td></tr></tbody></table>
 <h3 id="full-example">Full Example</h3>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels.nostr.my-bot]
 secret_key = &#x22;nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqspcgef&#x22;
@@ -229,6 +256,140 @@ enabled, or are silently ignored.</li>
 <p>When <code>otp_self_approval</code> is enabled and a non-allowlisted sender messages the
 bot, the sender appears in the Senders tab of the web UI where they can be
 approved or denied. This works the same as OTP for Telegram and Matrix.</p>
+<h2 id="buzz--nip-29-groups">Buzz &#x26; NIP-29 Groups</h2>
+<p><a href="https://github.com/block/buzz">Buzz</a> is Block’s open-source team-chat and
+agent-collaboration platform built on Nostr — a Slack/GitHub rival where AI
+agents and humans are first-class members of shared “channels”. Its primary API
+is <a href="https://github.com/nostr-protocol/nips/blob/master/29.md">NIP-29</a>
+relay-based group chat over a connection authenticated with
+<a href="https://github.com/nostr-protocol/nips/blob/master/42.md">NIP-42</a>.</p>
+<p>Because Buzz speaks plain Nostr, Moltis participates as an ordinary NIP-29
+client — the same code path works against Buzz relays and any other NIP-29
+relay. A Buzz channel is a group identified by an <code>h</code> tag; messages are
+<code>kind:9</code> (standard NIP-29) or <code>kind:40002</code> (Buzz) chat events — both are read,
+see <a href="#message-kinds-kind9-vs-kind40002">Message Kinds</a>. Unlike DMs, group
+messages are <strong>not</strong> encrypted — the relay enforces membership and
+authorization.</p>
+<h3 id="configuration-1">Configuration</h3>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels.nostr.my-bot]
+secret_key = &#x22;nsec1...&#x22;
+# Point at the Buzz relay (self-hosted or hosted). NIP-42 auth is automatic.
+relays = [&#x22;wss://relay.example-buzz.dev&#x22;]
+# The NIP-29 group ids (h tags) the bot joins. Empty keeps DM-only mode.
+groups = [&#x22;buzz-general&#x22;, &#x22;buzz-dev&#x22;]
+group_mention_mode = &#x22;mention&#x22;  # mention | always | none
+group_message_kind = &#x22;buzz_v2&#x22;  # nip29 (kind:9) | buzz_v2 (kind:40002)
+group_ack_reactions = true      # 👀 on receipt, ✅/❌ on completion"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channels</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">nostr</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">my-bot</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">secret_key </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "nsec1..."</span></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Point at the Buzz relay (self-hosted or hosted). NIP-42 auth is automatic.</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">relays </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"wss://relay.example-buzz.dev"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># The NIP-29 group ids (h tags) the bot joins. Empty keeps DM-only mode.</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">groups </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"buzz-general"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "buzz-dev"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">group_mention_mode </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "mention"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">  # mention | always | none</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">group_message_kind </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "buzz_v2"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">  # nip29 (kind:9) | buzz_v2 (kind:40002)</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">group_ack_reactions </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">      # 👀 on receipt, ✅/❌ on completion</span></span></code></pre>
+<h3 id="live-streaming-replies-buzz-only">Live-Streaming Replies (Buzz only)</h3>
+<p>Buzz supports editing a published message (<code>kind:40003</code>,
+<code>KIND_STREAM_MESSAGE_EDIT</code>). In a Buzz channel, Moltis publishes its reply as
+soon as the first tokens arrive and then edits it in place as the rest stream
+in, so the channel sees the answer forming rather than waiting for the whole
+turn. Edits are throttled (~1/second) so a long answer does not become hundreds
+of signed events in the relay’s audit log.</p>
+<p>Plain NIP-29 has no edit kind, so on a non-Buzz relay the reply is collected and
+posted once, as before. DMs are unchanged (gift wrap has no edit path).</p>
+<h3 id="acknowledgement-reactions">Acknowledgement Reactions</h3>
+<p>With <code>group_ack_reactions</code> enabled (the default), the bot reacts 👀 to a message
+it has picked up, swaps in a phase glyph as the agent works (🌐 browsing, 💻
+shell, ✏️ editing, 🏗️ building, 🛫 deploying, 🛠️ any other tool, ⏳ stalled), and
+finishes with ✅ or ❌ — the same acknowledgement pattern Moltis uses on Slack.</p>
+<p>Reactions are NIP-25 <code>kind:7</code> events, so each swap publishes one and retracts
+the previous with a NIP-09 deletion (<code>kind:5</code>). Relays honour deletions at their
+discretion, so a superseded glyph may briefly linger. On a busy turn this is a
+handful of extra events per message — set <code>group_ack_reactions = false</code> if your
+relay charges per event or you would rather keep the channel quiet.</p>
+<p>Reactions are only sent in groups: reacting to a gift-wrapped DM would expose
+that a conversation happened.</p>
+<p>Withdrawing the bot from a group stops new reactions, but it can still take back
+one it already placed — otherwise its last 👀 would sit on someone’s message
+permanently. A retraction that fails to reach the relay is retried a few times,
+and if it still does not land the next reaction on that message clears it, since
+nothing else revisits the turn once it has finished.</p>
+<h3 id="message-kinds-kind9-vs-kind40002">Message Kinds (kind:9 vs kind:40002)</h3>
+<p>Buzz defines two chat kinds and posts channel messages as <strong><code>kind:40002</code></strong>
+(<code>KIND_STREAM_MESSAGE_V2</code>), while plain NIP-29 relays use <strong><code>kind:9</code></strong>. Per
+Buzz’s own architecture notes, a client filtering <code>kind:9</code> alone never receives
+<code>kind:40002</code> messages and vice versa — so speaking only one dialect makes the
+bot invisible in the other.</p>
+<p>Moltis therefore <strong>always reads both</strong>, and <strong>replies mirror the kind of the
+message they answer</strong>, which makes Buzz channels work without any configuration.
+<code>group_message_kind</code> only decides bot-<em>initiated</em> messages in a group nothing
+has been received from yet; once a message arrives, the group’s observed dialect
+is used. Set it to <code>buzz_v2</code> on a Buzz relay so even the first proactive message
+lands correctly.</p>
+<h3 id="how-responses-are-triggered">How Responses Are Triggered</h3>
+<p><code>group_mention_mode</code> controls when the bot replies in a group:</p>
+<ul>
+<li><strong><code>mention</code></strong> (default) — respond only when the bot’s pubkey is <code>p</code>-tagged
+(an <code>@</code>-mention). Best for busy channels.</li>
+<li><strong><code>always</code></strong> — respond to every message in joined groups. Use for dedicated
+agent channels.</li>
+<li><strong><code>none</code></strong> — receive-only. The bot never responds, and never publishes into
+the group at all: outbound sends are refused too, so a turn queued before you
+changed the setting cannot still speak in the channel.</li>
+</ul>
+<p>Each group is a separate conversation — the group id is used as the session
+key, so different Buzz channels keep independent context. A reply carries the
+group’s <code>h</code> tag, a NIP-10 <code>e</code> tag threading it to the message being answered,
+and a <code>p</code> tag notifying that message’s author. It is published with the same
+kind as the message it answers.</p>
+<h3 id="turning-group-chat-off">Turning Group Chat Off</h3>
+<p>Removing a group from <code>groups</code>, or setting <code>group_mention_mode = "none"</code>, stops
+the bot publishing into that channel — not just answering in it. A reply target
+is stored with the session and outlives the settings that created it, so a turn
+queued or resumed from earlier would otherwise still speak in a channel you had
+already withdrawn the bot from.</p>
+<p>This is enforced at the publish itself, under the same lock the settings save
+takes. Once your save returns, nothing further is published: a send already in
+flight completes before the save applies, and any send afterwards is refused.
+A long streamed reply stops mid-answer rather than finishing, and the partial
+text already posted is withdrawn — it can never be completed, so leaving it
+would strand half a sentence in the channel as the bot’s last word. Taking the
+bot’s own content back out is not the same as speaking, so it is allowed after
+revocation. NIP-09 deletion is only a request, though, so a relay that ignores
+it will keep showing the fragment.</p>
+<h3 id="access-control-1">Access Control</h3>
+<p><code>groups</code> is the whole access model: it is both the set of groups the bot
+subscribes to <em>and</em> the set it accepts messages from. There is deliberately no
+“respond in any group” mode.</p>
+<aside class="admonition admonition-warning"><div class="admonition-title">Warning</div><div class="admonition-body"><p>A group's <code>h</code> tag is an unauthenticated label. An event's signature proves who<br>wrote it, not which group it belongs to, and a relay can push any event down<br>the socket — <code>nostr-sdk</code> does not verify that delivered events match the filters<br>you subscribed with. Moltis therefore re-checks every inbound group message<br>(<code>kind:9</code> and <code>kind:40002</code> alike) against <code>groups</code> and drops anything else, so<br>a hostile or buggy relay cannot inject text into the agent by inventing an <code>h</code><br>tag. Keep <code>groups</code> to channels you actually intend the bot to work in.</p></div></aside>
+<p>Withdrawing the bot takes effect immediately, including mid-answer. Removing a
+group from <code>groups</code> — or switching it to <code>none</code> — is re-checked before every
+publish, so a reply that is still streaming stops where it is instead of running
+to completion. The text already posted stays visible: a NIP-09 deletion is only
+a request the relay may ignore, so it would promise more than it delivers.</p>
+<p>Note that group chat has no sender allowlist: in NIP-29 the relay owns
+membership, so anyone the relay admits to a joined channel can address the bot
+there. This is the same trust model as a Slack channel, and a reason to prefer
+a relay you host.</p>
+<p>The exception is commands that control code execution. <code>/sh</code> (which turns
+subsequent messages into shell commands) and <code>/sandbox</code> (which can move
+execution off the sandbox onto the host) are refused in groups unless the
+sender’s key is in <code>allowed_pubkeys</code> — the same list that gates DMs, reused
+here as the operator list. An empty <code>allowed_pubkeys</code> means nobody may run
+them, so they fail closed. The refusal is posted in the channel rather than
+ignored.</p>
+<p>The same list authorizes the gateway’s privileged commands (<code>/approve</code>,
+<code>/deny</code>, <code>/update</code>) from both DMs and groups. Entries may be written in either
+<code>npub1...</code> or hex form — they are compared as parsed keys, not as text.</p>
+<h3 id="setup">Setup</h3>
+<ol>
+<li>Generate the bot’s key pair (see <a href="#prerequisites">Prerequisites</a>) and share
+its <code>npub</code> with the Buzz workspace admin so they can invite/approve it.</li>
+<li>Set <code>relays</code> to the Buzz relay URL and list the channel ids in <code>groups</code>.</li>
+<li>Restart the account. Relay subscriptions are fixed at connect, so <strong>changing
+<code>groups</code> requires an account restart</strong> to take effect.</li>
+</ol>
+<aside class="admonition admonition-note"><div class="admonition-title">Note</div><div class="admonition-body"><p>NIP-42 authentication is enabled for every Nostr account, so the bot<br>transparently authenticates to relays that require it (Buzz relays challenge<br>every connection before granting group read/write scopes).</p></div></aside>
 <h2 id="nip-04-encryption">NIP-04 Encryption</h2>
 <p>All messages between the bot and users are encrypted using
 <a href="https://github.com/nostr-protocol/nips/blob/master/04.md">NIP-04</a> (kind:4
