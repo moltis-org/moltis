@@ -1,0 +1,705 @@
+<!DOCTYPE html><html lang="en" data-theme="light" data-theme-choice="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Documentation for Moltis, a secure persistent personal agent server."><meta name="theme-color" content="#f7f7f5"><title>Instrumentation - Moltis Docs</title><script>
+      const storedTheme = localStorage.getItem('moltis-docs-theme') || 'auto'
+      const media = window.matchMedia('(prefers-color-scheme: dark)')
+      const resolvedTheme = storedTheme === 'auto' ? (media.matches ? 'dark' : 'light') : storedTheme
+      document.documentElement.dataset.theme = resolvedTheme
+      document.documentElement.dataset.themeChoice = storedTheme
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolvedTheme === 'dark' ? '#111214' : '#f7f7f5')
+    </script><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:opsz,wght@14..32,400;500;600;700;800;900&display=swap" rel="stylesheet"><link rel="stylesheet" href="/_astro/Docs.CAMaEg-2.css"></head><body><div class="site-shell"><header class="topbar"><button class="nav-toggle" type="button" aria-label="Open navigation" aria-expanded="false"><span></span><span></span><span></span></button><a class="brand" href="/index.html" aria-label="Moltis documentation home"><img class="brand-mark" src="/moltis-icon.svg" alt="" width="30" height="30" aria-hidden="true"><span>Moltis</span></a><nav class="topnav" aria-label="Primary"><a href="/quickstart.html">Quickstart</a><a href="/providers.html">Providers</a><a href="/security.html">Security</a><a href="https://github.com/moltis-org/moltis">GitHub</a></nav><div class="theme-toggle" role="group" aria-label="Theme"><button type="button" data-theme-option="auto" aria-label="Use system theme">A</button><button type="button" data-theme-option="light" aria-label="Use light theme"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"></path></svg></button><button type="button" data-theme-option="dark" aria-label="Use dark theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A7.5 7.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"></path></svg></button></div></header><div class="mobile-scrim"></div><aside class="sidebar" aria-label="Documentation navigation"><div class="sidebar-search"><label class="search-label" for="docs-search">Search docs</label><input id="docs-search" type="search" placeholder="Search pages..." autocomplete="off"><div id="search-results" class="search-results" hidden></div></div><section class="sidebar-section"><h2>Start</h2><ol><li class="depth-0"><a href="/index.html">Introduction</a></li></ol></section><section class="sidebar-section"><h2>Getting Started</h2><ol><li class="depth-0"><a href="/quickstart.html">Quickstart</a></li><li class="depth-0"><a href="/installation.html">Installation</a></li><li class="depth-0"><a href="/comparison.html">Comparison</a></li><li class="depth-0"><a href="/configuration.html">Configuration</a></li><li class="depth-1"><a href="/upstream-proxy.html">Upstream Proxy</a></li><li class="depth-1"><a href="/configuration-reference.html">Configuration Reference</a></li><li class="depth-0"><a href="/local-validation.html">Local Validation</a></li><li class="depth-0"><a href="/e2e-testing.html">End-to-End Testing</a></li></ol></section><section class="sidebar-section"><h2>Features</h2><ol><li class="depth-0"><a href="/providers.html">LLM Providers</a></li><li class="depth-1"><a href="/choosing-a-provider.html">Choosing a Provider</a></li><li class="depth-1"><a href="/anthropic-oauth.html">Anthropic OAuth (FAQ)</a></li><li class="depth-0"><a href="/mcp.html">MCP Servers</a></li><li class="depth-0"><a href="/external-agents.html">External Agents</a></li><li class="depth-1"><a href="/acp-server.html">Moltis as an ACP Agent</a></li><li class="depth-0"><a href="/memory.html">Memory</a></li><li class="depth-1"><a href="/memory-surfaces.html">Memory Surfaces</a></li><li class="depth-1"><a href="/memory-comparison.html">Moltis vs OpenClaw</a></li><li class="depth-0"><a href="/hooks.html">Hooks</a></li><li class="depth-0"><a href="/local-llm.html">Local LLMs</a></li><li class="depth-0"><a href="/sandbox.html">Sandbox</a></li><li class="depth-1"><a href="/trusted-network.html">Trusted Network</a></li><li class="depth-0"><a href="/voice.html">Voice</a></li><li class="depth-0"><a href="/remote-access.html">Remote Access</a></li><li class="depth-0"><a href="/channels.html">Channels</a></li><li class="depth-1"><a href="/telegram.html">Telegram</a></li><li class="depth-1"><a href="/teams.html">Microsoft Teams</a></li><li class="depth-1"><a href="/discord.html">Discord</a></li><li class="depth-1"><a href="/slack.html">Slack</a></li><li class="depth-1"><a href="/matrix.html">Matrix</a></li><li class="depth-1"><a href="/whatsapp.html">WhatsApp</a></li><li class="depth-1"><a href="/nostr.html">Nostr</a></li><li class="depth-1"><a href="/signal.html">Signal</a></li><li class="depth-1"><a href="/channels/telephony.html">Telephony (Phone Calls)</a></li><li class="depth-0"><a href="/browser-automation.html">Browser Automation</a></li><li class="depth-0"><a href="/caldav.html">CalDAV (Calendars)</a></li><li class="depth-0"><a href="/graphql.html">GraphQL API</a></li><li class="depth-0"><a href="/session-state.html">Session State</a></li><li class="depth-0"><a href="/commands.html">Slash Commands</a></li><li class="depth-0"><a href="/modes.html">Modes</a></li><li class="depth-0"><a href="/session-branching.html">Session Branching</a></li><li class="depth-0"><a href="/checkpoints.html">Checkpoints</a></li><li class="depth-0"><a href="/compaction.html">Compaction</a></li><li class="depth-0"><a href="/tools-fs.html">Filesystem Tools</a></li><li class="depth-0"><a href="/scheduling.html">Scheduling (Cron Jobs)</a></li><li class="depth-0"><a href="/webhooks.html">Webhooks</a></li><li class="depth-0"><a href="/skill-tools.html">Skill Self-Extension</a></li><li class="depth-0"><a href="/mobile-pwa.html">Mobile PWA</a></li><li class="depth-0"><a href="/native-swift-embedding.html">Native Swift Embedding (POC)</a></li><li class="depth-0"><a href="/macos-app-ffi-bridge.html">macOS App FFI Bridge (WIP)</a></li><li class="depth-0"><a href="/openclaw-import.html">OpenClaw Import</a></li><li class="depth-0"><a href="/nodes.html">Multi-Node</a></li><li class="depth-0"><a href="/service.html">Service Management</a></li></ol></section><section class="sidebar-section"><h2>Security</h2><ol><li class="depth-0"><a href="/authentication.html">Authentication</a></li><li class="depth-0"><a href="/vault.html">Encryption at Rest (Vault)</a></li><li class="depth-0"><a href="/security.html">Security Architecture</a></li><li class="depth-0"><a href="/skills-security.html">Third-Party Skills Security</a></li><li class="depth-0"><a href="/release-verification.html">Release Verification</a></li></ol></section><section class="sidebar-section"><h2>Deployment</h2><ol><li class="depth-0"><a href="/docker.html">Docker</a></li><li class="depth-0"><a href="/cloud-deploy.html">Cloud Deploy</a></li><li class="depth-0"><a href="/sandbox-remote.html">Remote Sandboxes</a></li><li class="depth-0"><a href="/deploy-vps.html">VPS Deployment</a></li></ol></section><section class="sidebar-section"><h2>Architecture</h2><ol><li class="depth-0"><a href="/system-prompt.html">System Prompt</a></li><li class="depth-0"><a href="/frontend.html">Frontend</a></li><li class="depth-0"><a href="/streaming.html">Streaming</a></li><li class="depth-0"><a href="/sqlite-migration.html">SQLite Migrations</a></li><li class="depth-0"><a href="/metrics-and-tracing.html">Metrics &amp; Tracing</a></li><li class="depth-0"><a class="active" href="/instrumentation.html">Instrumentation</a></li><li class="depth-0"><a href="/tool-registry.html">Tool Registry</a></li><li class="depth-0"><a href="/tool-policy.html">Tool Policy</a></li><li class="depth-0"><a href="/agent-presets.html">Agent Presets</a></li><li class="depth-0"><a href="/session-tools.html">Session Tools</a></li></ol></section><section class="sidebar-section"><h2>Reference</h2><ol><li class="depth-0"><a href="/changelog.html">Changelog</a></li></ol></section></aside><main class="page-grid"><article class="content-card"><div class="eyebrow">Architecture</div><h1 id="instrumentation">Instrumentation</h1>
+<p>Moltis can export what a completed agent run did — its LLM calls, tool
+invocations and retrievals, with timings, token usage and errors — to an
+external backend.</p>
+<p>Three backends are supported, and they are configured together under one
+<code>[instrumentation]</code> section because they are fed from a single instrumentation
+pass in the agent runtime:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Backend</th><th>What it is for</th></tr></thead><tbody><tr><td><strong>Langfuse</strong></td><td>LLM observability: prompts, completions, sessions, token usage, inferred cost, and reaction feedback</td></tr><tr><td><strong>OTLP</strong></td><td>Any OpenTelemetry backend — Grafana Tempo/Alloy, Honeycomb, an OpenTelemetry Collector</td></tr><tr><td><strong>Datadog</strong></td><td>Datadog APM, through the Datadog Agent’s OTLP intake</td></tr></tbody></table>
+<blockquote>
+<p><strong>Instrumentation is disabled by default.</strong> Unlike every other Moltis feature
+flag, it stays off until you turn it on: enabling it sends data about your
+conversations to a third party. Read <a href="#what-gets-sent">What gets sent</a> before
+switching it on.</p>
+</blockquote>
+<h2 id="backends-receive-different-data-on-purpose">Backends receive different data, on purpose</h2>
+<p>This is the most important thing to understand about the design.</p>
+<p>Langfuse is an LLM-native product. Moltis sends completed traces, conversation
+content, token usage, session and user attribution, and reaction feedback so
+Langfuse can provide LLM observability and infer costs.</p>
+<p>Datadog and Grafana are infrastructure tools. Sending them prompt bodies is
+actively harmful:</p>
+<ul>
+<li>span size becomes unbounded, and most vendors bill per ingested byte;</li>
+<li>prompt text as a span attribute is a cardinality problem in a trace index;</li>
+<li>it copies user conversation content into a system that was never scoped,
+reviewed, or access-controlled for it.</li>
+</ul>
+<p>So Moltis applies a different <strong>export profile</strong> per backend:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th></th><th>Langfuse</th><th>OTLP / Datadog</th></tr></thead><tbody><tr><td>Prompts, completions, tool arguments and results</td><td>✅ sent</td><td>❌ <strong>never sent</strong> by default</td></tr><tr><td>Payload sizes (<code>moltis.input.bytes</code>)</td><td>—</td><td>✅ sent</td></tr><tr><td>Observation type (<code>AGENT</code>, <code>TOOL</code>, <code>RETRIEVER</code>, …)</td><td>✅ <code>langfuse.observation.type</code></td><td>✅ as <code>gen_ai.operation.name</code></td></tr><tr><td>Model, latency, errors</td><td>✅</td><td>✅</td></tr><tr><td>Token counts</td><td>✅ usage details with cache split; Langfuse infers cost</td><td>✅ counts only</td></tr><tr><td>End-user id</td><td>✅</td><td>❌ off by default (cardinality)</td></tr><tr><td>Session id</td><td>✅</td><td>✅</td></tr><tr><td>Tags</td><td>✅</td><td>✅ OTLP · ❌ Datadog (billing)</td></tr></tbody></table>
+<p>You can raise an APM’s content level deliberately with
+<code>content = "full"</code>, or lower it to <code>none</code>. You cannot accidentally end up
+sending prompts to Datadog: the default for any newly configured OTLP-family
+backend is <code>metadata_only</code>.</p>
+<p><strong>For Grafana specifically:</strong> most of what you want is already available
+without this feature. Moltis exposes a Prometheus endpoint at <code>/metrics</code> with
+<code>moltis_llm_*</code> counters for tokens, latency and time-to-first-token. Scrape
+that for dashboards and alerts; use the OTLP exporter here when you want
+per-run traces to correlate a latency spike with a specific agent run.</p>
+<p>Moltis does not currently integrate Langfuse Prompt Management, datasets or
+dataset runs, evaluators, or media uploads. User reaction scores are the only
+evaluation signal sent directly to Langfuse.</p>
+<h2 id="quick-start-langfuse">Quick start: Langfuse</h2>
+<p>Prefer the process environment for the secret key:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="sh" data-code="export MOLTIS_INSTRUMENTATION__LANGFUSE__SECRET_KEY=&#x27;sk-lf-...&#x27;"><code><span class="line"><span style="color:#D32F2F;--shiki-dark:#F97583">export</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> MOLTIS_INSTRUMENTATION__LANGFUSE__SECRET_KEY</span><span style="color:#D32F2F;--shiki-dark:#F97583">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF">'sk-lf-...'</span></span></code></pre>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[instrumentation]
+enabled     = true
+environment = &#x22;production&#x22;
+
+[instrumentation.langfuse]
+enabled    = true
+host       = &#x22;https://cloud.langfuse.com&#x22;   # or your self-hosted URL
+public_key = &#x22;pk-lf-...&#x22;"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">instrumentation</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">enabled     </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">environment </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "production"</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">instrumentation</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">langfuse</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">enabled    </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">host       </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "https://cloud.langfuse.com"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">   # or your self-hosted URL</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">public_key </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "pk-lf-..."</span></span></code></pre>
+<p>Keys come from your Langfuse project settings. For a self-hosted deployment,
+point <code>host</code> at your own instance — no data leaves your network.</p>
+<p>Once Moltis has restarted, use <strong>Settings → Instrumentation → Test connection</strong>
+in the web UI to verify the host is reachable and the credentials are accepted
+before relying on it.</p>
+<h2 id="quick-start-grafana--opentelemetry-collector">Quick start: Grafana / OpenTelemetry Collector</h2>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[instrumentation]
+enabled = true
+
+[instrumentation.otlp]
+enabled  = true
+endpoint = &#x22;http://localhost:4318/v1/traces&#x22;
+content  = &#x22;metadata_only&#x22;   # default; &#x22;full&#x22; or &#x22;none&#x22; also accepted
+
+[instrumentation.otlp.headers]
+Authorization = &#x22;Basic ...&#x22;   # if your collector requires auth"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">instrumentation</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">enabled </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">instrumentation</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">otlp</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">enabled  </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">endpoint </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "http://localhost:4318/v1/traces"</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">content  </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "metadata_only"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">   # default; "full" or "none" also accepted</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">instrumentation</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">otlp</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">headers</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">Authorization </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "Basic ..."</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">   # if your collector requires auth</span></span></code></pre>
+<h2 id="quick-start-datadog">Quick start: Datadog</h2>
+<p>Run the Datadog Agent with OTLP ingest enabled and point Moltis at it. This is
+the recommended setup — the Agent handles batching, retries and your API key,
+so no Datadog credential needs to live in the Moltis config at all.</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[instrumentation]
+enabled = true
+
+[instrumentation.datadog]
+enabled  = true
+endpoint = &#x22;http://localhost:4318/v1/traces&#x22;
+service  = &#x22;moltis&#x22;"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">instrumentation</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">enabled </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">instrumentation</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">datadog</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">enabled  </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">endpoint </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "http://localhost:4318/v1/traces"</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">service  </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "moltis"</span></span></code></pre>
+<p>To post to Datadog’s intake directly instead, set <code>endpoint</code> to the regional
+OTLP intake URL and supply <code>api_key</code>.</p>
+<h2 id="where-the-settings-live">Where the settings live</h2>
+<p>Instrumentation is configured in <code>moltis.toml</code> under <code>[instrumentation]</code>, either
+by editing the file directly or through <strong>Settings → Configuration</strong> in the web
+UI, which edits the same TOML. Either way the change takes effect on restart.</p>
+<p><strong>Settings → Instrumentation is a read-only view.</strong> It reports what is actually
+running — active backends, any that failed to start and why, delivery counters,
+the capture policy in force, and whether credentials are present — and it can
+test the Langfuse connection. It deliberately has no fields to edit: turning
+instrumentation on sends conversation data to a third party, so that decision
+lives in the config file next to the credential it needs, not behind a toggle in
+a browser.</p>
+<h2 id="build-features">Build features</h2>
+<p>Both exporter families are compiled in by default, so nothing here needs a
+rebuild — only the config above switches them on. To leave one out of a build:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="bash" data-code="# Langfuse only (drops the generic OTLP and Datadog exporters).
+cargo build --no-default-features --features &#x22;web-ui,tls,langfuse&#x22;
+
+# No exporter at all.
+cargo build --no-default-features --features &#x22;web-ui,tls&#x22;"><code><span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Langfuse only (drops the generic OTLP and Datadog exporters).</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">cargo</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> build</span><span style="color:#2B5581;--shiki-dark:#79B8FF"> --no-default-features</span><span style="color:#2B5581;--shiki-dark:#79B8FF"> --features</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "web-ui,tls,langfuse"</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># No exporter at all.</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">cargo</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> build</span><span style="color:#2B5581;--shiki-dark:#79B8FF"> --no-default-features</span><span style="color:#2B5581;--shiki-dark:#79B8FF"> --features</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "web-ui,tls"</span></span></code></pre>
+<p><code>langfuse</code> implies <code>otlp</code>, because Langfuse ingests traces over the OTLP wire
+format, and <code>otlp</code> also carries Datadog. A backend enabled in config that the
+running binary was not built with is reported in <strong>Settings → Instrumentation</strong>
+as skipped with the reason <code>not compiled into this build</code>, rather than failing
+quietly.</p>
+<h2 id="running-several-backends-at-once">Running several backends at once</h2>
+<p>Backends are independent. Enabling all three sends full traces to Langfuse and
+operational spans to Grafana and Datadog from the same run, each with its own
+content policy. A backend that fails to start is reported in the settings UI
+with a reason; the others keep running.</p>
+<h2 id="what-gets-sent">What gets sent</h2>
+<p>With Langfuse enabled and default settings, each completed agent run produces:</p>
+<ul>
+<li>a trace named <code>agent-run</code> whose root observation has type <strong><code>AGENT</code></strong> and
+carries the user’s message and final answer;</li>
+<li>a <strong><code>GENERATION</code></strong> observation for each completed LLM call, with the full
+message array sent to the provider, completion text, model, token usage split
+into fresh / cache-read / cache-write buckets, and time-to-first-token;</li>
+<li>a completed <strong><code>TOOL</code></strong> or <strong><code>RETRIEVER</code></strong> observation for each tool call,
+with arguments and results;</li>
+<li>the session key as the session id, so a Langfuse session matches a Moltis
+conversation;</li>
+<li>the channel sender as the user id, namespaced per channel (<code>telegram:42</code>).</li>
+</ul>
+<p>Root and child observations are immutable and exported exactly once, after
+completion. Moltis does not send in-progress observation updates. Cancelled or
+timed-out work is closed as an error rather than exported as successful work.</p>
+<p>You can narrow this without turning the backend off:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[instrumentation.langfuse]
+capture_input    = false   # drop turn and LLM inputs
+capture_output   = false   # drop turn and LLM outputs
+capture_tool_io  = false   # drop tool arguments and results"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">instrumentation</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">langfuse</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">capture_input    </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> false</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">   # drop turn and LLM inputs</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">capture_output   </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> false</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">   # drop turn and LLM outputs</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">capture_tool_io  </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> false</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">   # drop tool arguments and results</span></span></code></pre>
+<p><code>capture_tool_io</code> is separate from the others because tool arguments are the
+likeliest place for a credential to appear — a <code>curl</code> command with a bearer
+token, a connection string, an API key passed to a script.</p>
+<h3 id="redaction">Redaction</h3>
+<p>Redaction runs before anything is serialized, in two passes:</p>
+<ol>
+<li><strong>By key name</strong> — any object key containing <code>password</code>, <code>secret</code>, <code>token</code>,
+<code>api_key</code>, <code>authorization</code>, <code>credential</code>, <code>private_key</code> and similar has its
+value replaced with <code>[REDACTED]</code>, at any nesting depth.</li>
+<li><strong>By value shape</strong> — string values that look like credentials are replaced
+even under an innocuous key, because tool output is unstructured. Covers
+<code>sk-</code>, <code>ghp_</code>, <code>github_pat_</code>, <code>xoxb-</code>, <code>AKIA</code>, <code>AIza</code>, <code>Bearer …</code>, PEM
+private key blocks and others.</li>
+</ol>
+<p>Add your own key patterns; they extend the built-in list rather than replacing
+it, so you cannot accidentally weaken the baseline:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[instrumentation]
+redact = [&#x22;customer_ref&#x22;, &#x22;internal_id&#x22;]"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">instrumentation</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">redact </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"customer_ref"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "internal_id"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span></code></pre>
+<p>Redaction is a strong mitigation, not a guarantee. It cannot detect a secret
+that looks like ordinary prose. If your agents routinely handle sensitive data,
+prefer <code>capture_tool_io = false</code>, a self-hosted Langfuse, or both.</p>
+<h3 id="transport-security">Transport security</h3>
+<p>Plaintext <code>http://</code> endpoints are refused for non-loopback hosts. These
+payloads carry conversation content and a credential in a header; shipping them
+unencrypted across a network is not something you should be able to do by
+mistyping a URL. <code>http://localhost</code> and <code>http://127.0.0.1</code> are allowed, for a
+local Agent or collector.</p>
+<h2 id="sampling-and-volume">Sampling and volume</h2>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[instrumentation]
+sample_rate       = 1.0        # fraction of turns traced, 0.0-1.0
+queue_capacity    = 10000      # bounded export queue
+flush_interval_ms = 5000
+max_batch_bytes   = 3000000"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">instrumentation</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">sample_rate       </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 1.0</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">        # fraction of turns traced, 0.0-1.0</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">queue_capacity    </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 10000</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">      # bounded export queue</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">flush_interval_ms </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 5000</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">max_batch_bytes   </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 3000000</span></span></code></pre>
+<p>Sampling is per-turn: a sampled turn is traced completely, so you never get a
+trace with holes in it.</p>
+<p>Telemetry never blocks an agent. Events go into a bounded queue and are
+<strong>dropped</strong> if it fills, rather than slowing a user’s turn. Drops are counted
+and shown in the settings UI — if you see them, raise <code>queue_capacity</code> or lower
+<code>sample_rate</code>.</p>
+<h2 id="configuration-reference">Configuration reference</h2>
+<h3 id="instrumentation-1"><code>[instrumentation]</code></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>enabled</code></td><td><code>false</code></td><td>Master switch. Off by default.</td></tr><tr><td><code>environment</code></td><td><code>"production"</code></td><td>Reported to every backend.</td></tr><tr><td><code>release</code></td><td>running version</td><td>Build identifier.</td></tr><tr><td><code>sample_rate</code></td><td><code>1.0</code></td><td>Fraction of turns traced.</td></tr><tr><td><code>redact</code></td><td><code>[]</code></td><td>Extra key patterns to redact.</td></tr><tr><td><code>queue_capacity</code></td><td><code>10000</code></td><td>Bounded export queue depth.</td></tr><tr><td><code>flush_interval_ms</code></td><td><code>5000</code></td><td>Maximum time an event waits before export.</td></tr><tr><td><code>max_batch_bytes</code></td><td><code>3000000</code></td><td>Forced flush threshold.</td></tr></tbody></table>
+<h3 id="instrumentationlangfuse"><code>[instrumentation.langfuse]</code></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>enabled</code></td><td><code>false</code></td><td></td></tr><tr><td><code>host</code></td><td><code>https://cloud.langfuse.com</code></td><td>Set to your self-hosted URL to keep data on-premises.</td></tr><tr><td><code>public_key</code></td><td><code>""</code></td><td></td></tr><tr><td><code>secret_key</code></td><td>unset</td><td>Prefer <code>MOLTIS_INSTRUMENTATION__LANGFUSE__SECRET_KEY</code>; a config value is also accepted and is never logged.</td></tr><tr><td><code>capture_input</code></td><td><code>true</code></td><td></td></tr><tr><td><code>capture_output</code></td><td><code>true</code></td><td></td></tr><tr><td><code>capture_tool_io</code></td><td><code>true</code></td><td></td></tr><tr><td><code>timeout_secs</code></td><td><code>10</code></td><td></td></tr></tbody></table>
+<h3 id="instrumentationotlp"><code>[instrumentation.otlp]</code></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>enabled</code></td><td><code>false</code></td><td></td></tr><tr><td><code>endpoint</code></td><td><code>""</code></td><td>Full traces URL, e.g. <code>http://localhost:4318/v1/traces</code>.</td></tr><tr><td><code>headers</code></td><td><code>{}</code></td><td>Extra headers, typically auth.</td></tr><tr><td><code>content</code></td><td><code>"metadata_only"</code></td><td><code>full</code>, <code>metadata_only</code>, or <code>none</code>.</td></tr><tr><td><code>emit_user_id</code></td><td><code>false</code></td><td>High-cardinality in an APM index.</td></tr><tr><td><code>timeout_secs</code></td><td><code>10</code></td><td></td></tr></tbody></table>
+<h3 id="instrumentationdatadog"><code>[instrumentation.datadog]</code></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>enabled</code></td><td><code>false</code></td><td></td></tr><tr><td><code>endpoint</code></td><td><code>http://localhost:4318/v1/traces</code></td><td>The Datadog Agent’s OTLP intake.</td></tr><tr><td><code>api_key</code></td><td>unset</td><td>Only needed when posting to the intake directly.</td></tr><tr><td><code>service</code></td><td><code>"moltis"</code></td><td>Datadog service name.</td></tr><tr><td><code>content</code></td><td><code>"metadata_only"</code></td><td></td></tr><tr><td><code>timeout_secs</code></td><td><code>10</code></td><td></td></tr></tbody></table>
+<h3 id="instrumentationfeedback"><code>[instrumentation.feedback]</code></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Key</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>enabled</code></td><td><code>true</code></td><td>Collect reaction feedback. Gated by the master switch.</td></tr><tr><td><code>positive</code></td><td><code>[]</code></td><td>Reaction tokens counted as approval. Empty uses the built-in list.</td></tr><tr><td><code>negative</code></td><td><code>[]</code></td><td>Reaction tokens counted as disapproval. Empty uses the built-in list.</td></tr><tr><td><code>link_retention_days</code></td><td><code>30</code></td><td>How long a reply stays attributable to its turn.</td></tr></tbody></table>
+<h2 id="user-feedback">User feedback</h2>
+<p>A thumbs up or down on a reply becomes a <code>user-feedback</code> score with Langfuse
+data type <code>BOOLEAN</code>, attached to the trace that produced the reply. The Scores
+API represents the value as <code>1.0</code> for positive and <code>0.0</code> for negative.</p>
+<p>Feedback works in three places:</p>
+<ul>
+<li><strong>Telegram, Discord and Slack</strong> — react to any message the bot sent.</li>
+<li><strong>The web UI</strong> — thumbs appear in the action bar under each assistant
+message, but only while instrumentation is active and feedback is enabled.
+A control that goes nowhere is worse than no control.</li>
+</ul>
+<p>Reactions accept raw emoji or shortcodes, and skin-tone and presentation
+selectors are ignored when matching, so <code>👍</code>, <code>👍🏾</code>, <code>:+1:</code> and <code>thumbsup</code> are
+one signal. The default vocabulary is deliberately narrow; a default that
+swallowed every positive-looking emoji would turn release parties into quality
+data. Override either list to change it:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[instrumentation.feedback]
+positive = [&#x22;👍&#x22;, &#x22;🎉&#x22;, &#x22;ship-it&#x22;]"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">instrumentation</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">feedback</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">positive </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"👍"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "🎉"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "ship-it"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span></code></pre>
+<p>Setting one list leaves the other on its defaults.</p>
+<p><strong>Changing your mind works.</strong> Score ids are derived from the trace and the
+reacting user. Switching from 👍 to 👎 submits the same id, so Langfuse replaces
+the vote instead of recording both. Removing the reaction deletes the score
+through the dedicated Scores API. Creates, replacements and deletions share one
+ordered delivery queue, preventing an older queued create from recreating a
+score after deletion. Two reacting users still count separately.</p>
+<h3 id="why-a-reaction-sometimes-does-nothing">Why a reaction sometimes does nothing</h3>
+<ul>
+<li><strong>The reply is older than <code>link_retention_days</code>.</strong> Attribution comes from a
+correlation table written when the reply is sent, and it is pruned on that
+schedule. The web UI says so explicitly rather than failing silently.</li>
+<li><strong>The reply predates instrumentation being switched on.</strong> There was no trace
+to attribute it to.</li>
+<li><strong>The channel cannot report the ids of messages it sends.</strong> Telegram, Discord
+and Slack can; other channels deliver the message but lose feedback
+attribution.</li>
+</ul>
+<h2 id="cost">Cost</h2>
+<p>Moltis exports the model id and token usage details, including separate
+cache-read and cache-write buckets, but it does not compute or export a cost of
+its own. Langfuse infers cost from its own versioned model definitions and
+pricing tiers, which stay current without Moltis shipping a price table that
+would go stale and then override them.</p>
+<p>Unknown, private or custom models may show no cost until their pricing is
+configured in Langfuse.</p>
+<h2 id="how-it-works">How it works</h2>
+<p>Trace observations are sent to Langfuse using OTLP/HTTP JSON at
+<code>/api/public/otel/v1/traces</code>. Every OTLP request includes
+<code>x-langfuse-ingestion-version: 4</code>, selecting Langfuse’s v4 ingestion contract.
+The exporter sends only completed, immutable root and child observations.</p>
+<p>OTLP cannot represent feedback scores. Moltis therefore creates, replaces and
+deletes <code>BOOLEAN</code> feedback through Langfuse’s dedicated Scores API at
+<code>/api/public/scores</code>, using a separate ordered sink.</p>
+<p>Spans carry two attribute vocabularies depending on the profile:</p>
+<ul>
+<li><code>langfuse.*</code> — Langfuse’s mapping for trace context, observation taxonomy,
+content, and detailed token usage.</li>
+<li><code>gen_ai.*</code> — the OpenTelemetry GenAI semantic conventions, understood by
+Grafana, Datadog, Honeycomb and other OTel consumers.</li>
+</ul>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<p><strong>No traces appear.</strong> Check <code>enabled = true</code> at both the <code>[instrumentation]</code>
+level and the backend level — the master switch gates everything. Then use
+Test connection in the settings UI.</p>
+<p><strong>Traces appear but token counts look wrong.</strong> Moltis reports fresh input
+tokens separately from cache reads and writes, because Langfuse prices them
+differently. A run with heavy prompt caching will show a low <code>input</code> and a
+large <code>input_cache_read</code>; that is correct, not a bug.</p>
+<p><strong>Events are being dropped.</strong> The export queue is full — the backend is slower
+than the agent is producing events. Raise <code>queue_capacity</code>, lower
+<code>sample_rate</code>, or check backend latency.</p>
+<p><strong>A backend shows as skipped.</strong> The settings UI gives the reason: missing
+credentials, an empty endpoint, or a rejected plaintext URL.</p><nav class="pager" aria-label="Page navigation"><a class="pager-link" href="/metrics-and-tracing.html"><span>Previous</span>Metrics &amp; Tracing</a><a class="pager-link next" href="/tool-registry.html"><span>Next</span>Tool Registry</a></nav></article><aside class="toc-panel" aria-label="On this page"><div class="toc-title">On this page</div><nav id="page-toc"></nav></aside></main></div><script>(function(){const searchPages = [{"title":"Introduction","slug":"index","sourcePath":"index.md","url":"/index.html","section":"Start","depth":0},{"title":"Quickstart","slug":"quickstart","sourcePath":"quickstart.md","url":"/quickstart.html","section":"Getting Started","depth":0},{"title":"Installation","slug":"installation","sourcePath":"installation.md","url":"/installation.html","section":"Getting Started","depth":0},{"title":"Comparison","slug":"comparison","sourcePath":"comparison.md","url":"/comparison.html","section":"Getting Started","depth":0},{"title":"Configuration","slug":"configuration","sourcePath":"configuration.md","url":"/configuration.html","section":"Getting Started","depth":0},{"title":"Upstream Proxy","slug":"upstream-proxy","sourcePath":"upstream-proxy.md","url":"/upstream-proxy.html","section":"Getting Started","depth":1},{"title":"Configuration Reference","slug":"configuration-reference","sourcePath":"configuration-reference.md","url":"/configuration-reference.html","section":"Getting Started","depth":1},{"title":"Local Validation","slug":"local-validation","sourcePath":"local-validation.md","url":"/local-validation.html","section":"Getting Started","depth":0},{"title":"End-to-End Testing","slug":"e2e-testing","sourcePath":"e2e-testing.md","url":"/e2e-testing.html","section":"Getting Started","depth":0},{"title":"LLM Providers","slug":"providers","sourcePath":"providers.md","url":"/providers.html","section":"Features","depth":0},{"title":"Choosing a Provider","slug":"choosing-a-provider","sourcePath":"choosing-a-provider.md","url":"/choosing-a-provider.html","section":"Features","depth":1},{"title":"Anthropic OAuth (FAQ)","slug":"anthropic-oauth","sourcePath":"anthropic-oauth.md","url":"/anthropic-oauth.html","section":"Features","depth":1},{"title":"MCP Servers","slug":"mcp","sourcePath":"mcp.md","url":"/mcp.html","section":"Features","depth":0},{"title":"External Agents","slug":"external-agents","sourcePath":"external-agents.md","url":"/external-agents.html","section":"Features","depth":0},{"title":"Moltis as an ACP Agent","slug":"acp-server","sourcePath":"acp-server.md","url":"/acp-server.html","section":"Features","depth":1},{"title":"Memory","slug":"memory","sourcePath":"memory.md","url":"/memory.html","section":"Features","depth":0},{"title":"Memory Surfaces","slug":"memory-surfaces","sourcePath":"memory-surfaces.md","url":"/memory-surfaces.html","section":"Features","depth":1},{"title":"Moltis vs OpenClaw","slug":"memory-comparison","sourcePath":"memory-comparison.md","url":"/memory-comparison.html","section":"Features","depth":1},{"title":"Hooks","slug":"hooks","sourcePath":"hooks.md","url":"/hooks.html","section":"Features","depth":0},{"title":"Local LLMs","slug":"local-llm","sourcePath":"local-llm.md","url":"/local-llm.html","section":"Features","depth":0},{"title":"Sandbox","slug":"sandbox","sourcePath":"sandbox.md","url":"/sandbox.html","section":"Features","depth":0},{"title":"Trusted Network","slug":"trusted-network","sourcePath":"trusted-network.md","url":"/trusted-network.html","section":"Features","depth":1},{"title":"Voice","slug":"voice","sourcePath":"voice.md","url":"/voice.html","section":"Features","depth":0},{"title":"Remote Access","slug":"remote-access","sourcePath":"remote-access.md","url":"/remote-access.html","section":"Features","depth":0},{"title":"Channels","slug":"channels","sourcePath":"channels.md","url":"/channels.html","section":"Features","depth":0},{"title":"Telegram","slug":"telegram","sourcePath":"telegram.md","url":"/telegram.html","section":"Features","depth":1},{"title":"Microsoft Teams","slug":"teams","sourcePath":"teams.md","url":"/teams.html","section":"Features","depth":1},{"title":"Discord","slug":"discord","sourcePath":"discord.md","url":"/discord.html","section":"Features","depth":1},{"title":"Slack","slug":"slack","sourcePath":"slack.md","url":"/slack.html","section":"Features","depth":1},{"title":"Matrix","slug":"matrix","sourcePath":"matrix.md","url":"/matrix.html","section":"Features","depth":1},{"title":"WhatsApp","slug":"whatsapp","sourcePath":"whatsapp.md","url":"/whatsapp.html","section":"Features","depth":1},{"title":"Nostr","slug":"nostr","sourcePath":"nostr.md","url":"/nostr.html","section":"Features","depth":1},{"title":"Signal","slug":"signal","sourcePath":"signal.md","url":"/signal.html","section":"Features","depth":1},{"title":"Telephony (Phone Calls)","slug":"channels/telephony","sourcePath":"channels/telephony.md","url":"/channels/telephony.html","section":"Features","depth":1},{"title":"Browser Automation","slug":"browser-automation","sourcePath":"browser-automation.md","url":"/browser-automation.html","section":"Features","depth":0},{"title":"CalDAV (Calendars)","slug":"caldav","sourcePath":"caldav.md","url":"/caldav.html","section":"Features","depth":0},{"title":"GraphQL API","slug":"graphql","sourcePath":"graphql.md","url":"/graphql.html","section":"Features","depth":0},{"title":"Session State","slug":"session-state","sourcePath":"session-state.md","url":"/session-state.html","section":"Features","depth":0},{"title":"Slash Commands","slug":"commands","sourcePath":"commands.md","url":"/commands.html","section":"Features","depth":0},{"title":"Modes","slug":"modes","sourcePath":"modes.md","url":"/modes.html","section":"Features","depth":0},{"title":"Session Branching","slug":"session-branching","sourcePath":"session-branching.md","url":"/session-branching.html","section":"Features","depth":0},{"title":"Checkpoints","slug":"checkpoints","sourcePath":"checkpoints.md","url":"/checkpoints.html","section":"Features","depth":0},{"title":"Compaction","slug":"compaction","sourcePath":"compaction.md","url":"/compaction.html","section":"Features","depth":0},{"title":"Filesystem Tools","slug":"tools-fs","sourcePath":"tools-fs.md","url":"/tools-fs.html","section":"Features","depth":0},{"title":"Scheduling (Cron Jobs)","slug":"scheduling","sourcePath":"scheduling.md","url":"/scheduling.html","section":"Features","depth":0},{"title":"Webhooks","slug":"webhooks","sourcePath":"webhooks.md","url":"/webhooks.html","section":"Features","depth":0},{"title":"Skill Self-Extension","slug":"skill-tools","sourcePath":"skill-tools.md","url":"/skill-tools.html","section":"Features","depth":0},{"title":"Mobile PWA","slug":"mobile-pwa","sourcePath":"mobile-pwa.md","url":"/mobile-pwa.html","section":"Features","depth":0},{"title":"Native Swift Embedding (POC)","slug":"native-swift-embedding","sourcePath":"native-swift-embedding.md","url":"/native-swift-embedding.html","section":"Features","depth":0},{"title":"macOS App FFI Bridge (WIP)","slug":"macos-app-ffi-bridge","sourcePath":"macos-app-ffi-bridge.md","url":"/macos-app-ffi-bridge.html","section":"Features","depth":0},{"title":"OpenClaw Import","slug":"openclaw-import","sourcePath":"openclaw-import.md","url":"/openclaw-import.html","section":"Features","depth":0},{"title":"Multi-Node","slug":"nodes","sourcePath":"nodes.md","url":"/nodes.html","section":"Features","depth":0},{"title":"Service Management","slug":"service","sourcePath":"service.md","url":"/service.html","section":"Features","depth":0},{"title":"Authentication","slug":"authentication","sourcePath":"authentication.md","url":"/authentication.html","section":"Security","depth":0},{"title":"Encryption at Rest (Vault)","slug":"vault","sourcePath":"vault.md","url":"/vault.html","section":"Security","depth":0},{"title":"Security Architecture","slug":"security","sourcePath":"security.md","url":"/security.html","section":"Security","depth":0},{"title":"Third-Party Skills Security","slug":"skills-security","sourcePath":"skills-security.md","url":"/skills-security.html","section":"Security","depth":0},{"title":"Release Verification","slug":"release-verification","sourcePath":"release-verification.md","url":"/release-verification.html","section":"Security","depth":0},{"title":"Docker","slug":"docker","sourcePath":"docker.md","url":"/docker.html","section":"Deployment","depth":0},{"title":"Cloud Deploy","slug":"cloud-deploy","sourcePath":"cloud-deploy.md","url":"/cloud-deploy.html","section":"Deployment","depth":0},{"title":"Remote Sandboxes","slug":"sandbox-remote","sourcePath":"sandbox-remote.md","url":"/sandbox-remote.html","section":"Deployment","depth":0},{"title":"VPS Deployment","slug":"deploy-vps","sourcePath":"deploy-vps.md","url":"/deploy-vps.html","section":"Deployment","depth":0},{"title":"System Prompt","slug":"system-prompt","sourcePath":"system-prompt.md","url":"/system-prompt.html","section":"Architecture","depth":0},{"title":"Frontend","slug":"frontend","sourcePath":"frontend.md","url":"/frontend.html","section":"Architecture","depth":0},{"title":"Streaming","slug":"streaming","sourcePath":"streaming.md","url":"/streaming.html","section":"Architecture","depth":0},{"title":"SQLite Migrations","slug":"sqlite-migration","sourcePath":"sqlite-migration.md","url":"/sqlite-migration.html","section":"Architecture","depth":0},{"title":"Metrics & Tracing","slug":"metrics-and-tracing","sourcePath":"metrics-and-tracing.md","url":"/metrics-and-tracing.html","section":"Architecture","depth":0},{"title":"Instrumentation","slug":"instrumentation","sourcePath":"instrumentation.md","url":"/instrumentation.html","section":"Architecture","depth":0},{"title":"Tool Registry","slug":"tool-registry","sourcePath":"tool-registry.md","url":"/tool-registry.html","section":"Architecture","depth":0},{"title":"Tool Policy","slug":"tool-policy","sourcePath":"tool-policy.md","url":"/tool-policy.html","section":"Architecture","depth":0},{"title":"Agent Presets","slug":"agent-presets","sourcePath":"agent-presets.md","url":"/agent-presets.html","section":"Architecture","depth":0},{"title":"Session Tools","slug":"session-tools","sourcePath":"session-tools.md","url":"/session-tools.html","section":"Architecture","depth":0},{"title":"Changelog","slug":"changelog","sourcePath":"changelog.md","url":"/changelog.html","section":"Reference","depth":0}];
+
+    const navToggle = document.querySelector('.nav-toggle')
+    const scrim = document.querySelector('.mobile-scrim')
+    const sidebar = document.querySelector('.sidebar')
+    const activeSidebarLink = sidebar?.querySelector('a.active')
+    const themeButtons = Array.from(document.querySelectorAll('[data-theme-option]'))
+    const themeMedia = window.matchMedia('(prefers-color-scheme: dark)')
+
+    function applyTheme(choice) {
+      const resolved = choice === 'auto' ? (themeMedia.matches ? 'dark' : 'light') : choice
+      document.documentElement.dataset.theme = resolved
+      document.documentElement.dataset.themeChoice = choice
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolved === 'dark' ? '#111214' : '#f7f7f5')
+      themeButtons.forEach((button) => {
+        const active = button.dataset.themeOption === choice
+        button.classList.toggle('active', active)
+        button.setAttribute('aria-pressed', String(active))
+      })
+    }
+
+    const storedTheme = localStorage.getItem('moltis-docs-theme') || 'auto'
+    applyTheme(storedTheme)
+    themeButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const choice = button.dataset.themeOption || 'auto'
+        localStorage.setItem('moltis-docs-theme', choice)
+        applyTheme(choice)
+      })
+    })
+    themeMedia.addEventListener('change', () => {
+      if ((localStorage.getItem('moltis-docs-theme') || 'auto') === 'auto') {
+        applyTheme('auto')
+      }
+    })
+
+    function closeNav() {
+      document.body.classList.remove('nav-open')
+      navToggle?.setAttribute('aria-expanded', 'false')
+    }
+
+    navToggle?.addEventListener('click', () => {
+      const open = document.body.classList.toggle('nav-open')
+      navToggle.setAttribute('aria-expanded', String(open))
+    })
+    scrim?.addEventListener('click', closeNav)
+    sidebar?.querySelectorAll('a').forEach((link) => link.addEventListener('click', closeNav))
+    if (sidebar && activeSidebarLink) {
+      const linkTop = activeSidebarLink.offsetTop
+      const targetTop = linkTop - sidebar.clientHeight / 2 + activeSidebarLink.clientHeight / 2
+      sidebar.scrollTop = Math.max(0, targetTop)
+    }
+
+    const toc = document.getElementById('page-toc')
+    const tocPanel = document.querySelector('.toc-panel')
+    const headings = Array.from(document.querySelectorAll('.content-card h2, .content-card h3'))
+    if (toc && headings.length > 1) {
+      headings.forEach((heading) => {
+        const link = document.createElement('a')
+        link.href = `#${heading.id}`
+        link.textContent = heading.textContent || ''
+        link.className = heading.tagName === 'H3' ? 'toc-h3' : 'toc-h2'
+        toc.appendChild(link)
+      })
+    } else {
+      tocPanel?.classList.add('empty')
+    }
+
+    document.querySelectorAll('pre[data-code]').forEach((pre) => {
+      const button = document.createElement('button')
+      button.className = 'copy-code'
+      button.type = 'button'
+      button.textContent = 'Copy'
+      pre.appendChild(button)
+      button.addEventListener('click', async () => {
+        const code = pre.dataset.code || ''
+        let copied = false
+
+        try {
+          if (navigator.clipboard) {
+            await navigator.clipboard.writeText(code)
+            copied = true
+          }
+        } catch {
+          copied = false
+        }
+
+        if (!copied) {
+          const textarea = document.createElement('textarea')
+          textarea.value = code
+          textarea.setAttribute('readonly', '')
+          textarea.style.position = 'fixed'
+          textarea.style.left = '-9999px'
+          document.body.appendChild(textarea)
+          textarea.select()
+          copied = document.execCommand('copy')
+          textarea.remove()
+        }
+
+        button.textContent = copied ? 'Copied' : 'Failed'
+        window.setTimeout(() => { button.textContent = 'Copy' }, 1200)
+      })
+    })
+
+    const search = document.getElementById('docs-search')
+    const results = document.getElementById('search-results')
+    search?.addEventListener('input', () => {
+      const query = search.value.trim().toLowerCase()
+      if (!query || !results) {
+        results.hidden = true
+        return
+      }
+      const matches = searchPages
+        .filter((page) => `${page.title} ${page.section}`.toLowerCase().includes(query))
+        .slice(0, 8)
+
+      results.replaceChildren()
+      matches.forEach((page) => {
+        const link = document.createElement('a')
+        const section = document.createElement('span')
+        link.href = page.url
+        section.textContent = page.section
+        link.appendChild(section)
+        link.appendChild(document.createTextNode(page.title))
+        results.appendChild(link)
+      })
+      results.hidden = matches.length === 0
+    })
+  })();</script></body></html>
