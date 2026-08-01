@@ -423,9 +423,10 @@ pub trait ChannelEventSink: Send + Sync {
     /// Dispatch a slash command (e.g. "new", "clear", "compact", "context")
     /// and return a text result to send back to the channel.
     ///
-    /// `sender_id` identifies the message sender. Commands other than `/help`
-    /// are restricted to exact IDs in the channel account's `operators` list.
-    /// Authorization is enforced centrally by the gateway.
+    /// `sender_id` identifies the message sender. The gateway enforces each
+    /// command's [`crate::commands::CommandPrivilege`]: public commands remain
+    /// available to guests, while operator-direct commands require an exact ID
+    /// in the account's `operators` list and a verified direct conversation.
     async fn dispatch_command(
         &self,
         command: &str,
