@@ -205,7 +205,7 @@ impl SlackOutbound {
         to: &str,
         thread_ts: &str,
         stream: &mut StreamReceiver,
-    ) -> ChannelResult<()> {
+    ) -> ChannelResult<Vec<String>> {
         let (bot_token, api_base_url, throttle, recipient) =
             self.get_native_stream_config(account_id, to, thread_ts)?;
         let api = HttpNativeStreamApi::new(shared_http_client(), api_base_url, bot_token);
@@ -219,7 +219,7 @@ impl SlackOutbound {
         to: &str,
         thread_ts: Option<&str>,
         stream: &mut StreamReceiver,
-    ) -> ChannelResult<()> {
+    ) -> ChannelResult<Vec<String>> {
         let (client, token) = self.get_session(account_id)?;
         let throttle = self.get_edit_throttle(account_id);
 
@@ -294,11 +294,12 @@ impl SlackOutbound {
         }
 
         if accumulated.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let final_text = markdown_to_slack(&accumulated);
         let chunks = chunk_message(&final_text, SLACK_MAX_MESSAGE_LEN);
+        let mut ids = Vec::with_capacity(chunks.len());
 
         // Final delivery failures are returned, not swallowed: the caller uses
         // the result to decide whether the reply actually landed.
@@ -310,27 +311,30 @@ impl SlackOutbound {
                         .inspect_err(|e| {
                             warn!(account_id, to, "failed to finalize stream message: {e}");
                         })?;
+                    ids.push(ts.to_string());
                 }
                 for chunk in chunks.iter().skip(1) {
-                    post_message(&client, &token, to, chunk, thread_ts)
+                    let ts = post_message(&client, &token, to, chunk, thread_ts)
                         .await
                         .inspect_err(|e| {
                             warn!(account_id, to, "failed to send overflow chunk: {e}")
                         })?;
+                    ids.push(ts.to_string());
                 }
             },
             None => {
                 for chunk in &chunks {
-                    post_message(&client, &token, to, chunk, thread_ts)
+                    let ts = post_message(&client, &token, to, chunk, thread_ts)
                         .await
                         .inspect_err(|e| {
                             warn!(account_id, to, "failed to send stream message: {e}")
                         })?;
+                    ids.push(ts.to_string());
                 }
             },
         }
 
-        Ok(())
+        Ok(ids)
     }
 }
 
@@ -665,6 +669,54 @@ impl ChannelOutbound for SlackOutbound {
         Ok(ids)
     }
 
+    async fn send_text_with_suffix(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<()> {
+        self.send_text_with_suffix_reporting_ids(account_id, to, text, suffix_html, reply_to)
+            .await?;
+        Ok(())
+    }
+
+    async fn send_text_with_suffix_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        _suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
+        self.send_text_reporting_ids(account_id, to, text, reply_to)
+            .await
+    }
+
+    async fn send_html(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<()> {
+        self.send_html_reporting_ids(account_id, to, html, reply_to)
+            .await?;
+        Ok(())
+    }
+
+    async fn send_html_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
+        self.send_text_reporting_ids(account_id, to, html, reply_to)
+            .await
+    }
+
     async fn send_media(
         &self,
         account_id: &str,
@@ -861,8 +913,20 @@ impl ChannelStreamOutbound for SlackOutbound {
         account_id: &str,
         to: &str,
         reply_to: Option<&str>,
-        mut stream: StreamReceiver,
+        stream: StreamReceiver,
     ) -> ChannelResult<()> {
+        self.send_stream_reporting_ids(account_id, to, reply_to, stream)
+            .await?;
+        Ok(())
+    }
+
+    async fn send_stream_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        mut stream: StreamReceiver,
+    ) -> ChannelResult<Vec<String>> {
         let stream_mode = self.get_stream_mode(account_id);
         let thread_ts = self.get_reply_thread_ts(account_id, reply_to);
 
@@ -896,18 +960,20 @@ impl ChannelStreamOutbound for SlackOutbound {
                         Some(StreamEvent::Done) | None => break,
                     }
                 }
+                let mut ids = Vec::new();
                 if !accumulated.is_empty() {
                     let (client, token) = self.get_session(account_id)?;
                     let final_text = markdown_to_slack(&accumulated);
                     for chunk in chunk_message(&final_text, SLACK_MAX_MESSAGE_LEN) {
-                        if let Err(e) =
-                            post_message(&client, &token, to, chunk, thread_ts.as_deref()).await
-                        {
-                            warn!(account_id, to, "failed to send stream message: {e}");
+                        match post_message(&client, &token, to, chunk, thread_ts.as_deref()).await {
+                            Ok(ts) => ids.push(ts.to_string()),
+                            Err(e) => {
+                                warn!(account_id, to, "failed to send stream message: {e}");
+                            },
                         }
                     }
                 }
-                Ok(())
+                Ok(ids)
             },
         }
     }
@@ -1089,5 +1155,20 @@ mod tests {
         assert_eq!(extension_for_mime("image/jpeg"), "jpg");
         assert_eq!(extension_for_mime("application/pdf"), "pdf");
         assert_eq!(extension_for_mime("text/plain"), "bin");
+    }
+
+    #[test]
+    fn trace_link_delivery_modes_override_reporting_contracts() {
+        let implementation = include_str!("outbound.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or_default();
+        for mode in ["text", "media", "text_with_suffix", "html", "stream"] {
+            let method = format!("async fn send_{mode}_reporting_ids(");
+            assert!(
+                implementation.contains(&method),
+                "Slack must override {method} so reactions retain trace links"
+            );
+        }
     }
 }

@@ -183,7 +183,7 @@ pub(crate) async fn send_native_stream(
     recipient: Option<&StreamRecipient>,
     throttle: Duration,
     stream: &mut moltis_channels::plugin::StreamReceiver,
-) -> ChannelResult<()> {
+) -> ChannelResult<Vec<String>> {
     send_native_stream_with_api(api, channel, thread_ts, recipient, throttle, stream).await
 }
 
@@ -194,7 +194,7 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
     recipient: Option<&StreamRecipient>,
     throttle: Duration,
     stream: &mut moltis_channels::plugin::StreamReceiver,
-) -> ChannelResult<()> {
+) -> ChannelResult<Vec<String>> {
     use moltis_channels::plugin::StreamEvent;
 
     let mut pending = String::new();
@@ -227,7 +227,7 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
 
     if native_stream.is_none() {
         let Some(initial) = take_markdown_chunk(&mut pending) else {
-            return Ok(());
+            return Ok(Vec::new());
         };
         native_stream = Some(api.start(channel, thread_ts, &initial, recipient).await?);
     }
@@ -248,7 +248,7 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
         }
         return Err(error);
     }
-    Ok(())
+    Ok(vec![native_stream.ts.clone()])
 }
 
 async fn flush_appends<A: NativeStreamApi>(
@@ -412,10 +412,12 @@ mod tests {
         ])
         .await;
 
-        send_native_stream_with_api(&api, "C1", "1.0", None, Duration::ZERO, &mut receiver)
-            .await
-            .unwrap();
+        let ids =
+            send_native_stream_with_api(&api, "C1", "1.0", None, Duration::ZERO, &mut receiver)
+                .await
+                .unwrap();
 
+        assert_eq!(ids, ["1.0"]);
         let calls = api.calls.lock().unwrap();
         assert_eq!(calls.first(), Some(&Call::Start(markdown.into())));
         let delivered = calls
