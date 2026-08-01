@@ -229,7 +229,7 @@ pub(crate) async fn run_streaming(
     let mut rate_limit_retries_remaining: u8 = STREAM_RATE_LIMIT_MAX_RETRIES;
     let mut rate_limit_backoff_ms: Option<u64> = None;
     let mut channel_stream_dispatcher =
-        ChannelStreamDispatcher::for_session(state, session_key).await;
+        ChannelStreamDispatcher::for_session(state, session_key, run_id).await;
 
     'attempts: loop {
         #[cfg(feature = "metrics")]

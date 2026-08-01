@@ -299,9 +299,10 @@ pub(crate) async fn run_with_tools(
     let provider_name_for_events = provider_name.to_string();
     let active_partial_for_events = active_partial_assistant.as_ref().map(Arc::clone);
     let (on_event, mut event_rx) = ordered_runner_event_callback();
-    let channel_stream_dispatcher = ChannelStreamDispatcher::for_session(state, session_key)
-        .await
-        .map(|dispatcher| Arc::new(Mutex::new(dispatcher)));
+    let channel_stream_dispatcher =
+        ChannelStreamDispatcher::for_session(state, session_key, run_id)
+            .await
+            .map(|dispatcher| Arc::new(Mutex::new(dispatcher)));
     let channel_stream_for_events = channel_stream_dispatcher.as_ref().map(Arc::clone);
     let event_forwarder_task = tokio::spawn(async move {
         // Track tool call arguments from ToolCallStart so they can be persisted in ToolCallEnd.
