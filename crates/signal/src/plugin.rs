@@ -169,7 +169,7 @@ impl ChannelPlugin for SignalPlugin {
             .collect()
     }
 
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts.get(account_id).map(|state| {
             let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
@@ -182,7 +182,7 @@ impl ChannelPlugin for SignalPlugin {
     /// Note: changing `http_url` takes effect only on the next SSE reconnect
     /// cycle — the existing stream continues from the old daemon URL until it
     /// drops naturally or errors out.
-    fn update_account_config(&self, account_id: &str, config: Value) -> ChannelResult<()> {
+    async fn update_account_config(&self, account_id: &str, config: Value) -> ChannelResult<()> {
         let new_config: SignalAccountConfig = serde_json::from_value(config).map_err(|e| {
             moltis_channels::Error::invalid_input(format!("invalid signal config: {e}"))
         })?;
@@ -209,7 +209,7 @@ impl ChannelPlugin for SignalPlugin {
         })
     }
 
-    fn account_config_json(&self, account_id: &str) -> Option<Value> {
+    async fn account_config_json(&self, account_id: &str) -> Option<Value> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts.get(account_id).and_then(|state| {
             let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());

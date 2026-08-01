@@ -8,6 +8,13 @@ use {
 
 use crate::{Error, Result, config_view::ChannelConfigView};
 
+mod message_types;
+
+pub use message_types::{
+    ChannelAttachment, ChannelDocumentFile, ChannelMessageKind, ChannelMessageMeta,
+    SavedChannelFile,
+};
+
 // ── Channel type enum ───────────────────────────────────────────────────────
 
 /// Supported channel types.
@@ -543,81 +550,6 @@ pub trait ChannelEventSink: Send + Sync {
     }
 }
 
-/// Metadata about a channel message, used for UI display.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ChannelMessageMeta {
-    pub channel_type: ChannelType,
-    pub sender_name: Option<String>,
-    pub username: Option<String>,
-    /// Platform-specific sender/peer ID (e.g. Telegram user ID, Discord user ID).
-    /// Used for per-sender tool policy resolution.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sender_id: Option<String>,
-    /// Original inbound message media kind (voice, audio, photo, etc.).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message_kind: Option<ChannelMessageKind>,
-    /// Default model configured for this channel account.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    /// Default agent configured for this channel account or chat override.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
-    /// Filename of saved voice audio (set by `save_channel_voice`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub audio_filename: Option<String>,
-    /// Saved inbound documents/files attached to this user message.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub documents: Option<Vec<ChannelDocumentFile>>,
-}
-
-/// Inbound channel message media kind.
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChannelMessageKind {
-    Text,
-    Voice,
-    Audio,
-    Photo,
-    Document,
-    Video,
-    Location,
-    Other,
-}
-
-/// An attachment (image, file) from a channel message.
-#[derive(Debug, Clone)]
-pub struct ChannelAttachment {
-    /// MIME type of the attachment (e.g., "image/jpeg", "image/png").
-    pub media_type: String,
-    /// Raw binary data of the attachment.
-    pub data: Vec<u8>,
-}
-
-/// Metadata for a saved inbound channel document.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ChannelDocumentFile {
-    /// User-facing original filename when available.
-    pub display_name: String,
-    /// Sanitized stored filename inside session media.
-    pub stored_filename: String,
-    /// MIME type reported by the channel.
-    pub mime_type: String,
-    /// Attachment size when the channel exposes it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size_bytes: Option<u64>,
-}
-
-/// Metadata for an inbound channel file saved to session media.
-#[derive(Debug, Clone)]
-pub struct SavedChannelFile {
-    /// Original or generated filename used in session media storage.
-    pub filename: String,
-    /// Relative media reference (e.g. `media/main/report.pdf`).
-    pub media_ref: String,
-    /// Absolute filesystem path for local tooling access.
-    pub absolute_path: String,
-}
-
 /// Where to send the LLM response back.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChannelReplyTarget {
@@ -814,13 +746,35 @@ pub trait ChannelPlugin: Send + Sync {
     fn account_ids(&self) -> Vec<String>;
 
     /// Get the typed config view for a specific account.
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>>;
+    ///
+    /// Async so a plugin may keep its config behind an async lock — see
+    /// [`Self::update_account_config`].
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>>;
 
     /// Update the in-memory config for an account without restarting.
     ///
     /// Accepts raw JSON because the store persists `Value`. Each plugin
     /// deserializes into its concrete config type internally.
-    fn update_account_config(&self, account_id: &str, config: serde_json::Value) -> Result<()>;
+    ///
+    /// # Why this is async
+    ///
+    /// Config changes can revoke permission to talk somewhere, and a send
+    /// already authorized must not slip out behind the change. Making that
+    /// airtight means a plugin holds its config lock from the authorization
+    /// check until the message is handed to the network — i.e. across an await
+    /// — which only an async lock allows. A synchronous version of this method
+    /// could not take one (`tokio::sync::RwLock::blocking_write` panics inside
+    /// a runtime), so every implementor would be stuck with a check-then-send
+    /// gap. See `moltis_nostr::outbound::NostrOutbound::authorized_group_publish`
+    /// for the pattern.
+    ///
+    /// Implementations that do not need that guarantee can ignore it — the
+    /// signature costs them nothing.
+    async fn update_account_config(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> Result<()>;
 
     /// Get a shared outbound sender for routing outside the plugin.
     fn shared_outbound(&self) -> Arc<dyn ChannelOutbound>;
@@ -832,7 +786,7 @@ pub trait ChannelPlugin: Send + Sync {
     ///
     /// Each plugin serializes its concrete config type. Returns `None` if the
     /// account is not found.
-    fn account_config_json(&self, _account_id: &str) -> Option<serde_json::Value> {
+    async fn account_config_json(&self, _account_id: &str) -> Option<serde_json::Value> {
         None
     }
 

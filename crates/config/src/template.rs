@@ -833,6 +833,23 @@ port = {port}                           # Port number (auto-generated for this i
 # otp_self_approval = true
 # otp_cooldown_secs = 300
 
+# Example Nostr account. Handles NIP-04/NIP-59 encrypted DMs and, when `groups`
+# is set, NIP-29 group chat on Buzz-style relays (https://github.com/block/buzz).
+# [channels.nostr.my-bot]
+# secret_key = "nsec1..."
+# relays = ["wss://relay.damus.io", "wss://relay.nostr.band", "wss://nos.lol"]
+# dm_policy = "allowlist"
+# allowed_pubkeys = ["npub1..."]
+# # Buzz / NIP-29 group chat: the `h`-tag group ids the bot joins. Requires a
+# # relay that supports NIP-29 + NIP-42 (Buzz relays do). Empty = DM-only.
+# # This list is also the allowlist — messages for any other group are dropped.
+# groups = ["buzz-general"]
+# group_mention_mode = "mention"  # mention (p-tagged only) | always | none (receive-only)
+# # Dialect for bot-initiated group messages. Both kinds are always read and
+# # replies mirror the message they answer; set buzz_v2 on a Buzz relay.
+# group_message_kind = "nip29"    # nip29 (kind:9) | buzz_v2 (kind:40002)
+# group_ack_reactions = true      # 👀 on receipt, phase glyphs, ✅/❌ at the end (NIP-25)
+
 # See docs or defaults.toml for full channel configuration examples
 # (WhatsApp, Telegram, Teams, Discord, Slack, Matrix, Nostr, Signal).
 

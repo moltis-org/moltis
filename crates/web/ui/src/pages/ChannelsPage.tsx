@@ -113,6 +113,10 @@ export interface ChannelConfig {
 	secret_key?: string;
 	relays?: string[];
 	allowed_pubkeys?: string[];
+	groups?: string[];
+	group_mention_mode?: string;
+	group_message_kind?: string;
+	group_ack_reactions?: boolean;
 	// Signal
 	account?: string;
 	account_uuid?: string;

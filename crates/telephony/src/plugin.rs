@@ -275,13 +275,13 @@ impl ChannelPlugin for TelephonyPlugin {
         self.accounts.keys().cloned().collect()
     }
 
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
         self.accounts
             .get(account_id)
             .map(|a| Box::new(a.config.clone()) as Box<dyn ChannelConfigView>)
     }
 
-    fn update_account_config(
+    async fn update_account_config(
         &self,
         _account_id: &str,
         _config: serde_json::Value,
@@ -289,7 +289,7 @@ impl ChannelPlugin for TelephonyPlugin {
         Ok(())
     }
 
-    fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
+    async fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
         self.accounts
             .get(account_id)
             .and_then(|a| serde_json::to_value(&a.config).ok())
