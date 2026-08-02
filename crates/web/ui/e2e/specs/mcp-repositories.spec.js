@@ -28,7 +28,8 @@ async function mockManagedRepositoriesRpc(page) {
 				headerNames: name === "yolo-8" ? ["Authorization"] : [],
 				approved: false,
 				approvalBlocked: name === "yolo-8",
-				approvalBlockReason: name === "yolo-8" ? "repository manifest contains an unbound environment placeholder" : undefined,
+				approvalBlockReason:
+					name === "yolo-8" ? "repository manifest contains an unbound environment placeholder" : undefined,
 				warnings: name === "yolo-3" ? ["shell-command"] : [],
 			});
 			const server = (name, repositoryId, alias, commit, approved = false, enabled = false) => ({
