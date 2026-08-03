@@ -434,7 +434,7 @@ mod tests {
         let output = output_dir.path().join("cwd.txt");
         let args = vec![
             "-c".to_string(),
-            "pwd > \"$1\"; while read line; do :; done".to_string(),
+            "pwd > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"; while read line; do :; done".to_string(),
             "sh".to_string(),
             output.to_string_lossy().into_owned(),
         ];

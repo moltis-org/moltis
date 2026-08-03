@@ -531,6 +531,8 @@ impl McpTransport for SseTransport {
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     use super::*;
 
     fn unused_local_url() -> String {
@@ -904,78 +906,41 @@ mod tests {
     // ── is_alive health-check tests (issue #732) ──────────────────────
 
     #[tokio::test]
-    async fn test_is_alive_200_returns_true() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"ok":true}"#)
-            .create_async()
-            .await;
+    async fn test_is_alive_accepts_any_http_status() {
+        for (status, reason) in [
+            (200, "OK"),
+            (400, "Bad Request"),
+            (401, "Unauthorized"),
+            (403, "Forbidden"),
+            (405, "Method Not Allowed"),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let count = stream.read(&mut buffer).await.unwrap();
+                    assert_ne!(count, 0, "health request closed before its headers");
+                    request.extend_from_slice(&buffer[..count]);
+                }
+                assert!(request.starts_with(b"GET / HTTP/1.1\r\n"));
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            });
 
-        let transport = SseTransport::new(&server.url()).unwrap();
-        assert!(transport.is_alive().await);
-    }
-
-    #[tokio::test]
-    async fn test_is_alive_401_returns_true() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/")
-            .with_status(401)
-            .with_header("www-authenticate", r#"Bearer realm="test""#)
-            .create_async()
-            .await;
-
-        let transport = SseTransport::new(&server.url()).unwrap();
-        assert!(transport.is_alive().await);
-    }
-
-    /// Streamable HTTP servers may not support GET (it's optional in the MCP
-    /// spec). A 405 response proves the server is reachable and alive.
-    #[tokio::test]
-    async fn test_is_alive_405_method_not_allowed_returns_true() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/")
-            .with_status(405)
-            .with_header("allow", "POST, DELETE")
-            .create_async()
-            .await;
-
-        let transport = SseTransport::new(&server.url()).unwrap();
-        assert!(transport.is_alive().await);
-    }
-
-    /// A 403 Forbidden from the health check still proves the server is
-    /// reachable — it just refused the request. The server is alive.
-    #[tokio::test]
-    async fn test_is_alive_403_forbidden_returns_true() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/")
-            .with_status(403)
-            .create_async()
-            .await;
-
-        let transport = SseTransport::new(&server.url()).unwrap();
-        assert!(transport.is_alive().await);
-    }
-
-    /// A 400 Bad Request still proves the server endpoint is alive.
-    #[tokio::test]
-    async fn test_is_alive_400_bad_request_returns_true() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/")
-            .with_status(400)
-            .with_body(r#"{"error":"bad request"}"#)
-            .create_async()
-            .await;
-
-        let transport = SseTransport::new(&server.url()).unwrap();
-        assert!(transport.is_alive().await);
+            let transport = SseTransport::new(&format!("http://{address}/")).unwrap();
+            assert!(transport.is_alive().await, "status {status}");
+            server.await.unwrap();
+        }
     }
 
     #[tokio::test]
