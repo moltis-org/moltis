@@ -745,24 +745,79 @@ async fn test_git_https_credentials_encrypt_and_update_when_vault_is_unsealed() 
 
 #[cfg(feature = "vault")]
 #[tokio::test]
-async fn test_git_https_credentials_use_plaintext_when_vault_is_sealed() {
+async fn test_git_https_credentials_fail_closed_when_vault_is_sealed() {
     let vault_password = fixture_secret("vault-git-https-sealed-password");
-    let token = fixture_secret("vault-git-https-sealed-token");
+    let initial_token = fixture_secret("vault-git-https-sealed-initial-token");
+    let updated_token = fixture_secret("vault-git-https-sealed-updated-token");
+    let new_token = fixture_secret("vault-git-https-sealed-new-token");
     let (store, vault) = vault_store(&vault_password).await;
-    vault.seal().await;
 
     let credential_id = store
-        .create_git_https_credential("github.com", "octocat", secrecy::Secret::new(token.clone()))
+        .create_git_https_credential("github.com", "octocat", secrecy::Secret::new(initial_token))
         .await
         .unwrap();
-    let row: (String, i64) =
-        sqlx::query_as("SELECT token, encrypted FROM git_https_credentials WHERE id = ?")
+    let original_row: (i64, String, String, String, i64, String, String) =
+        sqlx::query_as("SELECT * FROM git_https_credentials WHERE id = ?")
             .bind(credential_id)
             .fetch_one(store.db_pool())
             .await
             .unwrap();
+    assert_eq!(original_row.4, 1);
 
-    assert_eq!(row, (token, 0));
+    vault.seal().await;
+
+    let update_error = store
+        .update_git_https_credential(
+            credential_id,
+            "git.example.com",
+            "builder",
+            secrecy::Secret::new(updated_token),
+        )
+        .await
+        .unwrap_err();
+    assert!(update_error.to_string().contains("vault is sealed"));
+    let unchanged_row: (i64, String, String, String, i64, String, String) =
+        sqlx::query_as("SELECT * FROM git_https_credentials WHERE id = ?")
+            .bind(credential_id)
+            .fetch_one(store.db_pool())
+            .await
+            .unwrap();
+    assert_eq!(unchanged_row, original_row);
+
+    let create_error = store
+        .create_git_https_credential("gitlab.com", "builder", secrecy::Secret::new(new_token))
+        .await
+        .unwrap_err();
+    assert!(create_error.to_string().contains("vault is sealed"));
+    let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM git_https_credentials")
+        .fetch_one(store.db_pool())
+        .await
+        .unwrap();
+    assert_eq!(row_count, 1);
+}
+
+#[cfg(feature = "vault")]
+#[tokio::test]
+async fn test_git_https_credentials_fail_when_enabled_vault_is_unavailable() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let store = CredentialStore::with_vault(pool, &moltis_config::AuthConfig::default(), None)
+        .await
+        .unwrap();
+
+    let error = store
+        .create_git_https_credential(
+            "github.com",
+            "octocat",
+            secrecy::Secret::new(fixture_secret("vault-git-https-unavailable-token")),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("vault not available"));
+    let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM git_https_credentials")
+        .fetch_one(store.db_pool())
+        .await
+        .unwrap();
+    assert_eq!(row_count, 0);
 }
 
 #[tokio::test]

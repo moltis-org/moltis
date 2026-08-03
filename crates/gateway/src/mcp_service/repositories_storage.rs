@@ -66,7 +66,7 @@ impl LiveMcpService {
         })
         .await
         .map_err(|_| ServiceError::message("repository materialization task failed"))?
-        .map_err(|_| ServiceError::message("repository materialization failed"))?;
+        .map_err(service_message)?;
         discover_materialized_revision(
             request.id.clone(),
             request.alias.clone(),
@@ -80,9 +80,9 @@ impl LiveMcpService {
         &self,
         id: &ManagedRepositoryId,
     ) -> Result<(), ServiceError> {
-        let mut registry = self.manager.registry_snapshot().await;
-        let repository = registry.repositories.remove(id);
-        prune_owned_revisions(&self.data_dir, id, repository.as_ref()).await
+        let registry = self.manager.registry_snapshot().await;
+        let repository = registry.repositories.get(id);
+        prune_owned_revisions(&self.data_dir, id, repository).await
     }
 }
 

@@ -169,10 +169,12 @@ impl CredentialStore {
     ) -> Result<(Secret<String>, i64)> {
         #[cfg(feature = "vault")]
         {
-            if self.is_vault_encryption_enabled()
-                && let Some(ref vault) = self.vault
-                && vault.is_unsealed().await
-            {
+            if self.is_vault_encryption_enabled() {
+                let Some(ref vault) = self.vault else {
+                    return Err(Error::Crypto(
+                        "vault not available for HTTPS Git credential encryption".into(),
+                    ));
+                };
                 let encrypted = vault
                     .encrypt_string(token.expose_secret(), &git_https_aad(id))
                     .await

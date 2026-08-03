@@ -74,8 +74,7 @@ export function clampValidationProgressPercent(value: number): number {
 }
 
 export function createValidationRequestId(): string {
-	const nonce = Math.random().toString(36).slice(2, 10);
-	return `validate-${Date.now()}-${nonce}`;
+	return `validate-${globalThis.crypto.randomUUID()}`;
 }
 
 export function subscribeValidationProgress(

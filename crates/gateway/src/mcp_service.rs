@@ -169,7 +169,7 @@ impl McpService for LiveMcpService {
             if !matches!(result, Ok(false)) {
                 break (candidate, result);
             }
-            suffix = suffix.saturating_add(1);
+            suffix = next_server_name_suffix(suffix)?;
         };
 
         match add_result {
@@ -491,5 +491,28 @@ impl McpService for LiveMcpService {
     async fn update_request_timeout(&self, request_timeout_secs: u64) -> ServiceResult {
         self.manager.set_request_timeout_secs(request_timeout_secs);
         Ok(serde_json::json!({ "ok": true }))
+    }
+}
+
+fn next_server_name_suffix(suffix: u32) -> Result<u32, ServiceError> {
+    suffix
+        .checked_add(1)
+        .ok_or_else(|| ServiceError::message("MCP server name allocation failed"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_server_name_suffix;
+
+    #[test]
+    fn server_name_suffix_overflow_returns_error() {
+        assert_eq!(next_server_name_suffix(u32::MAX - 1).ok(), Some(u32::MAX));
+        assert_eq!(
+            next_server_name_suffix(u32::MAX)
+                .err()
+                .map(|error| error.to_string())
+                .as_deref(),
+            Some("MCP server name allocation failed")
+        );
     }
 }

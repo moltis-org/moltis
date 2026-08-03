@@ -160,7 +160,10 @@ impl McpRegistry {
             .with_context(|| format!("failed to read MCP registry: {}", path.display()))?;
         let value: serde_json::Value = serde_json::from_str(&data)
             .with_context(|| format!("failed to parse MCP registry: {}", path.display()))?;
-        let is_structured = value.get("servers").is_some() || value.get("repositories").is_some();
+        let is_structured = ["servers", "repositories"]
+            .into_iter()
+            .filter_map(|field| value.get(field))
+            .any(|section| !is_legacy_server_config(section));
         let mut registry = if is_structured {
             serde_json::from_value::<Self>(value)
                 .with_context(|| format!("failed to parse MCP registry: {}", path.display()))?
@@ -361,6 +364,27 @@ impl McpRegistry {
     }
 }
 
+fn is_legacy_server_config(value: &serde_json::Value) -> bool {
+    const FIELDS: &[&str] = &[
+        "command",
+        "args",
+        "cwd",
+        "env",
+        "enabled",
+        "request_timeout_secs",
+        "transport",
+        "url",
+        "headers",
+        "oauth",
+        "display_name",
+        "managed_origin",
+    ];
+    value
+        .as_object()
+        .is_some_and(|object| object.keys().any(|key| FIELDS.contains(&key.as_str())))
+        && serde_json::from_value::<McpServerConfig>(value.clone()).is_ok()
+}
+
 fn serialize_secret_string_map<S: serde::Serializer>(
     values: &HashMap<String, Secret<String>>,
     serializer: S,
@@ -498,6 +522,44 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["servers"]["legacy"]["command"], "echo");
         assert!(value.get("legacy").is_none());
+    }
+
+    #[test]
+    fn test_load_legacy_flat_registry_with_reserved_server_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(
+            &path,
+            r#"{"servers":{"command":"first"},"repositories":{"command":"second"}}"#,
+        )
+        .unwrap();
+
+        let registry = McpRegistry::load(&path).unwrap();
+        assert_eq!(registry.servers["servers"].command, "first");
+        assert_eq!(registry.servers["repositories"].command, "second");
+        assert!(registry.repositories.is_empty());
+
+        registry.save().unwrap();
+        let reloaded = McpRegistry::load(&path).unwrap();
+        assert_eq!(reloaded.servers["servers"].command, "first");
+        assert_eq!(reloaded.servers["repositories"].command, "second");
+        assert!(reloaded.repositories.is_empty());
+    }
+
+    #[test]
+    fn test_load_canonical_structured_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(
+            &path,
+            r#"{"servers":{"command":{"command":"echo"}},"repositories":{}}"#,
+        )
+        .unwrap();
+
+        let registry = McpRegistry::load(&path).unwrap();
+        assert_eq!(registry.servers.len(), 1);
+        assert_eq!(registry.servers["command"].command, "echo");
+        assert!(registry.repositories.is_empty());
     }
 
     #[test]

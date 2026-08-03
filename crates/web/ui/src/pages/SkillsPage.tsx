@@ -171,7 +171,7 @@ function doInstall(source: string): Promise<void> {
 		if (!S.connected) showToast("Not connected to gateway.", "error");
 		return Promise.resolve();
 	}
-	const opId = `skills-install-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+	const opId = `skills-install-${globalThis.crypto.randomUUID()}`;
 	const pid = startInstallProgress(source, opId);
 	return sendRpc("skills.install", { source, op_id: opId }).then(async (res) => {
 		if (res?.ok) {

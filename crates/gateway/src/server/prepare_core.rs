@@ -362,7 +362,7 @@ pub async fn prepare_gateway_core_with_profile(
     let mcp_configured_count;
     let live_mcp: Arc<crate::mcp_service::LiveMcpService>;
     {
-        let mcp_registry_path = moltis_config::data_dir().join("mcp-servers.json");
+        let mcp_registry_path = data_dir.join("mcp-servers.json");
         let mcp_reg = moltis_mcp::McpRegistry::load(&mcp_registry_path)?;
         let mut merged = mcp_reg;
         for (name, entry) in &config.mcp.servers {

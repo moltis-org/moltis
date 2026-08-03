@@ -1027,6 +1027,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn materialization_errors_preserve_actionable_details() {
+        let fixture = Fixture::new(r#""one":{"command":"one"}"#).await;
+        fs::remove_file(fixture.source.path().join(".mcp.json")).unwrap();
+        git(fixture.source.path(), &["add", ".mcp.json"]);
+        git(fixture.source.path(), &[
+            "commit",
+            "-q",
+            "-m",
+            "remove manifest",
+        ]);
+
+        let error = fixture
+            .service
+            .repositories_preview_impl(fixture.repository_params())
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("repository has no supported explicit MCP manifest")
+        );
+    }
+
+    #[tokio::test]
     async fn install_is_disabled_and_rejects_stale_commit_or_digest() {
         let fixture = Fixture::new(r#""one":{"command":"one"},"two":{"command":"two"}"#).await;
         let preview = fixture.preview().await;
@@ -1061,6 +1085,12 @@ mod tests {
         let registry = fixture.service.manager.registry_snapshot().await;
         assert_eq!(registry.repositories.len(), 1);
         assert_eq!(storage::revision_count(fixture._data.path()), 1);
+        let repository = registry.repositories.values().next().unwrap();
+        let active = repository.active.as_ref().unwrap();
+        assert_eq!(active.commit, preview["commit"].as_str().unwrap());
+        assert!(active.path.is_dir());
+        assert!(repository.previous.is_none());
+        assert!(storage::has_revision(fixture._data.path(), &active.commit));
         assert!(registry.servers.values().all(|config| !config.enabled));
         assert!(registry.servers.values().all(|config| {
             config
@@ -1219,16 +1249,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage::revision_count(fixture._data.path()), 2);
-        assert!(
-            fixture
-                .service
-                .manager
-                .registry_snapshot()
-                .await
-                .servers
-                .values()
-                .all(|config| !config.enabled)
-        );
+        let registry = fixture.service.manager.registry_snapshot().await;
+        let repository = registry.repositories.values().next().unwrap();
+        let active = repository.active.as_ref().unwrap();
+        let previous = repository.previous.as_ref().unwrap();
+        assert_eq!(active.commit, second_commit);
+        assert_eq!(previous.commit, first_commit);
+        assert!(active.path.is_dir());
+        assert!(previous.path.is_dir());
+        assert!(registry.servers.values().all(|config| !config.enabled));
 
         fixture
             .service
@@ -1239,12 +1268,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage::revision_count(fixture._data.path()), 2);
+        let registry = fixture.service.manager.registry_snapshot().await;
+        let repository = registry.repositories.values().next().unwrap();
+        assert_eq!(repository.active.as_ref().unwrap().commit, first_commit);
+        assert_eq!(repository.previous.as_ref().unwrap().commit, second_commit);
+        assert!(repository.active.as_ref().unwrap().path.is_dir());
+        assert!(repository.previous.as_ref().unwrap().path.is_dir());
         assert!(
-            fixture
-                .service
-                .manager
-                .registry_snapshot()
-                .await
+            registry
                 .servers
                 .values()
                 .any(|config| config.command == "old")
@@ -1269,6 +1300,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage::revision_count(fixture._data.path()), 2);
+        let third_commit = third["commit"].as_str().unwrap();
+        let registry = fixture.service.manager.registry_snapshot().await;
+        let repository = registry.repositories.values().next().unwrap();
+        assert_eq!(repository.active.as_ref().unwrap().commit, third_commit);
+        assert_eq!(repository.previous.as_ref().unwrap().commit, first_commit);
+        assert!(repository.active.as_ref().unwrap().path.is_dir());
+        assert!(repository.previous.as_ref().unwrap().path.is_dir());
         assert!(!storage::has_revision(fixture._data.path(), &second_commit));
 
         let source_path = fixture.source.path().to_path_buf();
