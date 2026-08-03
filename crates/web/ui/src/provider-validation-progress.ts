@@ -1,4 +1,5 @@
 import { onEvent } from "./events";
+import { randomId } from "./random-id";
 
 export const VALIDATION_HINT_TEXT = "";
 export const VALIDATION_HINT_RUNNING_TEXT = "Discovering models...";
@@ -74,7 +75,7 @@ export function clampValidationProgressPercent(value: number): number {
 }
 
 export function createValidationRequestId(): string {
-	return `validate-${globalThis.crypto.randomUUID()}`;
+	return `validate-${randomId()}`;
 }
 
 export function subscribeValidationProgress(

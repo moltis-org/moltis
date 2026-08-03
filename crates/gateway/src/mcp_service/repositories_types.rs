@@ -195,10 +195,8 @@ struct ResolvedRepositoryRequest {
 
 struct RepositoryOperationGuard {
     id: ManagedRepositoryId,
-    operations: Arc<Mutex<BTreeSetCompat>>,
+    operations: Arc<Mutex<HashSet<ManagedRepositoryId>>>,
 }
-
-type BTreeSetCompat = std::collections::HashSet<ManagedRepositoryId>;
 
 impl Drop for RepositoryOperationGuard {
     fn drop(&mut self) {

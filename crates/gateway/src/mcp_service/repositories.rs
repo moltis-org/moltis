@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };

@@ -2,6 +2,7 @@
 
 import { onEvent } from "../events";
 import { ensureProviderModal } from "../modals";
+import { randomId } from "../random-id";
 import * as S from "../state";
 import type {
 	ProviderInfo,
@@ -187,7 +188,7 @@ export function completeValidationProgress(state: ValidationProgressState | null
 }
 
 export function createValidationRequestId(): string {
-	return `validate-${globalThis.crypto.randomUUID()}`;
+	return `validate-${randomId()}`;
 }
 
 function normalizeAttempt(value: number | undefined, fallback: number): number {
