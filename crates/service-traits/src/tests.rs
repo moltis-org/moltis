@@ -1,13 +1,20 @@
 use serde_json::json;
 
 use crate::{
-    BrowserService, ChatService, McpService, NoopBrowserService, NoopMcpService, ServiceResult,
-    interfaces::model_service_not_configured_error,
+    BrowserService, ChatService, McpService, NoopBrowserService, NoopMcpService, ServiceError,
+    ServiceResult, interfaces::model_service_not_configured_error,
 };
 
 struct SlowShutdownBrowserService;
 
 struct DefaultRefreshChatService;
+
+#[test]
+fn invalid_request_service_errors_keep_their_protocol_classification() {
+    let error: moltis_protocol::ErrorShape = ServiceError::invalid_request("assigned").into();
+    assert_eq!(error.code, moltis_protocol::error_codes::INVALID_REQUEST);
+    assert_eq!(error.message, "assigned");
+}
 
 #[async_trait::async_trait]
 impl ChatService for DefaultRefreshChatService {

@@ -102,7 +102,7 @@ impl LiveMcpService {
             .filter(|repository| repository.ssh_target_id == Some(id))
             .count();
         if references != 0 {
-            return Err(ServiceError::message(
+            return Err(ServiceError::invalid_request(
                 "SSH target is still assigned to one or more managed MCP repositories",
             ));
         }
@@ -133,7 +133,7 @@ impl LiveMcpService {
             .filter(|target| referenced_targets.contains(&target.id) && target.key_id == Some(id))
             .count();
         if references != 0 {
-            return Err(ServiceError::message(
+            return Err(ServiceError::invalid_request(
                 "SSH key is still assigned to a managed MCP repository target",
             ));
         }

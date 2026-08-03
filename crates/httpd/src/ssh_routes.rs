@@ -15,6 +15,7 @@ use {
 use moltis_gateway::{
     auth::{SshAuthMode, SshKeyEntry, SshResolvedTarget, SshTargetEntry},
     node_exec::exec_resolved_ssh_target,
+    services::ServiceError,
 };
 
 const SSH_STORE_UNAVAILABLE: &str = "SSH_STORE_UNAVAILABLE";
@@ -193,6 +194,13 @@ impl ApiError {
     }
 }
 
+fn managed_ssh_delete_error(code: &'static str, error: ServiceError) -> ApiError {
+    match error {
+        ServiceError::InvalidRequest { message } => ApiError::bad_request(code, message),
+        other => ApiError::internal(code, other),
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         #[derive(Serialize)]
@@ -344,7 +352,7 @@ pub async fn ssh_delete_key(
         .mcp
         .managed_ssh_key_remove(id)
         .await
-        .map_err(|err| ApiError::bad_request(SSH_KEY_DELETE_FAILED, err.to_string()))?;
+        .map_err(|error| managed_ssh_delete_error(SSH_KEY_DELETE_FAILED, error))?;
     Ok(SshMutationResponse::success(None))
 }
 
@@ -405,7 +413,7 @@ pub async fn ssh_delete_target(
         .mcp
         .managed_ssh_target_remove(id)
         .await
-        .map_err(|err| ApiError::bad_request(SSH_TARGET_DELETE_FAILED, err.to_string()))?;
+        .map_err(|error| managed_ssh_delete_error(SSH_TARGET_DELETE_FAILED, error))?;
     refresh_ssh_target_count(&state).await;
 
     Ok(SshMutationResponse::success(None))
@@ -1348,6 +1356,21 @@ mod tests {
             error.message,
             "target must be a user@host or hostname, not an ssh option"
         );
+    }
+
+    #[test]
+    fn managed_ssh_delete_errors_preserve_status_classification() {
+        let assigned = managed_ssh_delete_error(
+            SSH_KEY_DELETE_FAILED,
+            ServiceError::invalid_request("still assigned"),
+        );
+        assert_eq!(assigned.status, StatusCode::BAD_REQUEST);
+
+        let storage = managed_ssh_delete_error(
+            SSH_TARGET_DELETE_FAILED,
+            ServiceError::message("database unavailable"),
+        );
+        assert_eq!(storage.status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]
