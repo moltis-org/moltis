@@ -209,7 +209,13 @@ fn open_isolated(path: &Path) -> Result<gix::Repository, Error> {
     })
 }
 
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), Error> {
     let directory = fs::File::open(path).map_err(|error| Error::io(path, error))?;
     directory.sync_all().map_err(|error| Error::io(path, error))
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<(), Error> {
+    Ok(())
 }
