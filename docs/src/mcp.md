@@ -28,7 +28,24 @@ MCP is an open protocol that lets AI assistants connect to external tools and da
 
 After saving a remote server, Moltis only shows a sanitized URL plus header names/count in the UI and status views. Stored header values stay hidden.
 
-### Managed Git Repositories for Deployment
+### Managed Git Repositories
+
+In **Settings** → **MCP Servers**, the managed repositories section can discover server definitions from Git and show a sanitized preview before anything is imported. For a public GitHub repository, enter `owner/repo`; Moltis derives the HTTPS URL and repository alias. Advanced options expose other HTTPS hosts, SSH and server-side local sources, Git refs, aliases, and stable repository IDs.
+
+Private GitHub repositories use a fine-grained personal access token:
+
+1. Under **Repository credentials**, click **Create fine-grained token**.
+2. In GitHub, choose **Only select repositories** and select only the repositories Moltis should read.
+3. Keep the prefilled **Contents** permission set to **Read-only**, generate the token, and paste it into Moltis.
+4. Mark the repository as private and select the saved credential before previewing it.
+
+Tokens are submitted once and never returned by the API. Moltis encrypts them when vault encryption is available; otherwise, the UI displays a plaintext-storage warning.
+
+SSH repositories require a target configured in **Settings** → **SSH**. The target must use a managed private key, have an explicit strict host pin, and exactly match the repository remote's host and port. Ineligible targets are not offered in the repository form.
+
+Preview is mandatory for every source. Imported servers remain disabled and unapproved until you approve the exact commit and sanitized configuration digest.
+
+#### Deployment CLI
 
 The main `moltis` CLI can materialize MCP server definitions from Git before the gateway starts. These commands work directly against `MOLTIS_DATA_DIR` (or global `--data-dir`) and do not start MCP processes.
 

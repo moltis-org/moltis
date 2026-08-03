@@ -284,7 +284,11 @@ export function renderMarkdown(raw: string): string {
 	return result.trimEnd();
 }
 
-export function sendRpc<T = unknown>(method: string, params: unknown): Promise<RpcResponse<T>> {
+export function sendRpc<T = unknown>(
+	method: string,
+	params: unknown,
+	timeoutMs = rpcTimeoutMs(),
+): Promise<RpcResponse<T>> {
 	return new Promise((resolve) => {
 		if (!S.ws || S.ws.readyState !== WebSocket.OPEN) {
 			resolve({
@@ -300,7 +304,6 @@ export function sendRpc<T = unknown>(method: string, params: unknown): Promise<R
 			return;
 		}
 		const id = nextId();
-		const timeoutMs = rpcTimeoutMs();
 		const timer = setTimeout(() => {
 			if (S.pending[id]) {
 				delete S.pending[id];

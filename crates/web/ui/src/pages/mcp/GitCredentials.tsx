@@ -11,22 +11,39 @@ interface GitCredentialsProps {
 	onMessage: (message: string, error?: boolean) => void;
 }
 
+const GITHUB_TOKEN_URL =
+	"https://github.com/settings/personal-access-tokens/new?name=Moltis%20MCP%20repositories&description=Read-only%20access%20for%20Moltis%20managed%20MCP%20repositories&contents=read";
+
+function credentialFormTitle(editing: boolean, customHost: boolean): string {
+	if (editing) return "Replace HTTPS credential";
+	return customHost ? "Add HTTPS credential" : "Connect GitHub";
+}
+
+function credentialSaveLabel(editing: boolean, customHost: boolean): string {
+	if (editing) return "Update credential";
+	return customHost ? "Create credential" : "Save GitHub connection";
+}
+
 export function GitCredentials({ data, onChanged, onMessage }: GitCredentialsProps): VNode {
 	const editing = useSignal<GitHttpsCredential | null>(null);
-	const host = useSignal("");
-	const username = useSignal("");
+	const customHost = useSignal(false);
+	const host = useSignal("github.com");
+	const username = useSignal("x-access-token");
 	const token = useSignal("");
 	const busy = useSignal(false);
+	const isEditing = editing.value !== null;
 
 	function reset(): void {
 		editing.value = null;
-		host.value = "";
-		username.value = "";
+		customHost.value = false;
+		host.value = "github.com";
+		username.value = "x-access-token";
 		token.value = "";
 	}
 
 	function startEdit(credential: GitHttpsCredential): void {
 		editing.value = credential;
+		customHost.value = true;
 		host.value = credential.host;
 		username.value = credential.username;
 		token.value = "";
@@ -78,7 +95,10 @@ export function GitCredentials({ data, onChanged, onMessage }: GitCredentialsPro
 	}
 
 	return (
-		<section className="rounded-xl border border-[var(--border)] bg-[var(--surface2)] p-4 sm:p-5">
+		<section
+			id="mcp-repository-credentials"
+			className="rounded-xl border border-[var(--border)] bg-[var(--surface2)] p-4 sm:p-5"
+		>
 			<div className="mb-4">
 				<h3 className="text-sm font-medium text-[var(--text-strong)]">Repository credentials</h3>
 				<p className="mt-1 text-xs text-[var(--muted)]">
@@ -126,35 +146,71 @@ export function GitCredentials({ data, onChanged, onMessage }: GitCredentialsPro
 					</div>
 					<div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
 						<h5 className="mb-3 text-sm font-medium text-[var(--text-strong)]">
-							{editing.value ? "Replace HTTPS credential" : "Add HTTPS credential"}
+							{credentialFormTitle(isEditing, customHost.value)}
 						</h5>
-						<TextField
-							label="Git host"
-							value={host.value}
-							onInput={(value) => (host.value = value)}
-							placeholder="github.com"
-						/>
-						<TextField label="Username" value={username.value} onInput={(value) => (username.value = value)} />
+						{!(isEditing || customHost.value) && (
+							<div className="mb-3 rounded-lg border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)]">
+								<p className="mb-2 text-[var(--text)]">Create a repository-scoped, read-only token:</p>
+								<ol className="mb-3 list-decimal space-y-1 pl-4">
+									<li>Open GitHub and choose the resource owner.</li>
+									<li>Under Repository access, choose Only select repositories.</li>
+									<li>Confirm Contents is set to Read-only, then generate the token.</li>
+								</ol>
+								<a
+									href={GITHUB_TOKEN_URL}
+									target="_blank"
+									rel="noopener noreferrer"
+									className="provider-btn provider-btn-secondary provider-btn-sm inline-flex"
+								>
+									Create fine-grained token
+								</a>
+							</div>
+						)}
+						{(isEditing || customHost.value) && (
+							<>
+								<TextField
+									label="Git host"
+									value={host.value}
+									onInput={(value) => (host.value = value)}
+									placeholder="github.com"
+								/>
+								<TextField label="Username" value={username.value} onInput={(value) => (username.value = value)} />
+							</>
+						)}
 						<TextField
 							label="Access token"
 							type="password"
 							value={token.value}
 							onInput={(value) => (token.value = value)}
 							autoComplete="new-password"
-							help="Required for create and update. Sent only when you save."
+							help="Paste the token once. It is sent only when you save and is never displayed again."
 						/>
-						<div className="flex gap-2">
+						<div className="flex flex-wrap gap-2">
 							<button
 								type="button"
 								className="provider-btn"
 								onClick={save}
 								disabled={busy.value || !(host.value.trim() && username.value.trim() && token.value)}
 							>
-								{editing.value ? "Update credential" : "Create credential"}
+								{credentialSaveLabel(isEditing, customHost.value)}
 							</button>
-							{editing.value && (
+							{(isEditing || customHost.value) && (
 								<button type="button" className="provider-btn provider-btn-secondary" onClick={reset}>
 									Cancel
+								</button>
+							)}
+							{!(isEditing || customHost.value) && (
+								<button
+									type="button"
+									className="provider-btn provider-btn-secondary"
+									onClick={() => {
+										customHost.value = true;
+										host.value = "";
+										username.value = "";
+										token.value = "";
+									}}
+								>
+									Use another Git host
 								</button>
 							)}
 						</div>

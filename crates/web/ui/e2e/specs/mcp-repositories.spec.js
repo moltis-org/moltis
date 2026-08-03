@@ -6,12 +6,12 @@ const PREVIOUS_COMMIT = "0000000000000000000000000000000000000000";
 const NEW_COMMIT = "2222222222222222222222222222222222222222";
 const INSTALL_COMMIT = "3333333333333333333333333333333333333333";
 
-async function mockManagedRepositoriesRpc(page) {
+async function mockManagedRepositoriesRpc(page, previewDelay = 0) {
 	await page.route("**/api/mcp", async (route) => {
 		await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
 	});
 	await page.addInitScript(
-		({ oldCommit, previousCommit, newCommit, installCommit }) => {
+		({ oldCommit, previousCommit, newCommit, installCommit, previewDelayMs }) => {
 			window.__mcpRepositoryE2ERequests = [];
 			window.__mcpRepositoryE2EUpdateAvailable = false;
 			const originalSend = WebSocket.prototype.send;
@@ -88,15 +88,45 @@ async function mockManagedRepositoriesRpc(page) {
 					keyName: "deployment-key",
 					hasKnownHost: true,
 				},
+				{
+					id: 10,
+					label: "System SSH",
+					target: "git@git.example.test",
+					port: 22,
+					authMode: "system",
+					hasKnownHost: true,
+				},
+				{
+					id: 11,
+					label: "Unpinned target",
+					target: "git@git.example.test",
+					port: 22,
+					authMode: "managed",
+					keyId: 3,
+					keyName: "deployment-key",
+					hasKnownHost: false,
+				},
+				{
+					id: 12,
+					label: "Other Git host",
+					target: "git@other.example.test",
+					port: 22,
+					authMode: "managed",
+					keyId: 3,
+					keyName: "deployment-key",
+					hasKnownHost: true,
+				},
 			];
 
-			function respond(socket, id, payload) {
-				queueMicrotask(() => {
+			function respond(socket, id, payload, delayMs = 0) {
+				const sendResponse = () => {
 					const event = new MessageEvent("message", {
 						data: JSON.stringify({ type: "res", id, ok: true, payload }),
 					});
 					if (typeof socket.onmessage === "function") socket.onmessage(event);
-				});
+				};
+				if (delayMs > 0) setTimeout(sendResponse, delayMs);
+				else queueMicrotask(sendResponse);
 			}
 
 			WebSocket.prototype.send = function (raw) {
@@ -122,18 +152,23 @@ async function mockManagedRepositoriesRpc(page) {
 						return;
 					case "mcp.repositories.preview": {
 						const candidates = Array.from({ length: 8 }, (_, index) => makeCandidate(`yolo-${index + 1}`));
-						respond(this, request.id, {
-							repository: {
-								id: request.params.id || "yolo-repo-v1",
-								alias: request.params.alias,
-								source: { ...request.params.source, httpsCredentialId: request.params.httpsCredentialId },
-								ref: request.params.ref,
-								discovery: "explicit",
+						respond(
+							this,
+							request.id,
+							{
+								repository: {
+									id: request.params.id || "yolo-repo-v1",
+									alias: request.params.alias,
+									source: { ...request.params.source, httpsCredentialId: request.params.httpsCredentialId },
+									ref: request.params.ref,
+									discovery: "explicit",
+								},
+								commit: installCommit,
+								candidates,
+								warnings: [{ kind: "yolo-manifest", sourceManifestPath: ".mcp.json" }],
 							},
-							commit: installCommit,
-							candidates,
-							warnings: [{ kind: "yolo-manifest", sourceManifestPath: ".mcp.json" }],
-						});
+							previewDelayMs,
+						);
 						return;
 					}
 					case "mcp.repositories.install": {
@@ -228,7 +263,13 @@ async function mockManagedRepositoriesRpc(page) {
 				}
 			};
 		},
-		{ oldCommit: OLD_COMMIT, previousCommit: PREVIOUS_COMMIT, newCommit: NEW_COMMIT, installCommit: INSTALL_COMMIT },
+		{
+			oldCommit: OLD_COMMIT,
+			previousCommit: PREVIOUS_COMMIT,
+			newCommit: NEW_COMMIT,
+			installCommit: INSTALL_COMMIT,
+			previewDelayMs: previewDelay,
+		},
 	);
 }
 
@@ -247,8 +288,8 @@ test.describe("Managed MCP repositories", () => {
 			.getByRole("heading", { name: "Add managed repository", exact: true })
 			.locator("..")
 			.locator("..");
-		await addSection.getByLabel("Repository source", { exact: true }).fill("https://github.com/example/yolo-tools.git");
-		await addSection.getByLabel("Alias", { exact: true }).fill("Yolo tools");
+		await addSection.getByLabel("Repository source", { exact: true }).fill("example/yolo-tools");
+		await addSection.getByRole("button", { name: "Advanced options", exact: true }).click();
 		await addSection.getByLabel("Git ref", { exact: true }).fill("main");
 		await addSection.getByRole("button", { name: "Preview repository", exact: true }).click();
 
@@ -278,13 +319,15 @@ test.describe("Managed MCP repositories", () => {
 
 		const imported = page
 			.locator("article")
-			.filter({ has: page.getByRole("heading", { name: "Yolo tools", exact: true }) });
+			.filter({ has: page.getByRole("heading", { name: "yolo-tools", exact: true }) });
 		await expect(imported.getByText("Approved 0/1", { exact: true })).toBeVisible();
 		await expect(imported.getByText("Enabled 0/1", { exact: true })).toBeVisible();
 		const installRequest = await page.evaluate(() =>
 			window.__mcpRepositoryE2ERequests.find((request) => request.method === "mcp.repositories.install"),
 		);
 		expect(installRequest.params.expectedCommit).toBe(INSTALL_COMMIT);
+		expect(installRequest.params.alias).toBe("yolo-tools");
+		expect(installRequest.params.source.url).toBe("https://github.com/example/yolo-tools.git");
 		expect(installRequest.params.selection.mode).toBe("selected");
 		expect(installRequest.params.selection.candidates).toHaveLength(1);
 
@@ -326,25 +369,86 @@ test.describe("Managed MCP repositories", () => {
 		await expect(
 			page.getByText("Plaintext storage: vault encryption unavailable or sealed", { exact: true }),
 		).toBeVisible();
-		await expect(page.getByText("Host pin available", { exact: true })).toBeVisible();
-		await expect(page.getByText("deployment-key", { exact: false })).toBeVisible();
+		await expect(page.getByText("Host pin available", { exact: true }).first()).toBeVisible();
+		await expect(page.getByText("deployment-key", { exact: false }).first()).toBeVisible();
 		await expect(page.getByText("PRIVATE KEY", { exact: false })).toHaveCount(0);
 		await expect(page.getByText("known_hosts", { exact: false })).toHaveCount(0);
 
+		const tokenLink = page.getByRole("link", { name: "Create fine-grained token", exact: true });
+		await expect(tokenLink).toHaveAttribute("href", /personal-access-tokens\/new/);
+		await expect(tokenLink).toHaveAttribute("href", /contents=read/);
+
 		const secret = "credential-token-must-never-render";
-		await page.getByLabel("Git host", { exact: true }).fill("new.example.test");
-		await page.getByLabel("Username", { exact: true }).fill("new-bot");
 		const tokenInput = page.getByLabel("Access token", { exact: true });
 		await expect(tokenInput).toHaveAttribute("type", "password");
 		await tokenInput.fill(secret);
-		await page.getByRole("button", { name: "Create credential", exact: true }).click();
-		await expect(page.getByText("new-bot@new.example.test", { exact: true })).toBeVisible();
+		await page.getByRole("button", { name: "Save GitHub connection", exact: true }).click();
+		await expect(page.getByText("x-access-token@github.com", { exact: true })).toBeVisible();
 		await expect(tokenInput).toHaveValue("");
 		await expect(page.getByText(secret, { exact: false })).toHaveCount(0);
 		const createRequest = await page.evaluate(() =>
 			window.__mcpRepositoryE2ERequests.find((request) => request.method === "mcp.git.credentials.create"),
 		);
+		expect(createRequest.params.host).toBe("github.com");
+		expect(createRequest.params.username).toBe("x-access-token");
 		expect(createRequest.params.token).toBe(secret);
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("offers only managed and pinned SSH targets matching the repository remote", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockManagedRepositoriesRpc(page);
+		await navigateAndWait(page, "/settings/mcp");
+		await waitForWsConnected(page);
+		await page.getByRole("button", { name: "Refresh repositories", exact: true }).click();
+
+		const addSection = page
+			.getByRole("heading", { name: "Add managed repository", exact: true })
+			.locator("..")
+			.locator("..");
+		await addSection.getByRole("button", { name: "Advanced options", exact: true }).click();
+		await addSection.getByLabel("Source type", { exact: true }).selectOption("ssh");
+		await addSection
+			.getByLabel("Repository source", { exact: true })
+			.fill("ssh://git@git.example.test:22/example/tools.git");
+
+		const targetSelect = addSection.getByLabel("Managed SSH target", { exact: true });
+		await expect(
+			targetSelect.getByRole("option", { name: "Git production (git@git.example.test:22)", exact: true }),
+		).toHaveCount(1);
+		await expect(targetSelect.getByRole("option", { name: /System SSH/ })).toHaveCount(0);
+		await expect(targetSelect.getByRole("option", { name: /Unpinned target/ })).toHaveCount(0);
+		await expect(targetSelect.getByRole("option", { name: /Other Git host/ })).toHaveCount(0);
+		await targetSelect.selectOption("9");
+		await expect(addSection.getByRole("button", { name: "Preview repository", exact: true })).toBeEnabled();
+
+		await addSection
+			.getByLabel("Repository source", { exact: true })
+			.fill("git@missing.example.test:example/tools.git");
+		await expect(targetSelect.getByRole("option", { name: /Git production/ })).toHaveCount(0);
+		await expect(addSection.getByRole("link", { name: /configure a matching key and pinned target/i })).toHaveAttribute(
+			"href",
+			"/settings/ssh",
+		);
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("allows repository operations to exceed the default RPC timeout", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockManagedRepositoriesRpc(page, 50);
+		await navigateAndWait(page, "/settings/mcp");
+		await waitForWsConnected(page);
+		await page.evaluate(() => {
+			window.__moltisTestRpcTimeoutMs = 10;
+		});
+
+		const addSection = page
+			.getByRole("heading", { name: "Add managed repository", exact: true })
+			.locator("..")
+			.locator("..");
+		await addSection.getByLabel("Repository source", { exact: true }).fill("example/slow-tools");
+		await addSection.getByRole("button", { name: "Preview repository", exact: true }).click();
+		await expect(page.getByRole("heading", { name: "Repository preview", exact: true })).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 });
