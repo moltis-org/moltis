@@ -41,8 +41,8 @@ function CandidateCard({ candidate, checked, onChecked }: CandidateCardProps): V
 						</span>
 						{candidate.approved && <span className="text-xs text-[var(--ok)]">approved</span>}
 						{candidate.approvalBlocked && <WarningBadge label="approval blocked" />}
-						{candidate.warnings.map((warning) => (
-							<WarningBadge key={warning} label={warning} />
+						{candidate.warnings.map((warning, index) => (
+							<WarningBadge key={`${warning}-${index}`} label={warning} />
 						))}
 					</div>
 					<div className="mt-2 break-all rounded bg-[var(--surface2)] px-2 py-1.5 font-mono text-xs text-[var(--text)]">

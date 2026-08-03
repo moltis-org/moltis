@@ -71,8 +71,24 @@ async fn noop_mcp_managed_reads_are_empty_and_writes_are_unavailable() {
         service.git_credentials_list(json!({})).await.unwrap(),
         json!({ "credentials": [], "sshKeys": [], "sshTargets": [] })
     );
-    assert!(service.repositories_install(json!({})).await.is_err());
-    assert!(service.git_credentials_create(json!({})).await.is_err());
+    let repository_error: moltis_protocol::ErrorShape = service
+        .repositories_install(json!({}))
+        .await
+        .unwrap_err()
+        .into();
+    assert_eq!(
+        repository_error.code,
+        moltis_protocol::error_codes::INVALID_REQUEST
+    );
+    let credential_error: moltis_protocol::ErrorShape = service
+        .git_credentials_create(json!({}))
+        .await
+        .unwrap_err()
+        .into();
+    assert_eq!(
+        credential_error.code,
+        moltis_protocol::error_codes::INVALID_REQUEST
+    );
 }
 
 #[async_trait::async_trait]
