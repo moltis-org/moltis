@@ -769,20 +769,28 @@ impl Sandbox for DockerSandbox {
                 .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
             max_bytes,
         )
-        .await?;
-        if matches!(
-            host_result,
-            SandboxReadResult::Ok(_) | SandboxReadResult::TooLarge(_)
-        ) {
-            return Ok(host_result);
+        .await;
+        match host_result {
+            Ok(result @ (SandboxReadResult::Ok(_) | SandboxReadResult::TooLarge(_))) => {
+                return Ok(result);
+            },
+            Ok(result) => {
+                debug!(
+                    guest_path = file_path,
+                    host_path = %host_path.display(),
+                    ?result,
+                    "mounted host read failed; falling back to container read"
+                );
+            },
+            Err(error) => {
+                debug!(
+                    guest_path = file_path,
+                    host_path = %host_path.display(),
+                    %error,
+                    "mounted host read failed; falling back to container read"
+                );
+            },
         }
-
-        debug!(
-            guest_path = file_path,
-            host_path = %host_path.display(),
-            result = ?host_result,
-            "mounted host read failed; falling back to container read"
-        );
 
         let container_name = self.container_name(id);
         oci_container_read_file(self.cli, &container_name, file_path, max_bytes).await
