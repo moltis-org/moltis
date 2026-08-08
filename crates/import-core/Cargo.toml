@@ -6,12 +6,11 @@ name              = "moltis-import-core"
 version.workspace = true
 
 [dependencies]
+fs2        = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
+tempfile   = { workspace = true }
 tracing    = { workspace = true }
-
-[dev-dependencies]
-tempfile = { workspace = true }
 
 [lints]
 workspace = true

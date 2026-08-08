@@ -531,7 +531,89 @@ impl McpTransport for SseTransport {
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     use super::*;
+
+    struct TestHttpResponse {
+        status: u16,
+        headers: Vec<(&'static str, &'static str)>,
+        body: &'static str,
+    }
+
+    async fn spawn_test_http_server(
+        responses: Vec<TestHttpResponse>,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::with_capacity(responses.len());
+            for response in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_http_request(&mut stream).await;
+                let reason = match response.status {
+                    200 => "OK",
+                    204 => "No Content",
+                    400 => "Bad Request",
+                    401 => "Unauthorized",
+                    403 => "Forbidden",
+                    405 => "Method Not Allowed",
+                    status => panic!("unsupported test status {status}"),
+                };
+                let mut raw_response = format!(
+                    "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n",
+                    response.status,
+                    reason,
+                    response.body.len()
+                );
+                for (name, value) in response.headers {
+                    raw_response.push_str(&format!("{name}: {value}\r\n"));
+                }
+                raw_response.push_str("\r\n");
+                raw_response.push_str(response.body);
+                stream.write_all(raw_response.as_bytes()).await.unwrap();
+                requests.push(String::from_utf8(request).unwrap());
+            }
+            requests
+        });
+        (format!("http://{address}/"), server)
+    }
+
+    async fn read_http_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        let header_end = loop {
+            let count = stream.read(&mut buffer).await.unwrap();
+            assert_ne!(count, 0, "request closed before its headers");
+            request.extend_from_slice(&buffer[..count]);
+            if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                break position + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().unwrap())
+            })
+            .unwrap_or_default();
+        while request.len() < header_end + content_length {
+            let count = stream.read(&mut buffer).await.unwrap();
+            assert_ne!(count, 0, "request closed before its body");
+            request.extend_from_slice(&buffer[..count]);
+        }
+        request
+    }
+
+    fn assert_request_header(request: &str, expected_name: &str, expected_value: &str) {
+        assert!(request.lines().any(|line| {
+            line.split_once(':').is_some_and(|(name, value)| {
+                name.eq_ignore_ascii_case(expected_name) && value.trim() == expected_value
+            })
+        }));
+    }
 
     fn unused_local_url() -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -581,15 +663,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_sse_transport_401_without_auth_returns_unauthorized() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("POST", "/")
-            .with_status(401)
-            .with_header("www-authenticate", r#"Bearer realm="test""#)
-            .create_async()
-            .await;
+        let (url, server) = spawn_test_http_server(vec![TestHttpResponse {
+            status: 401,
+            headers: vec![("www-authenticate", r#"Bearer realm="test""#)],
+            body: "",
+        }])
+        .await;
 
-        let transport = SseTransport::new(&server.url()).unwrap();
+        let transport = SseTransport::new(&url).unwrap();
         let result = transport.request("test", None).await;
 
         assert!(result.is_err());
@@ -598,22 +679,23 @@ mod tests {
             err,
             crate::Error::Transport(McpTransportError::Unauthorized { .. })
         ));
+        let requests = server.await.unwrap();
+        assert!(requests[0].starts_with("POST / HTTP/1.1\r\n"));
     }
 
     #[tokio::test]
     async fn test_sse_transport_200_no_auth() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("POST", "/")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#)
-            .create_async()
-            .await;
+        let (url, server) = spawn_test_http_server(vec![TestHttpResponse {
+            status: 200,
+            headers: vec![("content-type", "application/json")],
+            body: r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#,
+        }])
+        .await;
 
-        let transport = SseTransport::new(&server.url()).unwrap();
+        let transport = SseTransport::new(&url).unwrap();
         let resp = transport.request("test", None).await.unwrap();
         assert!(resp.result.is_some());
+        assert_eq!(server.await.unwrap().len(), 1);
     }
 
     fn remote_with_headers(
@@ -638,25 +720,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_sse_transport_custom_headers_injected() {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("POST", "/")
-            .match_header("x-api-key", "secret-header")
-            .match_header("authorization", "ApiKey raw-secret")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#)
-            .create_async()
-            .await;
+        let (url, server) = spawn_test_http_server(vec![TestHttpResponse {
+            status: 200,
+            headers: vec![("content-type", "application/json")],
+            body: r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#,
+        }])
+        .await;
 
-        let remote = remote_with_headers(&server.url(), &[
+        let remote = remote_with_headers(&url, &[
             ("x-api-key", "secret-header"),
             ("authorization", "ApiKey raw-secret"),
         ]);
         let transport = SseTransport::new_with_remote(remote, Duration::from_secs(60)).unwrap();
         let resp = transport.request("test", None).await.unwrap();
         assert!(resp.result.is_some());
-        mock.assert_async().await;
+        let requests = server.await.unwrap();
+        assert_request_header(&requests[0], "x-api-key", "secret-header");
+        assert_request_header(&requests[0], "authorization", "ApiKey raw-secret");
     }
 
     #[tokio::test]
@@ -697,21 +777,19 @@ mod tests {
             }
         }
 
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("POST", "/")
-            .match_header("authorization", "Bearer test-token-123")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#)
-            .create_async()
-            .await;
+        let (url, server) = spawn_test_http_server(vec![TestHttpResponse {
+            status: 200,
+            headers: vec![("content-type", "application/json")],
+            body: r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#,
+        }])
+        .await;
 
         let auth: SharedAuthProvider = Arc::new(FixedTokenProvider);
-        let transport = SseTransport::with_auth(&server.url(), auth).unwrap();
+        let transport = SseTransport::with_auth(&url, auth).unwrap();
         let resp = transport.request("test", None).await.unwrap();
         assert!(resp.result.is_some());
-        mock.assert_async().await;
+        let requests = server.await.unwrap();
+        assert_request_header(&requests[0], "authorization", "Bearer test-token-123");
     }
 
     #[tokio::test]
@@ -751,18 +829,14 @@ mod tests {
             }
         }
 
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("POST", "/")
-            .match_header("x-api-key", "secret-header")
-            .match_header("authorization", "Bearer oauth-token-123")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#)
-            .create_async()
-            .await;
+        let (url, server) = spawn_test_http_server(vec![TestHttpResponse {
+            status: 200,
+            headers: vec![("content-type", "application/json")],
+            body: r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#,
+        }])
+        .await;
 
-        let remote = remote_with_headers(&server.url(), &[
+        let remote = remote_with_headers(&url, &[
             ("x-api-key", "secret-header"),
             ("authorization", "ApiKey raw-secret"),
         ]);
@@ -771,37 +845,36 @@ mod tests {
             SseTransport::with_auth_remote(remote, auth, Duration::from_secs(60)).unwrap();
         let resp = transport.request("test", None).await.unwrap();
         assert!(resp.result.is_some());
-        mock.assert_async().await;
+        let requests = server.await.unwrap();
+        assert_request_header(&requests[0], "x-api-key", "secret-header");
+        assert_request_header(&requests[0], "authorization", "Bearer oauth-token-123");
     }
 
     #[tokio::test]
     async fn test_sse_transport_propagates_session_id() {
-        let mut server = mockito::Server::new_async().await;
+        let (url, server) = spawn_test_http_server(vec![
+            TestHttpResponse {
+                status: 200,
+                headers: vec![
+                    ("content-type", "application/json"),
+                    ("mcp-session-id", "session-123"),
+                ],
+                body: r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#,
+            },
+            TestHttpResponse {
+                status: 200,
+                headers: vec![("content-type", "application/json")],
+                body: r#"{"jsonrpc":"2.0","id":2,"result":{"ok":true}}"#,
+            },
+        ])
+        .await;
 
-        let first = server
-            .mock("POST", "/")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_header("mcp-session-id", "session-123")
-            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#)
-            .create_async()
-            .await;
-
-        let second = server
-            .mock("POST", "/")
-            .match_header("mcp-session-id", "session-123")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"jsonrpc":"2.0","id":2,"result":{"ok":true}}"#)
-            .create_async()
-            .await;
-
-        let transport = SseTransport::new(&server.url()).unwrap();
+        let transport = SseTransport::new(&url).unwrap();
         transport.request("initialize", None).await.unwrap();
         transport.request("tools/list", None).await.unwrap();
 
-        first.assert_async().await;
-        second.assert_async().await;
+        let requests = server.await.unwrap();
+        assert_request_header(&requests[1], "mcp-session-id", "session-123");
     }
 
     #[tokio::test]
@@ -848,159 +921,97 @@ mod tests {
             }
         }
 
-        let mut server = mockito::Server::new_async().await;
-
-        let first = server
-            .mock("POST", "/")
-            .match_header("authorization", "Bearer token-123")
-            .with_status(401)
-            .with_header("mcp-session-id", "session-reauth-1")
-            .with_header("www-authenticate", r#"Bearer realm="test""#)
-            .create_async()
-            .await;
-
-        let second = server
-            .mock("POST", "/")
-            .match_header("authorization", "Bearer token-123")
-            .match_header("mcp-session-id", "session-reauth-1")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#)
-            .create_async()
-            .await;
+        let (url, server) = spawn_test_http_server(vec![
+            TestHttpResponse {
+                status: 401,
+                headers: vec![
+                    ("mcp-session-id", "session-reauth-1"),
+                    ("www-authenticate", r#"Bearer realm="test""#),
+                ],
+                body: "",
+            },
+            TestHttpResponse {
+                status: 200,
+                headers: vec![("content-type", "application/json")],
+                body: r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#,
+            },
+        ])
+        .await;
 
         let auth = Arc::new(CountingAuthProvider {
             reauth_calls: AtomicUsize::new(0),
         });
         let auth_shared: SharedAuthProvider = auth.clone();
 
-        let transport = SseTransport::with_auth(&server.url(), auth_shared).unwrap();
+        let transport = SseTransport::with_auth(&url, auth_shared).unwrap();
         let resp = transport.request("initialize", None).await.unwrap();
         assert!(resp.result.is_some());
         assert_eq!(auth.reauth_calls.load(Ordering::SeqCst), 0);
 
-        first.assert_async().await;
-        second.assert_async().await;
+        let requests = server.await.unwrap();
+        assert_request_header(&requests[0], "authorization", "Bearer token-123");
+        assert_request_header(&requests[1], "authorization", "Bearer token-123");
+        assert_request_header(&requests[1], "mcp-session-id", "session-reauth-1");
     }
 
     #[tokio::test]
     async fn test_sse_transport_parses_event_stream_response() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("POST", "/")
-            .with_status(200)
-            .with_header("content-type", "text/event-stream")
-            .with_body(
-                "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\n",
-            )
-            .create_async()
-            .await;
+        let (url, server) = spawn_test_http_server(vec![TestHttpResponse {
+            status: 200,
+            headers: vec![("content-type", "text/event-stream")],
+            body: "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\n",
+        }])
+        .await;
 
-        let transport = SseTransport::new(&server.url()).unwrap();
+        let transport = SseTransport::new(&url).unwrap();
         let resp = transport.request("initialize", None).await.unwrap();
         assert!(resp.result.is_some());
+        assert_eq!(server.await.unwrap().len(), 1);
     }
 
     // ── is_alive health-check tests (issue #732) ──────────────────────
 
     #[tokio::test]
-    async fn test_is_alive_200_returns_true() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"ok":true}"#)
-            .create_async()
+    async fn test_is_alive_accepts_any_http_status() {
+        for status in [200, 400, 401, 403, 405] {
+            let (url, server) = spawn_test_http_server(vec![TestHttpResponse {
+                status,
+                headers: Vec::new(),
+                body: "",
+            }])
             .await;
-
-        let transport = SseTransport::new(&server.url()).unwrap();
-        assert!(transport.is_alive().await);
-    }
-
-    #[tokio::test]
-    async fn test_is_alive_401_returns_true() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/")
-            .with_status(401)
-            .with_header("www-authenticate", r#"Bearer realm="test""#)
-            .create_async()
-            .await;
-
-        let transport = SseTransport::new(&server.url()).unwrap();
-        assert!(transport.is_alive().await);
-    }
-
-    /// Streamable HTTP servers may not support GET (it's optional in the MCP
-    /// spec). A 405 response proves the server is reachable and alive.
-    #[tokio::test]
-    async fn test_is_alive_405_method_not_allowed_returns_true() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/")
-            .with_status(405)
-            .with_header("allow", "POST, DELETE")
-            .create_async()
-            .await;
-
-        let transport = SseTransport::new(&server.url()).unwrap();
-        assert!(transport.is_alive().await);
-    }
-
-    /// A 403 Forbidden from the health check still proves the server is
-    /// reachable — it just refused the request. The server is alive.
-    #[tokio::test]
-    async fn test_is_alive_403_forbidden_returns_true() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/")
-            .with_status(403)
-            .create_async()
-            .await;
-
-        let transport = SseTransport::new(&server.url()).unwrap();
-        assert!(transport.is_alive().await);
-    }
-
-    /// A 400 Bad Request still proves the server endpoint is alive.
-    #[tokio::test]
-    async fn test_is_alive_400_bad_request_returns_true() {
-        let mut server = mockito::Server::new_async().await;
-        let _mock = server
-            .mock("GET", "/")
-            .with_status(400)
-            .with_body(r#"{"error":"bad request"}"#)
-            .create_async()
-            .await;
-
-        let transport = SseTransport::new(&server.url()).unwrap();
-        assert!(transport.is_alive().await);
+            let transport = SseTransport::new(&url).unwrap();
+            assert!(transport.is_alive().await, "status {status}");
+            let requests = server.await.unwrap();
+            assert!(requests[0].starts_with("GET / HTTP/1.1\r\n"));
+        }
     }
 
     #[tokio::test]
     async fn test_sse_transport_kill_sends_delete_with_session_id() {
-        let mut server = mockito::Server::new_async().await;
-        let init = server
-            .mock("POST", "/")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_header("mcp-session-id", "session-to-close")
-            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#)
-            .create_async()
-            .await;
-        let delete = server
-            .mock("DELETE", "/")
-            .match_header("mcp-session-id", "session-to-close")
-            .with_status(204)
-            .create_async()
-            .await;
+        let (url, server) = spawn_test_http_server(vec![
+            TestHttpResponse {
+                status: 200,
+                headers: vec![
+                    ("content-type", "application/json"),
+                    ("mcp-session-id", "session-to-close"),
+                ],
+                body: r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#,
+            },
+            TestHttpResponse {
+                status: 204,
+                headers: Vec::new(),
+                body: "",
+            },
+        ])
+        .await;
 
-        let transport = SseTransport::new(&server.url()).unwrap();
+        let transport = SseTransport::new(&url).unwrap();
         transport.request("initialize", None).await.unwrap();
         transport.kill().await;
 
-        init.assert_async().await;
-        delete.assert_async().await;
+        let requests = server.await.unwrap();
+        assert!(requests[1].starts_with("DELETE / HTTP/1.1\r\n"));
+        assert_request_header(&requests[1], "mcp-session-id", "session-to-close");
     }
 }

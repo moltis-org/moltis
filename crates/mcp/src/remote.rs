@@ -1,4 +1,7 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{
+    collections::{BTreeSet, HashMap},
+    str::FromStr,
+};
 
 use {
     reqwest::header::{HeaderMap, HeaderName, HeaderValue},
@@ -135,7 +138,7 @@ pub fn substitute_env_placeholders(input: &str, env_overrides: &HashMap<String, 
             };
             let close_idx = name_start + relative_close;
             if close_idx > name_start {
-                let name = &input[name_start..close_idx];
+                let name = normalize_braced_env_name(&input[name_start..close_idx]);
                 if let Some(value) = lookup_env(name, env_overrides) {
                     out.push_str(&value);
                 } else {
@@ -173,6 +176,45 @@ pub fn substitute_env_placeholders(input: &str, env_overrides: &HashMap<String, 
 
     out.push_str(&input[cursor..]);
     out
+}
+
+/// Return environment variable names referenced by supported placeholder syntax.
+pub fn environment_placeholder_names(input: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    let bytes = input.as_bytes();
+    let mut cursor = 0usize;
+
+    while let Some(relative_dollar) = input[cursor..].find('$') {
+        let dollar_idx = cursor + relative_dollar;
+        let after_dollar = dollar_idx + 1;
+        if after_dollar >= input.len() {
+            break;
+        }
+        if bytes[after_dollar] == b'{' {
+            let name_start = after_dollar + 1;
+            let Some(relative_close) = input[name_start..].find('}') else {
+                break;
+            };
+            let close_idx = name_start + relative_close;
+            let name = normalize_braced_env_name(&input[name_start..close_idx]);
+            if valid_env_name(name) {
+                names.insert(name.to_string());
+            }
+            cursor = close_idx + 1;
+            continue;
+        }
+        if !is_env_ident_start(bytes[after_dollar] as char) {
+            cursor = after_dollar;
+            continue;
+        }
+        let mut name_end = after_dollar + 1;
+        while name_end < input.len() && is_env_ident_continue(bytes[name_end] as char) {
+            name_end += 1;
+        }
+        names.insert(input[after_dollar..name_end].to_string());
+        cursor = name_end;
+    }
+    names
 }
 
 fn build_header_map(
@@ -221,6 +263,17 @@ fn lookup_env(name: &str, env_overrides: &HashMap<String, String>) -> Option<Str
         .get(name)
         .cloned()
         .filter(|value| !value.trim().is_empty())
+}
+
+fn normalize_braced_env_name(name: &str) -> &str {
+    name.strip_prefix("env:")
+        .filter(|name| valid_env_name(name))
+        .unwrap_or(name)
+}
+
+fn valid_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(is_env_ident_start) && chars.all(is_env_ident_continue)
 }
 
 fn is_entire_env_placeholder_syntax(value: &str) -> bool {
@@ -285,8 +338,16 @@ mod tests {
             ("TWO".to_string(), "beta".to_string()),
         ]);
 
-        let value = substitute_env_placeholders("x=${ONE}&y=$TWO", &overrides);
-        assert_eq!(value, "x=alpha&y=beta");
+        let value = substitute_env_placeholders("x=${ONE}&y=$TWO&z=${env:ONE}", &overrides);
+        assert_eq!(value, "x=alpha&y=beta&z=alpha");
+    }
+
+    #[test]
+    fn extracts_supported_environment_placeholder_names() {
+        assert_eq!(
+            environment_placeholder_names("$ONE ${TWO} ${env:THREE} $9 ${env:bad-name}"),
+            BTreeSet::from(["ONE".to_string(), "THREE".to_string(), "TWO".to_string()])
+        );
     }
 
     #[test]

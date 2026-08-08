@@ -17,18 +17,17 @@ use crate::detect::CodexDetection;
 
 /// Import MCP servers from Codex config into Moltis.
 pub fn import_mcp_servers(detection: &CodexDetection, dest_path: &Path) -> CategoryReport {
-    let Some(ref config_path) = detection.config_path else {
-        return CategoryReport::skipped(moltis_import_core::report::ImportCategory::McpServers);
-    };
-
-    let servers = match extract_mcp_from_config(config_path) {
-        Some(s) if !s.is_empty() => s,
-        _ => {
-            return CategoryReport::skipped(moltis_import_core::report::ImportCategory::McpServers);
-        },
-    };
-
+    let servers = collect_mcp_servers(detection);
     merge_mcp_servers(&servers, dest_path)
+}
+
+/// Collect MCP servers from Codex config without writing them.
+pub fn collect_mcp_servers(detection: &CodexDetection) -> HashMap<String, ImportMcpServer> {
+    let Some(ref config_path) = detection.config_path else {
+        return HashMap::new();
+    };
+
+    extract_mcp_from_config(config_path).unwrap_or_default()
 }
 
 /// Count MCP servers configured in the Codex config file.
@@ -199,8 +198,54 @@ args = []
         assert_eq!(report.items_imported, 1);
 
         let content = std::fs::read_to_string(&dest).unwrap();
-        let loaded: HashMap<String, serde_json::Value> = serde_json::from_str(&content).unwrap();
-        assert!(loaded.contains_key("server-a"));
+        let loaded: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(loaded["servers"].get("server-a").is_some());
+    }
+
+    #[test]
+    fn import_preserves_managed_registry_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config.toml");
+        std::fs::write(
+            &config,
+            "[mcp_servers.imported]\ncommand = \"new\"\nargs = []\n",
+        )
+        .unwrap();
+        let dest = tmp.path().join("mcp-servers.json");
+        let existing = serde_json::json!({
+            "servers": {
+                "managed": {
+                    "command": "managed",
+                    "managed_origin": {
+                        "approval": {"commit": "abc", "config_digest": "digest"}
+                    }
+                }
+            },
+            "repositories": {"repo-1": {"alias": "managed-tools"}},
+            "future_registry_field": {"version": 2}
+        });
+        std::fs::write(&dest, serde_json::to_string(&existing).unwrap()).unwrap();
+        let mut detection = make_detection();
+        detection.config_path = Some(config);
+
+        let report = import_mcp_servers(&detection, &dest);
+
+        assert_eq!(
+            report.status,
+            moltis_import_core::report::ImportStatus::Success
+        );
+        let loaded: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&dest).unwrap()).unwrap();
+        assert_eq!(loaded["repositories"], existing["repositories"]);
+        assert_eq!(
+            loaded["future_registry_field"],
+            existing["future_registry_field"]
+        );
+        assert_eq!(
+            loaded["servers"]["managed"]["managed_origin"]["approval"],
+            existing["servers"]["managed"]["managed_origin"]["approval"]
+        );
+        assert_eq!(loaded["servers"]["imported"]["command"], "new");
     }
 
     #[test]

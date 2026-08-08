@@ -1,13 +1,20 @@
 use serde_json::json;
 
 use crate::{
-    BrowserService, ChatService, NoopBrowserService, ServiceResult,
-    interfaces::model_service_not_configured_error,
+    BrowserService, ChatService, McpService, NoopBrowserService, NoopMcpService, ServiceError,
+    ServiceResult, interfaces::model_service_not_configured_error,
 };
 
 struct SlowShutdownBrowserService;
 
 struct DefaultRefreshChatService;
+
+#[test]
+fn invalid_request_service_errors_keep_their_protocol_classification() {
+    let error: moltis_protocol::ErrorShape = ServiceError::invalid_request("assigned").into();
+    assert_eq!(error.code, moltis_protocol::error_codes::INVALID_REQUEST);
+    assert_eq!(error.message, "assigned");
+}
 
 #[async_trait::async_trait]
 impl ChatService for DefaultRefreshChatService {
@@ -50,6 +57,38 @@ impl ChatService for DefaultRefreshChatService {
     async fn full_context(&self, _params: serde_json::Value) -> ServiceResult {
         Ok(json!({}))
     }
+}
+
+#[tokio::test]
+#[allow(clippy::unwrap_used)]
+async fn noop_mcp_managed_reads_are_empty_and_writes_are_unavailable() {
+    let service = NoopMcpService;
+    assert_eq!(
+        service.repositories_list(json!({})).await.unwrap(),
+        json!({ "repositories": [] })
+    );
+    assert_eq!(
+        service.git_credentials_list(json!({})).await.unwrap(),
+        json!({ "credentials": [], "sshKeys": [], "sshTargets": [] })
+    );
+    let repository_error: moltis_protocol::ErrorShape = service
+        .repositories_install(json!({}))
+        .await
+        .unwrap_err()
+        .into();
+    assert_eq!(
+        repository_error.code,
+        moltis_protocol::error_codes::INVALID_REQUEST
+    );
+    let credential_error: moltis_protocol::ErrorShape = service
+        .git_credentials_create(json!({}))
+        .await
+        .unwrap_err()
+        .into();
+    assert_eq!(
+        credential_error.code,
+        moltis_protocol::error_codes::INVALID_REQUEST
+    );
 }
 
 #[async_trait::async_trait]

@@ -116,7 +116,7 @@ impl CredentialStore {
         Ok(store)
     }
 
-    /// Create a new store with vault support for encrypting environment variables.
+    /// Create a new store with vault support for encrypting managed secrets.
     #[cfg(feature = "vault")]
     pub async fn with_vault(
         pool: SqlitePool,
@@ -255,6 +255,21 @@ impl CredentialStore {
                 created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
                 updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY(key_id) REFERENCES ssh_keys(id)
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS git_https_credentials (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                host        TEXT    NOT NULL,
+                username    TEXT    NOT NULL,
+                token       TEXT    NOT NULL,
+                encrypted   INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(host, username)
             )",
         )
         .execute(&self.pool)
@@ -694,6 +709,9 @@ impl CredentialStore {
             .execute(&self.pool)
             .await?;
         sqlx::query("DELETE FROM ssh_keys")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM git_https_credentials")
             .execute(&self.pool)
             .await?;
         self.setup_complete.store(false, Ordering::Relaxed);

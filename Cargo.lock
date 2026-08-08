@@ -3822,7 +3822,6 @@ dependencies = [
  "gix-ignore",
  "gix-index",
  "gix-lock",
- "gix-mailmap",
  "gix-merge",
  "gix-negotiate",
  "gix-object",
@@ -3842,6 +3841,7 @@ dependencies = [
  "gix-submodule",
  "gix-tempfile",
  "gix-trace",
+ "gix-transport",
  "gix-traverse",
  "gix-url",
  "gix-utils",
@@ -3850,9 +3850,6 @@ dependencies = [
  "gix-worktree-state",
  "gix-worktree-stream",
  "nonempty",
- "parking_lot 0.12.5",
- "regex",
- "signal-hook",
  "smallvec",
  "thiserror 2.0.18",
 ]
@@ -4032,16 +4029,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc08e0fa1a91ff5f24affeab052f198056645e1de004910bde7b82b50ea5982a"
 dependencies = [
  "bstr",
- "gix-attributes",
  "gix-command",
  "gix-filter",
  "gix-fs",
  "gix-hash",
  "gix-imara-diff",
- "gix-index",
  "gix-object",
  "gix-path",
- "gix-pathspec",
  "gix-tempfile",
  "gix-trace",
  "gix-traverse",
@@ -4100,15 +4094,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af375693ad5333d0a2c66b4c5b2cbe9ccc38e34f8e8bf24e4ae42c12307fdc4f"
 dependencies = [
  "bytes",
- "bytesize",
  "crc32fast",
- "crossbeam-channel",
  "gix-path",
  "gix-trace",
  "gix-utils",
  "libc",
  "once_cell",
- "parking_lot 0.12.5",
  "prodash",
  "thiserror 2.0.18",
  "walkdir",
@@ -4248,18 +4239,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gix-mailmap"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "023d3a6561cbebe45b89e0764d48928ad970667076f16fa5889e6f86d8432086"
-dependencies = [
- "bstr",
- "gix-actor",
- "gix-date",
- "gix-error",
-]
-
-[[package]]
 name = "gix-merge"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4353,10 +4332,11 @@ dependencies = [
  "gix-hashtable",
  "gix-object",
  "gix-path",
+ "gix-tempfile",
  "memmap2",
+ "parking_lot 0.12.5",
  "smallvec",
  "thiserror 2.0.18",
- "uluru",
 ]
 
 [[package]]
@@ -4418,11 +4398,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa4bee82db63ec635996b96efae71cf467c155fa3f34a556184373224a26c4fd"
 dependencies = [
  "bstr",
+ "gix-credentials",
  "gix-date",
  "gix-features",
  "gix-hash",
+ "gix-lock",
+ "gix-negotiate",
+ "gix-object",
  "gix-ref",
+ "gix-refspec",
+ "gix-revwalk",
  "gix-shallow",
+ "gix-trace",
  "gix-transport",
  "gix-utils",
  "maybe-async",
@@ -4585,8 +4572,6 @@ dependencies = [
  "gix-fs",
  "libc",
  "parking_lot 0.12.5",
- "signal-hook",
- "signal-hook-registry",
  "tempfile",
 ]
 
@@ -4602,13 +4587,16 @@ version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ffd6a5c676b92d4ead5f5a2b2935024415dec69edc997b6090ca9cac010a3018"
 dependencies = [
+ "base64 0.22.1",
  "bstr",
  "gix-command",
+ "gix-credentials",
  "gix-features",
  "gix-packetline",
  "gix-quote",
  "gix-sec",
  "gix-url",
+ "reqwest 0.13.2",
  "thiserror 2.0.18",
 ]
 
@@ -5218,12 +5206,6 @@ name = "httpdate"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
-
-[[package]]
-name = "human_format"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eaec953f16e5bcf6b8a3cb3aa959b17e5577dbd2693e94554c462c08be22624b"
 
 [[package]]
 name = "hybrid-array"
@@ -7120,8 +7102,10 @@ dependencies = [
  "async-trait",
  "clap",
  "dotenvy",
+ "fs2",
  "moltis-acp",
  "moltis-agents",
+ "moltis-auth",
  "moltis-browser",
  "moltis-chat",
  "moltis-claude-import",
@@ -7130,6 +7114,7 @@ dependencies = [
  "moltis-config",
  "moltis-cron",
  "moltis-gateway",
+ "moltis-git-repositories",
  "moltis-hermes-import",
  "moltis-httpd",
  "moltis-import-core",
@@ -7154,6 +7139,7 @@ dependencies = [
  "rand 0.10.1",
  "reqwest 0.13.2",
  "secrecy 0.8.0",
+ "serde",
  "serde_json",
  "sqlx",
  "tempfile",
@@ -7614,8 +7600,10 @@ dependencies = [
  "moltis-cron",
  "moltis-discord",
  "moltis-external-agents",
+ "moltis-git-repositories",
  "moltis-hermes-import",
  "moltis-home-assistant",
+ "moltis-import-core",
  "moltis-matrix",
  "moltis-mcp",
  "moltis-mcp-agent-bridge",
@@ -7680,6 +7668,21 @@ dependencies = [
  "web-push",
  "webauthn-rs",
  "which 8.0.2",
+]
+
+[[package]]
+name = "moltis-git-repositories"
+version = "0.1.0"
+dependencies = [
+ "gix",
+ "metrics 0.24.3",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -7808,6 +7811,7 @@ dependencies = [
 name = "moltis-import-core"
 version = "0.1.0"
 dependencies = [
+ "fs2",
  "serde",
  "serde_json",
  "tempfile",
@@ -7844,18 +7848,22 @@ name = "moltis-mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "fs2",
  "futures",
  "mockito",
  "moltis-common",
  "moltis-config",
+ "moltis-git-repositories",
  "moltis-metrics",
  "moltis-oauth",
  "reqwest 0.13.2",
  "secrecy 0.8.0",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tokio-test",
  "tokio-util",
@@ -8114,6 +8122,7 @@ dependencies = [
  "json5",
  "moltis-common",
  "moltis-config",
+ "moltis-import-core",
  "moltis-oauth",
  "moltis-sessions",
  "notify-debouncer-full",
@@ -10064,8 +10073,6 @@ version = "31.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "962200e2d7d551451297d9fdce85138374019ada198e30ea9ede38034e27604c"
 dependencies = [
- "bytesize",
- "human_format",
  "parking_lot 0.12.5",
 ]
 
@@ -13740,15 +13747,6 @@ checksum = "470dbf6591da1b39d43c14523b2b469c86879a53e8b758c8e090a470fe7b1fbe"
 dependencies = [
  "rand 0.9.4",
  "web-time",
-]
-
-[[package]]
-name = "uluru"
-version = "3.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c8a2469e56e6e5095c82ccd3afb98dad95f7af7929aab6d8ba8d6e0f73657da"
-dependencies = [
- "arrayvec",
 ]
 
 [[package]]

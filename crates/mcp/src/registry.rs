@@ -1,7 +1,8 @@
 //! McpRegistry: persisted configuration of MCP servers (add/remove/enable/disable).
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -11,7 +12,10 @@ use {
     tracing::{debug, info},
 };
 
-use crate::error::{Context, Result};
+use crate::{
+    error::{Context, Result},
+    managed_repositories::{ManagedOrigin, ManagedRepository, ManagedRepositoryId},
+};
 
 /// Transport type for MCP server connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -58,6 +62,9 @@ pub struct McpServerConfig {
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
+    /// Working directory for stdio server processes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
     #[serde(
         default,
         skip_serializing_if = "HashMap::is_empty",
@@ -93,6 +100,9 @@ pub struct McpServerConfig {
     /// Custom display name for the server (shown in UI instead of technical ID).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// Immutable repository provenance for reconciled managed servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_origin: Option<ManagedOrigin>,
 }
 
 fn default_true() -> bool {
@@ -104,6 +114,7 @@ impl Default for McpServerConfig {
         Self {
             command: String::new(),
             args: Vec::new(),
+            cwd: None,
             env: HashMap::new(),
             enabled: true,
             request_timeout_secs: None,
@@ -112,6 +123,7 @@ impl Default for McpServerConfig {
             headers: HashMap::new(),
             oauth: None,
             display_name: None,
+            managed_origin: None,
         }
     }
 }
@@ -121,6 +133,8 @@ impl Default for McpServerConfig {
 pub struct McpRegistry {
     #[serde(default)]
     pub servers: HashMap<String, McpServerConfig>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub repositories: BTreeMap<ManagedRepositoryId, ManagedRepository>,
     /// File path for persistence (not serialized).
     #[serde(skip)]
     path: Option<PathBuf>,
@@ -144,8 +158,23 @@ impl McpRegistry {
 
         let data = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read MCP registry: {}", path.display()))?;
-        let mut registry: Self = serde_json::from_str(&data)
+        let value: serde_json::Value = serde_json::from_str(&data)
             .with_context(|| format!("failed to parse MCP registry: {}", path.display()))?;
+        let is_structured = ["servers", "repositories"]
+            .into_iter()
+            .filter_map(|field| value.get(field))
+            .any(|section| !is_legacy_server_config(section));
+        let mut registry = if is_structured {
+            serde_json::from_value::<Self>(value)
+                .with_context(|| format!("failed to parse MCP registry: {}", path.display()))?
+        } else {
+            Self {
+                servers: serde_json::from_value(value)
+                    .with_context(|| format!("failed to parse MCP registry: {}", path.display()))?,
+                repositories: BTreeMap::new(),
+                path: None,
+            }
+        };
         registry.path = Some(path.to_path_buf());
         Ok(registry)
     }
@@ -154,16 +183,43 @@ impl McpRegistry {
     pub fn save(&self) -> Result<()> {
         let path = self.path.as_ref().context("no path set for MCP registry")?;
         let data = serde_json::to_string_pretty(self)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)?;
+
+        let mut temp_file = tempfile::NamedTempFile::new_in(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            temp_file
+                .as_file()
+                .set_permissions(std::fs::Permissions::from_mode(0o600))?;
         }
-        std::fs::write(path, data)?;
+        temp_file.write_all(data.as_bytes())?;
+        temp_file.as_file().sync_all()?;
+        temp_file.persist(path).map_err(|error| error.error)?;
         info!(path = %path.display(), "saved MCP registry");
         Ok(())
     }
 
     /// Add or update a server configuration.
     pub fn add(&mut self, name: String, config: McpServerConfig) -> Result<()> {
+        if config.managed_origin.is_some() {
+            return Err(crate::Error::message(
+                "managed MCP servers must be changed through repository reconciliation",
+            ));
+        }
+        if self
+            .servers
+            .get(&name)
+            .is_some_and(|existing| existing.managed_origin.is_some())
+        {
+            return Err(crate::Error::message(
+                "managed MCP server structure cannot be changed manually",
+            ));
+        }
         info!(server = %name, command = %config.command, "adding MCP server");
         self.servers.insert(name, config);
         self.save()
@@ -171,6 +227,15 @@ impl McpRegistry {
 
     /// Remove a server configuration.
     pub fn remove(&mut self, name: &str) -> Result<bool> {
+        if self
+            .servers
+            .get(name)
+            .is_some_and(|config| config.managed_origin.is_some())
+        {
+            return Err(crate::Error::message(
+                "managed MCP servers must be removed with their repository",
+            ));
+        }
         let removed = self.servers.remove(name).is_some();
         if removed {
             info!(server = %name, "removed MCP server");
@@ -181,6 +246,32 @@ impl McpRegistry {
 
     /// Enable a server.
     pub fn enable(&mut self, name: &str) -> Result<bool> {
+        if let Some((config, origin)) = self.servers.get(name).and_then(|config| {
+            config
+                .managed_origin
+                .as_ref()
+                .map(|origin| (config, origin))
+        }) {
+            if let Some(reason) = crate::managed_repositories::managed_approval_block_reason(config)
+            {
+                return Err(crate::Error::message(format!(
+                    "managed MCP server cannot be enabled: {reason}"
+                )));
+            }
+            let active_matches = self
+                .repositories
+                .get(&origin.repository_id)
+                .and_then(|repository| repository.active.as_ref())
+                .is_some_and(|active| {
+                    active.commit == origin.discovered_commit
+                        && crate::managed_repositories::managed_config_is_current(config, active)
+                });
+            if !active_matches || !origin.is_currently_approved() {
+                return Err(crate::Error::message(
+                    "managed MCP server is not approved for its current commit and config",
+                ));
+            }
+        }
         if let Some(cfg) = self.servers.get_mut(name) {
             cfg.enabled = true;
             self.save()?;
@@ -201,6 +292,52 @@ impl McpRegistry {
         }
     }
 
+    /// Update user-controlled presentation overlays without changing managed structure.
+    pub fn update_managed_overlays(
+        &mut self,
+        name: &str,
+        display_name: Option<String>,
+        request_timeout_secs: Option<u64>,
+    ) -> Result<bool> {
+        let Some(existing) = self.servers.get(name) else {
+            return Ok(false);
+        };
+        if existing.managed_origin.is_none() {
+            return Err(crate::Error::message(format!(
+                "MCP server '{name}' is not managed"
+            )));
+        }
+        let mut staged = self.clone();
+        let config = staged.servers.get_mut(name).ok_or_else(|| {
+            crate::Error::message(format!("managed MCP server '{name}' not found"))
+        })?;
+        config.display_name = display_name;
+        config.request_timeout_secs = request_timeout_secs;
+        self.commit_staged(staged)?;
+        Ok(true)
+    }
+
+    /// Convert one managed entry into a manual server before repository removal.
+    pub fn detach_managed_server(&mut self, name: &str) -> Result<bool> {
+        let Some(origin) = self
+            .servers
+            .get(name)
+            .and_then(|config| config.managed_origin.clone())
+        else {
+            return Ok(false);
+        };
+        let mut staged = self.clone();
+        if let Some(config) = staged.servers.get_mut(name) {
+            config.managed_origin = None;
+            config.enabled = false;
+        }
+        if let Some(repository) = staged.repositories.get_mut(&origin.repository_id) {
+            repository.runtime_servers.remove(&origin.identity);
+        }
+        self.commit_staged(staged)?;
+        Ok(true)
+    }
+
     /// List all server names.
     pub fn list(&self) -> Vec<&str> {
         self.servers.keys().map(String::as_str).collect()
@@ -211,6 +348,12 @@ impl McpRegistry {
         self.servers.get(name)
     }
 
+    pub(crate) fn commit_staged(&mut self, staged: Self) -> Result<()> {
+        staged.save()?;
+        *self = staged;
+        Ok(())
+    }
+
     /// Get all enabled server configs.
     pub fn enabled_servers(&self) -> Vec<(&str, &McpServerConfig)> {
         self.servers
@@ -219,6 +362,27 @@ impl McpRegistry {
             .map(|(name, cfg)| (name.as_str(), cfg))
             .collect()
     }
+}
+
+fn is_legacy_server_config(value: &serde_json::Value) -> bool {
+    const FIELDS: &[&str] = &[
+        "command",
+        "args",
+        "cwd",
+        "env",
+        "enabled",
+        "request_timeout_secs",
+        "transport",
+        "url",
+        "headers",
+        "oauth",
+        "display_name",
+        "managed_origin",
+    ];
+    value
+        .as_object()
+        .is_some_and(|object| object.keys().any(|key| FIELDS.contains(&key.as_str())))
+        && serde_json::from_value::<McpServerConfig>(value.clone()).is_ok()
 }
 
 fn serialize_secret_string_map<S: serde::Serializer>(
@@ -331,6 +495,118 @@ mod tests {
         let loaded = McpRegistry::load(&path).unwrap();
         assert_eq!(loaded.servers.len(), 1);
         assert_eq!(loaded.servers["test"].env["FOO"].expose_secret(), "bar");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(value["servers"].get("test").is_some());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn test_load_legacy_flat_registry_and_save_migrates_without_data_loss() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(
+            &path,
+            r#"{"legacy":{"command":"echo","args":["hello"],"enabled":false}}"#,
+        )
+        .unwrap();
+
+        let registry = McpRegistry::load(&path).unwrap();
+        assert_eq!(registry.servers["legacy"].command, "echo");
+        assert_eq!(registry.servers["legacy"].args, ["hello"]);
+        assert!(!registry.servers["legacy"].enabled);
+        registry.save().unwrap();
+
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["servers"]["legacy"]["command"], "echo");
+        assert!(value.get("legacy").is_none());
+    }
+
+    #[test]
+    fn test_load_legacy_flat_registry_with_reserved_server_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(
+            &path,
+            r#"{"servers":{"command":"first"},"repositories":{"command":"second"}}"#,
+        )
+        .unwrap();
+
+        let registry = McpRegistry::load(&path).unwrap();
+        assert_eq!(registry.servers["servers"].command, "first");
+        assert_eq!(registry.servers["repositories"].command, "second");
+        assert!(registry.repositories.is_empty());
+
+        registry.save().unwrap();
+        let reloaded = McpRegistry::load(&path).unwrap();
+        assert_eq!(reloaded.servers["servers"].command, "first");
+        assert_eq!(reloaded.servers["repositories"].command, "second");
+        assert!(reloaded.repositories.is_empty());
+    }
+
+    #[test]
+    fn test_load_canonical_structured_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(
+            &path,
+            r#"{"servers":{"command":{"command":"echo"}},"repositories":{}}"#,
+        )
+        .unwrap();
+
+        let registry = McpRegistry::load(&path).unwrap();
+        assert_eq!(registry.servers.len(), 1);
+        assert_eq!(registry.servers["command"].command, "echo");
+        assert!(registry.repositories.is_empty());
+    }
+
+    #[test]
+    fn test_load_rejects_malformed_structured_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, r#"{"servers":{"broken":{"command":7}}}"#).unwrap();
+
+        let error = McpRegistry::load(&path).unwrap_err();
+        assert!(error.to_string().contains("failed to parse MCP registry"));
+    }
+
+    #[test]
+    fn test_load_structured_registry_without_servers_is_not_legacy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, r#"{"repositories":{}}"#).unwrap();
+
+        let registry = McpRegistry::load(&path).unwrap();
+        assert!(registry.servers.is_empty());
+        assert!(registry.repositories.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_replaces_registry_with_mode_0600() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, "old contents").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let old_inode = std::fs::metadata(&path).unwrap().ino();
+
+        let registry = McpRegistry {
+            servers: HashMap::from([("test".into(), McpServerConfig {
+                command: "echo".into(),
+                ..Default::default()
+            })]),
+            repositories: BTreeMap::new(),
+            path: Some(path.clone()),
+        };
+        registry.save().unwrap();
+
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert_ne!(metadata.ino(), old_inode);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     }
 
     #[test]

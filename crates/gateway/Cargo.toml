@@ -36,8 +36,10 @@ moltis-config           = { workspace = true }
 moltis-cron             = { workspace = true }
 moltis-discord          = { optional = true, workspace = true }
 moltis-external-agents  = { workspace = true }
+moltis-git-repositories = { workspace = true }
 moltis-hermes-import    = { optional = true, workspace = true }
 moltis-home-assistant   = { optional = true, workspace = true }
+moltis-import-core      = { workspace = true }
 moltis-matrix           = { optional = true, workspace = true }
 moltis-mcp              = { workspace = true }
 moltis-mcp-agent-bridge = { workspace = true }
@@ -186,6 +188,7 @@ metrics = [
   "dep:moltis-metrics",
   "moltis-chat/metrics",
   "moltis-discord?/metrics",
+  "moltis-git-repositories/metrics",
   "moltis-matrix?/metrics",
   "moltis-metrics/sqlite",
   "moltis-msteams?/metrics",

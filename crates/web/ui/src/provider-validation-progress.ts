@@ -1,4 +1,5 @@
 import { onEvent } from "./events";
+import { randomId } from "./random-id";
 
 export const VALIDATION_HINT_TEXT = "";
 export const VALIDATION_HINT_RUNNING_TEXT = "Discovering models...";
@@ -74,8 +75,7 @@ export function clampValidationProgressPercent(value: number): number {
 }
 
 export function createValidationRequestId(): string {
-	const nonce = Math.random().toString(36).slice(2, 10);
-	return `validate-${Date.now()}-${nonce}`;
+	return `validate-${randomId()}`;
 }
 
 export function subscribeValidationProgress(

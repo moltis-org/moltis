@@ -1,0 +1,1 @@
+{ "mcpServers": { "unrelated": { "command": "must-not-be-discovered" } } }

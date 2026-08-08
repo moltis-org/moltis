@@ -42,6 +42,7 @@ mod doctor_commands;
 mod hooks_commands;
 #[cfg(feature = "openclaw-import")]
 mod import_commands;
+mod mcp_commands;
 mod memory_commands;
 #[cfg(feature = "netbird")]
 mod netbird_commands;
@@ -201,6 +202,11 @@ enum Commands {
     Memory {
         #[command(subcommand)]
         action: memory_commands::MemoryAction,
+    },
+    /// MCP server and managed repository operations.
+    Mcp {
+        #[command(subcommand)]
+        action: mcp_commands::McpAction,
     },
     /// Manage remote nodes (generate-token, add, remove, list).
     Node {
@@ -590,6 +596,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Data { action }) => data_commands::handle_data(action).await,
         Some(Commands::Db { action }) => db_commands::handle_db(action).await,
         Some(Commands::Memory { action }) => memory_commands::handle_memory(action).await,
+        Some(Commands::Mcp { action }) => mcp_commands::handle_mcp(action, data_dir).await,
         Some(Commands::Node { action }) => node_commands::handle_node(action).await,
         Some(Commands::Service { action }) => service_commands::handle_service(action),
         #[cfg(feature = "openclaw-import")]

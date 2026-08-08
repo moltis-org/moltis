@@ -1,0 +1,1 @@
+{ "mcpServers": { "plugin-2": { "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/server.js"] } } }

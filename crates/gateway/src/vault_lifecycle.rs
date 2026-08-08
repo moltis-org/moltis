@@ -164,6 +164,16 @@ pub async fn run_vault_env_migration(credential_store: &CredentialStore) {
                 tracing::warn!(%error, "ssh key migration failed");
             },
         }
+        let _git_credential_mutation = moltis_auth::git_credential_mutation_guard().await;
+        match moltis_vault::migration::migrate_git_https_credentials(vault, pool).await {
+            Ok(n) if n > 0 => {
+                tracing::info!(count = n, "migrated Git HTTPS credentials to encrypted");
+            },
+            Ok(_) => {},
+            Err(error) => {
+                tracing::warn!(%error, "Git HTTPS credential migration failed");
+            },
+        }
 
         if let Some(config_dir) = moltis_config::config_dir() {
             let provider_keys_path = config_dir.join("provider_keys.json");
@@ -190,6 +200,7 @@ pub async fn run_vault_env_migration(credential_store: &CredentialStore) {
 pub struct VaultDisableReport {
     pub env_vars: usize,
     pub ssh_keys: usize,
+    pub git_https_credentials: usize,
     pub channels: usize,
     pub webhooks: usize,
     pub provider_keys: bool,
@@ -211,6 +222,7 @@ pub async fn disable_vault_and_decrypt_all(
     let report = VaultDisableReport {
         env_vars: decrypt_env_vars(vault, pool).await?,
         ssh_keys: decrypt_ssh_keys(vault, pool).await?,
+        git_https_credentials: decrypt_git_https_credentials(vault, pool).await?,
         channels: decrypt_channels(vault, pool).await?,
         webhooks: decrypt_webhooks(vault, pool).await?,
         provider_keys: decrypt_provider_keys(vault).await?,
@@ -266,6 +278,30 @@ async fn decrypt_ssh_keys(
             .bind(id)
             .execute(pool)
             .await?;
+    }
+    Ok(count)
+}
+
+async fn decrypt_git_https_credentials(
+    vault: &moltis_vault::Vault,
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<usize> {
+    let rows: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, token FROM git_https_credentials WHERE encrypted = 1")
+            .fetch_all(pool)
+            .await?;
+    let mut count = 0;
+    for (id, ciphertext) in rows {
+        let plaintext = vault
+            .decrypt_string(&ciphertext, &format!("git-https-credential:{id}"))
+            .await?;
+        let updated = sqlx::query("UPDATE git_https_credentials SET token = ?, encrypted = 0, updated_at = datetime('now') WHERE id = ? AND token = ? AND encrypted = 1")
+            .bind(plaintext)
+            .bind(id)
+            .bind(&ciphertext)
+            .execute(pool)
+            .await?;
+        count += usize::try_from(updated.rows_affected()).unwrap_or_default();
     }
     Ok(count)
 }
@@ -568,10 +604,13 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use {
-        crate::vault_lifecycle::{
-            AutoUnsealResult, AutoUnsealSecret, AutoUnsealSourceKind, auto_unseal_with_secret,
-            disable_vault_and_decrypt_all, is_vault_encryption_runtime_enabled,
-            set_vault_encryption_runtime_enabled,
+        crate::{
+            auth::CredentialStore,
+            vault_lifecycle::{
+                AutoUnsealResult, AutoUnsealSecret, AutoUnsealSourceKind, auto_unseal_with_secret,
+                disable_vault_and_decrypt_all, is_vault_encryption_runtime_enabled,
+                run_vault_env_migration, set_vault_encryption_runtime_enabled,
+            },
         },
         secrecy::Secret,
         sqlx::SqlitePool,
@@ -685,6 +724,47 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial(vault_runtime)]
+    async fn vault_unseal_migration_encrypts_git_https_credentials_with_id_aad() {
+        let _runtime_flag = VaultRuntimeFlagGuard::enabled();
+        let config_dir = tempfile::tempdir().unwrap();
+        moltis_config::set_config_dir(config_dir.path().to_path_buf());
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        moltis_vault::run_migrations(&pool).await.unwrap();
+        let vault = Arc::new(moltis_vault::Vault::new(pool.clone()).await.unwrap());
+        vault.initialize(&test_password()).await.unwrap();
+        let store = CredentialStore::with_vault(
+            pool.clone(),
+            &moltis_config::AuthConfig::default(),
+            Some(Arc::clone(&vault)),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO git_https_credentials (id, host, username, token, encrypted) VALUES (23, 'git.example.com', 'deploy', 'plain-token', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run_vault_env_migration(&store).await;
+
+        let row: (String, i64) =
+            sqlx::query_as("SELECT token, encrypted FROM git_https_credentials WHERE id = 23")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.1, 1);
+        assert_eq!(
+            vault
+                .decrypt_string(&row.0, "git-https-credential:23")
+                .await
+                .unwrap(),
+            "plain-token"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(vault_runtime)]
     async fn disable_vault_decrypts_stored_secrets_before_flipping_config() {
         let _runtime_flag = VaultRuntimeFlagGuard::enabled();
         let config_dir = tempfile::tempdir().unwrap();
@@ -707,6 +787,16 @@ mod tests {
 
         let ssh_ciphertext = vault
             .encrypt_string("private-key", "ssh-key:deploy")
+            .await
+            .unwrap();
+
+        let git_credential_ciphertext = vault
+            .encrypt_string("git-token", "git-https-credential:7")
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO git_https_credentials (id, token, encrypted, updated_at) VALUES (7, ?, 1, datetime('now'))")
+            .bind(git_credential_ciphertext)
+            .execute(&pool)
             .await
             .unwrap();
         sqlx::query("INSERT INTO ssh_keys (id, name, private_key, encrypted, updated_at) VALUES (1, 'deploy', ?, 1, datetime('now'))")
@@ -749,6 +839,7 @@ mod tests {
         let report = disable_vault_and_decrypt_all(&vault, &pool).await.unwrap();
         assert_eq!(report.env_vars, 1);
         assert_eq!(report.ssh_keys, 1);
+        assert_eq!(report.git_https_credentials, 1);
         assert_eq!(report.channels, 1);
         assert_eq!(report.webhooks, 1);
 
@@ -758,6 +849,12 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(env, ("env-secret".to_owned(), 0));
+        let git_credential: (String, i64) =
+            sqlx::query_as("SELECT token, encrypted FROM git_https_credentials WHERE id = 7")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(git_credential, ("git-token".to_owned(), 0));
         let channel: (String,) =
             sqlx::query_as("SELECT config FROM channels WHERE account_id = 'main'")
                 .fetch_one(&pool)
@@ -808,6 +905,7 @@ mod tests {
         for sql in [
             "CREATE TABLE env_variables (id INTEGER PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL, encrypted INTEGER NOT NULL DEFAULT 0, updated_at TEXT)",
             "CREATE TABLE ssh_keys (id INTEGER PRIMARY KEY, name TEXT NOT NULL, private_key TEXT NOT NULL, encrypted INTEGER NOT NULL DEFAULT 0, updated_at TEXT)",
+            "CREATE TABLE git_https_credentials (id INTEGER PRIMARY KEY, token TEXT NOT NULL, encrypted INTEGER NOT NULL DEFAULT 0, updated_at TEXT)",
             "CREATE TABLE channels (channel_type TEXT NOT NULL, account_id TEXT NOT NULL, config TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (channel_type, account_id))",
             "CREATE TABLE webhooks (id INTEGER PRIMARY KEY, auth_mode TEXT NOT NULL, auth_config_json TEXT, source_profile TEXT NOT NULL, source_config_json TEXT, updated_at TEXT)",
         ] {

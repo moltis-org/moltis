@@ -354,12 +354,16 @@ pub async fn prepare_gateway_core_with_profile(
     services.provider_setup =
         Arc::clone(&provider_setup_service) as Arc<dyn crate::services::ProviderSetupService>;
 
+    let data_dir = data_dir.unwrap_or_else(moltis_config::data_dir);
+    let managed_repository_lock = moltis_mcp::ManagedRepositoryLock::try_acquire(&data_dir)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+
     // Wire live MCP service.
     let mcp_configured_count;
     let live_mcp: Arc<crate::mcp_service::LiveMcpService>;
     {
-        let mcp_registry_path = moltis_config::data_dir().join("mcp-servers.json");
-        let mcp_reg = moltis_mcp::McpRegistry::load(&mcp_registry_path).unwrap_or_default();
+        let mcp_registry_path = data_dir.join("mcp-servers.json");
+        let mcp_reg = moltis_mcp::McpRegistry::load(&mcp_registry_path)?;
         let mut merged = mcp_reg;
         for (name, entry) in &config.mcp.servers {
             if !merged.servers.contains_key(name.as_str()) {
@@ -385,6 +389,7 @@ pub async fn prepare_gateway_core_with_profile(
                     .insert(name.to_string(), moltis_mcp::McpServerConfig {
                         command: entry.command.clone(),
                         args: entry.args.clone(),
+                        cwd: None,
                         env: entry.env.clone(),
                         enabled: entry.enabled,
                         request_timeout_secs: entry.request_timeout_secs,
@@ -397,6 +402,7 @@ pub async fn prepare_gateway_core_with_profile(
                             .collect(),
                         oauth,
                         display_name: entry.display_name.clone(),
+                        managed_origin: None,
                     });
             }
         }
@@ -410,13 +416,14 @@ pub async fn prepare_gateway_core_with_profile(
             Arc::clone(&mcp_manager),
             config_env_overrides.clone(),
             None,
+            data_dir.clone(),
+            managed_repository_lock,
         ));
         services.mcp = live_mcp.clone() as Arc<dyn crate::services::McpService>;
     }
     startup_mem_probe.checkpoint("services.core_wired");
 
     // Initialize data directory and SQLite database.
-    let data_dir = data_dir.unwrap_or_else(moltis_config::data_dir);
     std::fs::create_dir_all(&data_dir).unwrap_or_else(|e| {
         panic!(
             "failed to create data directory {}: {e}",

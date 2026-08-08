@@ -34,6 +34,10 @@ pub enum Error {
     /// SSH key/target validation error.
     #[error("{0}")]
     Ssh(String),
+
+    /// HTTPS Git credential validation error.
+    #[error("{0}")]
+    GitCredential(String),
 }
 
 /// Crate-level result alias.

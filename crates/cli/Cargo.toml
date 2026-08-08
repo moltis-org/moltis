@@ -71,8 +71,10 @@ anyhow                  = { workspace = true }
 async-trait             = { workspace = true }
 clap                    = { workspace = true }
 dotenvy                 = { workspace = true }
+fs2                     = { workspace = true }
 moltis-acp              = { optional = true, workspace = true }
 moltis-agents           = { workspace = true }
+moltis-auth             = { workspace = true }
 moltis-browser          = { workspace = true }
 moltis-chat             = { optional = true, workspace = true }
 moltis-claude-import    = { optional = true, workspace = true }
@@ -81,6 +83,7 @@ moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
 moltis-cron             = { workspace = true }
 moltis-gateway          = { workspace = true }
+moltis-git-repositories = { workspace = true }
 moltis-hermes-import    = { optional = true, workspace = true }
 moltis-httpd            = { workspace = true }
 moltis-import-core      = { workspace = true }
@@ -105,8 +108,10 @@ open                    = { workspace = true }
 rand                    = { workspace = true }
 reqwest                 = { workspace = true }
 secrecy                 = { workspace = true }
+serde                   = { workspace = true }
 serde_json              = { workspace = true }
 sqlx                    = { workspace = true }
+tempfile                = { workspace = true }
 time                    = { workspace = true }
 tokio                   = { workspace = true }
 tracing                 = { workspace = true }
@@ -116,9 +121,6 @@ which                   = { workspace = true }
 
 [target.'cfg(all(not(target_os = "windows"), not(all(target_os = "linux", target_arch = "aarch64"))))'.dependencies]
 tikv-jemallocator = { optional = true, workspace = true }
-
-[dev-dependencies]
-tempfile = { workspace = true }
 
 [features]
 acp = [
@@ -255,7 +257,7 @@ local-llm-metal = ["local-llm", "moltis-gateway/local-llm-metal"]
 local-llm-vulkan = ["local-llm", "moltis-gateway/local-llm-vulkan"]
 matrix = ["moltis-httpd/matrix"]
 mdns = ["moltis-gateway/mdns"]
-metrics = ["moltis-httpd/metrics", "moltis-web?/metrics"]
+metrics = ["moltis-git-repositories/metrics", "moltis-httpd/metrics", "moltis-web?/metrics"]
 msteams = ["moltis-httpd/msteams"]
 netbird = ["moltis-httpd/netbird", "moltis-web?/netbird"]
 ngrok = ["moltis-httpd/ngrok", "moltis-web?/ngrok"]
