@@ -739,15 +739,8 @@ async fn test_docker_list_files_falls_back_when_host_mount_is_inaccessible() {
         std::fs::set_permissions(&fake_cli, permissions).unwrap();
     }
 
-    let host_data_dir = temp_dir.path().join("host-only-data");
-    std::fs::write(&host_data_dir, "not a directory").unwrap();
-    let inaccessible_host_root = host_data_dir.join("notes");
-    assert!(
-        file_system::native_host_list_files(&inaccessible_host_root.display().to_string())
-            .await
-            .is_err(),
-        "a path below a regular file must fail instead of returning an empty host listing"
-    );
+    let host_data_dir = temp_dir.path().join("missing-host-data");
+    assert!(!host_data_dir.exists());
     let cli: &'static str = Box::leak(fake_cli.display().to_string().into_boxed_str());
     let docker = DockerSandbox::with_cli(
         SandboxConfig {

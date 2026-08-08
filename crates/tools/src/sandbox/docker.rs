@@ -763,13 +763,10 @@ impl Sandbox for DockerSandbox {
             return oci_container_read_file(self.cli, &container_name, file_path, max_bytes).await;
         };
 
-        let host_result = native_host_read_file(
-            host_path
-                .to_str()
-                .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
-            max_bytes,
-        )
-        .await;
+        let host_result = match host_path.to_str() {
+            Some(host_path) => native_host_read_file(host_path, max_bytes).await,
+            None => Err(Error::message("mounted host path contains invalid UTF-8")),
+        };
         match host_result {
             Ok(result @ (SandboxReadResult::Ok(_) | SandboxReadResult::TooLarge(_))) => {
                 return Ok(result);
@@ -803,13 +800,10 @@ impl Sandbox for DockerSandbox {
         content: &[u8],
     ) -> Result<Option<serde_json::Value>> {
         if let Some(host_path) = self.mounted_host_path(id, file_path) {
-            let host_result = native_host_write_file(
-                host_path
-                    .to_str()
-                    .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
-                content,
-            )
-            .await;
+            let host_result = match host_path.to_str() {
+                Some(host_path) => native_host_write_file(host_path, content).await,
+                None => Err(Error::message("mounted host path contains invalid UTF-8")),
+            };
             match host_result {
                 Ok(payload) => return Ok(payload),
                 Err(error) => {
@@ -829,12 +823,15 @@ impl Sandbox for DockerSandbox {
 
     async fn list_files(&self, id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
         if let Some(host_path) = self.mounted_host_path(id, root) {
-            let host_result = native_host_list_files(
-                host_path
-                    .to_str()
-                    .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
-            )
-            .await;
+            let host_result = match host_path.to_str() {
+                Some(host_path) => match tokio::fs::symlink_metadata(host_path).await {
+                    Ok(_) => native_host_list_files(host_path).await,
+                    Err(error) => Err(Error::message(format!(
+                        "failed to inspect mounted host path: {error}"
+                    ))),
+                },
+                None => Err(Error::message("mounted host path contains invalid UTF-8")),
+            };
             match host_result {
                 Ok(host_files) => {
                     return remap_host_list_result_to_guest(root, &host_path, host_files);
