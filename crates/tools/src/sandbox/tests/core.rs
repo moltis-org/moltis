@@ -745,7 +745,7 @@ async fn test_docker_list_files_falls_back_when_host_mount_is_inaccessible() {
     let docker = DockerSandbox::with_cli(
         SandboxConfig {
             workspace_mount: WorkspaceMount::Rw,
-            host_data_dir: Some(host_data_dir),
+            host_data_dir: Some(host_data_dir.clone()),
             ..Default::default()
         },
         cli,
@@ -755,6 +755,21 @@ async fn test_docker_list_files_falls_back_when_host_mount_is_inaccessible() {
         key: "test-docker-list-fallback".into(),
     };
     let guest_root = moltis_config::data_dir().join("notes");
+
+    let files = docker
+        .list_files(&id, &guest_root.display().to_string())
+        .await
+        .unwrap();
+
+    assert_eq!(files.files, vec!["/container/listed.txt"]);
+    assert!(!files.truncated);
+
+    std::fs::create_dir_all(&host_data_dir).unwrap();
+    std::os::unix::fs::symlink(
+        temp_dir.path().join("missing-target"),
+        host_data_dir.join("notes"),
+    )
+    .unwrap();
 
     let files = docker
         .list_files(&id, &guest_root.display().to_string())

@@ -32,8 +32,9 @@ use {
         exec::{ExecOpts, ExecResult},
         sandbox::file_system::{
             SandboxListFilesResult, SandboxReadResult, native_host_list_files,
-            native_host_read_file, native_host_write_file, oci_container_list_files,
-            oci_container_read_file, oci_container_write_file, remap_host_list_result_to_guest,
+            native_host_list_files_strict, native_host_read_file, native_host_write_file,
+            oci_container_list_files, oci_container_read_file, oci_container_write_file,
+            remap_host_list_result_to_guest,
         },
     },
 };
@@ -824,12 +825,7 @@ impl Sandbox for DockerSandbox {
     async fn list_files(&self, id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
         if let Some(host_path) = self.mounted_host_path(id, root) {
             let host_result = match host_path.to_str() {
-                Some(host_path) => match tokio::fs::symlink_metadata(host_path).await {
-                    Ok(_) => native_host_list_files(host_path).await,
-                    Err(error) => Err(Error::message(format!(
-                        "failed to inspect mounted host path: {error}"
-                    ))),
-                },
+                Some(host_path) => native_host_list_files_strict(host_path).await,
                 None => Err(Error::message("mounted host path contains invalid UTF-8")),
             };
             match host_result {

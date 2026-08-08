@@ -902,11 +902,37 @@ pub async fn native_host_write_file(file_path: &str, content: &[u8]) -> Result<O
 /// Native host-backed file listing implementation for sandbox backends whose
 /// paths are just host paths.
 pub async fn native_host_list_files(root: &str) -> Result<SandboxListFilesResult> {
+    native_host_list_files_with_behavior(root, MissingRootBehavior::ReturnEmpty).await
+}
+
+pub(crate) async fn native_host_list_files_strict(root: &str) -> Result<SandboxListFilesResult> {
+    native_host_list_files_with_behavior(root, MissingRootBehavior::ReturnError).await
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MissingRootBehavior {
+    ReturnEmpty,
+    ReturnError,
+}
+
+async fn native_host_list_files_with_behavior(
+    root: &str,
+    missing_root_behavior: MissingRootBehavior,
+) -> Result<SandboxListFilesResult> {
     let root = PathBuf::from(root);
     tokio::task::spawn_blocking(move || -> Result<SandboxListFilesResult> {
         match std::fs::symlink_metadata(&root) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
+            Ok(metadata)
+                if metadata.file_type().is_symlink()
+                    && missing_root_behavior == MissingRootBehavior::ReturnEmpty =>
+            {
                 return Ok(SandboxListFilesResult::complete(Vec::new()));
+            },
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::message(format!(
+                    "sandbox list_files '{}' failed: root is a symlink",
+                    root.display()
+                )));
             },
             Ok(metadata) if metadata.is_file() => {
                 return Ok(SandboxListFilesResult::complete(vec![
@@ -914,7 +940,10 @@ pub async fn native_host_list_files(root: &str) -> Result<SandboxListFilesResult
                 ]));
             },
             Ok(_) => {},
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound
+                    && missing_root_behavior == MissingRootBehavior::ReturnEmpty =>
+            {
                 return Ok(SandboxListFilesResult::complete(Vec::new()));
             },
             Err(error) => {
@@ -925,6 +954,7 @@ pub async fn native_host_list_files(root: &str) -> Result<SandboxListFilesResult
             },
         }
 
+        let root_path = root.clone();
         let mut stack = vec![root];
         let mut files = Vec::new();
 
@@ -932,7 +962,10 @@ pub async fn native_host_list_files(root: &str) -> Result<SandboxListFilesResult
             let entries = match std::fs::read_dir(&dir) {
                 Ok(entries) => entries,
                 Err(error) => {
-                    if error.kind() == io::ErrorKind::NotFound {
+                    if error.kind() == io::ErrorKind::NotFound
+                        && (dir != root_path
+                            || missing_root_behavior == MissingRootBehavior::ReturnEmpty)
+                    {
                         continue;
                     }
                     return Err(Error::message(format!(
