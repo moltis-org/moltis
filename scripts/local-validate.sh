@@ -319,6 +319,13 @@ build_targeted_rust_test_cmd() {
       # Nested source test modules do not map to Cargo --test targets, and a
       # basename such as `mod` is not a reliable nextest filter.
       commands+=("$base_cmd")
+    elif [[ "$(basename "$file")" == *_tests.rs ]]; then
+      # Sibling test files are commonly wired under their production module,
+      # e.g. connectors_tests.rs becomes connectors::tests rather than a
+      # connectors_tests module.
+      local filter_name
+      filter_name="$(basename "$file" _tests.rs)"
+      commands+=("$base_cmd $filter_name")
     elif grep -Eq '#\[(tokio::)?test\]' "$file" 2>/dev/null; then
       local filter_name
       filter_name="$(basename "$file" .rs)"
