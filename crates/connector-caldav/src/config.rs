@@ -42,28 +42,43 @@ impl fmt::Debug for CalDavAccountConfig {
 
 impl CalDavAccountConfig {
     pub fn validate(&self) -> Result<Url> {
-        if self.server_url.trim().is_empty() {
-            return Err(CalDavConnectorError::AccountConfig(
-                "server_url must not be empty",
-            ));
-        }
-        if self.username.trim().is_empty() {
-            return Err(CalDavConnectorError::AccountConfig(
-                "username must not be empty",
-            ));
-        }
         if self.password.expose_secret().is_empty() {
             return Err(CalDavConnectorError::AccountConfig(
                 "password must not be empty",
             ));
         }
-        if !(1..=300).contains(&self.timeout_seconds) {
+        Self::validate_non_secret_fields(
+            &self.server_url,
+            &self.username,
+            self.timeout_seconds,
+            self.allow_insecure_http,
+        )
+    }
+
+    /// Validates account fields without requiring access to the password.
+    pub fn validate_non_secret_fields(
+        server_url: &str,
+        username: &str,
+        timeout_seconds: u64,
+        allow_insecure_http: bool,
+    ) -> Result<Url> {
+        if server_url.trim().is_empty() {
+            return Err(CalDavConnectorError::AccountConfig(
+                "server_url must not be empty",
+            ));
+        }
+        if username.trim().is_empty() {
+            return Err(CalDavConnectorError::AccountConfig(
+                "username must not be empty",
+            ));
+        }
+        if !(1..=300).contains(&timeout_seconds) {
             return Err(CalDavConnectorError::AccountConfig(
                 "timeout_seconds must be between 1 and 300",
             ));
         }
 
-        let url = Url::parse(&self.server_url)
+        let url = Url::parse(server_url)
             .map_err(|_| CalDavConnectorError::AccountConfig("server_url must be a valid URL"))?;
         if !url.username().is_empty() || url.password().is_some() {
             return Err(CalDavConnectorError::AccountConfig(
@@ -82,7 +97,7 @@ impl CalDavAccountConfig {
         }
         match url.scheme() {
             "https" => {},
-            "http" if self.allow_insecure_http => {},
+            "http" if allow_insecure_http => {},
             "http" => {
                 return Err(CalDavConnectorError::AccountConfig(
                     "server_url must use HTTPS unless insecure HTTP is explicitly allowed",

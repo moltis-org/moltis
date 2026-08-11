@@ -16,7 +16,7 @@ use {
         Dataset, DatasetCreate, DatasetUpdate, ItemQuery, MAX_QUERY_LIMIT, ProjectionManifest,
         SqliteConnectorStore, SyncRun,
     },
-    secrecy::{ExposeSecret, Secret},
+    secrecy::ExposeSecret,
     serde_json::{Value, json},
     sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     time::{Duration, OffsetDateTime},
@@ -222,10 +222,8 @@ impl ConnectorManager {
         validate_account_fields(
             &request.server_url,
             &request.username,
-            request.password.expose_secret(),
             request.timeout_seconds,
             request.allow_insecure_http,
-            request.allow_private_network,
         )?;
 
         let id = Uuid::new_v4().to_string();
@@ -295,10 +293,8 @@ impl ConnectorManager {
         validate_account_fields(
             &request.server_url,
             &request.username,
-            replacement.unwrap_or("preserved-secret"),
             request.timeout_seconds,
             request.allow_insecure_http,
-            request.allow_private_network,
         )?;
 
         let password = match replacement {

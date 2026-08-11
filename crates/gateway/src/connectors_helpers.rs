@@ -3,20 +3,15 @@ use super::*;
 pub(super) fn validate_account_fields(
     server_url: &str,
     username: &str,
-    password: &str,
     timeout_seconds: u64,
     allow_insecure_http: bool,
-    allow_private_network: bool,
 ) -> Result<()> {
-    CalDavAccountConfig {
-        server_url: server_url.to_owned(),
-        username: username.to_owned(),
-        password: Secret::new(password.to_owned()),
+    CalDavAccountConfig::validate_non_secret_fields(
+        server_url,
+        username,
         timeout_seconds,
         allow_insecure_http,
-        allow_private_network,
-    }
-    .validate()
+    )
     .map(|_| ())
     .map_err(invalid_caldav)
 }

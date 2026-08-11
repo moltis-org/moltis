@@ -305,14 +305,8 @@ fn desired_account(
             "configured CalDAV account requires a password".to_owned(),
         )
     })?;
-    super::validate_account_fields(
-        &server_url,
-        &username,
-        password.expose_secret(),
-        account.timeout_seconds,
-        false,
-        false,
-    )?;
+    super::validate_password_replacement(password.expose_secret())?;
+    super::validate_account_fields(&server_url, &username, account.timeout_seconds, false)?;
     Ok(DesiredAccount {
         source_key,
         name: name.to_owned(),

@@ -1,6 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use {super::*, moltis_connectors::ProjectionConfig};
+use {
+    super::*,
+    moltis_connectors::ProjectionConfig,
+    secrecy::{ExposeSecret, Secret},
+    uuid::Uuid,
+};
 
 fn configured_caldav(
     name: &str,
@@ -24,6 +29,10 @@ fn configured_caldav(
     }
 }
 
+fn test_password() -> String {
+    Uuid::new_v4().to_string()
+}
+
 async fn manager() -> (tempfile::TempDir, ConnectorManager) {
     #[cfg(feature = "vault")]
     crate::vault_lifecycle::set_vault_encryption_runtime_enabled(false);
@@ -45,7 +54,7 @@ fn create_request() -> AccountCreateRequest {
         name: "Calendar".to_owned(),
         server_url: "https://calendar.example.com".to_owned(),
         username: "user@example.com".to_owned(),
-        password: Secret::new("correct horse battery staple".to_owned()),
+        password: Secret::new(test_password()),
         timeout_seconds: 30,
         allow_insecure_http: false,
         allow_private_network: false,
@@ -85,10 +94,12 @@ fn observation(
 #[cfg_attr(feature = "vault", serial_test::serial(vault_runtime))]
 async fn account_views_redact_password_and_redacted_updates_preserve_it() {
     let (_temp, manager) = manager().await;
-    let created = manager.add_account(create_request()).await.unwrap();
+    let request = create_request();
+    let password = request.password.expose_secret().clone();
+    let created = manager.add_account(request).await.unwrap();
     assert!(created.has_password);
     let serialized = serde_json::to_string(&created).unwrap();
-    assert!(!serialized.contains("correct horse"));
+    assert!(!serialized.contains(&password));
     assert!(!serialized.contains("password"));
 
     let updated = manager
@@ -112,7 +123,7 @@ async fn account_views_redact_password_and_redacted_updates_preserve_it() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.config["password"], "correct horse battery staple");
+    assert_eq!(stored.config["password"], password);
 }
 
 #[tokio::test]
@@ -138,12 +149,13 @@ async fn account_authority_changes_require_a_password_and_managed_fields_reject_
         ConnectorManagerError::InvalidInput(_)
     ));
 
+    let password = test_password();
     let config = configured_caldav(
         "work",
         Some("fastmail"),
         None,
         "managed@example.com",
-        "managed-password",
+        &password,
     );
     manager
         .reconcile_configured_caldav_accounts(&config)
@@ -175,19 +187,20 @@ async fn account_authority_changes_require_a_password_and_managed_fields_reject_
     ));
     let runtime = manager.runtime_account_config(&managed.id).await.unwrap();
     assert_eq!(runtime.server_url, "https://caldav.fastmail.com");
-    assert_eq!(runtime.password.expose_secret(), "managed-password");
+    assert_eq!(runtime.password.expose_secret(), &password);
 }
 
 #[tokio::test]
 #[cfg_attr(feature = "vault", serial_test::serial(vault_runtime))]
 async fn configured_caldav_accounts_import_once_and_reconcile_changes() {
     let (_temp, manager) = manager().await;
+    let first_password = test_password();
     let mut config = configured_caldav(
         "work",
         Some("fastmail"),
         None,
         "user@example.com",
-        "first-password",
+        &first_password,
     );
 
     let first = manager
@@ -244,7 +257,8 @@ async fn configured_caldav_accounts_import_once_and_reconcile_changes() {
 
     let legacy = config.accounts.get_mut("work").unwrap();
     legacy.username = Some("calendar-user@example.com".to_owned());
-    legacy.password = Some(Secret::new("rotated-password".to_owned()));
+    let rotated_password = test_password();
+    legacy.password = Some(Secret::new(rotated_password.clone()));
     let updated = manager
         .reconcile_configured_caldav_accounts(&config)
         .await
@@ -252,7 +266,7 @@ async fn configured_caldav_accounts_import_once_and_reconcile_changes() {
     assert_eq!(updated.updated, 1);
     let runtime = manager.runtime_account_config(&account_id).await.unwrap();
     assert_eq!(runtime.username, "calendar-user@example.com");
-    assert_eq!(runtime.password.expose_secret(), "rotated-password");
+    assert_eq!(runtime.password.expose_secret(), &rotated_password);
     assert!(manager.list_accounts().await.unwrap()[0].allow_private_network);
 
     config.accounts.clear();
@@ -280,12 +294,13 @@ async fn configured_caldav_accounts_import_once_and_reconcile_changes() {
             .is_some()
     );
 
+    let restored_password = test_password();
     let restored = configured_caldav(
         "work",
         Some("fastmail"),
         None,
         "restored@example.com",
-        "restored-password",
+        &restored_password,
     );
     let restored_report = manager
         .reconcile_configured_caldav_accounts(&restored)
@@ -294,7 +309,7 @@ async fn configured_caldav_accounts_import_once_and_reconcile_changes() {
     assert_eq!(restored_report.updated, 1);
     let runtime = manager.runtime_account_config(&account_id).await.unwrap();
     assert_eq!(runtime.username, "restored@example.com");
-    assert_eq!(runtime.password.expose_secret(), "restored-password");
+    assert_eq!(runtime.password.expose_secret(), &restored_password);
     let remove_error = manager.remove_account(&account_id).await.unwrap_err();
     assert!(matches!(
         remove_error,
@@ -306,13 +321,15 @@ async fn configured_caldav_accounts_import_once_and_reconcile_changes() {
 #[cfg_attr(feature = "vault", serial_test::serial(vault_runtime))]
 async fn configured_caldav_adopts_one_matching_manual_account() {
     let (_temp, manager) = manager().await;
-    let manual = manager.add_account(create_request()).await.unwrap();
+    let request = create_request();
+    let password = request.password.expose_secret().clone();
+    let manual = manager.add_account(request).await.unwrap();
     let config = configured_caldav(
         "work",
         Some("generic"),
         Some("https://calendar.example.com"),
         "user@example.com",
-        "correct horse battery staple",
+        &password,
     );
 
     let report = manager
@@ -333,8 +350,11 @@ async fn configured_caldav_adopts_one_matching_manual_account() {
 #[cfg_attr(feature = "vault", serial_test::serial(vault_runtime))]
 async fn configured_caldav_does_not_guess_between_duplicate_manual_accounts() {
     let (_temp, manager) = manager().await;
-    manager.add_account(create_request()).await.unwrap();
+    let request = create_request();
+    let password = request.password.expose_secret().clone();
+    manager.add_account(request).await.unwrap();
     let mut duplicate = create_request();
+    duplicate.password = Secret::new(password.clone());
     duplicate.name = "Duplicate".to_owned();
     manager.add_account(duplicate).await.unwrap();
     let config = configured_caldav(
@@ -342,7 +362,7 @@ async fn configured_caldav_does_not_guess_between_duplicate_manual_accounts() {
         Some("generic"),
         Some("https://calendar.example.com"),
         "user@example.com",
-        "correct horse battery staple",
+        &password,
     );
 
     let report = manager
@@ -359,23 +379,25 @@ async fn configured_caldav_does_not_guess_between_duplicate_manual_accounts() {
 #[cfg_attr(feature = "vault", serial_test::serial(vault_runtime))]
 async fn invalid_configured_caldav_account_does_not_block_valid_imports() {
     let (_temp, manager) = manager().await;
+    let stale_password = test_password();
     let stale = configured_caldav(
         "invalid",
         Some("generic"),
         Some("https://stale.example.com"),
         "stale@example.com",
-        "stale-password",
+        &stale_password,
     );
     manager
         .reconcile_configured_caldav_accounts(&stale)
         .await
         .unwrap();
+    let valid_password = test_password();
     let mut config = configured_caldav(
         "valid",
         Some("icloud"),
         None,
         "user@example.com",
-        "app-password",
+        &valid_password,
     );
     config.accounts.insert(
         "invalid".to_owned(),
@@ -406,12 +428,13 @@ async fn configured_caldav_never_falls_back_to_plaintext_without_vault() {
     crate::vault_lifecycle::set_vault_encryption_runtime_enabled(true);
     let temp = tempfile::tempdir().unwrap();
     let manager = ConnectorManager::open(temp.path(), 1, None).await.unwrap();
+    let password = test_password();
     let config = configured_caldav(
         "work",
         Some("generic"),
         Some("https://calendar.example.com"),
         "user@example.com",
-        "must-not-be-stored",
+        &password,
     );
 
     let report = manager
@@ -1148,7 +1171,8 @@ async fn sealed_vault_preserves_encrypted_password_on_redacted_update() {
     let vault_pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
     moltis_vault::run_migrations(&vault_pool).await.unwrap();
     let vault = Arc::new(moltis_vault::Vault::new(vault_pool).await.unwrap());
-    vault.initialize("test-password").await.unwrap();
+    let vault_password = test_password();
+    vault.initialize(&vault_password).await.unwrap();
 
     let temp = tempfile::tempdir().unwrap();
     let manager = ConnectorManager::open(temp.path(), 1, Some(Arc::clone(&vault)))
