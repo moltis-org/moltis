@@ -8,6 +8,7 @@ import { navigate, registerPrefix } from "../router";
 import { routes, settingsPath } from "../routes";
 import { initAgents, teardownAgents } from "./AgentsPage";
 import { initChannels, teardownChannels } from "./ChannelsPage";
+import { initConnectors, teardownConnectors } from "./ConnectorsPage";
 import { initCrons, teardownCrons } from "./CronsPage";
 import { initHooks, teardownHooks } from "./HooksPage";
 import { initImages, teardownImages } from "./ImagesPage";
@@ -154,6 +155,12 @@ const sections: SectionItem[] = [
 		page: true,
 	},
 	{
+		id: "connectors",
+		label: "Connectors",
+		icon: <span className="icon icon-connectors" />,
+		page: true,
+	},
+	{
 		id: "hooks",
 		label: "Hooks",
 		icon: <span className="icon icon-wrench" />,
@@ -215,6 +222,7 @@ function getVisibleSections(): SectionItem[] {
 	return sections.filter((s) => {
 		if (!s.id) return true;
 		if (s.id === "graphql" && !gon.get("graphql_enabled")) return false;
+		if (s.id === "connectors" && !gon.get("connectors_enabled")) return false;
 		if (
 			s.id === "import" &&
 			!gon.get("openclaw_detected") &&
@@ -304,6 +312,7 @@ const pageSectionHandlers: Record<string, PageSectionHandler> = {
 	webhooks: { init: initWebhooks, teardown: teardownWebhooks },
 	providers: { init: initProviders, teardown: teardownProviders },
 	channels: { init: initChannels, teardown: teardownChannels },
+	connectors: { init: initConnectors, teardown: teardownConnectors },
 	mcp: { init: initMcp, teardown: teardownMcp },
 	nodes: { init: initNodes, teardown: teardownNodes },
 	projects: { init: initProjects, teardown: teardownProjects },

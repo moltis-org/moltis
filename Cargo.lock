@@ -7128,6 +7128,7 @@ dependencies = [
  "moltis-codex-import",
  "moltis-common",
  "moltis-config",
+ "moltis-connectors",
  "moltis-cron",
  "moltis-gateway",
  "moltis-hermes-import",
@@ -7480,6 +7481,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-connector-caldav"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "metrics 0.24.3",
+ "moltis-caldav",
+ "moltis-common",
+ "moltis-connectors",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "moltis-connectors"
+version = "0.1.0"
+dependencies = [
+ "metrics 0.24.3",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "moltis-courier"
 version = "0.1.0"
 dependencies = [
@@ -7611,6 +7649,8 @@ dependencies = [
  "moltis-codex-import",
  "moltis-common",
  "moltis-config",
+ "moltis-connector-caldav",
+ "moltis-connectors",
  "moltis-cron",
  "moltis-discord",
  "moltis-external-agents",
@@ -13114,6 +13154,7 @@ dependencies = [
  "futures-core",
  "futures-io",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

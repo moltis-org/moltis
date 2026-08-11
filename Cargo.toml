@@ -17,6 +17,8 @@ default-members = [
   "crates/codex-import",
   "crates/common",
   "crates/config",
+  "crates/connector-caldav",
+  "crates/connectors",
   "crates/cron",
   "crates/ctl",
   "crates/discord",
@@ -91,6 +93,8 @@ members = [
   "crates/codex-import",
   "crates/common",
   "crates/config",
+  "crates/connector-caldav",
+  "crates/connectors",
   "crates/cron",
   "crates/ctl",
   "crates/external-agents",
@@ -250,30 +254,30 @@ fd-lock         = "4"
 genai           = "0.5"
 json_schema_ast = "0.3.1"
 # GraphQL
-async-graphql      = "7"
-async-graphql-axum = "7"
-gix                = "0.83"
-hex                = "0.4"
-hmac               = "0.12"
-jsonwebtoken       = { features = ["aws_lc_rs"], version = "10" }
-libc               = "0.2"
-llama-cpp-2        = "0.1"
-matrix-sdk         = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
-mockito            = "1.7"
+async-graphql       = "7"
+async-graphql-axum  = "7"
+gix                 = "0.83"
+hex                 = "0.4"
+hmac                = "0.12"
+jsonwebtoken        = { features = ["aws_lc_rs"], version = "10" }
+libc                = "0.2"
+llama-cpp-2         = "0.1"
+matrix-sdk          = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
+mockito             = "1.7"
 nostr-relay-builder = { version = "0.44" }
-nostr-sdk          = { features = ["nip04", "nip44", "nip59"], version = "0.44" }
-open               = "5.3"
-rand               = "0.10"
-regex              = "1"
-ring               = "0.17"
-secrecy            = { features = ["serde"], version = "0.8" }
-serenity           = { features = ["cache", "client", "gateway", "model", "rustls_backend"], version = "0.12" }
-sha1               = "0.10"
-sha2               = "0.10"
-slack-morphism     = { features = ["axum", "hyper"], version = "2.20" }
-sled               = "0.34"
-sysinfo            = "0.34"
-teloxide           = { features = ["macros"], version = "0.17" }
+nostr-sdk           = { features = ["nip04", "nip44", "nip59"], version = "0.44" }
+open                = "5.3"
+rand                = "0.10"
+regex               = "1"
+ring                = "0.17"
+secrecy             = { features = ["serde"], version = "0.8" }
+serenity            = { features = ["cache", "client", "gateway", "model", "rustls_backend"], version = "0.12" }
+sha1                = "0.10"
+sha2                = "0.10"
+slack-morphism      = { features = ["axum", "hyper"], version = "2.20" }
+sled                = "0.34"
+sysinfo             = "0.34"
+teloxide            = { features = ["macros"], version = "0.17" }
 # WhatsApp (sqlite-storage disabled to avoid libsqlite3-sys conflict with sqlx;
 # re-enable once sqlx 0.9 stabilises).
 wacore                         = { default-features = false, version = "0.6" }
@@ -395,6 +399,8 @@ moltis-code-index       = { path = "crates/code-index" }
 moltis-codex-import     = { path = "crates/codex-import" }
 moltis-common           = { path = "crates/common" }
 moltis-config           = { path = "crates/config" }
+moltis-connector-caldav = { path = "crates/connector-caldav" }
+moltis-connectors       = { path = "crates/connectors" }
 moltis-cron             = { path = "crates/cron" }
 moltis-discord          = { path = "crates/discord" }
 moltis-external-agents  = { path = "crates/external-agents" }

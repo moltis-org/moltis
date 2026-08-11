@@ -1207,6 +1207,10 @@
   -webkit-mask-image: url("../icons/masks/mask-fa03630d2271dc99.svg");
   mask-image: url("../icons/masks/mask-fa03630d2271dc99.svg");
 }
+.settings-nav-item[data-section="connectors"]::before {
+  -webkit-mask-image: url("../icons/masks/connectors.svg");
+  mask-image: url("../icons/masks/connectors.svg");
+}
 .settings-nav-item[data-section="hooks"]::before {
   -webkit-mask-image: url("../icons/masks/mask-99420ef32a8bfaac.svg");
   mask-image: url("../icons/masks/mask-99420ef32a8bfaac.svg");

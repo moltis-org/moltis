@@ -1936,6 +1936,10 @@
     -webkit-mask-image: url("./icons/masks/mask-fa03630d2271dc99.svg");
     mask-image: url("./icons/masks/mask-fa03630d2271dc99.svg");
   }
+  .icon-connectors {
+    -webkit-mask-image: url("./icons/masks/connectors.svg");
+    mask-image: url("./icons/masks/connectors.svg");
+  }
   .icon-cube {
     -webkit-mask-image: url("./icons/masks/mask-6da716ec55cb2796.svg");
     mask-image: url("./icons/masks/mask-6da716ec55cb2796.svg");

@@ -505,6 +505,8 @@ fn list_agent_workspace_files_recursively(
 mod admin;
 mod agents;
 mod channels;
+#[cfg(feature = "connectors")]
+mod connectors;
 mod core;
 mod feedback;
 mod instrumentation;
@@ -520,6 +522,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
     modes::register(reg);
     sessions::register(reg);
     channels::register(reg);
+    #[cfg(feature = "connectors")]
+    connectors::register(reg);
     core::register(reg);
     system::register(reg);
     admin::register(reg);

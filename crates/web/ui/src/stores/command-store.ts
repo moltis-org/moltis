@@ -290,6 +290,16 @@ export function buildCommands(): Command[] {
 			action: settingsNav("graphql"),
 		});
 	}
+	if (gon.get("connectors_enabled")) {
+		cmds.push({
+			id: "set-connectors",
+			label: "Connectors",
+			group: "settings",
+			icon: "icon-connectors",
+			keywords: ["connector", "caldav", "calendar", "dataset", "sync"],
+			action: settingsNav("connectors"),
+		});
+	}
 
 	// ── Actions ──────────────────────────────────────────────
 	cmds.push(

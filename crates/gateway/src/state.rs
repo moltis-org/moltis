@@ -469,6 +469,10 @@ pub struct GatewayState {
     #[cfg(feature = "vault")]
     pub vault: Option<Arc<moltis_vault::Vault>>,
 
+    /// Late-bound connector manager, initialized after its dedicated database opens.
+    #[cfg(feature = "connectors")]
+    pub connector_manager: std::sync::OnceLock<Arc<crate::connectors::ConnectorManager>>,
+
     // ── Channel webhook deduplication (separate lock) ──────────────────────
     /// Idempotency dedup store for channel webhooks. Uses its own
     /// `std::sync::RwLock` to avoid contending with the main `inner` lock.
@@ -613,6 +617,8 @@ impl GatewayState {
             metrics_store,
             #[cfg(feature = "vault")]
             vault,
+            #[cfg(feature = "connectors")]
+            connector_manager: std::sync::OnceLock::new(),
             channel_webhook_dedup: std::sync::RwLock::new(
                 crate::channel_webhook_dedup::ChannelWebhookDedupeStore::new(),
             ),
@@ -645,6 +651,18 @@ impl GatewayState {
     /// the `X-Forwarded-Proto` header.
     pub fn is_secure(&self) -> bool {
         self.tls_active || self.behind_proxy
+    }
+
+    #[cfg(feature = "connectors")]
+    pub fn connector_manager(&self) -> Option<Arc<crate::connectors::ConnectorManager>> {
+        self.connector_manager.get().cloned()
+    }
+
+    #[cfg(feature = "connectors")]
+    pub async fn shutdown_connectors(&self) {
+        if let Some(manager) = self.connector_manager() {
+            manager.shutdown().await;
+        }
     }
 
     /// Process uptime in milliseconds since this gateway state was created.

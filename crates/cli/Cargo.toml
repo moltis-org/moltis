@@ -79,6 +79,7 @@ moltis-claude-import    = { optional = true, workspace = true }
 moltis-codex-import     = { optional = true, workspace = true }
 moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
+moltis-connectors       = { optional = true, workspace = true }
 moltis-cron             = { workspace = true }
 moltis-gateway          = { workspace = true }
 moltis-hermes-import    = { optional = true, workspace = true }
@@ -132,6 +133,12 @@ acp = [
 agent = ["moltis-gateway/agent", "moltis-web?/agent"]
 caldav = ["moltis-gateway/caldav"]
 cloudflare-tunnel = ["moltis-httpd/cloudflare-tunnel", "moltis-web?/cloudflare-tunnel"]
+connectors = [
+  "dep:moltis-connectors",
+  "moltis-gateway/connectors",
+  "moltis-httpd/connectors",
+  "moltis-web?/connectors",
+]
 home-assistant = ["moltis-gateway/home-assistant"]
 # User-facing integrations stay default-on in the CLI crate per workspace policy,
 # even when the underlying implementation remains feature-gated in lower crates.
@@ -152,6 +159,7 @@ full = [
   "code-index-builtin",
   "code-splitter",
   "codex-import",
+  "connectors",
   "discord",
   "file-watcher",
   "firecrawl",

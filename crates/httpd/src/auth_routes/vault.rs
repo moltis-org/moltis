@@ -181,24 +181,33 @@ pub(super) async fn vault_disable_handler(
         }
     }
 
+    #[cfg(feature = "connectors")]
+    let connector_manager = state.gateway_state.connector_manager();
     match moltis_gateway::vault_lifecycle::disable_vault_and_decrypt_all(
         vault,
         state.credential_store.db_pool(),
+        #[cfg(feature = "connectors")]
+        connector_manager.as_deref(),
     )
     .await
     {
         Ok(report) => {
             vault.seal().await;
             state.credential_store.disable_vault_encryption();
+            let mut report_payload = serde_json::json!({
+                "env_vars": report.env_vars,
+                "ssh_keys": report.ssh_keys,
+                "channels": report.channels,
+                "webhooks": report.webhooks,
+                "provider_keys": report.provider_keys,
+            });
+            #[cfg(feature = "connectors")]
+            {
+                report_payload["connectors"] = serde_json::json!(report.connectors);
+            }
             Json(serde_json::json!({
                 "ok": true,
-                "report": {
-                    "env_vars": report.env_vars,
-                    "ssh_keys": report.ssh_keys,
-                    "channels": report.channels,
-                    "webhooks": report.webhooks,
-                    "provider_keys": report.provider_keys,
-                }
+                "report": report_payload,
             }))
             .into_response()
         },

@@ -6,6 +6,19 @@
 // typed use `unknown` as a placeholder -- callers can narrow with
 // `as` casts until we refine the type here.
 
+import type {
+	AvailableConnectorsResponse,
+	ConnectorAccount,
+	ConnectorAccountsResponse,
+	ConnectorCalendarsResponse,
+	ConnectorDataset,
+	ConnectorDatasetCompileResponse,
+	ConnectorDatasetsResponse,
+	ConnectorItemsResponse,
+	ConnectorRemovedResponse,
+	ConnectorRun,
+	ConnectorRunsResponse,
+} from "./connector";
 import type { ExternalAgentInfo } from "./external-agent";
 import type { ModelInfo } from "./model";
 import type { SessionMeta } from "./session";
@@ -35,6 +48,22 @@ export interface RpcMethodMap {
 	"channels.retry_ownership": unknown;
 	"channels.status": unknown;
 	"channels.update": unknown;
+
+	// ── Connectors ──────────────────────────────────────────────
+	"connectors.available": AvailableConnectorsResponse;
+	"connectors.accounts.list": ConnectorAccountsResponse;
+	"connectors.accounts.add": ConnectorAccount;
+	"connectors.accounts.update": ConnectorAccount;
+	"connectors.accounts.remove": ConnectorRemovedResponse;
+	"connectors.accounts.test": ConnectorCalendarsResponse;
+	"connectors.datasets.list": ConnectorDatasetsResponse;
+	"connectors.datasets.compile": ConnectorDatasetCompileResponse;
+	"connectors.datasets.add": ConnectorDataset;
+	"connectors.datasets.update": ConnectorDataset;
+	"connectors.datasets.remove": ConnectorRemovedResponse;
+	"connectors.datasets.sync": ConnectorRun;
+	"connectors.runs.list": ConnectorRunsResponse;
+	"connectors.items.query": ConnectorItemsResponse;
 
 	// ── Chat ────────────────────────────────────────────────────
 	"chat.abort": unknown;

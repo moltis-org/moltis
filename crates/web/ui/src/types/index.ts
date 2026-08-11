@@ -11,6 +11,31 @@ export type {
 // ChannelType is both a type and a runtime const object, so use plain re-export.
 export { ChannelType } from "./channel";
 
+export type {
+	AvailableConnectorsResponse,
+	CalendarSelection,
+	ConnectorAccount,
+	ConnectorAccountsResponse,
+	ConnectorCalendar,
+	ConnectorCalendarsResponse,
+	ConnectorDataset,
+	ConnectorDatasetCompileResponse,
+	ConnectorDatasetConfig,
+	ConnectorDatasetDraft,
+	ConnectorDatasetFilters,
+	ConnectorDatasetsResponse,
+	ConnectorDescriptor,
+	ConnectorItem,
+	ConnectorItemsResponse,
+	ConnectorKind,
+	ConnectorProjections,
+	ConnectorRemovedResponse,
+	ConnectorRun,
+	ConnectorRunStatus,
+	ConnectorRunsResponse,
+	JsonValue,
+} from "./connector";
+
 export type { ExternalAgentInfo } from "./external-agent";
 
 export type {

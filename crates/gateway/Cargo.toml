@@ -33,6 +33,8 @@ moltis-code-index       = { workspace = true }
 moltis-codex-import     = { optional = true, workspace = true }
 moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
+moltis-connector-caldav = { optional = true, workspace = true }
+moltis-connectors       = { optional = true, workspace = true }
 moltis-cron             = { workspace = true }
 moltis-discord          = { optional = true, workspace = true }
 moltis-external-agents  = { workspace = true }
@@ -91,7 +93,7 @@ thiserror               = { workspace = true }
 time                    = { workspace = true }
 tokio                   = { workspace = true }
 tokio-stream            = { workspace = true }
-tokio-util              = { workspace = true }
+tokio-util              = { features = ["rt"], workspace = true }
 toml                    = { workspace = true }
 tracing                 = { workspace = true }
 tracing-subscriber      = { workspace = true }
@@ -113,6 +115,7 @@ caldav = ["dep:moltis-caldav"]
 claude-import = ["dep:moltis-claude-import"]
 code-index-builtin = ["moltis-code-index/builtin"]
 codex-import = ["dep:moltis-codex-import"]
+connectors = ["dep:moltis-caldav", "dep:moltis-connector-caldav", "dep:moltis-connectors"]
 default = [
   "agent",
   "bundled-skills",
@@ -120,6 +123,7 @@ default = [
   "claude-import",
   "code-index-builtin",
   "codex-import",
+  "connectors",
   "discord",
   "file-watcher",
   "firecrawl",
@@ -185,6 +189,8 @@ mdns = ["dep:mdns-sd"]
 metrics = [
   "dep:moltis-metrics",
   "moltis-chat/metrics",
+  "moltis-connector-caldav?/metrics",
+  "moltis-connectors?/metrics",
   "moltis-discord?/metrics",
   "moltis-matrix?/metrics",
   "moltis-metrics/sqlite",
