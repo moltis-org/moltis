@@ -145,6 +145,8 @@ const READ_METHODS: &[&str] = &[
     #[cfg(feature = "connectors")]
     "connectors.accounts.list",
     #[cfg(feature = "connectors")]
+    "connectors.channel_sources.list",
+    #[cfg(feature = "connectors")]
     "connectors.datasets.list",
     #[cfg(feature = "connectors")]
     "connectors.runs.list",
@@ -541,6 +543,7 @@ mod tests {
         for method in [
             "connectors.available",
             "connectors.accounts.list",
+            "connectors.channel_sources.list",
             "connectors.datasets.list",
             "connectors.runs.list",
             "connectors.items.query",

@@ -482,6 +482,12 @@ impl ChannelPlugin for MatrixPlugin {
         Some(&self.outbound)
     }
 
+    fn shared_thread_context(&self) -> Option<Arc<dyn ChannelThreadContext>> {
+        Some(Arc::new(MatrixOutbound {
+            accounts: Arc::clone(&self.accounts),
+        }))
+    }
+
     fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
         Some(self)
     }

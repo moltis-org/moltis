@@ -1,24 +1,43 @@
-export type ConnectorKind = "caldav";
+export type ConnectorKind = "caldav" | "channel_history";
+
+export type ChannelType = "slack" | "discord" | "matrix" | "msteams";
 
 export interface ConnectorDescriptor {
 	kind: ConnectorKind;
 	displayName: string;
 }
 
-export interface ConnectorAccount {
+interface ConnectorAccountBase {
 	id: string;
-	kind: ConnectorKind;
 	name: string;
+	managed: boolean;
+	enabled: boolean;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface CalDavConnectorAccount extends ConnectorAccountBase {
+	kind: "caldav";
 	serverUrl: string;
 	username: string;
 	timeoutSeconds: number;
 	allowInsecureHttp: boolean;
 	allowPrivateNetwork: boolean;
 	hasPassword: boolean;
-	managed: boolean;
-	enabled: boolean;
-	createdAt: string;
-	updatedAt: string;
+}
+
+export interface ChannelHistoryConnectorAccount extends ConnectorAccountBase {
+	kind: "channel_history";
+	channelType: ChannelType;
+	channelAccountId: string;
+}
+
+export type ConnectorAccount = CalDavConnectorAccount | ChannelHistoryConnectorAccount;
+
+export interface ConnectorChannelSource {
+	channelType: ChannelType;
+	accountId: string;
+	displayName: string;
 }
 
 export interface ConnectorCalendar {
@@ -38,23 +57,31 @@ export interface ConnectorDatasetFilters {
 	acceptedByAccount: boolean;
 }
 
-export interface ConnectorDatasetConfig {
+export interface CalDavConnectorDatasetConfig {
 	schemaVersion: number;
 	selection: CalendarSelection;
 	filters: ConnectorDatasetFilters;
 }
+
+export interface ChannelHistoryConnectorDatasetConfig {
+	schemaVersion: number;
+	channelId: string;
+	threadId: string;
+	limit: number;
+}
+
+export type ConnectorDatasetConfig = CalDavConnectorDatasetConfig | ChannelHistoryConnectorDatasetConfig;
 
 export interface ConnectorProjections {
 	jsonl: boolean;
 	markdown: boolean;
 }
 
-export interface ConnectorDataset {
+interface ConnectorDatasetBase {
 	id: string;
 	accountId: string;
 	name: string;
 	instruction?: string;
-	config: ConnectorDatasetConfig;
 	scheduleMinutes?: number | null;
 	projections: ConnectorProjections;
 	enabled: boolean;
@@ -68,9 +95,21 @@ export interface ConnectorDataset {
 	updatedAt: string;
 }
 
+export interface CalDavConnectorDataset extends ConnectorDatasetBase {
+	kind: "caldav";
+	config: CalDavConnectorDatasetConfig;
+}
+
+export interface ChannelHistoryConnectorDataset extends ConnectorDatasetBase {
+	kind: "channel_history";
+	config: ChannelHistoryConnectorDatasetConfig;
+}
+
+export type ConnectorDataset = CalDavConnectorDataset | ChannelHistoryConnectorDataset;
+
 export interface ConnectorDatasetDraft {
 	name: string;
-	config: ConnectorDatasetConfig;
+	config: CalDavConnectorDatasetConfig;
 	scheduleMinutes?: number | null;
 	projections: ConnectorProjections;
 	enabled: boolean;
@@ -123,6 +162,16 @@ export interface ConnectorAccountsResponse {
 
 export interface ConnectorCalendarsResponse {
 	calendars: ConnectorCalendar[];
+}
+
+export interface ConnectorChannelReadyResponse {
+	channelReady: boolean;
+}
+
+export type ConnectorAccountTestResponse = ConnectorCalendarsResponse | ConnectorChannelReadyResponse;
+
+export interface ConnectorChannelSourcesResponse {
+	sources: ConnectorChannelSource[];
 }
 
 export interface ConnectorDatasetsResponse {

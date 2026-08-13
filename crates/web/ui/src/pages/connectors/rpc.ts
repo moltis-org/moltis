@@ -1,34 +1,45 @@
 import { sendRpc } from "../../helpers";
-import type { ConnectorDatasetConfig, ConnectorProjections, JsonValue } from "../../types/connector";
+import type { ChannelType, ConnectorDatasetConfig, ConnectorProjections, JsonValue } from "../../types/connector";
 import type { RpcMethodMap } from "../../types/rpc-methods";
 
 export interface ConnectorRpcParams {
 	"connectors.available": Record<string, never>;
 	"connectors.accounts.list": Record<string, never>;
-	"connectors.accounts.add": {
-		kind: "caldav";
-		name: string;
-		serverUrl: string;
-		username: string;
-		password: string;
-		timeoutSeconds: number;
-		allowInsecureHttp: boolean;
-		allowPrivateNetwork: boolean;
-		enabled: boolean;
-	};
-	"connectors.accounts.update": {
-		id: string;
-		name: string;
-		serverUrl: string;
-		username: string;
-		password?: string;
-		timeoutSeconds: number;
-		allowInsecureHttp: boolean;
-		allowPrivateNetwork: boolean;
-		enabled: boolean;
-	};
+	"connectors.accounts.add":
+		| {
+				kind: "caldav";
+				name: string;
+				serverUrl: string;
+				username: string;
+				password: string;
+				timeoutSeconds: number;
+				allowInsecureHttp: boolean;
+				allowPrivateNetwork: boolean;
+				enabled: boolean;
+		  }
+		| {
+				kind: "channel_history";
+				name: string;
+				channelType: ChannelType;
+				channelAccountId: string;
+				enabled: boolean;
+		  };
+	"connectors.accounts.update":
+		| {
+				id: string;
+				name: string;
+				serverUrl: string;
+				username: string;
+				password?: string;
+				timeoutSeconds: number;
+				allowInsecureHttp: boolean;
+				allowPrivateNetwork: boolean;
+				enabled: boolean;
+		  }
+		| { id: string; name: string; enabled: boolean };
 	"connectors.accounts.remove": { id: string };
 	"connectors.accounts.test": { id: string };
+	"connectors.channel_sources.list": Record<string, never>;
 	"connectors.datasets.list": Record<string, never>;
 	"connectors.datasets.compile": {
 		accountId: string;

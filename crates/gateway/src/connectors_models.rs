@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use {
+    moltis_channels::ChannelType,
     moltis_connector_caldav::{CalDavDatasetConfig, CalDavFilters, CalendarSelection},
     moltis_connectors::{
         Account, ConnectorItem, ConnectorKind, Dataset, ProjectionConfig, SyncRun,
@@ -25,9 +26,16 @@ pub struct ConnectorDescriptor {
 pub struct AccountCreateRequest {
     pub kind: ConnectorKind,
     pub name: String,
+    #[serde(default)]
     pub server_url: String,
+    #[serde(default)]
     pub username: String,
+    #[serde(default = "empty_secret")]
     pub password: Secret<String>,
+    #[serde(default)]
+    pub channel_type: Option<ChannelType>,
+    #[serde(default)]
+    pub channel_account_id: Option<String>,
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: u64,
     #[serde(default)]
@@ -42,7 +50,9 @@ pub struct AccountCreateRequest {
 #[serde(rename_all = "camelCase")]
 pub struct AccountUpdateRequest {
     pub name: String,
+    #[serde(default)]
     pub server_url: String,
+    #[serde(default)]
     pub username: String,
     #[serde(default)]
     pub password: Option<Secret<String>>,
@@ -68,6 +78,10 @@ pub struct AccountView {
     pub allow_insecure_http: bool,
     pub allow_private_network: bool,
     pub has_password: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_type: Option<ChannelType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_account_id: Option<String>,
     pub managed: bool,
     pub enabled: bool,
     pub created_at: OffsetDateTime,
@@ -120,6 +134,35 @@ impl Default for CalDavDatasetConfigView {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChannelHistoryDatasetConfigView {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+    pub channel_id: String,
+    pub thread_id: String,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ConnectorDatasetConfigView {
+    ChannelHistory(ChannelHistoryDatasetConfigView),
+    CalDav(CalDavDatasetConfigView),
+}
+
+impl Default for ConnectorDatasetConfigView {
+    fn default() -> Self {
+        Self::CalDav(CalDavDatasetConfigView::default())
+    }
+}
+
+impl From<CalDavDatasetConfigView> for ConnectorDatasetConfigView {
+    fn from(config: CalDavDatasetConfigView) -> Self {
+        Self::CalDav(config)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatasetCreateRequest {
@@ -127,7 +170,7 @@ pub struct DatasetCreateRequest {
     pub name: String,
     pub instruction: String,
     #[serde(default)]
-    pub config: CalDavDatasetConfigView,
+    pub config: ConnectorDatasetConfigView,
     #[serde(default)]
     pub schedule_minutes: Option<u64>,
     #[serde(default)]
@@ -142,7 +185,7 @@ pub struct DatasetUpdateRequest {
     pub name: String,
     pub instruction: String,
     #[serde(default)]
-    pub config: CalDavDatasetConfigView,
+    pub config: ConnectorDatasetConfigView,
     #[serde(default)]
     pub schedule_minutes: Option<u64>,
     #[serde(default)]
@@ -159,7 +202,8 @@ pub struct DatasetView {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instruction: Option<String>,
-    pub config: CalDavDatasetConfigView,
+    pub kind: ConnectorKind,
+    pub config: ConnectorDatasetConfigView,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule_minutes: Option<u64>,
     pub projections: ProjectionConfig,
@@ -228,6 +272,18 @@ pub struct CalendarView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collection_etag: Option<String>,
     pub supports_sync: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum AccountTestView {
+    Calendars {
+        calendars: Vec<CalendarView>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ChannelReady {
+        channel_ready: bool,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -299,7 +355,43 @@ pub(super) struct StoredAccountConfigView {
     pub(super) allow_private_network: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ChannelHistoryAccountConfig {
+    pub(super) channel_type: ChannelType,
+    pub(super) channel_account_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelSourceView {
+    pub channel_type: ChannelType,
+    pub account_id: String,
+    pub display_name: String,
+}
+
 pub(super) fn account_view(account: Account) -> Result<AccountView> {
+    if account.kind == ConnectorKind::ChannelHistory {
+        let config: ChannelHistoryAccountConfig = serde_json::from_value(account.config)
+            .map_err(|error| internal(error, "deserialize channel connector account view"))?;
+        return Ok(AccountView {
+            id: account.id,
+            kind: account.kind,
+            name: account.name,
+            server_url: String::new(),
+            username: String::new(),
+            timeout_seconds: default_timeout_seconds(),
+            allow_insecure_http: false,
+            allow_private_network: false,
+            has_password: false,
+            channel_type: Some(config.channel_type),
+            channel_account_id: Some(config.channel_account_id),
+            managed: account.source_key.is_some(),
+            enabled: account.enabled,
+            created_at: account.created_at,
+            updated_at: account.updated_at,
+        });
+    }
     let config: StoredAccountConfigView = serde_json::from_value(account.config)
         .map_err(|error| internal(error, "deserialize connector account view"))?;
     Ok(AccountView {
@@ -312,6 +404,8 @@ pub(super) fn account_view(account: Account) -> Result<AccountView> {
         allow_insecure_http: config.allow_insecure_http,
         allow_private_network: config.allow_private_network,
         has_password: stored_secret_present(&config.password)?,
+        channel_type: None,
+        channel_account_id: None,
         managed: account.source_key.is_some(),
         enabled: account.enabled,
         created_at: account.created_at,
@@ -319,9 +413,22 @@ pub(super) fn account_view(account: Account) -> Result<AccountView> {
     })
 }
 
-pub(super) fn dataset_view(dataset: Dataset, export_root: &Path) -> Result<DatasetView> {
-    let config: CalDavDatasetConfig = serde_json::from_value(dataset.config)
-        .map_err(|error| internal(error, "deserialize connector dataset view"))?;
+pub(super) fn dataset_view(
+    dataset: Dataset,
+    account_kind: ConnectorKind,
+    export_root: &Path,
+) -> Result<DatasetView> {
+    let config = match account_kind {
+        ConnectorKind::Caldav => ConnectorDatasetConfigView::CalDav(
+            serde_json::from_value::<CalDavDatasetConfig>(dataset.config)
+                .map_err(|error| internal(error, "deserialize CalDAV dataset view"))?
+                .into(),
+        ),
+        ConnectorKind::ChannelHistory => ConnectorDatasetConfigView::ChannelHistory(
+            serde_json::from_value(dataset.config)
+                .map_err(|error| internal(error, "deserialize channel dataset view"))?,
+        ),
+    };
     let projection_path = if dataset.projections.jsonl || dataset.projections.markdown {
         Some(
             moltis_connectors::projection_directory(export_root, &dataset.name, &dataset.id)?
@@ -336,7 +443,8 @@ pub(super) fn dataset_view(dataset: Dataset, export_root: &Path) -> Result<Datas
         account_id: dataset.account_id,
         name: dataset.name,
         instruction: dataset.instruction,
-        config: config.into(),
+        kind: account_kind,
+        config,
         schedule_minutes: dataset.schedule_minutes,
         projections: dataset.projections,
         enabled: dataset.enabled,
@@ -462,4 +570,8 @@ impl From<ConnectorItem> for ConnectorItemView {
 
 const fn default_schema_version() -> u32 {
     1
+}
+
+fn empty_secret() -> Secret<String> {
+    Secret::new(String::new())
 }

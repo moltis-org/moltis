@@ -493,6 +493,8 @@ pub struct InteractiveMessage {
 /// A single message from a thread conversation.
 #[derive(Debug, Clone)]
 pub struct ThreadMessage {
+    /// Stable provider identifier used for deduplication and reconciliation.
+    pub message_id: String,
     pub sender_id: String,
     pub is_bot: bool,
     pub text: String,
@@ -581,6 +583,11 @@ pub trait ChannelPlugin: Send + Sync {
 
     /// Thread context provider for fetching prior thread messages.
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
+        None
+    }
+
+    /// Shared thread context handle for work that must outlive the plugin lock.
+    fn shared_thread_context(&self) -> Option<Arc<dyn ChannelThreadContext>> {
         None
     }
 

@@ -969,6 +969,7 @@ impl ChannelThreadContext for DiscordOutbound {
         let mut result: Vec<ThreadMessage> = messages
             .into_iter()
             .map(|msg| ThreadMessage {
+                message_id: msg.id.to_string(),
                 sender_id: msg.author.id.to_string(),
                 is_bot: msg.author.bot,
                 text: msg.content,

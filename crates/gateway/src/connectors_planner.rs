@@ -227,7 +227,12 @@ fn planner_messages(
         })
         .collect::<Vec<_>>();
     let existing_context = existing.map(|dataset| {
-        let mut config = serde_json::to_value(&dataset.config).unwrap_or(Value::Null);
+        let mut config = match &dataset.config {
+            crate::connectors::ConnectorDatasetConfigView::CalDav(config) => {
+                serde_json::to_value(config).unwrap_or(Value::Null)
+            },
+            crate::connectors::ConnectorDatasetConfigView::ChannelHistory(_) => Value::Null,
+        };
         alias_existing_selection(&mut config, calendars);
         json!({
             "draft": {

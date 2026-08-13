@@ -1021,6 +1021,7 @@ impl ChannelThreadContext for SlackOutbound {
                 let timestamp = msg.origin.ts.to_string();
 
                 ThreadMessage {
+                    message_id: timestamp.clone(),
                     sender_id,
                     is_bot,
                     text,

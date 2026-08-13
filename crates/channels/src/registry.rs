@@ -247,14 +247,25 @@ impl ChannelRegistry {
             .plugins
             .get(&channel_type)
             .ok_or_else(|| Error::invalid_input(format!("unknown channel type: {channel_type}")))?;
-        let p = plugin.read().await;
-        match p.thread_context() {
+        let context = plugin.read().await.shared_thread_context();
+        match context {
             Some(ctx) => {
                 ctx.fetch_thread_messages(account_id, channel_id, thread_id, limit)
                     .await
             },
             None => Ok(Vec::new()),
         }
+    }
+
+    /// Whether an active account exposes the shared thread-history capability.
+    pub async fn supports_thread_history(&self, account_id: &str) -> bool {
+        let Some(channel_type) = self.resolve_channel_type(account_id) else {
+            return false;
+        };
+        let Some(plugin) = self.plugins.get(&channel_type) else {
+            return false;
+        };
+        plugin.read().await.shared_thread_context().is_some()
     }
 
     /// Update account config via the registry.

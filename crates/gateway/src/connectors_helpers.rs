@@ -1,4 +1,4 @@
-use super::*;
+use {super::*, serde_json::json};
 
 pub(super) fn validate_account_fields(
     server_url: &str,
@@ -30,6 +30,33 @@ pub(super) fn validate_dataset_request(
         i64::try_from(minutes).map_err(|_| {
             ConnectorManagerError::InvalidInput("scheduleMinutes is too large".to_owned())
         })?;
+    }
+    Ok(())
+}
+
+pub(super) fn validate_channel_dataset_config(
+    config: &ChannelHistoryDatasetConfigView,
+    schedule_minutes: Option<u64>,
+) -> Result<()> {
+    if config.schema_version != 1 {
+        return Err(ConnectorManagerError::InvalidInput(
+            "unsupported channel dataset schema version".to_owned(),
+        ));
+    }
+    if config.channel_id.trim().is_empty() || config.thread_id.trim().is_empty() {
+        return Err(ConnectorManagerError::InvalidInput(
+            "channelId and threadId must not be empty".to_owned(),
+        ));
+    }
+    if !(1..=200).contains(&config.limit) {
+        return Err(ConnectorManagerError::InvalidInput(
+            "channel message limit must be between 1 and 200".to_owned(),
+        ));
+    }
+    if schedule_minutes == Some(0) {
+        return Err(ConnectorManagerError::InvalidInput(
+            "scheduleMinutes must be greater than zero".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -118,6 +145,9 @@ pub(super) fn next_sync_at(
 pub(super) fn ensure_caldav(kind: ConnectorKind) -> Result<()> {
     match kind {
         ConnectorKind::Caldav => Ok(()),
+        ConnectorKind::ChannelHistory => Err(ConnectorManagerError::InvalidInput(
+            "operation is only available for CalDAV connectors".to_owned(),
+        )),
     }
 }
 

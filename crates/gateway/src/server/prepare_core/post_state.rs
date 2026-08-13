@@ -249,6 +249,12 @@ pub(super) async fn complete_startup(
     connector_manager
         .configure_planner(Arc::clone(&registry))
         .context("failed to initialize connector planner")?;
+    #[cfg(feature = "connectors")]
+    if let Some(channel_registry) = services.channel_registry.as_ref() {
+        connector_manager
+            .configure_channel_registry(Arc::clone(channel_registry))
+            .context("failed to initialize connector channel registry")?;
+    }
     let pairing_store = Arc::new(crate::pairing::PairingStore::new(db_pool.clone()));
     #[cfg(feature = "tls")]
     let tls_enabled_for_gateway = config.tls.enabled;

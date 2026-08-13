@@ -829,6 +829,8 @@ mod tests {
             manager
                 .add_account(crate::connectors::AccountCreateRequest {
                     kind: moltis_connectors::ConnectorKind::Caldav,
+                    channel_type: None,
+                    channel_account_id: None,
                     name: "Calendar".to_owned(),
                     server_url: "https://calendar.example.com".to_owned(),
                     username: "user@example.com".to_owned(),

@@ -75,6 +75,18 @@ pub(super) fn register(registry: &mut MethodRegistry) {
         }),
     );
     registry.register(
+        "connectors.channel_sources.list",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                let sources = manager(&ctx.state)?
+                    .list_channel_sources()
+                    .await
+                    .map_err(map_error)?;
+                serialize(json!({ "sources": sources }))
+            })
+        }),
+    );
+    registry.register(
         "connectors.accounts.add",
         Box::new(|ctx| {
             Box::pin(async move {
@@ -118,11 +130,11 @@ pub(super) fn register(registry: &mut MethodRegistry) {
         Box::new(|ctx| {
             Box::pin(async move {
                 let params: IdParams = parse(ctx.params)?;
-                let calendars = manager(&ctx.state)?
+                let result = manager(&ctx.state)?
                     .test_account(&params.id)
                     .await
                     .map_err(map_error)?;
-                serialize(json!({ "calendars": calendars }))
+                serialize(result)
             })
         }),
     );
@@ -271,6 +283,21 @@ fn map_error(error: ConnectorManagerError) -> ErrorShape {
             tracing::warn!(error = ?error, "connector provider RPC operation failed");
             map_provider_error(error)
         },
+        ConnectorManagerError::Channel(error) => {
+            tracing::warn!(error = ?error, "channel history RPC operation failed");
+            match error {
+                moltis_channels::Error::InvalidInput { message } => {
+                    ErrorShape::new(error_codes::INVALID_REQUEST, message)
+                },
+                moltis_channels::Error::UnknownAccount { .. } => {
+                    ErrorShape::new(error_codes::NOT_FOUND, "channel account is not active")
+                },
+                _ => ErrorShape::new(
+                    error_codes::UNAVAILABLE,
+                    "channel message history request failed",
+                ),
+            }
+        },
         error @ ConnectorManagerError::Internal(_) => {
             tracing::warn!(error = ?error, "connector RPC operation failed");
             ErrorShape::new(error_codes::INTERNAL, "connector operation failed")
@@ -339,6 +366,7 @@ mod tests {
         for method in [
             "connectors.available",
             "connectors.accounts.list",
+            "connectors.channel_sources.list",
             "connectors.accounts.add",
             "connectors.accounts.update",
             "connectors.accounts.remove",

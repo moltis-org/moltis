@@ -258,6 +258,8 @@ impl DesiredAccount {
     fn create_request(&self) -> AccountCreateRequest {
         AccountCreateRequest {
             kind: ConnectorKind::Caldav,
+            channel_type: None,
+            channel_account_id: None,
             name: self.name.clone(),
             server_url: self.server_url.clone(),
             username: self.username.clone(),

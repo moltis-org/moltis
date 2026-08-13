@@ -11,18 +11,26 @@ import {
 	TextField,
 } from "../../components/forms";
 import { useTranslation } from "../../i18n";
-import type { ConnectorAccount, ConnectorCalendar } from "../../types/connector";
+import type {
+	CalDavConnectorAccount,
+	ChannelHistoryConnectorAccount,
+	ConnectorAccount,
+	ConnectorCalendar,
+	ConnectorChannelSource,
+} from "../../types/connector";
 import { ConfirmDialog, Modal, requestConfirm, showToast } from "../../ui";
 import { connectorRpc } from "./rpc";
 
 interface ConnectionsTabProps {
 	accounts: ConnectorAccount[];
 	caldavAvailable: boolean;
+	channelHistoryAvailable: boolean;
+	channelSources: ConnectorChannelSource[];
 	onChanged: () => Promise<void>;
 }
 
 interface ConnectionFormModalProps {
-	account: ConnectorAccount | null;
+	account: CalDavConnectorAccount | null;
 	onClose: () => void;
 	onSaved: () => Promise<void>;
 }
@@ -238,6 +246,125 @@ function ConnectionFormModal({ account, onClose, onSaved }: ConnectionFormModalP
 	);
 }
 
+interface ChannelConnectionFormModalProps {
+	account: ChannelHistoryConnectorAccount | null;
+	sources: ConnectorChannelSource[];
+	onClose: () => void;
+	onSaved: () => Promise<void>;
+}
+
+function ChannelConnectionFormModal({ account, sources, onClose, onSaved }: ChannelConnectionFormModalProps): VNode {
+	const { t } = useTranslation("connectors");
+	const initialSource = account
+		? sources.find(
+				(source) => source.channelType === account.channelType && source.accountId === account.channelAccountId,
+			)
+		: sources[0];
+	const [name, setName] = useState(account?.name ?? "");
+	const [sourceKey, setSourceKey] = useState(
+		initialSource ? `${initialSource.channelType}:${initialSource.accountId}` : "",
+	);
+	const [enabled, setEnabled] = useState(account?.enabled ?? true);
+	const [saving, setSaving] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	async function submit(event: Event): Promise<void> {
+		event.preventDefault();
+		const source = sources.find((candidate) => `${candidate.channelType}:${candidate.accountId}` === sourceKey);
+		if (!(name.trim() && (account || source))) {
+			setError(t("connections.channelRequired"));
+			return;
+		}
+		setSaving(true);
+		setError(null);
+		let saved = false;
+		try {
+			if (account) {
+				await connectorRpc("connectors.accounts.update", { id: account.id, name: name.trim(), enabled });
+			} else if (source) {
+				await connectorRpc("connectors.accounts.add", {
+					kind: "channel_history",
+					name: name.trim(),
+					channelType: source.channelType,
+					channelAccountId: source.accountId,
+					enabled,
+				});
+			}
+			saved = true;
+			await onSaved();
+			showToast(t("connections.saved"), "success");
+			onClose();
+		} catch (caught: unknown) {
+			if (saved) {
+				showToast(t("refreshFailed"), "error");
+				onClose();
+			} else {
+				setError(caught instanceof Error ? caught.message : String(caught));
+			}
+		} finally {
+			setSaving(false);
+		}
+	}
+
+	return (
+		<Modal
+			show={true}
+			onClose={onClose}
+			title={account ? t("connections.editChannelTitle") : t("connections.addChannelTitle")}
+		>
+			<form onSubmit={submit} className="flex flex-col gap-1">
+				<TextField
+					id="connector-channel-connection-name"
+					label={t("connections.name")}
+					value={name}
+					onInput={setName}
+					placeholder={t("connections.channelNamePlaceholder")}
+					required
+				/>
+				<fieldset className="mb-3" disabled={Boolean(account)}>
+					<legend className="mb-2 text-xs text-[var(--muted)]">{t("connections.channelSource")}</legend>
+					<div className="grid gap-2 sm:grid-cols-2">
+						{sources.map((source) => {
+							const key = `${source.channelType}:${source.accountId}`;
+							return (
+								<button
+									key={key}
+									type="button"
+									aria-pressed={sourceKey === key}
+									className={`backend-card ${sourceKey === key ? "selected" : ""} block w-full p-3 text-left`}
+									onClick={() => setSourceKey(key)}
+								>
+									<div className="text-sm font-medium text-[var(--text)]">{source.displayName}</div>
+									<div className="mt-1 text-xs text-[var(--muted)]">
+										{source.channelType} · {source.accountId}
+									</div>
+								</button>
+							);
+						})}
+					</div>
+					{sources.length === 0 ? <EmptyState message={t("connections.noChannelSources")} /> : null}
+				</fieldset>
+				<div className="mb-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-xs text-[var(--muted)]">
+					{t("connections.channelSourceHelp")}
+				</div>
+				<CheckboxField label={t("connections.enabled")} checked={enabled} onChange={setEnabled} />
+				<StatusMessage error={error} />
+				<div className="mt-2 flex justify-end gap-2">
+					<button type="button" className="provider-btn provider-btn-secondary" onClick={onClose}>
+						{t("cancel")}
+					</button>
+					<SaveButton
+						type="submit"
+						saving={saving}
+						disabled={!account && sources.length === 0}
+						label={account ? t("connections.save") : t("connections.create")}
+					/>
+				</div>
+			</form>
+		</Modal>
+	);
+}
+
 interface TestConnectionModalProps {
 	account: ConnectorAccount;
 	onClose: () => void;
@@ -246,13 +373,16 @@ interface TestConnectionModalProps {
 function TestConnectionModal({ account, onClose }: TestConnectionModalProps): VNode {
 	const { t } = useTranslation("connectors");
 	const [calendars, setCalendars] = useState<ConnectorCalendar[] | null>(null);
+	const [channelReady, setChannelReady] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
 		let active = true;
 		connectorRpc("connectors.accounts.test", { id: account.id })
 			.then((payload) => {
-				if (active) setCalendars(payload.calendars);
+				if (!active) return;
+				if ("calendars" in payload) setCalendars(payload.calendars);
+				else setChannelReady(payload.channelReady);
 			})
 			.catch((caught: unknown) => {
 				if (active) setError(caught instanceof Error ? caught.message : String(caught));
@@ -263,11 +393,16 @@ function TestConnectionModal({ account, onClose }: TestConnectionModalProps): VN
 	}, [account.id]);
 
 	return (
-		<Modal show={true} onClose={onClose} title={t("connections.testTitle")}>
+		<Modal
+			show={true}
+			onClose={onClose}
+			title={account.kind === "caldav" ? t("connections.testTitle") : t("connections.testChannelTitle")}
+		>
 			<div className="flex flex-col gap-3">
 				<div className="text-xs text-[var(--muted)]">{account.name}</div>
-				{calendars || error ? null : <Loading message={t("connections.testing")} />}
+				{calendars || channelReady || error ? null : <Loading message={t("connections.testing")} />}
 				<StatusMessage error={error} />
+				{channelReady ? <StatusMessage success={t("connections.channelReady")} /> : null}
 				{calendars?.length === 0 ? <EmptyState message={t("connections.noCalendars")} /> : null}
 				{calendars?.map((calendar) => (
 					<div key={calendar.href} className="rounded border border-[var(--border)] bg-[var(--bg)] p-3">
@@ -290,9 +425,15 @@ function TestConnectionModal({ account, onClose }: TestConnectionModalProps): VN
 	);
 }
 
-export function ConnectionsTab({ accounts, caldavAvailable, onChanged }: ConnectionsTabProps): VNode {
+export function ConnectionsTab({
+	accounts,
+	caldavAvailable,
+	channelHistoryAvailable,
+	channelSources,
+	onChanged,
+}: ConnectionsTabProps): VNode {
 	const { t } = useTranslation("connectors");
-	const [editing, setEditing] = useState<ConnectorAccount | "new" | null>(null);
+	const [editing, setEditing] = useState<ConnectorAccount | "caldav" | "channel_history" | null>(null);
 	const [testing, setTesting] = useState<ConnectorAccount | null>(null);
 
 	async function remove(account: ConnectorAccount): Promise<void> {
@@ -314,12 +455,23 @@ export function ConnectionsTab({ accounts, caldavAvailable, onChanged }: Connect
 
 	return (
 		<div className="flex flex-col gap-3">
-			<div className="flex justify-end">
-				<button type="button" className="provider-btn" disabled={!caldavAvailable} onClick={() => setEditing("new")}>
+			<div className="flex flex-wrap justify-end gap-2">
+				<button type="button" className="provider-btn" disabled={!caldavAvailable} onClick={() => setEditing("caldav")}>
 					{t("connections.add")}
+				</button>
+				<button
+					type="button"
+					className="provider-btn"
+					disabled={!channelHistoryAvailable || channelSources.length === 0}
+					onClick={() => setEditing("channel_history")}
+				>
+					{t("connections.addChannel")}
 				</button>
 			</div>
 			{caldavAvailable ? null : <StatusMessage error={t("connections.unavailable")} />}
+			{channelHistoryAvailable && channelSources.length === 0 ? (
+				<StatusMessage error={t("connections.noChannelSources")} />
+			) : null}
 			{accounts.length === 0 ? <EmptyState message={t("connections.empty")} /> : null}
 			{accounts.map((account) => (
 				<SettingsCard key={account.id} className="bg-[var(--surface)] border border-[var(--border)] rounded-lg p-4">
@@ -332,16 +484,28 @@ export function ConnectionsTab({ accounts, caldavAvailable, onChanged }: Connect
 									variant={account.enabled ? "configured" : "muted"}
 								/>
 								{account.managed ? <Badge label={t("connections.managed")} variant="muted" /> : null}
-								<Badge
-									label={account.hasPassword ? t("connections.passwordConfigured") : t("connections.passwordMissing")}
-									variant={account.hasPassword ? "configured" : "warning"}
-								/>
+								{account.kind === "caldav" ? (
+									<Badge
+										label={account.hasPassword ? t("connections.passwordConfigured") : t("connections.passwordMissing")}
+										variant={account.hasPassword ? "configured" : "warning"}
+									/>
+								) : (
+									<Badge label={t("connections.channelHistory")} variant="configured" />
+								)}
 							</div>
-							<div className="mt-2 break-all text-xs text-[var(--muted)]">{safeServerUrl(account.serverUrl)}</div>
-							<div className="mt-1 text-xs text-[var(--muted)]">
-								{account.username} · {account.timeoutSeconds}s
-							</div>
-							{account.allowInsecureHttp || account.allowPrivateNetwork ? (
+							{account.kind === "caldav" ? (
+								<>
+									<div className="mt-2 break-all text-xs text-[var(--muted)]">{safeServerUrl(account.serverUrl)}</div>
+									<div className="mt-1 text-xs text-[var(--muted)]">
+										{account.username} · {account.timeoutSeconds}s
+									</div>
+								</>
+							) : (
+								<div className="mt-2 text-xs text-[var(--muted)]">
+									{account.channelType} · {account.channelAccountId}
+								</div>
+							)}
+							{account.kind === "caldav" && (account.allowInsecureHttp || account.allowPrivateNetwork) ? (
 								<div className="mt-2 flex flex-wrap gap-2">
 									{account.allowInsecureHttp ? <Badge label={t("connections.allowHttp")} variant="warning" /> : null}
 									{account.allowPrivateNetwork ? (
@@ -354,7 +518,7 @@ export function ConnectionsTab({ accounts, caldavAvailable, onChanged }: Connect
 							<button
 								type="button"
 								className="provider-btn provider-btn-secondary"
-								disabled={!(account.enabled && account.hasPassword)}
+								disabled={!(account.enabled && (account.kind === "channel_history" || account.hasPassword))}
 								onClick={() => setTesting(account)}
 							>
 								{t("connections.test")}
@@ -375,10 +539,20 @@ export function ConnectionsTab({ accounts, caldavAvailable, onChanged }: Connect
 					</div>
 				</SettingsCard>
 			))}
-			{editing ? (
+			{editing && (editing === "caldav" || (typeof editing === "object" && editing.kind === "caldav")) ? (
 				<ConnectionFormModal
-					key={editing === "new" ? "new" : editing.id}
-					account={editing === "new" ? null : editing}
+					key={editing === "caldav" ? "new-caldav" : editing.id}
+					account={editing === "caldav" ? null : editing}
+					onClose={() => setEditing(null)}
+					onSaved={onChanged}
+				/>
+			) : null}
+			{editing &&
+			(editing === "channel_history" || (typeof editing === "object" && editing.kind === "channel_history")) ? (
+				<ChannelConnectionFormModal
+					key={editing === "channel_history" ? "new-channel" : editing.id}
+					account={editing === "channel_history" ? null : editing}
+					sources={channelSources}
 					onClose={() => setEditing(null)}
 					onSaved={onChanged}
 				/>

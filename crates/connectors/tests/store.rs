@@ -359,6 +359,11 @@ fn connector_kind_conversions_and_serde() -> TestResult {
     assert_eq!(ConnectorKind::Caldav.to_string(), "caldav");
     assert_eq!(ConnectorKind::try_from("caldav")?, ConnectorKind::Caldav);
     assert_eq!(serde_json::to_string(&ConnectorKind::Caldav)?, "\"caldav\"");
+    assert_eq!(ConnectorKind::ChannelHistory.as_str(), "channel_history");
+    assert_eq!(
+        ConnectorKind::try_from("channel_history")?,
+        ConnectorKind::ChannelHistory
+    );
     assert!(matches!(
         ConnectorKind::try_from("other"),
         Err(ConnectorError::UnknownConnectorKind(_))

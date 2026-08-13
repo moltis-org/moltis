@@ -825,6 +825,10 @@ fn timeline_event_to_thread_message(event: &TimelineEvent, bot_user_id: &str) ->
         .unwrap_or_else(|| (String::new(), String::new()));
 
     ThreadMessage {
+        message_id: event
+            .event_id()
+            .map(|event_id| event_id.to_string())
+            .unwrap_or_default(),
         is_bot: sender_id == bot_user_id,
         sender_id,
         text,

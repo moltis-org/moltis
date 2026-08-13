@@ -19,6 +19,7 @@ async function installConnectorsRpcMock(page) {
 			runs: [],
 			items: [],
 			requests: [],
+			channelSources: [{ channelType: "slack", accountId: "slack-team-1", displayName: "Acme Slack" }],
 			calendars: [
 				{
 					href: "/dav/calendars/alice/work/",
@@ -44,42 +45,62 @@ async function installConnectorsRpcMock(page) {
 			mock.requests.push({ method: request.method, params: structuredClone(params) });
 			switch (request.method) {
 				case "connectors.available":
-					return { ok: true, payload: { connectors: [{ kind: "caldav", displayName: "CalDAV" }] } };
+					return {
+						ok: true,
+						payload: {
+							connectors: [
+								{ kind: "caldav", displayName: "CalDAV" },
+								{ kind: "channel_history", displayName: "Channel history" },
+							],
+						},
+					};
+				case "connectors.channel_sources.list":
+					return { ok: true, payload: { sources: structuredClone(mock.channelSources) } };
 				case "connectors.accounts.list":
 					return { ok: true, payload: { accounts: structuredClone(mock.accounts) } };
 				case "connectors.accounts.add": {
-					const account = {
+					const shared = {
 						id: `account-${mock.accounts.length + 1}`,
-						kind: "caldav",
+						kind: params.kind,
 						name: params.name,
-						serverUrl: params.serverUrl,
-						username: params.username,
-						timeoutSeconds: params.timeoutSeconds,
-						allowInsecureHttp: params.allowInsecureHttp,
-						allowPrivateNetwork: params.allowPrivateNetwork,
-						hasPassword: Boolean(params.password),
 						managed: false,
 						enabled: params.enabled,
 						createdAt: now,
 						updatedAt: now,
 					};
+					const account =
+						params.kind === "channel_history"
+							? {
+									...shared,
+									channelType: params.channelType,
+									channelAccountId: params.channelAccountId,
+								}
+							: {
+									...shared,
+									serverUrl: params.serverUrl,
+									username: params.username,
+									timeoutSeconds: params.timeoutSeconds,
+									allowInsecureHttp: params.allowInsecureHttp,
+									allowPrivateNetwork: params.allowPrivateNetwork,
+									hasPassword: Boolean(params.password),
+								};
 					mock.accounts.push(account);
 					return { ok: true, payload: structuredClone(account) };
 				}
 				case "connectors.accounts.update": {
 					const account = mock.accounts.find((candidate) => candidate.id === params.id);
 					if (!account) return { ok: false, error: { message: "account not found" } };
-					Object.assign(account, {
-						name: params.name,
-						serverUrl: params.serverUrl,
-						username: params.username,
-						timeoutSeconds: params.timeoutSeconds,
-						allowInsecureHttp: params.allowInsecureHttp,
-						allowPrivateNetwork: params.allowPrivateNetwork,
-						enabled: params.enabled,
-						updatedAt: now,
-					});
-					if (params.password) account.hasPassword = true;
+					Object.assign(account, { name: params.name, enabled: params.enabled, updatedAt: now });
+					if (account.kind === "caldav") {
+						Object.assign(account, {
+							serverUrl: params.serverUrl,
+							username: params.username,
+							timeoutSeconds: params.timeoutSeconds,
+							allowInsecureHttp: params.allowInsecureHttp,
+							allowPrivateNetwork: params.allowPrivateNetwork,
+						});
+						if (params.password) account.hasPassword = true;
+					}
 					return { ok: true, payload: structuredClone(account) };
 				}
 				case "connectors.accounts.remove":
@@ -87,7 +108,13 @@ async function installConnectorsRpcMock(page) {
 					mock.datasets = mock.datasets.filter((dataset) => dataset.accountId !== params.id);
 					return { ok: true, payload: { removed: true } };
 				case "connectors.accounts.test":
-					return { ok: true, payload: { calendars: structuredClone(mock.calendars) } };
+					return {
+						ok: true,
+						payload:
+							mock.accounts.find((account) => account.id === params.id)?.kind === "channel_history"
+								? { channelReady: true }
+								: { calendars: structuredClone(mock.calendars) },
+					};
 				case "connectors.datasets.list":
 					return { ok: true, payload: { datasets: structuredClone(mock.datasets) } };
 				case "connectors.datasets.compile": {
@@ -116,9 +143,11 @@ async function installConnectorsRpcMock(page) {
 					};
 				}
 				case "connectors.datasets.add": {
+					const account = mock.accounts.find((candidate) => candidate.id === params.accountId);
 					const dataset = {
 						id: `dataset-${mock.datasets.length + 1}`,
 						accountId: params.accountId,
+						kind: account?.kind,
 						name: params.name,
 						instruction: params.instruction,
 						config: structuredClone(params.config),
@@ -175,12 +204,15 @@ async function installConnectorsRpcMock(page) {
 						{
 							id: "item-1",
 							datasetId: dataset.id,
-							remoteId: "event-1",
-							kind: "calendar_event",
+							remoteId: dataset.kind === "channel_history" ? "message-1" : "event-1",
+							kind: dataset.kind === "channel_history" ? "channel_message" : "calendar_event",
 							remoteVersion: "v1",
 							occurredAt: "2026-08-07T09:00:00Z",
 							updatedAt: now,
-							bodyJson: { summary: "Planning review", attendees: ["Alice", "Bob"] },
+							bodyJson:
+								dataset.kind === "channel_history"
+									? { text: "Please escalate this support issue", author: "U123" }
+									: { summary: "Planning review", attendees: ["Alice", "Bob"] },
 							contentHash: "hash-1",
 							createdAt: now,
 							storedAt: now,
@@ -460,6 +492,81 @@ test.describe("Settings > Connectors", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("creates and syncs a bounded Slack thread dataset without compiling", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/connectors");
+		await waitForWsConnected(page);
+		await installConnectorsRpcMock(page);
+
+		await page.getByRole("button", { name: "Add channel history connection", exact: true }).click();
+		let modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Add channel history connection", exact: true }),
+		});
+		await modal.getByLabel("Connection name", { exact: true }).fill("Support Slack");
+		await expect(modal.getByRole("button", { name: /Acme Slack/ })).toHaveAttribute("aria-pressed", "true");
+		await modal.getByRole("button", { name: "Add connection", exact: true }).click();
+
+		const accountCard = cardForHeading(page, "Support Slack");
+		await expect(accountCard).toContainText("slack · slack-team-1");
+		await accountCard.getByRole("button", { name: "Test connection", exact: true }).click();
+		modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Channel history readiness", exact: true }),
+		});
+		await expect(modal.getByText("The channel account is ready for history sync.", { exact: true })).toBeVisible();
+		await modal.getByRole("button", { name: "Close", exact: true }).click();
+
+		await page.getByRole("tab", { name: "Datasets", exact: true }).click();
+		await page.getByRole("button", { name: "Add dataset", exact: true }).click();
+		modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Add channel history dataset", exact: true }),
+		});
+		await expect(modal.getByText(/provider-native IDs/)).toBeVisible();
+		await modal.getByLabel("Dataset name", { exact: true }).fill("Escalation thread");
+		await modal.getByLabel("Channel or conversation ID", { exact: true }).fill("C0123456789");
+		await modal.getByLabel("Thread or root message ID", { exact: true }).fill("1722942000.123456");
+		await modal.getByLabel("Message limit", { exact: true }).fill("201");
+		await modal.getByLabel("Schedule (minutes)", { exact: true }).fill("15");
+		await modal.getByRole("button", { name: "Create dataset", exact: true }).click();
+		await expect(modal.getByText("Message limit must be a whole number from 1 to 200.", { exact: true })).toBeVisible();
+		await modal.getByLabel("Message limit", { exact: true }).fill("25");
+		await modal.getByRole("button", { name: "Create dataset", exact: true }).click();
+
+		const compileRequests = await page.evaluate(
+			() =>
+				window.__connectorRpcState.requests.filter((request) => request.method === "connectors.datasets.compile")
+					.length,
+		);
+		expect(compileRequests).toBe(0);
+		const addDatasetRequest = await page.evaluate(() =>
+			window.__connectorRpcState.requests.find((request) => request.method === "connectors.datasets.add"),
+		);
+		expect(addDatasetRequest.params).toEqual({
+			accountId: "account-1",
+			instruction: "Keep up to 25 messages from channel C0123456789 in thread 1722942000.123456.",
+			name: "Escalation thread",
+			config: {
+				schemaVersion: 1,
+				channelId: "C0123456789",
+				threadId: "1722942000.123456",
+				limit: 25,
+			},
+			scheduleMinutes: 15,
+			projections: { jsonl: true, markdown: true },
+			enabled: true,
+		});
+
+		const datasetCard = cardForHeading(page, "Escalation thread");
+		await expect(datasetCard).toContainText("Channel C0123456789 · thread 1722942000.123456 · up to 25 messages");
+		await datasetCard.getByRole("button", { name: "Run now", exact: true }).click();
+		await expect(datasetCard.getByText("1 items", { exact: true })).toBeVisible();
+		await datasetCard.getByRole("button", { name: "Preview", exact: true }).click();
+		modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Dataset preview", exact: true }),
+		});
+		await expect(modal.locator("pre")).toContainText("Please escalate this support issue");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("protects config-managed connections and disabled datasets", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/connectors");
@@ -488,6 +595,7 @@ test.describe("Settings > Connectors", () => {
 				{
 					id: "managed-dataset",
 					accountId: "managed-account",
+					kind: "caldav",
 					name: "Configured archive",
 					instruction: "Keep all calendars",
 					config: { schemaVersion: 1, selection: { mode: "all" }, filters: { acceptedByAccount: false } },

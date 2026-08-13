@@ -2,15 +2,18 @@ import type { VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
 	Badge,
+	CheckboxField,
 	EmptyState,
 	Loading,
 	SaveButton,
 	SettingsCard,
 	StatusMessage,
 	TextAreaField,
+	TextField,
 } from "../../components/forms";
 import { useTranslation } from "../../i18n";
 import type {
+	CalDavConnectorDataset,
 	ConnectorAccount,
 	ConnectorDataset,
 	ConnectorDatasetCompileResponse,
@@ -43,7 +46,7 @@ function formatTimestamp(value?: string): string {
 	return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-function currentDraft(dataset: ConnectorDataset): ConnectorDatasetDraft {
+function currentDraft(dataset: CalDavConnectorDataset): ConnectorDatasetDraft {
 	return {
 		name: dataset.name,
 		config: dataset.config,
@@ -51,6 +54,38 @@ function currentDraft(dataset: ConnectorDataset): ConnectorDatasetDraft {
 		projections: dataset.projections,
 		enabled: dataset.enabled,
 	};
+}
+
+interface AccountSelectorProps {
+	accounts: ConnectorAccount[];
+	accountId: string;
+	disabled: boolean;
+	onChange: (accountId: string) => void;
+}
+
+function AccountSelector({ accounts, accountId, disabled, onChange }: AccountSelectorProps): VNode {
+	const { t } = useTranslation("connectors");
+	return (
+		<fieldset className="mb-3" disabled={disabled}>
+			<legend className="mb-2 text-xs text-[var(--muted)]">{t("datasets.account")}</legend>
+			<div className="grid gap-2 sm:grid-cols-2">
+				{accounts.map((account) => (
+					<button
+						key={account.id}
+						type="button"
+						aria-pressed={accountId === account.id}
+						className={`backend-card ${accountId === account.id ? "selected" : ""} block w-full p-3 text-left`}
+						onClick={() => onChange(account.id)}
+					>
+						<div className="text-sm font-medium text-[var(--text)]">{account.name}</div>
+						<div className="mt-1 text-xs text-[var(--muted)]">
+							{account.kind === "caldav" ? account.username : `${account.channelType} · ${account.channelAccountId}`}
+						</div>
+					</button>
+				))}
+			</div>
+		</fieldset>
+	);
 }
 
 function parseOverrides(value: string): JsonValue | undefined {
@@ -135,9 +170,19 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 	const { t } = useTranslation("connectors");
 	const [accountId, setAccountId] = useState(dataset?.accountId ?? accounts[0]?.id ?? "");
 	const [instruction, setInstruction] = useState(dataset?.instruction ?? "");
+	const [channelId, setChannelId] = useState(dataset?.kind === "channel_history" ? dataset.config.channelId : "");
+	const [threadId, setThreadId] = useState(dataset?.kind === "channel_history" ? dataset.config.threadId : "");
+	const [limit, setLimit] = useState(dataset?.kind === "channel_history" ? String(dataset.config.limit) : "100");
+	const [name, setName] = useState(dataset?.name ?? "");
+	const [schedule, setSchedule] = useState(
+		dataset?.scheduleMinutes === null || dataset?.scheduleMinutes === undefined ? "" : String(dataset.scheduleMinutes),
+	);
+	const [jsonl, setJsonl] = useState(dataset?.projections.jsonl ?? true);
+	const [markdown, setMarkdown] = useState(dataset?.projections.markdown ?? true);
+	const [enabled, setEnabled] = useState(dataset?.enabled ?? true);
 	const [advancedJson, setAdvancedJson] = useState("");
 	const [preview, setPreview] = useState<ConnectorDatasetCompileResponse | null>(() =>
-		dataset
+		dataset?.kind === "caldav"
 			? {
 					draft: currentDraft(dataset),
 					summary: t("datasets.currentDraftSummary"),
@@ -150,6 +195,8 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const revision = useRef(0);
+	const selectedAccount = accounts.find((account) => account.id === accountId);
+	const channelHistory = dataset?.kind === "channel_history" || selectedAccount?.kind === "channel_history";
 
 	function invalidate(): void {
 		revision.current += 1;
@@ -197,6 +244,56 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 
 	async function submit(event: Event): Promise<void> {
 		event.preventDefault();
+		if (channelHistory) {
+			if (!(name.trim() && channelId.trim() && threadId.trim())) {
+				setError(t("datasets.channelRequired"));
+				return;
+			}
+			const parsedLimit = Number(limit);
+			if (!(Number.isSafeInteger(parsedLimit) && parsedLimit >= 1 && parsedLimit <= 200)) {
+				setError(t("datasets.limitInvalid"));
+				return;
+			}
+			const scheduleMinutes = schedule.trim() ? Number(schedule) : null;
+			if (scheduleMinutes !== null && !(Number.isSafeInteger(scheduleMinutes) && scheduleMinutes > 0)) {
+				setError(t("datasets.scheduleInvalid"));
+				return;
+			}
+			setSaving(true);
+			setError(null);
+			let saved = false;
+			try {
+				const values = {
+					instruction: `Keep up to ${parsedLimit} messages from channel ${channelId.trim()} in thread ${threadId.trim()}.`,
+					name: name.trim(),
+					config: {
+						schemaVersion: dataset?.kind === "channel_history" ? dataset.config.schemaVersion : 1,
+						channelId: channelId.trim(),
+						threadId: threadId.trim(),
+						limit: parsedLimit,
+					},
+					scheduleMinutes,
+					projections: { jsonl, markdown },
+					enabled,
+				};
+				if (dataset) await connectorRpc("connectors.datasets.update", { id: dataset.id, ...values });
+				else await connectorRpc("connectors.datasets.add", { accountId, ...values });
+				saved = true;
+				await onSaved();
+				showToast(t("datasets.saved"), "success");
+				onClose();
+			} catch (caught: unknown) {
+				if (saved) {
+					showToast(t("refreshFailed"), "error");
+					onClose();
+				} else {
+					setError(caught instanceof Error ? caught.message : String(caught));
+				}
+			} finally {
+				setSaving(false);
+			}
+			return;
+		}
 		if (!(compiled && preview)) return;
 		const values = { instruction: instruction.trim(), ...preview.draft };
 		setSaving(true);
@@ -225,77 +322,143 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 	}
 
 	return (
-		<Modal show={true} onClose={onClose} title={dataset ? t("datasets.editTitle") : t("datasets.addTitle")}>
+		<Modal
+			show={true}
+			onClose={onClose}
+			title={
+				channelHistory
+					? dataset
+						? t("datasets.editChannelTitle")
+						: t("datasets.addChannelTitle")
+					: dataset
+						? t("datasets.editTitle")
+						: t("datasets.addTitle")
+			}
+		>
 			<form onSubmit={submit} className="flex flex-col gap-1">
-				<fieldset className="mb-3" disabled={Boolean(dataset)}>
-					<legend className="mb-2 text-xs text-[var(--muted)]">{t("datasets.account")}</legend>
-					<div className="grid gap-2 sm:grid-cols-2">
-						{accounts.map((account) => (
-							<button
-								key={account.id}
-								type="button"
-								aria-pressed={accountId === account.id}
-								className={`backend-card ${accountId === account.id ? "selected" : ""} block w-full p-3 text-left`}
-								onClick={() => {
-									if (account.id === accountId) return;
-									setAccountId(account.id);
-									invalidate();
-								}}
-							>
-								<div className="text-sm font-medium text-[var(--text)]">{account.name}</div>
-								<div className="mt-1 text-xs text-[var(--muted)]">{account.username}</div>
-							</button>
-						))}
-					</div>
-				</fieldset>
-				<TextAreaField
-					id="connector-dataset-instruction"
-					label={t("datasets.instruction")}
-					value={instruction}
-					onInput={(value) => {
-						setInstruction(value);
+				<AccountSelector
+					accounts={accounts}
+					accountId={accountId}
+					disabled={Boolean(dataset)}
+					onChange={(nextAccountId) => {
+						if (nextAccountId === accountId) return;
+						setAccountId(nextAccountId);
 						invalidate();
 					}}
-					placeholder={t("datasets.instructionPlaceholder")}
-					help={t("datasets.instructionHelp")}
-					rows={5}
-					required
 				/>
-				<div className="mb-3 rounded border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--muted)]">
-					<div className="mb-1 font-medium text-[var(--text)]">{t("datasets.examples")}</div>
-					<ul className="list-disc space-y-1 pl-4">
-						<li>{t("datasets.exampleAll")}</li>
-						<li>{t("datasets.exampleFiltered")}</li>
-					</ul>
-				</div>
-				<details className="mb-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
-					<summary className="cursor-pointer text-sm font-medium text-[var(--text)]">{t("datasets.advanced")}</summary>
-					<TextAreaField
-						id="connector-dataset-overrides"
-						label={t("datasets.overrides")}
-						value={advancedJson}
-						onInput={(value) => {
-							setAdvancedJson(value);
-							invalidate();
-						}}
-						placeholder={t("datasets.overridesPlaceholder")}
-						help={t("datasets.overridesHelp")}
-						rows={5}
-						className="mt-3"
-						monospace
-					/>
-				</details>
-				<div className="mb-3 flex justify-start">
-					<button
-						type="button"
-						className="provider-btn"
-						disabled={compiling || !accountId || !instruction.trim()}
-						onClick={() => void compile()}
-					>
-						{compiling ? t("datasets.compiling") : t("datasets.compile")}
-					</button>
-				</div>
-				{preview ? <DraftPreview preview={preview} compiled={compiled} /> : null}
+				{channelHistory ? (
+					<>
+						<div className="mb-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-xs text-[var(--muted)]">
+							{t("datasets.channelHelp")}
+						</div>
+						<TextField
+							id="connector-channel-dataset-name"
+							label={t("datasets.name")}
+							value={name}
+							onInput={setName}
+							placeholder={t("datasets.channelNamePlaceholder")}
+							required
+						/>
+						<TextField
+							id="connector-channel-id"
+							label={t("datasets.channelId")}
+							value={channelId}
+							onInput={setChannelId}
+							placeholder={t("datasets.channelIdPlaceholder")}
+							help={t("datasets.channelIdHelp")}
+							required
+						/>
+						<TextField
+							id="connector-thread-id"
+							label={t("datasets.threadId")}
+							value={threadId}
+							onInput={setThreadId}
+							placeholder={t("datasets.threadIdPlaceholder")}
+							help={t("datasets.threadIdHelp")}
+							required
+						/>
+						<div className="grid gap-3 sm:grid-cols-2">
+							<TextField
+								id="connector-message-limit"
+								label={t("datasets.limit")}
+								type="number"
+								value={limit}
+								onInput={setLimit}
+								help={t("datasets.limitHelp")}
+								required
+							/>
+							<TextField
+								id="connector-channel-schedule"
+								label={t("datasets.schedule")}
+								type="number"
+								value={schedule}
+								onInput={setSchedule}
+								help={t("datasets.scheduleHelp")}
+							/>
+						</div>
+						<fieldset className="mb-2">
+							<legend className="mb-2 text-xs text-[var(--muted)]">{t("datasets.projections")}</legend>
+							<div className="flex flex-wrap gap-4">
+								<CheckboxField label={t("datasets.jsonl")} checked={jsonl} onChange={setJsonl} />
+								<CheckboxField label={t("datasets.markdown")} checked={markdown} onChange={setMarkdown} />
+							</div>
+						</fieldset>
+						<CheckboxField label={t("datasets.enabled")} checked={enabled} onChange={setEnabled} />
+					</>
+				) : (
+					<>
+						<TextAreaField
+							id="connector-dataset-instruction"
+							label={t("datasets.instruction")}
+							value={instruction}
+							onInput={(value) => {
+								setInstruction(value);
+								invalidate();
+							}}
+							placeholder={t("datasets.instructionPlaceholder")}
+							help={t("datasets.instructionHelp")}
+							rows={5}
+							required
+						/>
+						<div className="mb-3 rounded border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--muted)]">
+							<div className="mb-1 font-medium text-[var(--text)]">{t("datasets.examples")}</div>
+							<ul className="list-disc space-y-1 pl-4">
+								<li>{t("datasets.exampleAll")}</li>
+								<li>{t("datasets.exampleFiltered")}</li>
+							</ul>
+						</div>
+						<details className="mb-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
+							<summary className="cursor-pointer text-sm font-medium text-[var(--text)]">
+								{t("datasets.advanced")}
+							</summary>
+							<TextAreaField
+								id="connector-dataset-overrides"
+								label={t("datasets.overrides")}
+								value={advancedJson}
+								onInput={(value) => {
+									setAdvancedJson(value);
+									invalidate();
+								}}
+								placeholder={t("datasets.overridesPlaceholder")}
+								help={t("datasets.overridesHelp")}
+								rows={5}
+								className="mt-3"
+								monospace
+							/>
+						</details>
+						<div className="mb-3 flex justify-start">
+							<button
+								type="button"
+								className="provider-btn"
+								disabled={compiling || !accountId || !instruction.trim()}
+								onClick={() => void compile()}
+							>
+								{compiling ? t("datasets.compiling") : t("datasets.compile")}
+							</button>
+						</div>
+						{preview ? <DraftPreview preview={preview} compiled={compiled} /> : null}
+					</>
+				)}
 				<StatusMessage error={error} />
 				<div className="mt-2 flex justify-end gap-2">
 					<button type="button" className="provider-btn provider-btn-secondary" onClick={onClose}>
@@ -304,7 +467,7 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 					<SaveButton
 						type="submit"
 						saving={saving}
-						disabled={!(compiled && preview)}
+						disabled={channelHistory ? !accountId : !(compiled && preview)}
 						label={dataset ? t("datasets.save") : t("datasets.create")}
 					/>
 				</div>
@@ -435,7 +598,17 @@ export function DatasetsTab({ accounts, datasets, onChanged }: DatasetsTabProps)
 			{datasets.length === 0 ? <EmptyState message={t("datasets.empty")} /> : null}
 			{datasets.map((dataset) => {
 				const account = accounts.find((candidate) => candidate.id === dataset.accountId);
-				const selection = dataset.config.selection;
+				const scope =
+					dataset.kind === "caldav"
+						? dataset.config.selection.mode === "all"
+							? t("datasets.all")
+							: t("datasets.selected", { count: dataset.config.selection.calendarHrefs.length })
+						: t("datasets.channelScope", {
+								channelId: dataset.config.channelId,
+								threadId: dataset.config.threadId,
+								limit: dataset.config.limit,
+							});
+				const canRun = account?.enabled === true && (account.kind === "channel_history" || account.hasPassword);
 				return (
 					<SettingsCard key={dataset.id} className="bg-[var(--surface)] border border-[var(--border)] rounded-lg p-4">
 						<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -454,10 +627,7 @@ export function DatasetsTab({ accounts, datasets, onChanged }: DatasetsTabProps)
 									{dataset.scheduleMinutes
 										? t("datasets.everyMinutes", { count: dataset.scheduleMinutes })
 										: t("datasets.manual")}{" "}
-									·{" "}
-									{selection.mode === "all"
-										? t("datasets.all")
-										: t("datasets.selected", { count: selection.calendarHrefs.length })}
+									· {scope}
 								</div>
 								<div className="mt-1 text-xs text-[var(--muted)]">
 									{t("datasets.lastSync", {
@@ -482,7 +652,7 @@ export function DatasetsTab({ accounts, datasets, onChanged }: DatasetsTabProps)
 								<button
 									type="button"
 									className="provider-btn"
-									disabled={syncingId !== null || !dataset.enabled || !account?.enabled || !account.hasPassword}
+									disabled={syncingId !== null || !dataset.enabled || !canRun}
 									onClick={() => void sync(dataset)}
 								>
 									{syncingId === dataset.id ? t("datasets.running") : t("datasets.runNow")}

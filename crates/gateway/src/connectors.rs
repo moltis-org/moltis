@@ -10,6 +10,7 @@ use std::{
 use {
     dashmap::DashSet,
     futures::StreamExt,
+    moltis_channels::ChannelRegistry,
     moltis_connector_caldav::{CalDavAccountConfig, CalDavConnector, CalDavDatasetConfig},
     moltis_connectors::{
         Account, AccountCreate, AccountUpdate, ConnectorError, ConnectorItem, ConnectorKind,
@@ -17,7 +18,7 @@ use {
         SqliteConnectorStore, SyncRun,
     },
     secrecy::ExposeSecret,
-    serde_json::{Value, json},
+    serde_json::Value,
     sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     time::{Duration, OffsetDateTime},
     tokio::{sync::Mutex, task::JoinHandle},
@@ -28,6 +29,8 @@ use {
 #[path = "connectors_helpers.rs"]
 mod helpers;
 use helpers::*;
+#[path = "connectors/channel_history.rs"]
+mod channel_history;
 #[path = "connectors_maintenance.rs"]
 mod maintenance;
 use maintenance::{ActiveSyncGuard, SyncTrigger};
@@ -72,6 +75,8 @@ pub enum ConnectorManagerError {
     Unavailable(String),
     #[error("connector provider operation failed")]
     Provider(#[source] moltis_connector_caldav::CalDavConnectorError),
+    #[error("channel history operation failed")]
+    Channel(#[source] moltis_channels::Error),
     #[error("internal connector operation failed")]
     Internal(#[source] anyhow::Error),
 }
@@ -92,6 +97,7 @@ pub struct ConnectorManager {
     maintenance: Mutex<Option<JoinHandle<()>>>,
     sync_tasks: TaskTracker,
     planner: OnceLock<ConnectorPlanner>,
+    channel_registry: OnceLock<Arc<ChannelRegistry>>,
 }
 
 #[derive(Default)]
@@ -169,6 +175,7 @@ impl ConnectorManager {
             maintenance: Mutex::new(None),
             sync_tasks: TaskTracker::new(),
             planner: OnceLock::new(),
+            channel_registry: OnceLock::new(),
         };
         if let Err(error) = manager.reconcile_projection_directories().await {
             tracing::warn!(?error, "initial connector projection maintenance failed");
@@ -191,10 +198,16 @@ impl ConnectorManager {
 
     #[must_use]
     pub fn available(&self) -> Vec<ConnectorDescriptor> {
-        vec![ConnectorDescriptor {
-            kind: ConnectorKind::Caldav,
-            display_name: "CalDAV",
-        }]
+        vec![
+            ConnectorDescriptor {
+                kind: ConnectorKind::Caldav,
+                display_name: "CalDAV",
+            },
+            ConnectorDescriptor {
+                kind: ConnectorKind::ChannelHistory,
+                display_name: "Channel messages",
+            },
+        ]
     }
 
     pub async fn list_accounts(&self) -> Result<Vec<AccountView>> {
@@ -217,29 +230,52 @@ impl ConnectorManager {
         source_key: Option<String>,
     ) -> Result<AccountView> {
         let mut mutation = self.account_mutations.lock().await;
-        ensure_caldav(request.kind)?;
-        validate_password_replacement(request.password.expose_secret())?;
-        validate_account_fields(
-            &request.server_url,
-            &request.username,
-            request.timeout_seconds,
-            request.allow_insecure_http,
-        )?;
-
         let id = Uuid::new_v4().to_string();
-        let mut config = account_config_value(
-            request.server_url,
-            request.username,
-            Value::String(request.password.expose_secret().to_owned()),
-            request.timeout_seconds,
-            request.allow_insecure_http,
-            request.allow_private_network,
-        );
-        self.prepare_secret_for_storage(&id, &mut config).await?;
+        let kind = request.kind;
+        let config = match kind {
+            ConnectorKind::Caldav => {
+                validate_password_replacement(request.password.expose_secret())?;
+                validate_account_fields(
+                    &request.server_url,
+                    &request.username,
+                    request.timeout_seconds,
+                    request.allow_insecure_http,
+                )?;
+                let mut config = account_config_value(
+                    request.server_url,
+                    request.username,
+                    Value::String(request.password.expose_secret().to_owned()),
+                    request.timeout_seconds,
+                    request.allow_insecure_http,
+                    request.allow_private_network,
+                );
+                self.prepare_secret_for_storage(&id, &mut config).await?;
+                config
+            },
+            ConnectorKind::ChannelHistory => {
+                let channel_type = request.channel_type.ok_or_else(|| {
+                    ConnectorManagerError::InvalidInput(
+                        "channelType is required for channel history".to_owned(),
+                    )
+                })?;
+                let channel_account_id = request.channel_account_id.ok_or_else(|| {
+                    ConnectorManagerError::InvalidInput(
+                        "channelAccountId is required for channel history".to_owned(),
+                    )
+                })?;
+                self.validate_channel_source(channel_type, &channel_account_id)
+                    .await?;
+                serde_json::to_value(ChannelHistoryAccountConfig {
+                    channel_type,
+                    channel_account_id,
+                })
+                .map_err(|error| internal(error, "serialize channel connector account"))?
+            },
+        };
         let account = self
             .store
             .create_account_with_id(&id, AccountCreate {
-                kind: ConnectorKind::Caldav,
+                kind,
                 name: request.name,
                 config,
                 enabled: request.enabled,
@@ -259,6 +295,24 @@ impl ConnectorManager {
         let mut mutation = self.account_mutations.lock().await;
         let existing = self.account_required(id).await?;
         self.ensure_account_inactive(id).await?;
+        if existing.kind == ConnectorKind::ChannelHistory {
+            let config: ChannelHistoryAccountConfig =
+                serde_json::from_value(existing.config.clone())
+                    .map_err(|error| internal(error, "deserialize channel connector account"))?;
+            self.validate_channel_source(config.channel_type, &config.channel_account_id)
+                .await?;
+            let account = self
+                .store
+                .update_account(id, AccountUpdate {
+                    name: request.name,
+                    config: existing.config,
+                    enabled: request.enabled,
+                })
+                .await
+                .map_err(ConnectorManagerError::from)?;
+            mutation.revision = mutation.revision.wrapping_add(1);
+            return account_view(account);
+        }
         ensure_caldav(existing.kind)?;
 
         let replacement = request
@@ -353,14 +407,24 @@ impl ConnectorManager {
         }
     }
 
-    pub async fn test_account(&self, id: &str) -> Result<Vec<CalendarView>> {
+    pub async fn test_account(&self, id: &str) -> Result<AccountTestView> {
+        let account = self.account_required(id).await?;
+        if account.kind == ConnectorKind::ChannelHistory {
+            let config: ChannelHistoryAccountConfig = serde_json::from_value(account.config)
+                .map_err(|error| internal(error, "deserialize channel connector account"))?;
+            self.validate_channel_source(config.channel_type, &config.channel_account_id)
+                .await?;
+            return Ok(AccountTestView::ChannelReady {
+                channel_ready: true,
+            });
+        }
         let config = self.runtime_account_config(id).await?;
         self.caldav
             .test_connection(&config)
             .await
             .map_err(ConnectorManagerError::Provider)
-            .map(|calendars| {
-                calendars
+            .map(|calendars| AccountTestView::Calendars {
+                calendars: calendars
                     .into_iter()
                     .map(|calendar| CalendarView {
                         href: calendar.href,
@@ -370,7 +434,7 @@ impl ConnectorManager {
                         collection_etag: calendar.collection_etag,
                         supports_sync: calendar.supports_sync,
                     })
-                    .collect()
+                    .collect(),
             })
     }
 
@@ -390,7 +454,7 @@ impl ConnectorManager {
             datasets.extend(
                 account_datasets
                     .into_iter()
-                    .map(|dataset| dataset_view(dataset, &self.export_root))
+                    .map(|dataset| dataset_view(dataset, account.kind, &self.export_root))
                     .collect::<Result<Vec<_>>>()?,
             );
         }
@@ -401,10 +465,12 @@ impl ConnectorManager {
     pub async fn add_dataset(&self, request: DatasetCreateRequest) -> Result<DatasetView> {
         let mut mutation = self.account_mutations.lock().await;
         let account = self.account_required(&request.account_id).await?;
-        ensure_caldav(account.kind)?;
         validate_instruction(&request.instruction)?;
-        let config = CalDavDatasetConfig::from(request.config);
-        validate_dataset_request(&config, request.schedule_minutes)?;
+        let config = self.validate_and_serialize_dataset_config(
+            account.kind,
+            request.config,
+            request.schedule_minutes,
+        )?;
         let next_sync_at = next_sync_at(request.enabled, request.schedule_minutes)?;
         let dataset = self
             .store
@@ -412,8 +478,7 @@ impl ConnectorManager {
                 account_id: request.account_id,
                 name: request.name,
                 instruction: Some(request.instruction),
-                config: serde_json::to_value(config)
-                    .map_err(|error| internal(error, "serialize CalDAV dataset config"))?,
+                config,
                 schedule_minutes: request.schedule_minutes,
                 projections: request.projections,
                 enabled: request.enabled,
@@ -422,7 +487,7 @@ impl ConnectorManager {
             .await
             .map_err(ConnectorManagerError::from)?;
         mutation.revision = mutation.revision.wrapping_add(1);
-        dataset_view(dataset, &self.export_root)
+        dataset_view(dataset, account.kind, &self.export_root)
     }
 
     pub async fn update_dataset(
@@ -436,10 +501,12 @@ impl ConnectorManager {
         }
         let existing = self.dataset_required(id).await?;
         let account = self.account_required(&existing.account_id).await?;
-        ensure_caldav(account.kind)?;
         validate_instruction(&request.instruction)?;
-        let config = CalDavDatasetConfig::from(request.config);
-        validate_dataset_request(&config, request.schedule_minutes)?;
+        let config = self.validate_and_serialize_dataset_config(
+            account.kind,
+            request.config,
+            request.schedule_minutes,
+        )?;
         let next_sync_at = next_sync_at(request.enabled, request.schedule_minutes)?;
         let old_projection_path = self.projection_path(&existing)?;
         let projection_config_changed = existing.projections != request.projections;
@@ -448,8 +515,7 @@ impl ConnectorManager {
             .update_dataset(id, DatasetUpdate {
                 name: request.name,
                 instruction: Some(request.instruction),
-                config: serde_json::to_value(config)
-                    .map_err(|error| internal(error, "serialize CalDAV dataset config"))?,
+                config,
                 schedule_minutes: request.schedule_minutes,
                 projections: request.projections,
                 enabled: request.enabled,
@@ -483,7 +549,7 @@ impl ConnectorManager {
             }
         }
         mutation.revision = mutation.revision.wrapping_add(1);
-        dataset_view(dataset, &self.export_root)
+        dataset_view(dataset, account.kind, &self.export_root)
     }
 
     pub async fn validate_dataset_draft(
@@ -527,11 +593,17 @@ impl ConnectorManager {
                     "dataset does not belong to account".to_owned(),
                 ));
             }
-            Some(dataset_view(dataset, &self.export_root)?)
+            Some(dataset_view(dataset, account.kind, &self.export_root)?)
         } else {
             None
         };
-        let calendars = self.test_account(&request.account_id).await?;
+        let AccountTestView::Calendars { calendars } =
+            self.test_account(&request.account_id).await?
+        else {
+            return Err(ConnectorManagerError::InvalidInput(
+                "channel history datasets are configured directly".to_owned(),
+            ));
+        };
         let planner = self.planner.get().ok_or_else(|| {
             ConnectorManagerError::Unavailable("connector planner is not initialized".to_owned())
         })?;
@@ -893,6 +965,30 @@ impl ConnectorManager {
         self.ensure_datasets_inactive(&datasets)
     }
 
+    fn validate_and_serialize_dataset_config(
+        &self,
+        kind: ConnectorKind,
+        config: ConnectorDatasetConfigView,
+        schedule_minutes: Option<u64>,
+    ) -> Result<Value> {
+        match (kind, config) {
+            (ConnectorKind::Caldav, ConnectorDatasetConfigView::CalDav(config)) => {
+                let config = CalDavDatasetConfig::from(config);
+                validate_dataset_request(&config, schedule_minutes)?;
+                serde_json::to_value(config)
+                    .map_err(|error| internal(error, "serialize CalDAV dataset config"))
+            },
+            (ConnectorKind::ChannelHistory, ConnectorDatasetConfigView::ChannelHistory(config)) => {
+                validate_channel_dataset_config(&config, schedule_minutes)?;
+                serde_json::to_value(config)
+                    .map_err(|error| internal(error, "serialize channel dataset config"))
+            },
+            _ => Err(ConnectorManagerError::InvalidInput(
+                "dataset config does not match connector kind".to_owned(),
+            )),
+        }
+    }
+
     fn ensure_datasets_inactive(&self, datasets: &[Dataset]) -> Result<()> {
         if let Some(dataset) = datasets
             .iter()
@@ -916,6 +1012,9 @@ impl ConnectorManager {
 
     async fn sync_dataset_inner(&self, dataset: &Dataset, run_id: &str) -> Result<SyncRun> {
         let account = self.account_required(&dataset.account_id).await?;
+        if account.kind == ConnectorKind::ChannelHistory {
+            return self.sync_channel_dataset(dataset, run_id, account).await;
+        }
         ensure_caldav(account.kind)?;
         let account_config = self.runtime_account_config(&account.id).await?;
         let dataset_config: CalDavDatasetConfig = serde_json::from_value(dataset.config.clone())
@@ -1336,6 +1435,7 @@ async fn decrypt_credentials(
 
 fn safe_sync_error(error: &ConnectorManagerError) -> &'static str {
     match error {
+        ConnectorManagerError::Channel(_) => "Channel message history synchronization failed",
         ConnectorManagerError::Provider(
             moltis_connector_caldav::CalDavConnectorError::NetworkSafety(_),
         ) => "CalDAV server address was blocked by network safety policy",

@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { Loading, SectionHeading, StatusMessage, TabBar } from "../components/forms";
 import { useTranslation } from "../i18n";
 import { settingsPath } from "../routes";
-import type { ConnectorAccount, ConnectorDataset, ConnectorDescriptor } from "../types/connector";
+import type {
+	ConnectorAccount,
+	ConnectorChannelSource,
+	ConnectorDataset,
+	ConnectorDescriptor,
+} from "../types/connector";
 import { ActivityTab } from "./connectors/ActivityTab";
 import { ConnectionsTab } from "./connectors/ConnectionsTab";
 import { DatasetsTab } from "./connectors/DatasetsTab";
@@ -29,6 +34,7 @@ function ConnectorsPage({ initialTab }: ConnectorsPageProps): VNode {
 	const [activeTab, setActiveTab] = useState<ConnectorsTab>(initialTab);
 	const [available, setAvailable] = useState<ConnectorDescriptor[]>([]);
 	const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
+	const [channelSources, setChannelSources] = useState<ConnectorChannelSource[]>([]);
 	const [datasets, setDatasets] = useState<ConnectorDataset[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -39,15 +45,17 @@ function ConnectorsPage({ initialTab }: ConnectorsPageProps): VNode {
 		loadRevision.current = revision;
 		setLoading(true);
 		try {
-			const [availablePayload, accountsPayload, datasetsPayload] = await Promise.all([
+			const [availablePayload, accountsPayload, datasetsPayload, channelSourcesPayload] = await Promise.all([
 				connectorRpc("connectors.available", {}),
 				connectorRpc("connectors.accounts.list", {}),
 				connectorRpc("connectors.datasets.list", {}),
+				connectorRpc("connectors.channel_sources.list", {}),
 			]);
 			if (loadRevision.current === revision) {
 				setAvailable(availablePayload.connectors);
 				setAccounts(accountsPayload.accounts);
 				setDatasets(datasetsPayload.datasets);
+				setChannelSources(channelSourcesPayload.sources);
 				setError(null);
 			}
 		} catch (caught: unknown) {
@@ -102,6 +110,8 @@ function ConnectorsPage({ initialTab }: ConnectorsPageProps): VNode {
 					<ConnectionsTab
 						accounts={accounts}
 						caldavAvailable={available.some((connector) => connector.kind === "caldav")}
+						channelHistoryAvailable={available.some((connector) => connector.kind === "channel_history")}
+						channelSources={channelSources}
 						onChanged={refreshAfterMutation}
 					/>
 				) : null}

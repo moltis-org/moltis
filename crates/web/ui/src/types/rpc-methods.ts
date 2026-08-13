@@ -10,7 +10,8 @@ import type {
 	AvailableConnectorsResponse,
 	ConnectorAccount,
 	ConnectorAccountsResponse,
-	ConnectorCalendarsResponse,
+	ConnectorAccountTestResponse,
+	ConnectorChannelSourcesResponse,
 	ConnectorDataset,
 	ConnectorDatasetCompileResponse,
 	ConnectorDatasetsResponse,
@@ -55,7 +56,8 @@ export interface RpcMethodMap {
 	"connectors.accounts.add": ConnectorAccount;
 	"connectors.accounts.update": ConnectorAccount;
 	"connectors.accounts.remove": ConnectorRemovedResponse;
-	"connectors.accounts.test": ConnectorCalendarsResponse;
+	"connectors.accounts.test": ConnectorAccountTestResponse;
+	"connectors.channel_sources.list": ConnectorChannelSourcesResponse;
 	"connectors.datasets.list": ConnectorDatasetsResponse;
 	"connectors.datasets.compile": ConnectorDatasetCompileResponse;
 	"connectors.datasets.add": ConnectorDataset;

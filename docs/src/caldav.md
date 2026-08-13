@@ -8,6 +8,8 @@ update, or delete entries on your behalf.
 Moltis also provides a read-only **CalDAV connector** that synchronizes remote
 calendar data into local datasets. The connector is configured from **Settings
 -> Connectors** and is independent from the agent tool described below.
+The same connector subsystem can also reuse supported channel accounts for
+bounded message-history datasets; see [Connectors](connectors.md).
 
 Both capabilities are compiled in by default. The `connectors` cargo feature
 controls inbound synchronization, while `caldav` controls the agent tool. They

@@ -11,6 +11,7 @@ use crate::{ConnectorError, Result};
 #[serde(rename_all = "snake_case")]
 pub enum ConnectorKind {
     Caldav,
+    ChannelHistory,
 }
 
 impl ConnectorKind {
@@ -18,6 +19,7 @@ impl ConnectorKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Caldav => "caldav",
+            Self::ChannelHistory => "channel_history",
         }
     }
 }
@@ -34,6 +36,7 @@ impl TryFrom<&str> for ConnectorKind {
     fn try_from(value: &str) -> Result<Self> {
         match value {
             "caldav" => Ok(Self::Caldav),
+            "channel_history" => Ok(Self::ChannelHistory),
             other => Err(ConnectorError::UnknownConnectorKind(other.to_owned())),
         }
     }
