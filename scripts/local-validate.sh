@@ -7,11 +7,15 @@ CURRENT_PID=""
 RUN_CHECK_ASYNC_PID=""
 STATUS_PUBLISH_ENABLED=1
 
+# `"${arr[@]+"${arr[@]}"}"` is required throughout this script: bash 3.2 (the
+# default /bin/bash on macOS) treats a plain `"${arr[@]}"` on an empty array as
+# an unbound variable under `set -u`. ACTIVE_PIDS is empty before the first
+# async check starts and again after the last one is reaped.
 remove_active_pid() {
   local target="$1"
   local -a kept=()
   local pid
-  for pid in "${ACTIVE_PIDS[@]}"; do
+  for pid in "${ACTIVE_PIDS[@]+"${ACTIVE_PIDS[@]}"}"; do
     if [[ "$pid" != "$target" ]]; then
       kept+=("$pid")
     fi
@@ -31,7 +35,7 @@ handle_interrupt() {
   fi
 
   local pid
-  for pid in "${ACTIVE_PIDS[@]}"; do
+  for pid in "${ACTIVE_PIDS[@]+"${ACTIVE_PIDS[@]}"}"; do
     kill -TERM "$pid" 2>/dev/null || true
   done
 
@@ -41,7 +45,7 @@ handle_interrupt() {
     kill -KILL "$CURRENT_PID" 2>/dev/null || true
   fi
 
-  for pid in "${ACTIVE_PIDS[@]}"; do
+  for pid in "${ACTIVE_PIDS[@]+"${ACTIVE_PIDS[@]}"}"; do
     kill -KILL "$pid" 2>/dev/null || true
   done
 

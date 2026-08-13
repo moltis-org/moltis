@@ -358,9 +358,12 @@ local-validate-full pr_number='':
     if [[ -n {{ quote(pr_number) }} ]]; then
         args+=({{ quote(pr_number) }})
     fi
+    # `"${args[@]+...}"` is required: bash 3.2 (the default /bin/bash on macOS)
+    # treats a plain `"${args[@]}"` on an empty array as an unbound variable
+    # under `set -u`. The array is empty in the supported no-PR local-only mode.
     LOCAL_VALIDATE_TEST_CMD="just test" \
     LOCAL_VALIDATE_E2E_CMD="cd crates/web/ui && npm run e2e:install && npm run e2e" \
-        ./scripts/local-validate.sh "${args[@]}"
+        ./scripts/local-validate.sh "${args[@]+"${args[@]}"}"
 
 # Run all tests (nightly to share build cache with clippy/lint, OS-aware).
 # On macOS: single nextest run using default features (includes Metal, not CUDA).
