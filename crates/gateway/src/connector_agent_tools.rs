@@ -9,7 +9,10 @@ use {
     std::sync::Arc,
 };
 
-use crate::connectors::{ConnectorItemView, ConnectorManager, ItemQueryRequest};
+use {
+    crate::connectors::{ConnectorItemView, ConnectorManager, ItemQueryRequest},
+    moltis_connectors::ConnectorKind,
+};
 
 const DEFAULT_SEARCH_LIMIT: u64 = 20;
 const MAX_SEARCH_LIMIT: u64 = 25;
@@ -109,7 +112,13 @@ impl AgentTool for ConnectorsTool {
 
         match operation {
             ConnectorsOperation::ListDatasets => {
-                let all_datasets = self.manager.list_datasets().await?;
+                let all_datasets = self
+                    .manager
+                    .list_datasets()
+                    .await?
+                    .into_iter()
+                    .filter(|dataset| legacy_tool_allows(dataset.kind))
+                    .collect::<Vec<_>>();
                 let truncated = all_datasets.len() > MAX_DATASETS;
                 let datasets = all_datasets
                     .into_iter()
@@ -135,6 +144,7 @@ impl AgentTool for ConnectorsTool {
                 offset,
             } => {
                 let dataset_id = validated_id("dataset_id", dataset_id)?;
+                require_legacy_dataset(&self.manager, &dataset_id).await?;
                 let text = validated_query(text)?;
                 let limit = validated_limit(limit)?;
                 let offset = validated_offset(offset)?;
@@ -168,6 +178,7 @@ impl AgentTool for ConnectorsTool {
                 item_id,
             } => {
                 let dataset_id = validated_id("dataset_id", dataset_id)?;
+                require_legacy_dataset(&self.manager, &dataset_id).await?;
                 let item_id = validated_id("item_id", item_id)?;
                 let item = self
                     .manager
@@ -181,6 +192,23 @@ impl AgentTool for ConnectorsTool {
             },
         }
     }
+}
+
+const fn legacy_tool_allows(kind: ConnectorKind) -> bool {
+    !matches!(kind, ConnectorKind::Gmail | ConnectorKind::Himalaya)
+}
+
+async fn require_legacy_dataset(manager: &ConnectorManager, dataset_id: &str) -> Result<()> {
+    let dataset = manager
+        .list_datasets()
+        .await?
+        .into_iter()
+        .find(|dataset| dataset.id == dataset_id)
+        .ok_or_else(|| anyhow!("connector dataset not found: {dataset_id}"))?;
+    if !legacy_tool_allows(dataset.kind) {
+        bail!("email datasets must be accessed through their provider-specific tool");
+    }
+    Ok(())
 }
 
 fn parameters_schema() -> Value {
@@ -450,6 +478,14 @@ mod tests {
         assert!(validated_query(Some("x".repeat(MAX_QUERY_CHARS + 1))).is_err());
         assert!(validated_query(Some("x".repeat(MAX_QUERY_CHARS))).is_ok());
         Ok(())
+    }
+
+    #[test]
+    fn legacy_tool_excludes_email_connector_kinds() {
+        assert!(legacy_tool_allows(ConnectorKind::Caldav));
+        assert!(legacy_tool_allows(ConnectorKind::ChannelHistory));
+        assert!(!legacy_tool_allows(ConnectorKind::Gmail));
+        assert!(!legacy_tool_allows(ConnectorKind::Himalaya));
     }
 
     #[test]

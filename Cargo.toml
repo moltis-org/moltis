@@ -18,6 +18,8 @@ default-members = [
   "crates/common",
   "crates/config",
   "crates/connector-caldav",
+  "crates/connector-gmail",
+  "crates/connector-himalaya",
   "crates/connectors",
   "crates/cron",
   "crates/ctl",
@@ -94,6 +96,8 @@ members = [
   "crates/common",
   "crates/config",
   "crates/connector-caldav",
+  "crates/connector-gmail",
+  "crates/connector-himalaya",
   "crates/connectors",
   "crates/cron",
   "crates/ctl",
@@ -361,6 +365,7 @@ grep-searcher         = "0.1"
 ignore                = "0.4"
 include_dir           = "0.7"
 json5                 = "0.4"
+mail-parser           = "0.11.6"
 notify-debouncer-full = "0.7"
 pdf-extract           = "0.10"
 portable-pty          = "0.9"
@@ -400,6 +405,8 @@ moltis-codex-import     = { path = "crates/codex-import" }
 moltis-common           = { path = "crates/common" }
 moltis-config           = { path = "crates/config" }
 moltis-connector-caldav = { path = "crates/connector-caldav" }
+moltis-connector-gmail  = { path = "crates/connector-gmail" }
+moltis-connector-himalaya = { path = "crates/connector-himalaya" }
 moltis-connectors       = { path = "crates/connectors" }
 moltis-cron             = { path = "crates/cron" }
 moltis-discord          = { path = "crates/discord" }

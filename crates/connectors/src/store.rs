@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use {
+    async_trait::async_trait,
     sqlx::{Row, Sqlite, SqlitePool, Transaction, sqlite::SqliteRow},
     time::OffsetDateTime,
     uuid::Uuid,
@@ -8,8 +9,9 @@ use {
 
 use crate::{
     Account, AccountCreate, AccountUpdate, ConnectorError, ConnectorItem, ConnectorItemInput,
-    ConnectorKind, Dataset, DatasetCreate, DatasetUpdate, ItemQuery, ProjectionConfig, Result,
-    SnapshotResult, SourceObservation, SourceStateMap, SyncRun, SyncRunStatus, search::fts_query,
+    ConnectorKind, ConnectorReader, Dataset, DatasetCreate, DatasetUpdate, ItemQuery,
+    ProjectionConfig, Result, SnapshotResult, SourceObservation, SourceStateMap, SyncRun,
+    SyncRunStatus, search::fts_query,
 };
 
 pub const MAX_QUERY_LIMIT: u64 = 500;
@@ -28,6 +30,20 @@ impl SqliteConnectorStore {
     #[must_use]
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    async fn dataset_has_kind(&self, dataset_id: &str, kind: ConnectorKind) -> Result<bool> {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(SELECT 1 FROM connector_datasets AS dataset \
+             JOIN connector_accounts AS account ON account.id = dataset.account_id \
+             WHERE dataset.id = ? AND account.kind = ?)",
+        )
+        .bind(dataset_id)
+        .bind(kind.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map(|exists| exists != 0)
+        .map_err(Into::into)
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, input), fields(kind = %input.kind)))]
@@ -664,6 +680,45 @@ impl SqliteConnectorStore {
         self.get_dataset(id)
             .await?
             .ok_or_else(|| not_found("dataset", id))
+    }
+}
+
+#[async_trait]
+impl ConnectorReader for SqliteConnectorStore {
+    async fn list_datasets_for_kind(&self, kind: ConnectorKind) -> Result<Vec<Dataset>> {
+        let rows = sqlx::query(
+            "SELECT dataset.* FROM connector_datasets AS dataset \
+             JOIN connector_accounts AS account ON account.id = dataset.account_id \
+             WHERE account.kind = ? ORDER BY dataset.name, dataset.id",
+        )
+        .bind(kind.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(dataset_from_row).collect()
+    }
+
+    async fn query_items_for_kind(
+        &self,
+        kind: ConnectorKind,
+        dataset_id: &str,
+        query: ItemQuery,
+    ) -> Result<Vec<ConnectorItem>> {
+        if !self.dataset_has_kind(dataset_id, kind).await? {
+            return Ok(Vec::new());
+        }
+        self.query_items(dataset_id, query).await
+    }
+
+    async fn get_item_for_kind(
+        &self,
+        kind: ConnectorKind,
+        dataset_id: &str,
+        item_id: &str,
+    ) -> Result<Option<ConnectorItem>> {
+        if !self.dataset_has_kind(dataset_id, kind).await? {
+            return Ok(None);
+        }
+        self.get_item(dataset_id, item_id, false).await
     }
 }
 

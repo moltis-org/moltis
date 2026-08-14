@@ -21,6 +21,10 @@ pub(super) fn validate_dataset_request(
     schedule_minutes: Option<u64>,
 ) -> Result<()> {
     config.validate().map_err(invalid_caldav)?;
+    validate_schedule(schedule_minutes)
+}
+
+pub(super) fn validate_schedule(schedule_minutes: Option<u64>) -> Result<()> {
     if schedule_minutes == Some(0) {
         return Err(ConnectorManagerError::InvalidInput(
             "scheduleMinutes must be greater than zero".to_owned(),
@@ -145,7 +149,7 @@ pub(super) fn next_sync_at(
 pub(super) fn ensure_caldav(kind: ConnectorKind) -> Result<()> {
     match kind {
         ConnectorKind::Caldav => Ok(()),
-        ConnectorKind::ChannelHistory => Err(ConnectorManagerError::InvalidInput(
+        _ => Err(ConnectorManagerError::InvalidInput(
             "operation is only available for CalDAV connectors".to_owned(),
         )),
     }

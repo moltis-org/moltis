@@ -79,7 +79,13 @@ function AccountSelector({ accounts, accountId, disabled, onChange }: AccountSel
 					>
 						<div className="text-sm font-medium text-[var(--text)]">{account.name}</div>
 						<div className="mt-1 text-xs text-[var(--muted)]">
-							{account.kind === "caldav" ? account.username : `${account.channelType} · ${account.channelAccountId}`}
+							{account.kind === "caldav"
+								? account.username
+								: account.kind === "channel_history"
+									? `${account.channelType} · ${account.channelAccountId}`
+									: account.kind === "gmail"
+										? "Google Workspace"
+										: `${account.himalayaBackend} · ${account.himalayaAccountName}`}
 						</div>
 					</button>
 				))}
@@ -173,6 +179,22 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 	const [channelId, setChannelId] = useState(dataset?.kind === "channel_history" ? dataset.config.channelId : "");
 	const [threadId, setThreadId] = useState(dataset?.kind === "channel_history" ? dataset.config.threadId : "");
 	const [limit, setLimit] = useState(dataset?.kind === "channel_history" ? String(dataset.config.limit) : "100");
+	const [emailQuery, setEmailQuery] = useState(
+		dataset?.kind === "gmail" ? dataset.config.query : dataset?.kind === "himalaya" ? (dataset.config.query ?? "") : "",
+	);
+	const [mailboxes, setMailboxes] = useState(
+		dataset?.kind === "himalaya" ? dataset.config.mailboxIds.join("\n") : "INBOX",
+	);
+	const [maxMessages, setMaxMessages] = useState(
+		dataset?.kind === "gmail" || dataset?.kind === "himalaya" ? String(dataset.config.maxMessages) : "500",
+	);
+	const [includeBodies, setIncludeBodies] = useState(
+		dataset?.kind === "gmail"
+			? dataset.config.includeBody
+			: dataset?.kind === "himalaya"
+				? dataset.config.includeBodies
+				: true,
+	);
 	const [name, setName] = useState(dataset?.name ?? "");
 	const [schedule, setSchedule] = useState(
 		dataset?.scheduleMinutes === null || dataset?.scheduleMinutes === undefined ? "" : String(dataset.scheduleMinutes),
@@ -197,6 +219,11 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 	const revision = useRef(0);
 	const selectedAccount = accounts.find((account) => account.id === accountId);
 	const channelHistory = dataset?.kind === "channel_history" || selectedAccount?.kind === "channel_history";
+	const emailDataset =
+		dataset?.kind === "gmail" ||
+		dataset?.kind === "himalaya" ||
+		selectedAccount?.kind === "gmail" ||
+		selectedAccount?.kind === "himalaya";
 
 	function invalidate(): void {
 		revision.current += 1;
@@ -294,6 +321,70 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 			}
 			return;
 		}
+		if (emailDataset) {
+			if (
+				!(name.trim() && selectedAccount && (selectedAccount.kind === "gmail" || selectedAccount.kind === "himalaya"))
+			) {
+				setError(t("datasets.emailRequired"));
+				return;
+			}
+			const parsedMax = Number(maxMessages);
+			if (!(Number.isSafeInteger(parsedMax) && parsedMax >= 1 && parsedMax <= 1000)) {
+				setError(t("datasets.emailLimitInvalid"));
+				return;
+			}
+			const scheduleMinutes = schedule.trim() ? Number(schedule) : null;
+			if (scheduleMinutes !== null && !(Number.isSafeInteger(scheduleMinutes) && scheduleMinutes > 0)) {
+				setError(t("datasets.scheduleInvalid"));
+				return;
+			}
+			const mailboxIds = mailboxes
+				.split(/\r?\n/)
+				.map((value) => value.trim())
+				.filter(Boolean);
+			if (selectedAccount.kind === "himalaya" && (mailboxIds.length === 0 || mailboxIds.length > 32)) {
+				setError(t("datasets.mailboxesInvalid"));
+				return;
+			}
+			const supportsQuery =
+				selectedAccount.kind !== "himalaya" ||
+				(selectedAccount.himalayaBackend !== "gmail" && selectedAccount.himalayaBackend !== "msgraph");
+			const config =
+				selectedAccount.kind === "gmail"
+					? { schemaVersion: 1, query: emailQuery.trim(), maxMessages: parsedMax, includeBody: includeBodies }
+					: {
+							schemaVersion: 1,
+							mailboxIds,
+							...(supportsQuery && emailQuery.trim() ? { query: emailQuery.trim() } : {}),
+							maxMessages: parsedMax,
+							includeBodies,
+						};
+			setSaving(true);
+			setError(null);
+			try {
+				const values = {
+					instruction:
+						selectedAccount.kind === "gmail"
+							? `Keep up to ${parsedMax} Gmail messages matching ${emailQuery.trim() || "all mail"}.`
+							: `Keep up to ${parsedMax} messages from ${mailboxIds.join(", ")}.`,
+					name: name.trim(),
+					config,
+					scheduleMinutes,
+					projections: { jsonl, markdown },
+					enabled,
+				};
+				if (dataset) await connectorRpc("connectors.datasets.update", { id: dataset.id, ...values });
+				else await connectorRpc("connectors.datasets.add", { accountId, ...values });
+				await onSaved();
+				showToast(t("datasets.saved"), "success");
+				onClose();
+			} catch (caught: unknown) {
+				setError(caught instanceof Error ? caught.message : String(caught));
+			} finally {
+				setSaving(false);
+			}
+			return;
+		}
 		if (!(compiled && preview)) return;
 		const values = { instruction: instruction.trim(), ...preview.draft };
 		setSaving(true);
@@ -330,9 +421,13 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 					? dataset
 						? t("datasets.editChannelTitle")
 						: t("datasets.addChannelTitle")
-					: dataset
-						? t("datasets.editTitle")
-						: t("datasets.addTitle")
+					: emailDataset
+						? dataset
+							? t("datasets.editEmailTitle")
+							: t("datasets.addEmailTitle")
+						: dataset
+							? t("datasets.editTitle")
+							: t("datasets.addTitle")
 			}
 		>
 			<form onSubmit={submit} className="flex flex-col gap-1">
@@ -405,6 +500,69 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 						</fieldset>
 						<CheckboxField label={t("datasets.enabled")} checked={enabled} onChange={setEnabled} />
 					</>
+				) : emailDataset ? (
+					<>
+						<div className="mb-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-xs text-[var(--muted)]">
+							{t("datasets.emailHelp")}
+						</div>
+						<TextField
+							id="connector-email-dataset-name"
+							label={t("datasets.name")}
+							value={name}
+							onInput={setName}
+							required
+						/>
+						{selectedAccount?.kind === "himalaya" ? (
+							<TextAreaField
+								id="connector-email-mailboxes"
+								label={t("datasets.mailboxes")}
+								value={mailboxes}
+								onInput={setMailboxes}
+								help={t("datasets.mailboxesHelp")}
+								required
+							/>
+						) : null}
+						{selectedAccount?.kind !== "himalaya" ||
+						selectedAccount.himalayaBackend === "imap" ||
+						selectedAccount.himalayaBackend === "jmap" ||
+						selectedAccount.himalayaBackend === "maildir" ||
+						selectedAccount.himalayaBackend === "m2dir" ? (
+							<TextField
+								id="connector-email-query"
+								label={t("datasets.emailQuery")}
+								value={emailQuery}
+								onInput={setEmailQuery}
+								help={t("datasets.emailQueryHelp")}
+							/>
+						) : null}
+						<div className="grid gap-3 sm:grid-cols-2">
+							<TextField
+								id="connector-email-limit"
+								label={t("datasets.emailLimit")}
+								type="number"
+								value={maxMessages}
+								onInput={setMaxMessages}
+								required
+							/>
+							<TextField
+								id="connector-email-schedule"
+								label={t("datasets.schedule")}
+								type="number"
+								value={schedule}
+								onInput={setSchedule}
+								help={t("datasets.scheduleHelp")}
+							/>
+						</div>
+						<CheckboxField label={t("datasets.includeBodies")} checked={includeBodies} onChange={setIncludeBodies} />
+						<fieldset className="mb-2">
+							<legend className="mb-2 text-xs text-[var(--muted)]">{t("datasets.projections")}</legend>
+							<div className="flex flex-wrap gap-4">
+								<CheckboxField label={t("datasets.jsonl")} checked={jsonl} onChange={setJsonl} />
+								<CheckboxField label={t("datasets.markdown")} checked={markdown} onChange={setMarkdown} />
+							</div>
+						</fieldset>
+						<CheckboxField label={t("datasets.enabled")} checked={enabled} onChange={setEnabled} />
+					</>
 				) : (
 					<>
 						<TextAreaField
@@ -467,7 +625,7 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 					<SaveButton
 						type="submit"
 						saving={saving}
-						disabled={channelHistory ? !accountId : !(compiled && preview)}
+						disabled={channelHistory || emailDataset ? !accountId : !(compiled && preview)}
 						label={dataset ? t("datasets.save") : t("datasets.create")}
 					/>
 				</div>
@@ -603,12 +761,22 @@ export function DatasetsTab({ accounts, datasets, onChanged }: DatasetsTabProps)
 						? dataset.config.selection.mode === "all"
 							? t("datasets.all")
 							: t("datasets.selected", { count: dataset.config.selection.calendarHrefs.length })
-						: t("datasets.channelScope", {
-								channelId: dataset.config.channelId,
-								threadId: dataset.config.threadId,
-								limit: dataset.config.limit,
-							});
-				const canRun = account?.enabled === true && (account.kind === "channel_history" || account.hasPassword);
+						: dataset.kind === "channel_history"
+							? t("datasets.channelScope", {
+									channelId: dataset.config.channelId,
+									threadId: dataset.config.threadId,
+									limit: dataset.config.limit,
+								})
+							: dataset.kind === "gmail"
+								? t("datasets.gmailScope", {
+										query: dataset.config.query || t("datasets.allMail"),
+										limit: dataset.config.maxMessages,
+									})
+								: t("datasets.himalayaScope", {
+										mailboxes: dataset.config.mailboxIds.join(", "),
+										limit: dataset.config.maxMessages,
+									});
+				const canRun = account?.enabled === true && (account.kind !== "caldav" || account.hasPassword);
 				return (
 					<SettingsCard key={dataset.id} className="bg-[var(--surface)] border border-[var(--border)] rounded-lg p-4">
 						<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

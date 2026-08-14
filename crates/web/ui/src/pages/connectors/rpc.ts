@@ -1,5 +1,11 @@
 import { sendRpc } from "../../helpers";
-import type { ChannelType, ConnectorDatasetConfig, ConnectorProjections, JsonValue } from "../../types/connector";
+import type {
+	ChannelType,
+	ConnectorDatasetConfig,
+	ConnectorProjections,
+	HimalayaBackend,
+	JsonValue,
+} from "../../types/connector";
 import type { RpcMethodMap } from "../../types/rpc-methods";
 
 export interface ConnectorRpcParams {
@@ -22,6 +28,14 @@ export interface ConnectorRpcParams {
 				name: string;
 				channelType: ChannelType;
 				channelAccountId: string;
+				enabled: boolean;
+		  }
+		| { kind: "gmail"; name: string; enabled: boolean }
+		| {
+				kind: "himalaya";
+				name: string;
+				himalayaAccountName: string;
+				himalayaBackend: HimalayaBackend;
 				enabled: boolean;
 		  };
 	"connectors.accounts.update":

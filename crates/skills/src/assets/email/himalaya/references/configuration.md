@@ -1,184 +1,133 @@
-# Himalaya Configuration Reference
+# Himalaya v2 Configuration
 
-Configuration file location: `~/.config/himalaya/config.toml`
+Himalaya v2 loads the first valid file from:
 
-## Minimal IMAP + SMTP Setup
+- `$XDG_CONFIG_HOME/himalaya/config.toml`
+- `~/.config/himalaya/config.toml`
+- `~/.himalayarc`
+
+Override it with `himalaya --config <path>` (or `-c`). Run bare `himalaya` to
+generate account TOML, then validate configured accounts with `himalaya account
+list` and `himalaya account check`. V2 has no `account configure` subcommand.
+
+## IMAP and SMTP
+
+This minimal account reads with IMAP and sends with SMTP:
 
 ```toml
-[accounts.default]
-email = "user@example.com"
-display-name = "Your Name"
+[accounts.work]
 default = true
 
-# IMAP backend for reading emails
-backend.type = "imap"
-backend.host = "imap.example.com"
-backend.port = 993
-backend.encryption.type = "tls"
-backend.login = "user@example.com"
-backend.auth.type = "password"
-backend.auth.raw = "your-password"
+imap.server = "imaps://imap.example.com:993"
+imap.sasl.plain.username = "user@example.com"
+imap.sasl.plain.password.command = "pass show email/imap"
 
-# SMTP backend for sending emails
-message.send.backend.type = "smtp"
-message.send.backend.host = "smtp.example.com"
-message.send.backend.port = 587
-message.send.backend.encryption.type = "start-tls"
-message.send.backend.login = "user@example.com"
-message.send.backend.auth.type = "password"
-message.send.backend.auth.raw = "your-password"
+smtp.server = "smtp://smtp.example.com:587"
+smtp.starttls = true
+smtp.sasl.plain.username = "user@example.com"
+smtp.sasl.plain.password.command = "pass show email/smtp"
+
+mailbox.alias.inbox = "INBOX"
+mailbox.alias.sent = "Sent"
+mailbox.alias.drafts = "Drafts"
+mailbox.alias.trash = "Trash"
 ```
 
-## Password Options
+V2 uses backend-specific keys such as `imap.server` and
+`imap.sasl.plain.password.command`. The v1 `backend.type`, `backend.host`,
+`backend.auth.*`, and `message.send.backend.*` keys are not v2 configuration.
 
-### Raw password (testing only, not recommended)
+SMTP is send-only. Commands that list, search, or read mail must use a readable
+backend such as IMAP, JMAP, Gmail, Microsoft Graph, Maildir, or M2dir.
+
+## Secrets
+
+Prefer a command that prints the secret on stdout:
 
 ```toml
-backend.auth.raw = "your-password"
+imap.sasl.plain.password.command = "pass show email/imap"
+smtp.sasl.plain.password.command = ["security", "find-generic-password", "-a", "user@example.com", "-s", "smtp", "-w"]
 ```
 
-### Password from command (recommended)
+Raw values are suitable only for temporary testing:
 
 ```toml
-backend.auth.cmd = "pass show email/imap"
-# backend.auth.cmd = "security find-generic-password -a user@example.com -s imap -w"
+imap.sasl.plain.password.raw = "app-password"
 ```
 
-### System keyring (requires keyring feature)
+Native keyring integration and built-in OAuth flows were removed in v2. Use a
+secret-manager CLI or token broker as the relevant `command` value.
 
-```toml
-backend.auth.keyring = "imap-example"
-```
+## Gmail
 
-Then run `himalaya account configure <account>` to store the password.
-
-## Gmail Configuration
+Gmail over IMAP/SMTP requires an app password when using SASL PLAIN:
 
 ```toml
 [accounts.gmail]
-email = "you@gmail.com"
-display-name = "Your Name"
 default = true
 
-backend.type = "imap"
-backend.host = "imap.gmail.com"
-backend.port = 993
-backend.encryption.type = "tls"
-backend.login = "you@gmail.com"
-backend.auth.type = "password"
-backend.auth.cmd = "pass show google/app-password"
+imap.server = "imaps://imap.gmail.com:993"
+imap.sasl.plain.username = "you@gmail.com"
+imap.sasl.plain.password.command = "pass show gmail"
 
-message.send.backend.type = "smtp"
-message.send.backend.host = "smtp.gmail.com"
-message.send.backend.port = 587
-message.send.backend.encryption.type = "start-tls"
-message.send.backend.login = "you@gmail.com"
-message.send.backend.auth.type = "password"
-message.send.backend.auth.cmd = "pass show google/app-password"
+smtp.server = "smtps://smtp.gmail.com:465"
+smtp.sasl.plain.username = "you@gmail.com"
+smtp.sasl.plain.password.command = "pass show gmail"
+
+mailbox.alias.inbox = "INBOX"
+mailbox.alias.sent = "[Gmail]/Sent Mail"
+mailbox.alias.drafts = "[Gmail]/Drafts"
+mailbox.alias.trash = "[Gmail]/Trash"
+mailbox.alias.archive = "[Gmail]/All Mail"
 ```
 
-**Note:** Gmail requires an App Password if 2FA is enabled.
-
-## iCloud Configuration
+To use Himalaya's native Gmail REST backend instead, provide a short-lived
+access token through an external broker:
 
 ```toml
-[accounts.icloud]
-email = "you@icloud.com"
-display-name = "Your Name"
-
-backend.type = "imap"
-backend.host = "imap.mail.me.com"
-backend.port = 993
-backend.encryption.type = "tls"
-backend.login = "you@icloud.com"
-backend.auth.type = "password"
-backend.auth.cmd = "pass show icloud/app-password"
-
-message.send.backend.type = "smtp"
-message.send.backend.host = "smtp.mail.me.com"
-message.send.backend.port = 587
-message.send.backend.encryption.type = "start-tls"
-message.send.backend.login = "you@icloud.com"
-message.send.backend.auth.type = "password"
-message.send.backend.auth.cmd = "pass show icloud/app-password"
+[accounts.gmail-api]
+gmail.auth.token.command = ["ortie", "token", "show", "-a", "gmail"]
 ```
 
-**Note:** Generate an app-specific password at appleid.apple.com
+Select it with `--account=gmail-api --backend=gmail`. Token refresh belongs to
+the external command.
 
-## Folder Aliases
+## JMAP and Microsoft Graph
 
-Map custom folder names:
+Example JMAP account:
 
 ```toml
-[accounts.default.folder.alias]
-inbox = "INBOX"
-sent = "Sent"
-drafts = "Drafts"
-trash = "Trash"
+[accounts.fastmail]
+jmap.server = "https://api.fastmail.com/jmap/session"
+jmap.auth.bearer.token.command = "pass show fastmail/api-token"
 ```
 
-## Multiple Accounts
+Example native Microsoft Graph account:
 
 ```toml
-[accounts.personal]
-email = "personal@example.com"
-default = true
-# ... backend config ...
-
-[accounts.work]
-email = "work@company.com"
-# ... backend config ...
+[accounts.outlook]
+msgraph.auth.token.command = ["ortie", "token", "show", "-a", "msgraph"]
 ```
 
-Switch accounts with `--account`:
+Select native Graph with `--account=outlook --backend=msgraph`. Himalaya v2's
+shared `envelope search` query language is not supported by the Gmail or
+Microsoft Graph backends; use protocol-specific commands for native queries.
 
-```bash
-himalaya --account work envelope list
-```
+## Local backends and multiple accounts
 
-## Notmuch Backend (local mail)
+Maildir uses a local root:
 
 ```toml
 [accounts.local]
-email = "user@example.com"
-
-backend.type = "notmuch"
-backend.db-path = "~/.mail/.notmuch"
+maildir.root = "~/Mail/local"
 ```
 
-## OAuth2 Authentication (for providers that support it)
-
-```toml
-backend.auth.type = "oauth2"
-backend.auth.client-id = "your-client-id"
-backend.auth.client-secret.cmd = "pass show oauth/client-secret"
-backend.auth.access-token.cmd = "pass show oauth/access-token"
-backend.auth.refresh-token.cmd = "pass show oauth/refresh-token"
-backend.auth.auth-url = "https://provider.com/oauth/authorize"
-backend.auth.token-url = "https://provider.com/oauth/token"
-```
-
-## Additional Options
-
-### Signature
-
-```toml
-[accounts.default]
-signature = "Best regards,\nYour Name"
-signature-delim = "-- \n"
-```
-
-### Downloads directory
-
-```toml
-[accounts.default]
-downloads-dir = "~/Downloads/himalaya"
-```
-
-### Editor for composing
-
-Set via environment variable:
+Declare additional `[accounts.<name>]` tables and select one globally:
 
 ```bash
-export EDITOR="vim"
+himalaya --json account list
+himalaya --account=work --backend=imap mailbox list
 ```
+
+When an account has multiple backends, always pass `--backend` to avoid relying
+on backend ordering.

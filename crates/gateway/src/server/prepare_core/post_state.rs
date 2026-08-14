@@ -1308,9 +1308,18 @@ pub(super) async fn complete_startup(
         // Register after spawn_agent snapshots its tools so a narrowed parent
         // policy cannot regain private connector data through a sub-agent.
         #[cfg(feature = "connectors")]
-        tool_registry.register(Box::new(crate::connector_agent_tools::ConnectorsTool::new(
-            Arc::clone(&connector_manager),
-        )));
+        {
+            tool_registry.register(Box::new(crate::connector_agent_tools::ConnectorsTool::new(
+                Arc::clone(&connector_manager),
+            )));
+            let reader = connector_manager.reader();
+            tool_registry.register(Box::new(moltis_connector_gmail::GmailConnectorTool::new(
+                Arc::clone(&reader),
+            )));
+            tool_registry.register(Box::new(
+                moltis_connector_himalaya::HimalayaConnectorTool::new(reader),
+            ));
+        }
 
         let shared_tool_registry = Arc::new(tokio::sync::RwLock::new(tool_registry));
         let mut chat_service = LiveChatService::new(

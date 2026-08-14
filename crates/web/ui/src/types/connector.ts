@@ -1,6 +1,7 @@
-export type ConnectorKind = "caldav" | "channel_history";
+export type ConnectorKind = "caldav" | "channel_history" | "gmail" | "himalaya";
 
 export type ChannelType = "slack" | "discord" | "matrix" | "msteams";
+export type HimalayaBackend = "imap" | "jmap" | "gmail" | "msgraph" | "maildir" | "m2dir";
 
 export interface ConnectorDescriptor {
 	kind: ConnectorKind;
@@ -32,7 +33,23 @@ export interface ChannelHistoryConnectorAccount extends ConnectorAccountBase {
 	channelAccountId: string;
 }
 
-export type ConnectorAccount = CalDavConnectorAccount | ChannelHistoryConnectorAccount;
+export interface GmailConnectorAccount extends ConnectorAccountBase {
+	kind: "gmail";
+	credentialSource: "google_workspace";
+}
+
+export interface HimalayaConnectorAccount extends ConnectorAccountBase {
+	kind: "himalaya";
+	himalayaAccountName: string;
+	himalayaBackend: HimalayaBackend;
+	credentialSource: "himalaya";
+}
+
+export type ConnectorAccount =
+	| CalDavConnectorAccount
+	| ChannelHistoryConnectorAccount
+	| GmailConnectorAccount
+	| HimalayaConnectorAccount;
 
 export interface ConnectorChannelSource {
 	channelType: ChannelType;
@@ -70,7 +87,26 @@ export interface ChannelHistoryConnectorDatasetConfig {
 	limit: number;
 }
 
-export type ConnectorDatasetConfig = CalDavConnectorDatasetConfig | ChannelHistoryConnectorDatasetConfig;
+export interface GmailConnectorDatasetConfig {
+	schemaVersion: number;
+	query: string;
+	maxMessages: number;
+	includeBody: boolean;
+}
+
+export interface HimalayaConnectorDatasetConfig {
+	schemaVersion: number;
+	mailboxIds: string[];
+	query?: string | null;
+	maxMessages: number;
+	includeBodies: boolean;
+}
+
+export type ConnectorDatasetConfig =
+	| CalDavConnectorDatasetConfig
+	| ChannelHistoryConnectorDatasetConfig
+	| GmailConnectorDatasetConfig
+	| HimalayaConnectorDatasetConfig;
 
 export interface ConnectorProjections {
 	jsonl: boolean;
@@ -105,7 +141,21 @@ export interface ChannelHistoryConnectorDataset extends ConnectorDatasetBase {
 	config: ChannelHistoryConnectorDatasetConfig;
 }
 
-export type ConnectorDataset = CalDavConnectorDataset | ChannelHistoryConnectorDataset;
+export interface GmailConnectorDataset extends ConnectorDatasetBase {
+	kind: "gmail";
+	config: GmailConnectorDatasetConfig;
+}
+
+export interface HimalayaConnectorDataset extends ConnectorDatasetBase {
+	kind: "himalaya";
+	config: HimalayaConnectorDatasetConfig;
+}
+
+export type ConnectorDataset =
+	| CalDavConnectorDataset
+	| ChannelHistoryConnectorDataset
+	| GmailConnectorDataset
+	| HimalayaConnectorDataset;
 
 export interface ConnectorDatasetDraft {
 	name: string;
@@ -168,7 +218,16 @@ export interface ConnectorChannelReadyResponse {
 	channelReady: boolean;
 }
 
-export type ConnectorAccountTestResponse = ConnectorCalendarsResponse | ConnectorChannelReadyResponse;
+export interface ConnectorEmailReadyResponse {
+	emailReady: boolean;
+	emailAddress?: string;
+	mailboxes?: Array<{ id: string; displayName?: string }>;
+}
+
+export type ConnectorAccountTestResponse =
+	| ConnectorCalendarsResponse
+	| ConnectorChannelReadyResponse
+	| ConnectorEmailReadyResponse;
 
 export interface ConnectorChannelSourcesResponse {
 	sources: ConnectorChannelSource[];

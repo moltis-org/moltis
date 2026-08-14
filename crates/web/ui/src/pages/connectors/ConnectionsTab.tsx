@@ -6,6 +6,7 @@ import {
 	EmptyState,
 	Loading,
 	SaveButton,
+	SelectField,
 	SettingsCard,
 	StatusMessage,
 	TextField,
@@ -17,6 +18,9 @@ import type {
 	ConnectorAccount,
 	ConnectorCalendar,
 	ConnectorChannelSource,
+	GmailConnectorAccount,
+	HimalayaBackend,
+	HimalayaConnectorAccount,
 } from "../../types/connector";
 import { ConfirmDialog, Modal, requestConfirm, showToast } from "../../ui";
 import { connectorRpc } from "./rpc";
@@ -25,8 +29,124 @@ interface ConnectionsTabProps {
 	accounts: ConnectorAccount[];
 	caldavAvailable: boolean;
 	channelHistoryAvailable: boolean;
+	gmailAvailable: boolean;
+	himalayaAvailable: boolean;
 	channelSources: ConnectorChannelSource[];
 	onChanged: () => Promise<void>;
+}
+
+interface EmailConnectionFormModalProps {
+	kind: "gmail" | "himalaya";
+	account: GmailConnectorAccount | HimalayaConnectorAccount | null;
+	onClose: () => void;
+	onSaved: () => Promise<void>;
+}
+
+const HIMALAYA_BACKENDS: Array<{ value: HimalayaBackend; label: string }> = [
+	{ value: "imap", label: "IMAP" },
+	{ value: "jmap", label: "JMAP" },
+	{ value: "gmail", label: "Gmail API" },
+	{ value: "msgraph", label: "Microsoft Graph" },
+	{ value: "maildir", label: "Maildir" },
+	{ value: "m2dir", label: "M2dir" },
+];
+
+function EmailConnectionFormModal({ kind, account, onClose, onSaved }: EmailConnectionFormModalProps): VNode {
+	const { t } = useTranslation("connectors");
+	const [name, setName] = useState(account?.name ?? "");
+	const himalaya = account?.kind === "himalaya" ? account : null;
+	const [accountName, setAccountName] = useState(himalaya?.himalayaAccountName ?? "");
+	const [backend, setBackend] = useState<HimalayaBackend>(himalaya?.himalayaBackend ?? "imap");
+	const [enabled, setEnabled] = useState(account?.enabled ?? true);
+	const [saving, setSaving] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	async function submit(event: Event): Promise<void> {
+		event.preventDefault();
+		if (!name.trim() || (kind === "himalaya" && !accountName.trim())) {
+			setError(t("connections.emailRequired"));
+			return;
+		}
+		setSaving(true);
+		setError(null);
+		try {
+			if (account) {
+				await connectorRpc("connectors.accounts.update", {
+					id: account.id,
+					name: name.trim(),
+					enabled,
+				});
+			} else if (kind === "gmail") {
+				await connectorRpc("connectors.accounts.add", { kind, name: name.trim(), enabled });
+			} else {
+				await connectorRpc("connectors.accounts.add", {
+					kind,
+					name: name.trim(),
+					himalayaAccountName: accountName.trim(),
+					himalayaBackend: backend,
+					enabled,
+				});
+			}
+			await onSaved();
+			showToast(t("connections.saved"), "success");
+			onClose();
+		} catch (caught: unknown) {
+			setError(caught instanceof Error ? caught.message : String(caught));
+		} finally {
+			setSaving(false);
+		}
+	}
+
+	return (
+		<Modal
+			show={true}
+			onClose={onClose}
+			title={t(kind === "gmail" ? "connections.addGmailTitle" : "connections.addHimalayaTitle")}
+		>
+			<form onSubmit={submit} className="flex flex-col gap-1">
+				<TextField
+					id="connector-email-connection-name"
+					label={t("connections.name")}
+					value={name}
+					onInput={setName}
+					placeholder={t("connections.emailNamePlaceholder")}
+					required
+				/>
+				{kind === "himalaya" ? (
+					<>
+						<TextField
+							id="connector-himalaya-account"
+							label={t("connections.himalayaAccount")}
+							value={accountName}
+							onInput={setAccountName}
+							required
+							disabled={Boolean(account)}
+						/>
+						<SelectField
+							id="connector-himalaya-backend"
+							label={t("connections.himalayaBackend")}
+							value={backend}
+							onChange={(value) => setBackend(value as HimalayaBackend)}
+							options={HIMALAYA_BACKENDS}
+							disabled={Boolean(account)}
+						/>
+					</>
+				) : (
+					<div className="mb-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-xs text-[var(--muted)]">
+						{t("connections.gmailCredentialHelp")}
+					</div>
+				)}
+				<CheckboxField label={t("connections.enabled")} checked={enabled} onChange={setEnabled} />
+				<StatusMessage error={error} />
+				<div className="mt-2 flex justify-end gap-2">
+					<button type="button" className="provider-btn provider-btn-secondary" onClick={onClose}>
+						{t("cancel")}
+					</button>
+					<SaveButton type="submit" saving={saving} label={account ? t("connections.save") : t("connections.create")} />
+				</div>
+			</form>
+		</Modal>
+	);
 }
 
 interface ConnectionFormModalProps {
@@ -374,6 +494,9 @@ function TestConnectionModal({ account, onClose }: TestConnectionModalProps): VN
 	const { t } = useTranslation("connectors");
 	const [calendars, setCalendars] = useState<ConnectorCalendar[] | null>(null);
 	const [channelReady, setChannelReady] = useState(false);
+	const [emailReady, setEmailReady] = useState(false);
+	const [emailAddress, setEmailAddress] = useState<string | undefined>();
+	const [mailboxes, setMailboxes] = useState<Array<{ id: string; displayName?: string }>>([]);
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -382,7 +505,12 @@ function TestConnectionModal({ account, onClose }: TestConnectionModalProps): VN
 			.then((payload) => {
 				if (!active) return;
 				if ("calendars" in payload) setCalendars(payload.calendars);
-				else setChannelReady(payload.channelReady);
+				else if ("channelReady" in payload) setChannelReady(payload.channelReady);
+				else {
+					setEmailReady(payload.emailReady);
+					setEmailAddress(payload.emailAddress);
+					setMailboxes(payload.mailboxes ?? []);
+				}
 			})
 			.catch((caught: unknown) => {
 				if (active) setError(caught instanceof Error ? caught.message : String(caught));
@@ -396,13 +524,34 @@ function TestConnectionModal({ account, onClose }: TestConnectionModalProps): VN
 		<Modal
 			show={true}
 			onClose={onClose}
-			title={account.kind === "caldav" ? t("connections.testTitle") : t("connections.testChannelTitle")}
+			title={
+				account.kind === "caldav"
+					? t("connections.testTitle")
+					: account.kind === "channel_history"
+						? t("connections.testChannelTitle")
+						: t("connections.testEmailTitle")
+			}
 		>
 			<div className="flex flex-col gap-3">
 				<div className="text-xs text-[var(--muted)]">{account.name}</div>
-				{calendars || channelReady || error ? null : <Loading message={t("connections.testing")} />}
+				{calendars || channelReady || emailReady || error ? null : <Loading message={t("connections.testing")} />}
 				<StatusMessage error={error} />
 				{channelReady ? <StatusMessage success={t("connections.channelReady")} /> : null}
+				{emailReady ? (
+					<StatusMessage
+						success={
+							emailAddress ? t("connections.emailReadyAddress", { email: emailAddress }) : t("connections.emailReady")
+						}
+					/>
+				) : null}
+				{mailboxes.map((mailbox) => (
+					<div
+						key={mailbox.id}
+						className="rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-sm text-[var(--text)]"
+					>
+						{mailbox.displayName || mailbox.id}
+					</div>
+				))}
 				{calendars?.length === 0 ? <EmptyState message={t("connections.noCalendars")} /> : null}
 				{calendars?.map((calendar) => (
 					<div key={calendar.href} className="rounded border border-[var(--border)] bg-[var(--bg)] p-3">
@@ -429,11 +578,15 @@ export function ConnectionsTab({
 	accounts,
 	caldavAvailable,
 	channelHistoryAvailable,
+	gmailAvailable,
+	himalayaAvailable,
 	channelSources,
 	onChanged,
 }: ConnectionsTabProps): VNode {
 	const { t } = useTranslation("connectors");
-	const [editing, setEditing] = useState<ConnectorAccount | "caldav" | "channel_history" | null>(null);
+	const [editing, setEditing] = useState<ConnectorAccount | "caldav" | "channel_history" | "gmail" | "himalaya" | null>(
+		null,
+	);
 	const [testing, setTesting] = useState<ConnectorAccount | null>(null);
 
 	async function remove(account: ConnectorAccount): Promise<void> {
@@ -467,6 +620,17 @@ export function ConnectionsTab({
 				>
 					{t("connections.addChannel")}
 				</button>
+				<button type="button" className="provider-btn" disabled={!gmailAvailable} onClick={() => setEditing("gmail")}>
+					{t("connections.addGmail")}
+				</button>
+				<button
+					type="button"
+					className="provider-btn"
+					disabled={!himalayaAvailable}
+					onClick={() => setEditing("himalaya")}
+				>
+					{t("connections.addHimalaya")}
+				</button>
 			</div>
 			{caldavAvailable ? null : <StatusMessage error={t("connections.unavailable")} />}
 			{channelHistoryAvailable && channelSources.length === 0 ? (
@@ -489,8 +653,10 @@ export function ConnectionsTab({
 										label={account.hasPassword ? t("connections.passwordConfigured") : t("connections.passwordMissing")}
 										variant={account.hasPassword ? "configured" : "warning"}
 									/>
-								) : (
+								) : account.kind === "channel_history" ? (
 									<Badge label={t("connections.channelHistory")} variant="configured" />
+								) : (
+									<Badge label={account.kind === "gmail" ? "Gmail" : "Himalaya"} variant="configured" />
 								)}
 							</div>
 							{account.kind === "caldav" ? (
@@ -500,9 +666,15 @@ export function ConnectionsTab({
 										{account.username} · {account.timeoutSeconds}s
 									</div>
 								</>
-							) : (
+							) : account.kind === "channel_history" ? (
 								<div className="mt-2 text-xs text-[var(--muted)]">
 									{account.channelType} · {account.channelAccountId}
+								</div>
+							) : (
+								<div className="mt-2 text-xs text-[var(--muted)]">
+									{account.kind === "gmail"
+										? t("connections.googleWorkspaceCredentials")
+										: `${account.himalayaBackend} · ${account.himalayaAccountName}`}
 								</div>
 							)}
 							{account.kind === "caldav" && (account.allowInsecureHttp || account.allowPrivateNetwork) ? (
@@ -518,7 +690,7 @@ export function ConnectionsTab({
 							<button
 								type="button"
 								className="provider-btn provider-btn-secondary"
-								disabled={!(account.enabled && (account.kind === "channel_history" || account.hasPassword))}
+								disabled={!(account.enabled && (account.kind !== "caldav" || account.hasPassword))}
 								onClick={() => setTesting(account)}
 							>
 								{t("connections.test")}
@@ -543,6 +715,18 @@ export function ConnectionsTab({
 				<ConnectionFormModal
 					key={editing === "caldav" ? "new-caldav" : editing.id}
 					account={editing === "caldav" ? null : editing}
+					onClose={() => setEditing(null)}
+					onSaved={onChanged}
+				/>
+			) : null}
+			{editing &&
+			(editing === "gmail" ||
+				editing === "himalaya" ||
+				(typeof editing === "object" && (editing.kind === "gmail" || editing.kind === "himalaya"))) ? (
+				<EmailConnectionFormModal
+					key={typeof editing === "string" ? `new-${editing}` : editing.id}
+					kind={typeof editing === "string" ? editing : editing.kind}
+					account={typeof editing === "string" ? null : editing}
 					onClose={() => setEditing(null)}
 					onSaved={onChanged}
 				/>

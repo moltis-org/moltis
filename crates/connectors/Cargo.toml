@@ -10,6 +10,7 @@ metrics = ["dep:metrics"]
 tracing = ["dep:tracing"]
 
 [dependencies]
+async-trait = { workspace = true }
 metrics    = { optional = true, workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }

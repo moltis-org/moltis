@@ -231,7 +231,9 @@ fn planner_messages(
             crate::connectors::ConnectorDatasetConfigView::CalDav(config) => {
                 serde_json::to_value(config).unwrap_or(Value::Null)
             },
-            crate::connectors::ConnectorDatasetConfigView::ChannelHistory(_) => Value::Null,
+            crate::connectors::ConnectorDatasetConfigView::ChannelHistory(_)
+            | crate::connectors::ConnectorDatasetConfigView::Gmail(_)
+            | crate::connectors::ConnectorDatasetConfigView::Himalaya(_) => Value::Null,
         };
         alias_existing_selection(&mut config, calendars);
         json!({

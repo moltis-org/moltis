@@ -228,6 +228,17 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
     }
 }
 
+fn inject_moltis_data_dir(env: &mut Vec<(String, String)>, runs_on_host: bool) {
+    if !runs_on_host {
+        return;
+    }
+    env.retain(|(key, _)| key != "MOLTIS_DATA_DIR");
+    env.push((
+        "MOLTIS_DATA_DIR".to_owned(),
+        moltis_config::data_dir().to_string_lossy().into_owned(),
+    ));
+}
+
 /// The exec tool exposed to the agent tool registry.
 pub struct ExecTool {
     pub default_timeout: Duration,
@@ -625,10 +636,11 @@ impl AgentTool for ExecTool {
 
         // Expose secrets only at the injection boundary.
         use secrecy::ExposeSecret;
-        let env: Vec<(String, String)> = secret_env
+        let mut env: Vec<(String, String)> = secret_env
             .iter()
             .map(|(k, v)| (k.clone(), v.expose_secret().clone()))
             .collect();
+        inject_moltis_data_dir(&mut env, runs_on_host);
 
         let opts = ExecOpts {
             timeout: Duration::from_secs(timeout_secs),

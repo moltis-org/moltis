@@ -12,10 +12,12 @@ use {
     futures::StreamExt,
     moltis_channels::ChannelRegistry,
     moltis_connector_caldav::{CalDavAccountConfig, CalDavConnector, CalDavDatasetConfig},
+    moltis_connector_gmail::{GmailAccountConfig, GmailConnector, GmailDatasetConfig},
+    moltis_connector_himalaya::{HimalayaAccountConfig, HimalayaConnector, HimalayaDatasetConfig},
     moltis_connectors::{
         Account, AccountCreate, AccountUpdate, ConnectorError, ConnectorItem, ConnectorKind,
-        Dataset, DatasetCreate, DatasetUpdate, ItemQuery, MAX_QUERY_LIMIT, ProjectionManifest,
-        SqliteConnectorStore, SyncRun,
+        ConnectorReader, Dataset, DatasetCreate, DatasetUpdate, ItemQuery, MAX_QUERY_LIMIT,
+        ProjectionManifest, SqliteConnectorStore, SyncRun,
     },
     secrecy::ExposeSecret,
     serde_json::Value,
@@ -75,6 +77,10 @@ pub enum ConnectorManagerError {
     Unavailable(String),
     #[error("connector provider operation failed")]
     Provider(#[source] moltis_connector_caldav::CalDavConnectorError),
+    #[error("Gmail connector operation failed")]
+    GmailProvider(#[source] moltis_connector_gmail::GmailConnectorError),
+    #[error("Himalaya connector operation failed")]
+    HimalayaProvider(#[source] moltis_connector_himalaya::HimalayaConnectorError),
     #[error("channel history operation failed")]
     Channel(#[source] moltis_channels::Error),
     #[error("internal connector operation failed")]
@@ -84,6 +90,8 @@ pub enum ConnectorManagerError {
 pub struct ConnectorManager {
     store: Arc<SqliteConnectorStore>,
     caldav: CalDavConnector,
+    himalaya: HimalayaConnector,
+    google_token_path: PathBuf,
     export_root: PathBuf,
     #[cfg(feature = "vault")]
     vault: Option<Arc<moltis_vault::Vault>>,
@@ -162,6 +170,8 @@ impl ConnectorManager {
         let manager = Self {
             store,
             caldav: CalDavConnector,
+            himalaya: HimalayaConnector::default(),
+            google_token_path: data_dir.join("google_token.json"),
             export_root,
             #[cfg(feature = "vault")]
             vault,
@@ -206,6 +216,14 @@ impl ConnectorManager {
             ConnectorDescriptor {
                 kind: ConnectorKind::ChannelHistory,
                 display_name: "Channel messages",
+            },
+            ConnectorDescriptor {
+                kind: ConnectorKind::Gmail,
+                display_name: "Gmail",
+            },
+            ConnectorDescriptor {
+                kind: ConnectorKind::Himalaya,
+                display_name: "Himalaya email",
             },
         ]
     }
@@ -271,6 +289,28 @@ impl ConnectorManager {
                 })
                 .map_err(|error| internal(error, "serialize channel connector account"))?
             },
+            ConnectorKind::Gmail => serde_json::to_value(GmailAccountConfig::default())
+                .map_err(|error| internal(error, "serialize Gmail connector account"))?,
+            ConnectorKind::Himalaya => {
+                let config = HimalayaAccountConfig {
+                    schema_version: 1,
+                    account_name: request.himalaya_account_name.ok_or_else(|| {
+                        ConnectorManagerError::InvalidInput(
+                            "himalayaAccountName is required for Himalaya".to_owned(),
+                        )
+                    })?,
+                    backend: request.himalaya_backend.ok_or_else(|| {
+                        ConnectorManagerError::InvalidInput(
+                            "himalayaBackend is required for Himalaya".to_owned(),
+                        )
+                    })?,
+                };
+                config
+                    .validate()
+                    .map_err(ConnectorManagerError::HimalayaProvider)?;
+                serde_json::to_value(config)
+                    .map_err(|error| internal(error, "serialize Himalaya connector account"))?
+            },
         };
         let account = self
             .store
@@ -306,6 +346,43 @@ impl ConnectorManager {
                 .update_account(id, AccountUpdate {
                     name: request.name,
                     config: existing.config,
+                    enabled: request.enabled,
+                })
+                .await
+                .map_err(ConnectorManagerError::from)?;
+            mutation.revision = mutation.revision.wrapping_add(1);
+            return account_view(account);
+        }
+        if existing.kind == ConnectorKind::Gmail {
+            let config: GmailAccountConfig = serde_json::from_value(existing.config.clone())
+                .map_err(|error| internal(error, "deserialize Gmail connector account"))?;
+            config
+                .validate()
+                .map_err(ConnectorManagerError::GmailProvider)?;
+            let account = self
+                .store
+                .update_account(id, AccountUpdate {
+                    name: request.name,
+                    config: existing.config,
+                    enabled: request.enabled,
+                })
+                .await
+                .map_err(ConnectorManagerError::from)?;
+            mutation.revision = mutation.revision.wrapping_add(1);
+            return account_view(account);
+        }
+        if existing.kind == ConnectorKind::Himalaya {
+            let stored: HimalayaAccountConfig = serde_json::from_value(existing.config)
+                .map_err(|error| internal(error, "deserialize Himalaya connector account"))?;
+            stored
+                .validate()
+                .map_err(ConnectorManagerError::HimalayaProvider)?;
+            let account = self
+                .store
+                .update_account(id, AccountUpdate {
+                    name: request.name,
+                    config: serde_json::to_value(stored)
+                        .map_err(|error| internal(error, "serialize Himalaya connector account"))?,
                     enabled: request.enabled,
                 })
                 .await
@@ -409,14 +486,52 @@ impl ConnectorManager {
 
     pub async fn test_account(&self, id: &str) -> Result<AccountTestView> {
         let account = self.account_required(id).await?;
-        if account.kind == ConnectorKind::ChannelHistory {
-            let config: ChannelHistoryAccountConfig = serde_json::from_value(account.config)
-                .map_err(|error| internal(error, "deserialize channel connector account"))?;
-            self.validate_channel_source(config.channel_type, &config.channel_account_id)
-                .await?;
-            return Ok(AccountTestView::ChannelReady {
-                channel_ready: true,
-            });
+        match account.kind {
+            ConnectorKind::ChannelHistory => {
+                let config: ChannelHistoryAccountConfig = serde_json::from_value(account.config)
+                    .map_err(|error| internal(error, "deserialize channel connector account"))?;
+                self.validate_channel_source(config.channel_type, &config.channel_account_id)
+                    .await?;
+                return Ok(AccountTestView::ChannelReady {
+                    channel_ready: true,
+                });
+            },
+            ConnectorKind::Gmail => {
+                let config: GmailAccountConfig = serde_json::from_value(account.config)
+                    .map_err(|error| internal(error, "deserialize Gmail connector account"))?;
+                let profile = GmailConnector::new(self.google_token_path.clone())
+                    .await
+                    .map_err(ConnectorManagerError::GmailProvider)?
+                    .test_connection(&config)
+                    .await
+                    .map_err(ConnectorManagerError::GmailProvider)?;
+                return Ok(AccountTestView::EmailReady {
+                    email_ready: true,
+                    email_address: Some(profile.email_address),
+                    mailboxes: Vec::new(),
+                });
+            },
+            ConnectorKind::Himalaya => {
+                let config: HimalayaAccountConfig = serde_json::from_value(account.config)
+                    .map_err(|error| internal(error, "deserialize Himalaya connector account"))?;
+                let mailboxes = self
+                    .himalaya
+                    .test_account(&config)
+                    .await
+                    .map_err(ConnectorManagerError::HimalayaProvider)?
+                    .into_iter()
+                    .map(|mailbox| HimalayaMailboxView {
+                        id: mailbox.id,
+                        display_name: mailbox.display_name,
+                    })
+                    .collect();
+                return Ok(AccountTestView::EmailReady {
+                    email_ready: true,
+                    email_address: None,
+                    mailboxes,
+                });
+            },
+            ConnectorKind::Caldav => {},
         }
         let config = self.runtime_account_config(id).await?;
         self.caldav
@@ -467,7 +582,7 @@ impl ConnectorManager {
         let account = self.account_required(&request.account_id).await?;
         validate_instruction(&request.instruction)?;
         let config = self.validate_and_serialize_dataset_config(
-            account.kind,
+            &account,
             request.config,
             request.schedule_minutes,
         )?;
@@ -503,7 +618,7 @@ impl ConnectorManager {
         let account = self.account_required(&existing.account_id).await?;
         validate_instruction(&request.instruction)?;
         let config = self.validate_and_serialize_dataset_config(
-            account.kind,
+            &account,
             request.config,
             request.schedule_minutes,
         )?;
@@ -967,11 +1082,11 @@ impl ConnectorManager {
 
     fn validate_and_serialize_dataset_config(
         &self,
-        kind: ConnectorKind,
+        account: &Account,
         config: ConnectorDatasetConfigView,
         schedule_minutes: Option<u64>,
     ) -> Result<Value> {
-        match (kind, config) {
+        match (account.kind, config) {
             (ConnectorKind::Caldav, ConnectorDatasetConfigView::CalDav(config)) => {
                 let config = CalDavDatasetConfig::from(config);
                 validate_dataset_request(&config, schedule_minutes)?;
@@ -982,6 +1097,26 @@ impl ConnectorManager {
                 validate_channel_dataset_config(&config, schedule_minutes)?;
                 serde_json::to_value(config)
                     .map_err(|error| internal(error, "serialize channel dataset config"))
+            },
+            (ConnectorKind::Gmail, ConnectorDatasetConfigView::Gmail(config)) => {
+                config
+                    .validate()
+                    .map_err(ConnectorManagerError::GmailProvider)?;
+                validate_schedule(schedule_minutes)?;
+                serde_json::to_value(config)
+                    .map_err(|error| internal(error, "serialize Gmail dataset config"))
+            },
+            (ConnectorKind::Himalaya, ConnectorDatasetConfigView::Himalaya(config)) => {
+                let account_config: HimalayaAccountConfig =
+                    serde_json::from_value(account.config.clone()).map_err(|error| {
+                        internal(error, "deserialize Himalaya connector account")
+                    })?;
+                config
+                    .validate(account_config.backend)
+                    .map_err(ConnectorManagerError::HimalayaProvider)?;
+                validate_schedule(schedule_minutes)?;
+                serde_json::to_value(config)
+                    .map_err(|error| internal(error, "serialize Himalaya dataset config"))
             },
             _ => Err(ConnectorManagerError::InvalidInput(
                 "dataset config does not match connector kind".to_owned(),
@@ -1015,36 +1150,84 @@ impl ConnectorManager {
         if account.kind == ConnectorKind::ChannelHistory {
             return self.sync_channel_dataset(dataset, run_id, account).await;
         }
-        ensure_caldav(account.kind)?;
-        let account_config = self.runtime_account_config(&account.id).await?;
-        let dataset_config: CalDavDatasetConfig = serde_json::from_value(dataset.config.clone())
-            .map_err(|error| internal(error, "deserialize stored CalDAV dataset config"))?;
-        dataset_config.validate().map_err(invalid_caldav)?;
         let existing = self
             .store
             .source_states(&dataset.id)
             .await
             .map_err(ConnectorManagerError::from)?;
-        let snapshot = self
-            .caldav
-            .sync_dataset(
-                &account_config,
-                &dataset_config,
-                existing,
-                dataset.plan_revision,
-            )
-            .await
-            .map_err(ConnectorManagerError::Provider)?;
+        let (items, observations): (
+            Vec<moltis_connectors::ConnectorItemInput>,
+            Vec<moltis_connectors::SourceObservation>,
+        ) = match account.kind {
+            ConnectorKind::Caldav => {
+                let account_config = self.runtime_account_config(&account.id).await?;
+                let dataset_config: CalDavDatasetConfig =
+                    serde_json::from_value(dataset.config.clone()).map_err(|error| {
+                        internal(error, "deserialize stored CalDAV dataset config")
+                    })?;
+                dataset_config.validate().map_err(invalid_caldav)?;
+                let snapshot = self
+                    .caldav
+                    .sync_dataset(
+                        &account_config,
+                        &dataset_config,
+                        existing,
+                        dataset.plan_revision,
+                    )
+                    .await
+                    .map_err(ConnectorManagerError::Provider)?;
+                (snapshot.items, snapshot.source_observations)
+            },
+            ConnectorKind::Gmail => {
+                let account_config: GmailAccountConfig = serde_json::from_value(account.config)
+                    .map_err(|error| internal(error, "deserialize Gmail connector account"))?;
+                let dataset_config: GmailDatasetConfig =
+                    serde_json::from_value(dataset.config.clone()).map_err(|error| {
+                        internal(error, "deserialize stored Gmail dataset config")
+                    })?;
+                let snapshot = GmailConnector::new(self.google_token_path.clone())
+                    .await
+                    .map_err(ConnectorManagerError::GmailProvider)?
+                    .sync_dataset(
+                        &account_config,
+                        &dataset_config,
+                        existing,
+                        dataset.plan_revision,
+                    )
+                    .await
+                    .map_err(ConnectorManagerError::GmailProvider)?;
+                (snapshot.items, snapshot.source_observations)
+            },
+            ConnectorKind::Himalaya => {
+                let account_config: HimalayaAccountConfig = serde_json::from_value(account.config)
+                    .map_err(|error| internal(error, "deserialize Himalaya connector account"))?;
+                let dataset_config: HimalayaDatasetConfig =
+                    serde_json::from_value(dataset.config.clone()).map_err(|error| {
+                        internal(error, "deserialize stored Himalaya dataset config")
+                    })?;
+                let snapshot = self
+                    .himalaya
+                    .sync_dataset(
+                        &account_config,
+                        &dataset_config,
+                        existing,
+                        dataset.plan_revision,
+                    )
+                    .await
+                    .map_err(ConnectorManagerError::HimalayaProvider)?;
+                (snapshot.items, snapshot.source_observations)
+            },
+            ConnectorKind::ChannelHistory => {
+                return Err(internal(
+                    anyhow::anyhow!("channel history sync reached provider dispatch"),
+                    "dispatch connector sync",
+                ));
+            },
+        };
         let next_sync_at = next_sync_at(dataset.enabled, dataset.schedule_minutes)?;
         let (_stats, run) = self
             .store
-            .commit_sync_snapshot(
-                run_id,
-                &dataset.id,
-                &snapshot.items,
-                &snapshot.source_observations,
-                next_sync_at,
-            )
+            .commit_sync_snapshot(run_id, &dataset.id, &items, &observations, next_sync_at)
             .await
             .map_err(ConnectorManagerError::from)?;
 
@@ -1080,226 +1263,9 @@ impl ConnectorManager {
         Ok(run)
     }
 
-    async fn write_dataset_projection(&self, dataset: &Dataset) -> Result<()> {
-        let mut maintenance = self.projection_maintenance.lock().await;
-        let result = self.write_dataset_projection_locked(dataset).await;
-        if result.is_ok() {
-            maintenance.revision = maintenance.revision.wrapping_add(1);
-        }
-        result
-    }
-
-    async fn write_dataset_projection_locked(&self, dataset: &Dataset) -> Result<()> {
-        let items = self.all_active_items(&dataset.id).await?;
-        moltis_connectors::write_projection(&self.export_root, &dataset.name, dataset, &items)
-            .await
-            .map_err(ConnectorManagerError::from)?;
-        let current = self.dataset_required(&dataset.id).await?;
-        if current.last_sync_at != dataset.last_sync_at
-            || current.synced_plan_revision != dataset.synced_plan_revision
-            || current.item_count != dataset.item_count
-            || current.name != dataset.name
-            || current.projections != dataset.projections
-        {
-            return Err(ConnectorManagerError::Conflict(dataset.id.clone()));
-        }
-        Ok(())
-    }
-
-    async fn all_active_items(&self, dataset_id: &str) -> Result<Vec<ConnectorItem>> {
-        let mut items = Vec::new();
-        let mut offset = 0;
-        loop {
-            let page = self
-                .store
-                .query_items(dataset_id, ItemQuery {
-                    limit: MAX_QUERY_LIMIT,
-                    offset,
-                    include_deleted: false,
-                    text: None,
-                })
-                .await
-                .map_err(ConnectorManagerError::from)?;
-            let page_len = u64::try_from(page.len())
-                .map_err(|error| internal(error, "convert connector projection page length"))?;
-            items.extend(page);
-            if page_len < MAX_QUERY_LIMIT {
-                break;
-            }
-            offset = offset.checked_add(page_len).ok_or_else(|| {
-                ConnectorManagerError::InvalidInput("connector item offset overflow".to_owned())
-            })?;
-        }
-        Ok(items)
-    }
-
-    async fn fail_and_reschedule(
-        &self,
-        dataset: &Dataset,
-        run_id: &str,
-        error: &str,
-    ) -> Result<()> {
-        let next_sync_at = next_sync_at(dataset.enabled, dataset.schedule_minutes)?;
-        self.store
-            .fail_sync_run_and_reschedule(run_id, error, next_sync_at)
-            .await
-            .map_err(ConnectorManagerError::from)?;
-        Ok(())
-    }
-
-    async fn run_due_datasets(self: &Arc<Self>) -> Result<()> {
-        let now = OffsetDateTime::now_utc();
-        let accounts = self
-            .store
-            .list_accounts()
-            .await
-            .map_err(ConnectorManagerError::from)?;
-        let mut due = Vec::new();
-        for account in accounts.into_iter().filter(|account| account.enabled) {
-            let datasets = self
-                .store
-                .list_datasets(&account.id)
-                .await
-                .map_err(ConnectorManagerError::from)?;
-            for dataset in datasets.into_iter().filter(|dataset| {
-                dataset.enabled && dataset.next_sync_at.is_some_and(|next| next <= now)
-            }) {
-                due.push(dataset.id);
-            }
-        }
-        futures::stream::iter(due)
-            .for_each_concurrent(SCHEDULER_CONCURRENCY, |dataset_id| async move {
-                if self.cancellation.is_cancelled() {
-                    return;
-                }
-                if let Err(error) = self
-                    .spawn_sync(&dataset_id, SyncTrigger::Scheduled { due_at: now })
-                    .await
-                    && !matches!(error, ConnectorManagerError::Conflict(_))
-                {
-                    tracing::warn!(
-                        dataset_id,
-                        error = ?error,
-                        "scheduled connector sync failed"
-                    );
-                }
-            })
-            .await;
-        Ok(())
-    }
-
-    fn projection_path(&self, dataset: &Dataset) -> Result<Option<PathBuf>> {
-        if !(dataset.projections.jsonl || dataset.projections.markdown) {
-            return Ok(None);
-        }
-        moltis_connectors::projection_directory(&self.export_root, &dataset.name, &dataset.id)
-            .map(Some)
-            .map_err(ConnectorManagerError::from)
-    }
-
-    async fn remove_projection_best_effort(&self, dataset: &Dataset) {
-        match self.projection_path(dataset) {
-            Ok(Some(path)) => self.remove_projection_path_best_effort(&path).await,
-            Ok(None) => {},
-            Err(error) => tracing::warn!(
-                dataset_id = dataset.id,
-                ?error,
-                "failed to resolve obsolete connector projection path"
-            ),
-        }
-    }
-
-    async fn remove_projection_path_best_effort(&self, path: &Path) {
-        let mut maintenance = self.projection_maintenance.lock().await;
-        remove_directory_best_effort(path).await;
-        maintenance.revision = maintenance.revision.wrapping_add(1);
-    }
-
-    async fn reconcile_projection_directories(&self) -> Result<()> {
-        let mut maintenance = self.projection_maintenance.lock().await;
-        moltis_connectors::cleanup_projection_artifacts(&self.export_root)
-            .await
-            .map_err(ConnectorManagerError::from)?;
-        let accounts = self
-            .store
-            .list_accounts()
-            .await
-            .map_err(ConnectorManagerError::from)?;
-        let mut expected = HashSet::new();
-        let mut projected = Vec::new();
-        for account in accounts {
-            for dataset in self
-                .store
-                .list_datasets(&account.id)
-                .await
-                .map_err(ConnectorManagerError::from)?
-            {
-                if let Some(path) = self.projection_path(&dataset)? {
-                    expected.insert(path.clone());
-                    projected.push((dataset, path));
-                }
-            }
-        }
-
-        let mut entries = tokio::fs::read_dir(&self.export_root)
-            .await
-            .map_err(|error| internal(error, "read connector projection directory"))?;
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|error| internal(error, "read connector projection entry"))?
-        {
-            let path = entry.path();
-            let file_type = entry
-                .file_type()
-                .await
-                .map_err(|error| internal(error, "inspect connector projection entry"))?;
-            if file_type.is_dir() && !expected.contains(&path) {
-                remove_directory_best_effort(&path).await;
-                maintenance.revision = maintenance.revision.wrapping_add(1);
-            }
-        }
-        for (dataset, path) in projected {
-            if self.active_dataset_ids.contains(&dataset.id)
-                || !projection_needs_rebuild(&dataset, &path).await
-            {
-                continue;
-            }
-            match self.write_dataset_projection_locked(&dataset).await {
-                Ok(()) => {
-                    maintenance.revision = maintenance.revision.wrapping_add(1);
-                    if dataset.last_error.as_deref() == Some(PROJECTION_ERROR)
-                        && let Err(error) =
-                            self.store.set_dataset_last_error(&dataset.id, None).await
-                    {
-                        tracing::warn!(
-                            dataset_id = dataset.id,
-                            ?error,
-                            "failed to clear recovered connector projection error"
-                        );
-                    }
-                },
-                Err(error) => {
-                    tracing::warn!(
-                        dataset_id = dataset.id,
-                        ?error,
-                        "failed to rebuild stale connector projection"
-                    );
-                    if let Err(metadata_error) = self
-                        .store
-                        .set_dataset_last_error(&dataset.id, Some(PROJECTION_ERROR))
-                        .await
-                    {
-                        tracing::warn!(
-                            dataset_id = dataset.id,
-                            error = ?metadata_error,
-                            "failed to record stale connector projection error"
-                        );
-                    }
-                },
-            }
-        }
-        Ok(())
+    #[must_use]
+    pub fn reader(&self) -> Arc<dyn ConnectorReader> {
+        self.store.clone()
     }
 
     #[cfg(feature = "vault")]
@@ -1453,6 +1419,8 @@ fn safe_sync_error(error: &ConnectorManagerError) -> &'static str {
             "CalDAV account does not have access to the requested calendars"
         },
         ConnectorManagerError::Provider(_) => "CalDAV server synchronization failed",
+        ConnectorManagerError::GmailProvider(_) => "Gmail synchronization failed",
+        ConnectorManagerError::HimalayaProvider(_) => "Himalaya email synchronization failed",
         ConnectorManagerError::Unavailable(_) => {
             "Connector credentials are unavailable while the vault is sealed"
         },

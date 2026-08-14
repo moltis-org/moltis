@@ -283,6 +283,14 @@ fn map_error(error: ConnectorManagerError) -> ErrorShape {
             tracing::warn!(error = ?error, "connector provider RPC operation failed");
             map_provider_error(error)
         },
+        ConnectorManagerError::GmailProvider(error) => {
+            tracing::warn!(error = ?error, "Gmail connector RPC operation failed");
+            map_gmail_error(error)
+        },
+        ConnectorManagerError::HimalayaProvider(error) => {
+            tracing::warn!(error = ?error, "Himalaya connector RPC operation failed");
+            map_himalaya_error(error)
+        },
         ConnectorManagerError::Channel(error) => {
             tracing::warn!(error = ?error, "channel history RPC operation failed");
             match error {
@@ -301,6 +309,74 @@ fn map_error(error: ConnectorManagerError) -> ErrorShape {
         error @ ConnectorManagerError::Internal(_) => {
             tracing::warn!(error = ?error, "connector RPC operation failed");
             ErrorShape::new(error_codes::INTERNAL, "connector operation failed")
+        },
+    }
+}
+
+fn map_gmail_error(error: moltis_connector_gmail::GmailConnectorError) -> ErrorShape {
+    use moltis_connector_gmail::GmailConnectorError;
+
+    match error {
+        GmailConnectorError::AccountConfig(message)
+        | GmailConnectorError::DatasetConfig(message)
+        | GmailConnectorError::Credential(message) => {
+            ErrorShape::new(error_codes::INVALID_REQUEST, message)
+        },
+        GmailConnectorError::ApiStatus(401 | 403) | GmailConnectorError::OAuth(_) => {
+            ErrorShape::new(
+                error_codes::INVALID_REQUEST,
+                "Gmail authentication failed; reconfigure the Google Workspace account",
+            )
+        },
+        GmailConnectorError::CredentialIo(_) | GmailConnectorError::CredentialJson(_) => {
+            ErrorShape::new(
+                error_codes::UNAVAILABLE,
+                "Google Workspace credentials are not configured",
+            )
+        },
+        GmailConnectorError::Timeout => {
+            ErrorShape::new(error_codes::TIMEOUT, "Gmail request timed out")
+        },
+        GmailConnectorError::Http(error) if error.is_timeout() => {
+            ErrorShape::new(error_codes::TIMEOUT, "Gmail request timed out")
+        },
+        GmailConnectorError::Http(_)
+        | GmailConnectorError::ApiStatus(_)
+        | GmailConnectorError::ServerResponse(_)
+        | GmailConnectorError::MessageBody(_) => {
+            ErrorShape::new(error_codes::UNAVAILABLE, "Gmail request failed")
+        },
+        GmailConnectorError::Serialization(_) => {
+            ErrorShape::new(error_codes::INTERNAL, "failed to store Gmail data")
+        },
+    }
+}
+
+fn map_himalaya_error(error: moltis_connector_himalaya::HimalayaConnectorError) -> ErrorShape {
+    use moltis_connector_himalaya::HimalayaConnectorError;
+
+    match error {
+        HimalayaConnectorError::AccountConfig(message)
+        | HimalayaConnectorError::DatasetConfig(message) => {
+            ErrorShape::new(error_codes::INVALID_REQUEST, message)
+        },
+        HimalayaConnectorError::ExecutableNotFound => {
+            ErrorShape::new(error_codes::UNAVAILABLE, "Himalaya is not installed")
+        },
+        HimalayaConnectorError::UnsupportedVersion => {
+            ErrorShape::new(error_codes::INVALID_REQUEST, "Himalaya v2 is required")
+        },
+        HimalayaConnectorError::Timeout => {
+            ErrorShape::new(error_codes::TIMEOUT, "Himalaya command timed out")
+        },
+        HimalayaConnectorError::Spawn(_)
+        | HimalayaConnectorError::CommandFailed
+        | HimalayaConnectorError::OutputLimit
+        | HimalayaConnectorError::Response(_) => {
+            ErrorShape::new(error_codes::UNAVAILABLE, "Himalaya email request failed")
+        },
+        HimalayaConnectorError::Serialization(_) => {
+            ErrorShape::new(error_codes::INTERNAL, "failed to store Himalaya data")
         },
     }
 }

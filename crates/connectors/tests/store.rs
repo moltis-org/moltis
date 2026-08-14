@@ -1,8 +1,9 @@
 use {
     moltis_connectors::{
-        AccountCreate, AccountUpdate, ConnectorError, ConnectorItemInput, ConnectorKind, Dataset,
-        DatasetCreate, DatasetUpdate, ItemQuery, MAX_QUERY_LIMIT, ProjectionConfig, SnapshotResult,
-        SourceDisposition, SourceObservation, SqliteConnectorStore, SyncRunStatus, run_migrations,
+        AccountCreate, AccountUpdate, ConnectorError, ConnectorItemInput, ConnectorKind,
+        ConnectorReader, Dataset, DatasetCreate, DatasetUpdate, ItemQuery, MAX_QUERY_LIMIT,
+        ProjectionConfig, SnapshotResult, SourceDisposition, SourceObservation,
+        SqliteConnectorStore, SyncRunStatus, run_migrations,
     },
     serde_json::json,
     sqlx::sqlite::SqlitePoolOptions,
@@ -17,6 +18,81 @@ async fn store() -> TestResult<SqliteConnectorStore> {
         .await?;
     run_migrations(&pool).await?;
     Ok(SqliteConnectorStore::new(pool))
+}
+
+#[tokio::test]
+async fn provider_reader_never_crosses_connector_kinds() -> TestResult {
+    let store = store().await?;
+    let gmail_account = store
+        .create_account(AccountCreate {
+            kind: ConnectorKind::Gmail,
+            source_key: None,
+            name: "Gmail".to_owned(),
+            config: json!({"schemaVersion": 1}),
+            enabled: true,
+        })
+        .await?;
+    let gmail_dataset = store
+        .create_dataset(DatasetCreate {
+            account_id: gmail_account.id,
+            name: "Inbox".to_owned(),
+            instruction: None,
+            config: json!({"schemaVersion": 1}),
+            schedule_minutes: None,
+            projections: ProjectionConfig::default(),
+            enabled: true,
+            next_sync_at: None,
+        })
+        .await?;
+    store
+        .apply_snapshot(
+            &gmail_dataset.id,
+            &[item("gmail-message", "1", "private email")],
+            &["gmail-message".to_owned()],
+            true,
+        )
+        .await?;
+
+    assert_eq!(
+        store
+            .list_datasets_for_kind(ConnectorKind::Gmail)
+            .await?
+            .len(),
+        1
+    );
+    assert!(
+        store
+            .list_datasets_for_kind(ConnectorKind::Himalaya)
+            .await?
+            .is_empty()
+    );
+    assert!(
+        store
+            .query_items_for_kind(
+                ConnectorKind::Himalaya,
+                &gmail_dataset.id,
+                ItemQuery::default(),
+            )
+            .await?
+            .is_empty()
+    );
+    let gmail_item = store
+        .query_items_for_kind(
+            ConnectorKind::Gmail,
+            &gmail_dataset.id,
+            ItemQuery::default(),
+        )
+        .await?
+        .into_iter()
+        .next()
+        .ok_or("Gmail item missing")?;
+    assert!(
+        store
+            .get_item_for_kind(ConnectorKind::Himalaya, &gmail_dataset.id, &gmail_item.id,)
+            .await?
+            .is_none()
+    );
+    Ok(())
 }
 
 async fn create_dataset(store: &SqliteConnectorStore) -> TestResult<Dataset> {
@@ -363,6 +439,11 @@ fn connector_kind_conversions_and_serde() -> TestResult {
     assert_eq!(
         ConnectorKind::try_from("channel_history")?,
         ConnectorKind::ChannelHistory
+    );
+    assert_eq!(ConnectorKind::try_from("gmail")?, ConnectorKind::Gmail);
+    assert_eq!(
+        ConnectorKind::try_from("himalaya")?,
+        ConnectorKind::Himalaya
     );
     assert!(matches!(
         ConnectorKind::try_from("other"),

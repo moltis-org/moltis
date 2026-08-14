@@ -3,6 +3,8 @@ use std::path::Path;
 use {
     moltis_channels::ChannelType,
     moltis_connector_caldav::{CalDavDatasetConfig, CalDavFilters, CalendarSelection},
+    moltis_connector_gmail::{GmailAccountConfig, GmailDatasetConfig},
+    moltis_connector_himalaya::{HimalayaAccountConfig, HimalayaBackend, HimalayaDatasetConfig},
     moltis_connectors::{
         Account, ConnectorItem, ConnectorKind, Dataset, ProjectionConfig, SyncRun,
     },
@@ -36,6 +38,10 @@ pub struct AccountCreateRequest {
     pub channel_type: Option<ChannelType>,
     #[serde(default)]
     pub channel_account_id: Option<String>,
+    #[serde(default)]
+    pub himalaya_account_name: Option<String>,
+    #[serde(default)]
+    pub himalaya_backend: Option<HimalayaBackend>,
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: u64,
     #[serde(default)]
@@ -82,6 +88,12 @@ pub struct AccountView {
     pub channel_type: Option<ChannelType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub himalaya_account_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub himalaya_backend: Option<HimalayaBackend>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_source: Option<String>,
     pub managed: bool,
     pub enabled: bool,
     pub created_at: OffsetDateTime,
@@ -114,7 +126,7 @@ pub struct CalDavFiltersView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CalDavDatasetConfigView {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
@@ -148,13 +160,9 @@ pub struct ChannelHistoryDatasetConfigView {
 #[serde(untagged)]
 pub enum ConnectorDatasetConfigView {
     ChannelHistory(ChannelHistoryDatasetConfigView),
+    Himalaya(HimalayaDatasetConfig),
     CalDav(CalDavDatasetConfigView),
-}
-
-impl Default for ConnectorDatasetConfigView {
-    fn default() -> Self {
-        Self::CalDav(CalDavDatasetConfigView::default())
-    }
+    Gmail(GmailDatasetConfig),
 }
 
 impl From<CalDavDatasetConfigView> for ConnectorDatasetConfigView {
@@ -169,7 +177,6 @@ pub struct DatasetCreateRequest {
     pub account_id: String,
     pub name: String,
     pub instruction: String,
-    #[serde(default)]
     pub config: ConnectorDatasetConfigView,
     #[serde(default)]
     pub schedule_minutes: Option<u64>,
@@ -184,7 +191,6 @@ pub struct DatasetCreateRequest {
 pub struct DatasetUpdateRequest {
     pub name: String,
     pub instruction: String,
-    #[serde(default)]
     pub config: ConnectorDatasetConfigView,
     #[serde(default)]
     pub schedule_minutes: Option<u64>,
@@ -284,6 +290,22 @@ pub enum AccountTestView {
     ChannelReady {
         channel_ready: bool,
     },
+    #[serde(rename_all = "camelCase")]
+    EmailReady {
+        email_ready: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        email_address: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        mailboxes: Vec<HimalayaMailboxView>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HimalayaMailboxView {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -371,41 +393,112 @@ pub struct ChannelSourceView {
 }
 
 pub(super) fn account_view(account: Account) -> Result<AccountView> {
-    if account.kind == ConnectorKind::ChannelHistory {
-        let config: ChannelHistoryAccountConfig = serde_json::from_value(account.config)
-            .map_err(|error| internal(error, "deserialize channel connector account view"))?;
-        return Ok(AccountView {
-            id: account.id,
-            kind: account.kind,
-            name: account.name,
-            server_url: String::new(),
-            username: String::new(),
-            timeout_seconds: default_timeout_seconds(),
-            allow_insecure_http: false,
-            allow_private_network: false,
-            has_password: false,
-            channel_type: Some(config.channel_type),
-            channel_account_id: Some(config.channel_account_id),
-            managed: account.source_key.is_some(),
-            enabled: account.enabled,
-            created_at: account.created_at,
-            updated_at: account.updated_at,
-        });
-    }
-    let config: StoredAccountConfigView = serde_json::from_value(account.config)
-        .map_err(|error| internal(error, "deserialize connector account view"))?;
+    let (
+        server_url,
+        username,
+        timeout_seconds,
+        allow_insecure_http,
+        allow_private_network,
+        has_password,
+        channel_type,
+        channel_account_id,
+        himalaya_account_name,
+        himalaya_backend,
+        credential_source,
+    ) = match account.kind {
+        ConnectorKind::ChannelHistory => {
+            let config: ChannelHistoryAccountConfig =
+                serde_json::from_value(account.config.clone()).map_err(|error| {
+                    internal(error, "deserialize channel connector account view")
+                })?;
+            (
+                String::new(),
+                String::new(),
+                default_timeout_seconds(),
+                false,
+                false,
+                false,
+                Some(config.channel_type),
+                Some(config.channel_account_id),
+                None,
+                None,
+                None,
+            )
+        },
+        ConnectorKind::Gmail => {
+            let config: GmailAccountConfig = serde_json::from_value(account.config.clone())
+                .map_err(|error| internal(error, "deserialize Gmail connector account view"))?;
+            config
+                .validate()
+                .map_err(|error| internal(error, "validate Gmail account view"))?;
+            (
+                String::new(),
+                String::new(),
+                default_timeout_seconds(),
+                false,
+                false,
+                false,
+                None,
+                None,
+                None,
+                None,
+                Some("google_workspace".to_owned()),
+            )
+        },
+        ConnectorKind::Himalaya => {
+            let config: HimalayaAccountConfig = serde_json::from_value(account.config.clone())
+                .map_err(|error| internal(error, "deserialize Himalaya connector account view"))?;
+            config
+                .validate()
+                .map_err(|error| internal(error, "validate Himalaya account view"))?;
+            (
+                String::new(),
+                String::new(),
+                default_timeout_seconds(),
+                false,
+                false,
+                false,
+                None,
+                None,
+                Some(config.account_name),
+                Some(config.backend),
+                Some("himalaya".to_owned()),
+            )
+        },
+        ConnectorKind::Caldav => {
+            let config: StoredAccountConfigView = serde_json::from_value(account.config.clone())
+                .map_err(|error| internal(error, "deserialize connector account view"))?;
+            let has_password = stored_secret_present(&config.password)?;
+            (
+                config.server_url,
+                config.username,
+                config.timeout_seconds,
+                config.allow_insecure_http,
+                config.allow_private_network,
+                has_password,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        },
+    };
     Ok(AccountView {
         id: account.id,
         kind: account.kind,
         name: account.name,
-        server_url: config.server_url,
-        username: config.username,
-        timeout_seconds: config.timeout_seconds,
-        allow_insecure_http: config.allow_insecure_http,
-        allow_private_network: config.allow_private_network,
-        has_password: stored_secret_present(&config.password)?,
-        channel_type: None,
-        channel_account_id: None,
+        server_url,
+        username,
+        timeout_seconds,
+        allow_insecure_http,
+        allow_private_network,
+        has_password,
+        channel_type,
+        channel_account_id,
+        himalaya_account_name,
+        himalaya_backend,
+        credential_source,
         managed: account.source_key.is_some(),
         enabled: account.enabled,
         created_at: account.created_at,
@@ -427,6 +520,14 @@ pub(super) fn dataset_view(
         ConnectorKind::ChannelHistory => ConnectorDatasetConfigView::ChannelHistory(
             serde_json::from_value(dataset.config)
                 .map_err(|error| internal(error, "deserialize channel dataset view"))?,
+        ),
+        ConnectorKind::Gmail => ConnectorDatasetConfigView::Gmail(
+            serde_json::from_value(dataset.config)
+                .map_err(|error| internal(error, "deserialize Gmail dataset view"))?,
+        ),
+        ConnectorKind::Himalaya => ConnectorDatasetConfigView::Himalaya(
+            serde_json::from_value(dataset.config)
+                .map_err(|error| internal(error, "deserialize Himalaya dataset view"))?,
         ),
     };
     let projection_path = if dataset.projections.jsonl || dataset.projections.markdown {
@@ -574,4 +675,28 @@ const fn default_schema_version() -> u32 {
 
 fn empty_secret() -> Secret<String> {
     Secret::new(String::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dataset_requests_require_provider_owned_config() {
+        assert!(
+            serde_json::from_value::<DatasetCreateRequest>(serde_json::json!({
+                "accountId": "account",
+                "name": "name",
+                "instruction": "instruction"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<DatasetUpdateRequest>(serde_json::json!({
+                "name": "name",
+                "instruction": "instruction"
+            }))
+            .is_err()
+        );
+    }
 }

@@ -60,6 +60,17 @@ async fn test_exec_echo() {
     assert_eq!(result.exit_code, 0);
 }
 
+#[test]
+fn host_exec_injects_the_resolved_moltis_data_dir() {
+    let mut env = vec![("MOLTIS_DATA_DIR".to_owned(), "stale".to_owned())];
+    inject_moltis_data_dir(&mut env, true);
+
+    assert_eq!(env, vec![(
+        "MOLTIS_DATA_DIR".to_owned(),
+        moltis_config::data_dir().to_string_lossy().into_owned(),
+    )]);
+}
+
 #[tokio::test]
 async fn test_exec_stderr() {
     let result = exec_command("echo err >&2", &ExecOpts::default())

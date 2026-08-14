@@ -1,10 +1,23 @@
 # Connectors
 
 Connectors copy bounded snapshots of external data into local, durable datasets
-in `<data_dir>/connectors.db`. Trusted agents can search those datasets through
-the read-only `connectors` tool without contacting the remote service. Optional
-JSONL and Markdown projections are written under
-`<data_dir>/connectors/exports/`.
+in `<data_dir>/connectors.db`. They share account, dataset, run, projection, and
+atomic snapshot machinery, while each provider owns its item schema and may
+expose a provider-specific read tool. Trusted agents can search synchronized
+data without contacting the remote service. Optional JSONL and Markdown
+projections are written under `<data_dir>/connectors/exports/`.
+
+## Email
+
+Moltis can synchronize bounded, read-only email datasets directly from Gmail or
+through an existing Himalaya v2 account. Credentials stay with the existing
+Google Workspace or Himalaya configuration; they are not copied into the
+connector database. Email uses provider-owned schemas and the trusted-only
+`gmail_connector` and `himalaya_connector` tools rather than the generic
+`connectors` tool.
+
+See [Email connectors](email-connectors.md) for setup, provider limits, Himalaya
+v2 commands, storage, and security details.
 
 ## Channel message history
 

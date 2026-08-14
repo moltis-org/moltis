@@ -831,6 +831,8 @@ mod tests {
                     kind: moltis_connectors::ConnectorKind::Caldav,
                     channel_type: None,
                     channel_account_id: None,
+                    himalaya_account_name: None,
+                    himalaya_backend: None,
                     name: "Calendar".to_owned(),
                     server_url: "https://calendar.example.com".to_owned(),
                     username: "user@example.com".to_owned(),

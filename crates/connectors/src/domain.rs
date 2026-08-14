@@ -12,6 +12,8 @@ use crate::{ConnectorError, Result};
 pub enum ConnectorKind {
     Caldav,
     ChannelHistory,
+    Gmail,
+    Himalaya,
 }
 
 impl ConnectorKind {
@@ -20,6 +22,8 @@ impl ConnectorKind {
         match self {
             Self::Caldav => "caldav",
             Self::ChannelHistory => "channel_history",
+            Self::Gmail => "gmail",
+            Self::Himalaya => "himalaya",
         }
     }
 }
@@ -37,6 +41,8 @@ impl TryFrom<&str> for ConnectorKind {
         match value {
             "caldav" => Ok(Self::Caldav),
             "channel_history" => Ok(Self::ChannelHistory),
+            "gmail" => Ok(Self::Gmail),
+            "himalaya" => Ok(Self::Himalaya),
             other => Err(ConnectorError::UnknownConnectorKind(other.to_owned())),
         }
     }

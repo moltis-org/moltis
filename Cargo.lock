@@ -5365,7 +5365,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.57.0",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -6459,6 +6459,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mail-parser"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4084ec5c2f90b341d0c70990e92a23b128f75ca14fc1dd5edd8fd5c9b417da4d"
+dependencies = [
+ "hashify",
+]
+
+[[package]]
 name = "maplit"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7501,9 +7510,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-connector-gmail"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "futures",
+ "html2text",
+ "metrics 0.24.3",
+ "moltis-agents",
+ "moltis-common",
+ "moltis-connectors",
+ "moltis-oauth",
+ "reqwest 0.13.2",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "moltis-connector-himalaya"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "mail-parser",
+ "metrics 0.24.3",
+ "moltis-agents",
+ "moltis-common",
+ "moltis-connectors",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "which 8.0.2",
+]
+
+[[package]]
 name = "moltis-connectors"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "metrics 0.24.3",
  "serde",
  "serde_json",
@@ -7650,6 +7707,8 @@ dependencies = [
  "moltis-common",
  "moltis-config",
  "moltis-connector-caldav",
+ "moltis-connector-gmail",
+ "moltis-connector-himalaya",
  "moltis-connectors",
  "moltis-cron",
  "moltis-discord",

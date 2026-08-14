@@ -34,6 +34,8 @@ moltis-codex-import     = { optional = true, workspace = true }
 moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
 moltis-connector-caldav = { optional = true, workspace = true }
+moltis-connector-gmail  = { optional = true, workspace = true }
+moltis-connector-himalaya = { optional = true, workspace = true }
 moltis-connectors       = { optional = true, workspace = true }
 moltis-cron             = { workspace = true }
 moltis-discord          = { optional = true, workspace = true }
@@ -115,7 +117,13 @@ caldav = ["dep:moltis-caldav"]
 claude-import = ["dep:moltis-claude-import"]
 code-index-builtin = ["moltis-code-index/builtin"]
 codex-import = ["dep:moltis-codex-import"]
-connectors = ["dep:moltis-caldav", "dep:moltis-connector-caldav", "dep:moltis-connectors"]
+connectors = [
+  "dep:moltis-caldav",
+  "dep:moltis-connector-caldav",
+  "dep:moltis-connector-gmail",
+  "dep:moltis-connector-himalaya",
+  "dep:moltis-connectors",
+]
 default = [
   "agent",
   "bundled-skills",
@@ -190,6 +198,8 @@ metrics = [
   "dep:moltis-metrics",
   "moltis-chat/metrics",
   "moltis-connector-caldav?/metrics",
+  "moltis-connector-gmail?/metrics",
+  "moltis-connector-himalaya?/metrics",
   "moltis-connectors?/metrics",
   "moltis-discord?/metrics",
   "moltis-matrix?/metrics",

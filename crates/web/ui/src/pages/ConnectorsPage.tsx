@@ -111,6 +111,8 @@ function ConnectorsPage({ initialTab }: ConnectorsPageProps): VNode {
 						accounts={accounts}
 						caldavAvailable={available.some((connector) => connector.kind === "caldav")}
 						channelHistoryAvailable={available.some((connector) => connector.kind === "channel_history")}
+						gmailAvailable={available.some((connector) => connector.kind === "gmail")}
+						himalayaAvailable={available.some((connector) => connector.kind === "himalaya")}
 						channelSources={channelSources}
 						onChanged={refreshAfterMutation}
 					/>

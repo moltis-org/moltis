@@ -51,6 +51,8 @@ async function installConnectorsRpcMock(page) {
 							connectors: [
 								{ kind: "caldav", displayName: "CalDAV" },
 								{ kind: "channel_history", displayName: "Channel history" },
+								{ kind: "gmail", displayName: "Gmail" },
+								{ kind: "himalaya", displayName: "Himalaya" },
 							],
 						},
 					};
@@ -68,22 +70,33 @@ async function installConnectorsRpcMock(page) {
 						createdAt: now,
 						updatedAt: now,
 					};
-					const account =
-						params.kind === "channel_history"
-							? {
-									...shared,
-									channelType: params.channelType,
-									channelAccountId: params.channelAccountId,
-								}
-							: {
-									...shared,
-									serverUrl: params.serverUrl,
-									username: params.username,
-									timeoutSeconds: params.timeoutSeconds,
-									allowInsecureHttp: params.allowInsecureHttp,
-									allowPrivateNetwork: params.allowPrivateNetwork,
-									hasPassword: Boolean(params.password),
-								};
+					let account;
+					if (params.kind === "channel_history") {
+						account = {
+							...shared,
+							channelType: params.channelType,
+							channelAccountId: params.channelAccountId,
+						};
+					} else if (params.kind === "gmail") {
+						account = { ...shared, credentialSource: "google_workspace" };
+					} else if (params.kind === "himalaya") {
+						account = {
+							...shared,
+							himalayaAccountName: params.himalayaAccountName,
+							himalayaBackend: params.himalayaBackend,
+							credentialSource: "himalaya",
+						};
+					} else {
+						account = {
+							...shared,
+							serverUrl: params.serverUrl,
+							username: params.username,
+							timeoutSeconds: params.timeoutSeconds,
+							allowInsecureHttp: params.allowInsecureHttp,
+							allowPrivateNetwork: params.allowPrivateNetwork,
+							hasPassword: Boolean(params.password),
+						};
+					}
 					mock.accounts.push(account);
 					return { ok: true, payload: structuredClone(account) };
 				}
@@ -107,14 +120,26 @@ async function installConnectorsRpcMock(page) {
 					mock.accounts = mock.accounts.filter((account) => account.id !== params.id);
 					mock.datasets = mock.datasets.filter((dataset) => dataset.accountId !== params.id);
 					return { ok: true, payload: { removed: true } };
-				case "connectors.accounts.test":
-					return {
-						ok: true,
-						payload:
-							mock.accounts.find((account) => account.id === params.id)?.kind === "channel_history"
-								? { channelReady: true }
-								: { calendars: structuredClone(mock.calendars) },
-					};
+				case "connectors.accounts.test": {
+					const kind = mock.accounts.find((account) => account.id === params.id)?.kind;
+					if (kind === "channel_history") return { ok: true, payload: { channelReady: true } };
+					if (kind === "gmail") {
+						return { ok: true, payload: { emailReady: true, emailAddress: "alice@example.test" } };
+					}
+					if (kind === "himalaya") {
+						return {
+							ok: true,
+							payload: {
+								emailReady: true,
+								mailboxes: [
+									{ id: "INBOX", displayName: "Inbox" },
+									{ id: "Archive/2026", displayName: "2026 archive" },
+								],
+							},
+						};
+					}
+					return { ok: true, payload: { calendars: structuredClone(mock.calendars) } };
+				}
 				case "connectors.datasets.list":
 					return { ok: true, payload: { datasets: structuredClone(mock.datasets) } };
 				case "connectors.datasets.compile": {
@@ -259,6 +284,8 @@ async function installConnectorsRpcMock(page) {
 	});
 	await page.getByRole("button", { name: "Refresh", exact: true }).click();
 	await expect(page.getByRole("button", { name: "Add CalDAV connection", exact: true })).toBeEnabled();
+	await expect(page.getByRole("button", { name: "Add Gmail connection", exact: true })).toBeEnabled();
+	await expect(page.getByRole("button", { name: "Add Himalaya connection", exact: true })).toBeEnabled();
 }
 
 function cardForHeading(page, name) {
@@ -564,6 +591,211 @@ test.describe("Settings > Connectors", () => {
 			has: page.getByRole("heading", { name: "Dataset preview", exact: true }),
 		});
 		await expect(modal.locator("pre")).toContainText("Please escalate this support issue");
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("adds and tests Gmail and Himalaya email connections", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/connectors");
+		await waitForWsConnected(page);
+		await installConnectorsRpcMock(page);
+
+		await page.getByRole("button", { name: "Add Gmail connection", exact: true }).click();
+		let modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Gmail connection", exact: true }),
+		});
+		await expect(
+			modal.getByText(
+				"Uses the existing Google Workspace authorization in Moltis. Gmail credentials are referenced and are not copied into the connector database.",
+				{ exact: true },
+			),
+		).toBeVisible();
+		await expect(modal.getByLabel("Username", { exact: true })).toHaveCount(0);
+		await expect(modal.getByLabel("Password", { exact: true })).toHaveCount(0);
+		await expect(modal.locator('input[type="password"]')).toHaveCount(0);
+		await modal.getByLabel("Connection name", { exact: true }).fill("Primary Gmail");
+		await modal.getByRole("button", { name: "Add connection", exact: true }).click();
+
+		const gmailCard = cardForHeading(page, "Primary Gmail");
+		await expect(gmailCard).toBeVisible();
+		await expect(gmailCard.getByText("Gmail", { exact: true })).toBeVisible();
+		await expect(gmailCard.getByText("Google Workspace credentials", { exact: true })).toBeVisible();
+
+		await page.getByRole("button", { name: "Add Himalaya connection", exact: true }).click();
+		modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Himalaya email connection", exact: true }),
+		});
+		await modal.getByLabel("Connection name", { exact: true }).fill("Archive Mail");
+		await modal.getByLabel("Himalaya account name", { exact: true }).fill("archive-work");
+		await modal.getByLabel("Storage backend", { exact: true }).selectOption("jmap");
+		await modal.getByRole("button", { name: "Add connection", exact: true }).click();
+
+		const himalayaCard = cardForHeading(page, "Archive Mail");
+		await expect(himalayaCard).toBeVisible();
+		await expect(himalayaCard.getByText("Himalaya", { exact: true })).toBeVisible();
+		await expect(himalayaCard.getByText("jmap · archive-work", { exact: true })).toBeVisible();
+
+		const addAccountRequests = await page.evaluate(() =>
+			window.__connectorRpcState.requests.filter((request) => request.method === "connectors.accounts.add"),
+		);
+		expect(addAccountRequests.map((request) => request.params)).toEqual([
+			{ kind: "gmail", name: "Primary Gmail", enabled: true },
+			{
+				kind: "himalaya",
+				name: "Archive Mail",
+				himalayaAccountName: "archive-work",
+				himalayaBackend: "jmap",
+				enabled: true,
+			},
+		]);
+
+		await gmailCard.getByRole("button", { name: "Test connection", exact: true }).click();
+		modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Email connection readiness", exact: true }),
+		});
+		await expect(modal.getByText("Gmail is ready for alice@example.test.", { exact: true })).toBeVisible();
+		await modal.getByRole("button", { name: "Close", exact: true }).click();
+
+		await himalayaCard.getByRole("button", { name: "Test connection", exact: true }).click();
+		modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Email connection readiness", exact: true }),
+		});
+		await expect(modal.getByText("The email account is ready for synchronization.", { exact: true })).toBeVisible();
+		await expect(modal.getByText("Inbox", { exact: true })).toBeVisible();
+		await expect(modal.getByText("2026 archive", { exact: true })).toBeVisible();
+		await modal.getByRole("button", { name: "Close", exact: true }).click();
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("creates direct Gmail and Himalaya email datasets", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/connectors");
+		await waitForWsConnected(page);
+		await installConnectorsRpcMock(page);
+		await page.evaluate(() => {
+			const now = "2026-08-06T10:00:00Z";
+			window.__connectorRpcState.accounts = [
+				{
+					id: "gmail-account",
+					kind: "gmail",
+					name: "Primary Gmail",
+					credentialSource: "google_workspace",
+					managed: false,
+					enabled: true,
+					createdAt: now,
+					updatedAt: now,
+				},
+				{
+					id: "himalaya-account",
+					kind: "himalaya",
+					name: "Archive Mail",
+					himalayaAccountName: "archive-work",
+					himalayaBackend: "jmap",
+					credentialSource: "himalaya",
+					managed: false,
+					enabled: true,
+					createdAt: now,
+					updatedAt: now,
+				},
+			];
+		});
+		await page.getByRole("button", { name: "Refresh", exact: true }).click();
+		await page.getByRole("tab", { name: "Datasets", exact: true }).click();
+
+		await page.getByRole("button", { name: "Add dataset", exact: true }).click();
+		let modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Add email dataset", exact: true }),
+		});
+		await expect(modal).toBeVisible();
+		await expect(modal.getByRole("button", { name: "Primary Gmail Google Workspace", exact: true })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+		await modal.getByLabel("Dataset name", { exact: true }).fill("Priority Gmail");
+		await modal.getByLabel("Search query", { exact: true }).fill("from:alerts@example.test is:unread");
+		await modal.getByLabel("Message limit", { exact: true }).fill("40");
+		await modal.getByLabel("Store bounded message bodies", { exact: true }).uncheck();
+		await modal.getByRole("button", { name: "Create dataset", exact: true }).click();
+
+		const gmailDatasetCard = cardForHeading(page, "Priority Gmail");
+		await expect(gmailDatasetCard).toContainText("Gmail query from:alerts@example.test is:unread · up to 40 messages");
+
+		await page.getByRole("button", { name: "Add dataset", exact: true }).click();
+		modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Add email dataset", exact: true }),
+		});
+		const himalayaAccount = modal.getByRole("button", {
+			name: "Archive Mail jmap · archive-work",
+			exact: true,
+		});
+		await himalayaAccount.click();
+		await expect(himalayaAccount).toHaveAttribute("aria-pressed", "true");
+		await modal.getByLabel("Dataset name", { exact: true }).fill("Invoice Archive");
+		await modal.getByLabel("Mailboxes", { exact: true }).fill("INBOX\nArchive, 2026");
+		await modal.getByLabel("Search query", { exact: true }).fill("subject:invoice");
+		await modal.getByLabel("Message limit", { exact: true }).fill("125");
+		await modal.getByLabel("Store bounded message bodies", { exact: true }).check();
+		await modal.getByRole("button", { name: "Create dataset", exact: true }).click();
+
+		const himalayaDatasetCard = cardForHeading(page, "Invoice Archive");
+		await expect(himalayaDatasetCard).toContainText("Mailboxes INBOX, Archive, 2026 · up to 125 messages");
+
+		const addDatasetRequests = await page.evaluate(() =>
+			window.__connectorRpcState.requests.filter((request) => request.method === "connectors.datasets.add"),
+		);
+		expect(addDatasetRequests).toHaveLength(2);
+		const [{ params: gmailParams }, { params: himalayaParams }] = addDatasetRequests;
+		expect(gmailParams.instruction).toEqual(expect.any(String));
+		expect(gmailParams).toEqual({
+			accountId: "gmail-account",
+			instruction: gmailParams.instruction,
+			name: "Priority Gmail",
+			config: {
+				schemaVersion: 1,
+				query: "from:alerts@example.test is:unread",
+				maxMessages: 40,
+				includeBody: false,
+			},
+			scheduleMinutes: null,
+			projections: { jsonl: true, markdown: true },
+			enabled: true,
+		});
+		expect(himalayaParams.instruction).toEqual(expect.any(String));
+		expect(himalayaParams).toEqual({
+			accountId: "himalaya-account",
+			instruction: himalayaParams.instruction,
+			name: "Invoice Archive",
+			config: {
+				schemaVersion: 1,
+				mailboxIds: ["INBOX", "Archive, 2026"],
+				query: "subject:invoice",
+				maxMessages: 125,
+				includeBodies: true,
+			},
+			scheduleMinutes: null,
+			projections: { jsonl: true, markdown: true },
+			enabled: true,
+		});
+		const compileRequestCount = await page.evaluate(
+			() =>
+				window.__connectorRpcState.requests.filter((request) => request.method === "connectors.datasets.compile")
+					.length,
+		);
+		expect(compileRequestCount).toBe(0);
+
+		await page.evaluate(() => {
+			window.__connectorRpcState.accounts.find((account) => account.id === "himalaya-account").himalayaBackend =
+				"gmail";
+		});
+		await page.getByRole("button", { name: "Refresh", exact: true }).click();
+		await page.getByRole("button", { name: "Add dataset", exact: true }).click();
+		modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Add email dataset", exact: true }),
+		});
+		await modal.getByRole("button", { name: "Archive Mail gmail · archive-work", exact: true }).click();
+		await expect(modal.getByLabel("Search query", { exact: true })).toHaveCount(0);
+		await modal.getByRole("button", { name: "Cancel", exact: true }).click();
 		expect(pageErrors).toEqual([]);
 	});
 
