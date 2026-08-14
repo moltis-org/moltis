@@ -676,27 +676,3 @@ const fn default_schema_version() -> u32 {
 fn empty_secret() -> Secret<String> {
     Secret::new(String::new())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dataset_requests_require_provider_owned_config() {
-        assert!(
-            serde_json::from_value::<DatasetCreateRequest>(serde_json::json!({
-                "accountId": "account",
-                "name": "name",
-                "instruction": "instruction"
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<DatasetUpdateRequest>(serde_json::json!({
-                "name": "name",
-                "instruction": "instruction"
-            }))
-            .is_err()
-        );
-    }
-}

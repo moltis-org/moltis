@@ -630,6 +630,25 @@ async fn email_accounts_and_datasets_keep_provider_owned_configs() {
     ));
 }
 
+#[test]
+fn dataset_requests_require_provider_owned_config() {
+    assert!(
+        serde_json::from_value::<DatasetCreateRequest>(serde_json::json!({
+            "accountId": "account",
+            "name": "name",
+            "instruction": "instruction"
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<DatasetUpdateRequest>(serde_json::json!({
+            "name": "name",
+            "instruction": "instruction"
+        }))
+        .is_err()
+    );
+}
+
 #[tokio::test]
 #[cfg_attr(feature = "vault", serial_test::serial(vault_runtime))]
 async fn draft_validation_checks_instruction_config_and_dataset_account_scope() {
