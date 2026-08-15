@@ -32,6 +32,13 @@ struct NativeStream {
     ts: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiscardOutcome {
+    Deleted,
+    Retained,
+    Unrecovered,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum NativeStreamChunk {
@@ -393,10 +400,10 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
     if let Err(error) = api.stop(native_stream, final_content.as_ref()).await {
         warn!(channel, "chat.stopStream failed: {error}");
         let cleanup = error_cleanup_content(final_content.as_ref(), &active_tasks);
-        if discard_stream(api, native_stream, cleanup.as_ref()).await {
-            return Err(error);
+        match discard_stream(api, native_stream, cleanup.as_ref()).await {
+            DiscardOutcome::Retained => return Ok(vec![native_stream.ts.clone()]),
+            DiscardOutcome::Deleted | DiscardOutcome::Unrecovered => return Err(error),
         }
-        return Ok(vec![native_stream.ts.clone()]);
     }
     Ok(vec![native_stream.ts.clone()])
 }
@@ -426,10 +433,10 @@ async fn append_or_stop<A: NativeStreamApi>(
 ) -> ChannelResult<bool> {
     if let Err(error) = api.append(stream, content).await {
         let cleanup = error_cleanup_content(Some(content), active_tasks);
-        if discard_stream(api, stream, cleanup.as_ref()).await {
-            return Err(error);
+        match discard_stream(api, stream, cleanup.as_ref()).await {
+            DiscardOutcome::Retained => return Ok(false),
+            DiscardOutcome::Deleted | DiscardOutcome::Unrecovered => return Err(error),
         }
-        return Ok(false);
     }
     apply_task_updates(active_tasks, content);
     Ok(true)
@@ -439,7 +446,7 @@ async fn discard_stream<A: NativeStreamApi>(
     api: &A,
     stream: &NativeStream,
     cleanup: Option<&NativeStreamContent>,
-) -> bool {
+) -> DiscardOutcome {
     let stopped = match api.stop(stream, cleanup).await {
         Ok(()) => true,
         Err(error) => {
@@ -448,13 +455,19 @@ async fn discard_stream<A: NativeStreamApi>(
         },
     };
     match api.delete(stream).await {
-        Ok(()) => true,
+        Ok(()) => DiscardOutcome::Deleted,
         Err(error) => {
             warn!("chat.delete failed while discarding native stream: {error}");
-            if !stopped && let Err(retry_error) = api.stop(stream, cleanup).await {
-                warn!("retry chat.stopStream failed while retaining stream: {retry_error}");
+            if stopped {
+                return DiscardOutcome::Retained;
             }
-            false
+            match api.stop(stream, cleanup).await {
+                Ok(()) => DiscardOutcome::Retained,
+                Err(retry_error) => {
+                    warn!("retry chat.stopStream failed while retaining stream: {retry_error}");
+                    DiscardOutcome::Unrecovered
+                },
+            }
         },
     }
 }
@@ -683,6 +696,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn total_cleanup_failure_preserves_complete_fallback() {
+        let api = FakeApi {
+            fail_append: true,
+            fail_delete: true,
+            stop_failures: Mutex::new(2),
+            ..Default::default()
+        };
+        let mut receiver = stream(vec![
+            StreamEvent::Delta("first".into()),
+            StreamEvent::Delta("second".into()),
+            StreamEvent::Done,
+        ])
+        .await;
+
+        let result =
+            send_native_stream_with_api(&api, "C1", "1.0", None, Duration::ZERO, &mut receiver)
+                .await;
+
+        assert!(result.unwrap_err().to_string().contains("append failed"));
+        assert_eq!(*api.calls.lock().unwrap(), vec![
+            Call::Start(text_content("first")),
+            Call::Append(text_content("second")),
+            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
+            Call::Delete,
+            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
+        ]);
+        assert!(matches!(receiver.recv().await, Some(StreamEvent::Done)));
+    }
+
+    #[tokio::test]
     async fn failed_terminal_task_append_stops_with_an_error_card() {
         let api = FakeApi {
             fail_append: true,
@@ -822,6 +865,73 @@ mod tests {
             Call::Stop(Some(text_content("tail"))),
             Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
             Call::Delete,
+        ]);
+    }
+
+    #[tokio::test]
+    async fn failed_final_stop_with_retained_notice_suppresses_fallback() {
+        let api = FakeApi {
+            fail_delete: true,
+            stop_failures: Mutex::new(1),
+            ..Default::default()
+        };
+        let mut receiver = stream(vec![
+            StreamEvent::Delta("start".into()),
+            StreamEvent::Delta("tail".into()),
+            StreamEvent::Done,
+        ])
+        .await;
+
+        let result = send_native_stream_with_api(
+            &api,
+            "C1",
+            "1.0",
+            None,
+            Duration::from_secs(60),
+            &mut receiver,
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), vec!["1.0"]);
+        assert_eq!(*api.calls.lock().unwrap(), vec![
+            Call::Start(text_content("start")),
+            Call::Stop(Some(text_content("tail"))),
+            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
+            Call::Delete,
+        ]);
+    }
+
+    #[tokio::test]
+    async fn total_final_stop_cleanup_failure_preserves_complete_fallback() {
+        let api = FakeApi {
+            fail_delete: true,
+            stop_failures: Mutex::new(3),
+            ..Default::default()
+        };
+        let mut receiver = stream(vec![
+            StreamEvent::Delta("start".into()),
+            StreamEvent::Delta("tail".into()),
+            StreamEvent::Done,
+        ])
+        .await;
+
+        let result = send_native_stream_with_api(
+            &api,
+            "C1",
+            "1.0",
+            None,
+            Duration::from_secs(60),
+            &mut receiver,
+        )
+        .await;
+
+        assert!(result.unwrap_err().to_string().contains("stop failed"));
+        assert_eq!(*api.calls.lock().unwrap(), vec![
+            Call::Start(text_content("start")),
+            Call::Stop(Some(text_content("tail"))),
+            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
+            Call::Delete,
+            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
         ]);
     }
 
