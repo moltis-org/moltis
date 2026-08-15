@@ -16,6 +16,7 @@ use crate::{
 
 const BASE_URL: &str = "https://clawhub.ai";
 const USER_AGENT: &str = "moltis-skills";
+const REQUEST_TIMEOUT_SECS: u64 = 15;
 
 // ── API response types ──────────────────────────────────────────────────────
 
@@ -39,6 +40,26 @@ pub struct SearchResult {
     pub updated_at: Option<u64>,
     #[serde(default)]
     pub version: Option<String>,
+    #[serde(default)]
+    pub downloads: u64,
+    #[serde(default)]
+    pub owner_handle: Option<String>,
+    #[serde(default)]
+    pub owner: Option<OwnerInfo>,
+    #[serde(default)]
+    pub native: Option<NativeSearchMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NativeSearchMetadata {
+    #[serde(default)]
+    pub skill: Option<NativeSearchSkill>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NativeSearchSkill {
+    #[serde(default)]
+    pub stats: Option<SkillStats>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,6 +208,7 @@ impl ClawHubClient {
                 .get(url)
                 .query(query)
                 .header("User-Agent", USER_AGENT)
+                .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
                 .send()
                 .await?;
 
@@ -231,9 +253,16 @@ impl ClawHubClient {
     }
 
     /// Get metadata for a specific skill.
-    pub async fn skill_info(&self, slug: &str) -> Result<SkillInfoResponse> {
+    pub async fn skill_info(
+        &self,
+        slug: &str,
+        owner_handle: Option<&str>,
+    ) -> Result<SkillInfoResponse> {
         let url = format!("{}/api/v1/skills/{}", self.base_url, slug);
-        let resp = self.get_with_retry(&url, &[]).await?;
+        let query = owner_handle
+            .map(|owner| vec![("ownerHandle", owner)])
+            .unwrap_or_default();
+        let resp = self.get_with_retry(&url, &query).await?;
 
         if !resp.status().is_success() {
             return Err(Error::Install(format!(
@@ -247,9 +276,12 @@ impl ClawHubClient {
     }
 
     /// Get security scan results for a skill.
-    pub async fn scan(&self, slug: &str) -> Result<ScanResponse> {
+    pub async fn scan(&self, slug: &str, owner_handle: Option<&str>) -> Result<ScanResponse> {
         let url = format!("{}/api/v1/skills/{}/scan", self.base_url, slug);
-        let resp = self.get_with_retry(&url, &[]).await?;
+        let query = owner_handle
+            .map(|owner| vec![("ownerHandle", owner)])
+            .unwrap_or_default();
+        let resp = self.get_with_retry(&url, &query).await?;
 
         if !resp.status().is_success() {
             return Err(Error::Install(format!(
@@ -263,11 +295,18 @@ impl ClawHubClient {
     }
 
     /// Download a skill as a zip archive.
-    pub async fn download_zip(&self, slug: &str, version: &str) -> Result<Vec<u8>> {
+    pub async fn download_zip(
+        &self,
+        slug: &str,
+        owner_handle: Option<&str>,
+        version: &str,
+    ) -> Result<Vec<u8>> {
         let url = format!("{}/api/v1/download", self.base_url);
-        let resp = self
-            .get_with_retry(&url, &[("slug", slug), ("version", version)])
-            .await?;
+        let mut query = vec![("slug", slug), ("version", version)];
+        if let Some(owner) = owner_handle {
+            query.push(("ownerHandle", owner));
+        }
+        let resp = self.get_with_retry(&url, &query).await?;
 
         if !resp.status().is_success() {
             return Err(Error::Install(format!(
@@ -283,8 +322,7 @@ impl ClawHubClient {
 
 // ── Enriched search results ─────────────────────────────────────────────────
 
-/// Enriched search result with additional metadata from skill info lookups.
-/// This is what we return to the frontend.
+/// Search result shaped for the frontend, using metadata returned by search.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnrichedSearchResult {
@@ -304,12 +342,28 @@ pub struct EnrichedSearchResult {
     pub owner_handle: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_image: Option<String>,
+    pub install_ref: String,
     #[serde(default)]
     pub stars: u64,
 }
 
 impl From<SearchResult> for EnrichedSearchResult {
     fn from(r: SearchResult) -> Self {
+        let owner_handle = r
+            .owner_handle
+            .or_else(|| r.owner.as_ref().and_then(|owner| owner.handle.clone()));
+        let install_ref = owner_handle
+            .as_ref()
+            .map(|owner| format!("@{owner}/{}", r.slug))
+            .unwrap_or_else(|| r.slug.clone());
+        let owner_image = r.owner.and_then(|owner| owner.image);
+        let native_stats = r.native.and_then(|native| native.skill?.stats);
+        let downloads = if r.downloads == 0 {
+            native_stats.as_ref().map_or(0, |stats| stats.downloads)
+        } else {
+            r.downloads
+        };
+        let stars = native_stats.map_or(0, |stats| stats.stars);
         Self {
             score: r.score,
             slug: r.slug,
@@ -317,35 +371,68 @@ impl From<SearchResult> for EnrichedSearchResult {
             summary: r.summary,
             updated_at: r.updated_at,
             version: r.version,
-            downloads: 0,
-            owner_handle: None,
-            owner_image: None,
-            stars: 0,
+            downloads,
+            owner_handle,
+            owner_image,
+            install_ref,
+            stars,
         }
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SkillReference<'a> {
+    pub slug: &'a str,
+    pub owner_handle: Option<&'a str>,
+}
+
+pub fn parse_skill_reference(reference: &str) -> Result<SkillReference<'_>> {
+    let Some(qualified) = reference.strip_prefix('@') else {
+        validate_slug(reference)?;
+        return Ok(SkillReference {
+            slug: reference,
+            owner_handle: None,
+        });
+    };
+    let (owner_handle, slug) = qualified
+        .split_once('/')
+        .ok_or_else(|| Error::Install("invalid ClawHub reference: expected @owner/slug".into()))?;
+    validate_slug(owner_handle)?;
+    validate_slug(slug)?;
+    Ok(SkillReference {
+        slug,
+        owner_handle: Some(owner_handle),
+    })
+}
+
 // ── Install from ClawHub ────────────────────────────────────────────────────
 
-/// Install a single skill from ClawHub by slug.
+/// Install a single skill from ClawHub by owner-qualified reference or bare slug.
 ///
 /// Downloads the skill zip archive, extracts all files (SKILL.md, scripts,
-/// templates, references, etc.) to `install_dir/clawhub-<slug>/`, and
+/// templates, references, etc.) to an owner-qualified directory, and
 /// records the skill in the manifest.
-pub async fn install_from_clawhub(slug: &str, install_dir: &Path) -> Result<Vec<SkillMetadata>> {
-    validate_slug(slug)?;
+pub async fn install_from_clawhub(
+    reference: &str,
+    install_dir: &Path,
+) -> Result<Vec<SkillMetadata>> {
+    let skill_ref = parse_skill_reference(reference)?;
+    let slug = skill_ref.slug;
+    let owner_handle = skill_ref.owner_handle;
 
     let client = ClawHubClient::new();
 
     // Get skill metadata and version.
-    let info = client.skill_info(slug).await?;
+    let info = client.skill_info(slug, owner_handle).await?;
     let version = info
         .latest_version
         .as_ref()
         .map(|v| v.version.clone())
         .ok_or_else(|| Error::Install(format!("skill '{slug}' has no published version")))?;
 
-    let dir_name = format!("clawhub-{slug}");
+    let dir_name = owner_handle
+        .map(|owner| format!("clawhub-{owner}-{slug}"))
+        .unwrap_or_else(|| format!("clawhub-{slug}"));
     let target = install_dir.join(&dir_name);
 
     // Remove existing if re-installing.
@@ -355,7 +442,7 @@ pub async fn install_from_clawhub(slug: &str, install_dir: &Path) -> Result<Vec<
     tokio::fs::create_dir_all(&target).await?;
 
     // Download zip archive.
-    let zip_bytes = client.download_zip(slug, &version).await?;
+    let zip_bytes = client.download_zip(slug, owner_handle, &version).await?;
 
     // Extract zip on a blocking thread (zip I/O is synchronous).
     let target_owned = target.clone();
@@ -386,7 +473,7 @@ pub async fn install_from_clawhub(slug: &str, install_dir: &Path) -> Result<Vec<
     let mut manifest = store.load()?;
 
     // Remove existing entry if re-installing.
-    let source_key = clawhub_source_key(slug);
+    let source_key = clawhub_source_key(reference);
     manifest.remove_repo(&source_key);
 
     let now = std::time::SystemTime::now()
@@ -521,13 +608,24 @@ mod tests {
     /// Test with the actual JSON shape returned by the ClawHub /api/v1/search endpoint.
     #[test]
     fn search_response_deserialises_real_format() {
-        let json = r#"{"results":[{"score":3.54,"slug":"csv-handler","displayName":"Csv Handler","summary":"Handle CSV files","version":null,"updatedAt":1772056835938}]}"#;
+        let json = r#"{"results":[{"score":6120,"slug":"csv","displayName":"CSV","summary":"Handle CSV files","version":null,"updatedAt":1772056835938,"downloads":5395,"ownerHandle":"ivangdavila","owner":{"handle":"ivangdavila","displayName":"Ivan","image":"https://example.com/avatar.png"},"native":{"skill":{"stats":{"downloads":5395,"installs":188,"stars":4,"versions":1}}}}]}"#;
         let resp: SearchResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.results.len(), 1);
-        assert_eq!(resp.results[0].slug, "csv-handler");
-        assert_eq!(resp.results[0].display_name.as_deref(), Some("Csv Handler"));
+        assert_eq!(resp.results[0].slug, "csv");
+        assert_eq!(resp.results[0].display_name.as_deref(), Some("CSV"));
         assert_eq!(resp.results[0].updated_at, Some(1772056835938));
         assert!(resp.results[0].version.is_none());
+        assert_eq!(resp.results[0].downloads, 5395);
+        assert_eq!(resp.results[0].owner_handle.as_deref(), Some("ivangdavila"));
+        assert_eq!(
+            resp.results[0]
+                .native
+                .as_ref()
+                .and_then(|native| native.skill.as_ref())
+                .and_then(|skill| skill.stats.as_ref())
+                .map(|stats| stats.stars),
+            Some(4)
+        );
     }
 
     /// Test with the actual JSON shape returned by the ClawHub /api/v1/skills/<slug> endpoint.
@@ -565,11 +663,53 @@ mod tests {
             summary: Some("A test".into()),
             updated_at: Some(1234567890000),
             version: None,
+            downloads: 42,
+            owner_handle: Some("publisher".into()),
+            owner: Some(OwnerInfo {
+                handle: Some("publisher".into()),
+                display_name: None,
+                image: Some("https://example.com/avatar.png".into()),
+            }),
+            native: Some(NativeSearchMetadata {
+                skill: Some(NativeSearchSkill {
+                    stats: Some(SkillStats {
+                        downloads: 42,
+                        installs_all_time: 3,
+                        stars: 7,
+                    }),
+                }),
+            }),
         };
         let enriched: EnrichedSearchResult = sr.into();
         assert_eq!(enriched.slug, "test");
-        assert_eq!(enriched.downloads, 0);
-        assert!(enriched.owner_handle.is_none());
+        assert_eq!(enriched.downloads, 42);
+        assert_eq!(enriched.owner_handle.as_deref(), Some("publisher"));
+        assert_eq!(enriched.install_ref, "@publisher/test");
+        assert_eq!(enriched.stars, 7);
+        assert_eq!(
+            enriched.owner_image.as_deref(),
+            Some("https://example.com/avatar.png")
+        );
+    }
+
+    #[test]
+    fn parses_owner_qualified_skill_reference() {
+        assert_eq!(
+            parse_skill_reference("@ivangdavila/csv").unwrap(),
+            SkillReference {
+                slug: "csv",
+                owner_handle: Some("ivangdavila"),
+            }
+        );
+        assert_eq!(
+            parse_skill_reference("csv-handler").unwrap(),
+            SkillReference {
+                slug: "csv-handler",
+                owner_handle: None,
+            }
+        );
+        assert!(parse_skill_reference("@owner").is_err());
+        assert!(parse_skill_reference("@../csv").is_err());
     }
 
     /// Integration test: hit the real ClawHub search API.
@@ -598,7 +738,7 @@ mod tests {
     #[tokio::test]
     async fn live_scan_returns_security_data() {
         let client = ClawHubClient::new();
-        let resp = client.scan("csv-handler").await;
+        let resp = client.scan("csv", Some("ivangdavila")).await;
         match resp {
             Ok(scan) => {
                 let sec = scan.security.expect("should have security data");
@@ -620,10 +760,10 @@ mod tests {
     #[tokio::test]
     async fn live_skill_info_returns_metadata() {
         let client = ClawHubClient::new();
-        let resp = client.skill_info("csv-handler").await;
+        let resp = client.skill_info("csv", Some("ivangdavila")).await;
         match resp {
             Ok(info) => {
-                assert_eq!(info.skill.slug, "csv-handler");
+                assert_eq!(info.skill.slug, "csv");
                 assert!(info.latest_version.is_some());
                 assert!(info.owner.is_some());
             },

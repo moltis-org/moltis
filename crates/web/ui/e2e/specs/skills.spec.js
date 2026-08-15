@@ -1,6 +1,29 @@
 const { expect, test } = require("../base-test");
 const { navigateAndWait, watchPageErrors } = require("../helpers");
 
+async function mockClawHubSearch(page, response) {
+	await page.addInitScript((searchResponse) => {
+		const originalSend = WebSocket.prototype.send;
+		WebSocket.prototype.send = function (payload) {
+			try {
+				const parsed = JSON.parse(payload);
+				if (parsed?.method === "skills.clawhub.search") {
+					queueMicrotask(() => {
+						const event = new MessageEvent("message", {
+							data: JSON.stringify({ type: "res", id: parsed.id, ...searchResponse }),
+						});
+						if (typeof this.onmessage === "function") this.onmessage(event);
+					});
+					return;
+				}
+			} catch {
+				// Let non-JSON WebSocket traffic pass through unchanged.
+			}
+			return originalSend.call(this, payload);
+		};
+	}, response);
+}
+
 test.describe("Skills page", () => {
 	test("skills page loads", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
@@ -31,6 +54,64 @@ test.describe("Skills page", () => {
 	test("page has no JS errors", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/skills");
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("ClawHub search shows owner-qualified results", async ({ page }) => {
+		await mockClawHubSearch(page, {
+			ok: true,
+			payload: {
+				results: [
+					{
+						score: 6120,
+						slug: "csv",
+						installRef: "@ivangdavila/csv",
+						displayName: "CSV by Ivan",
+						summary: "Parse RFC 4180 CSV files",
+						downloads: 5395,
+						ownerHandle: "ivangdavila",
+					},
+					{
+						score: 6120,
+						slug: "csv",
+						installRef: "@thcjp/csv",
+						displayName: "CSV by THCJP",
+						summary: "Parse and generate CSV files",
+						downloads: 17,
+						ownerHandle: "thcjp",
+					},
+				],
+			},
+		});
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/skills");
+		await page.getByRole("tab", { name: "ClawHub", exact: true }).click();
+		await page.getByPlaceholder("Search ClawHub skills (e.g. csv, weather, github)...").fill("csv");
+
+		await expect(page.getByText("CSV by Ivan", { exact: true })).toBeVisible();
+		await expect(page.getByText("CSV by THCJP", { exact: true })).toBeVisible();
+		await expect(page.getByText("@ivangdavila /", { exact: true })).toBeVisible();
+		await expect(page.getByText("@thcjp /", { exact: true })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("ClawHub search reports RPC errors in the page, toast, and console", async ({ page }) => {
+		await mockClawHubSearch(page, {
+			ok: false,
+			error: { code: "TIMEOUT", message: "ClawHub search timed out after 15 seconds" },
+		});
+		const consoleErrors = [];
+		page.on("console", (message) => {
+			if (message.type() === "error") consoleErrors.push(message.text());
+		});
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/skills");
+		await page.getByRole("tab", { name: "ClawHub", exact: true }).click();
+		await page.getByPlaceholder("Search ClawHub skills (e.g. csv, weather, github)...").fill("csv");
+
+		await expect(page.getByRole("alert")).toContainText("The request timed out. Please try again.");
+		await expect(page.getByText("The request timed out. Please try again.", { exact: true })).toBeVisible();
+		expect(consoleErrors.some((message) => message.includes("ClawHub search failed"))).toBeTruthy();
 		expect(pageErrors).toEqual([]);
 	});
 
