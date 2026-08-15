@@ -302,8 +302,13 @@ edit-in-place mode. The completed reply still falls back to normal delivery when
 the native stream fails. Moltis first tries to stop and delete the partial native
 message so the fallback does not duplicate content already accepted by Slack. If
 Slack cannot delete it, Moltis retains that message with a visible streaming-error
-notice and suppresses the duplicate fallback. If Slack also rejects both attempts
-to stop the stream, Moltis preserves the normal complete fallback instead.
+notice and retries the stop after draining the remaining response. Only after
+Slack confirms the stream is stopped does Moltis replace the retained message
+with the complete text through `chat.update`. If Slack still cannot stop or update
+the message, Moltis makes a final deletion attempt before preserving normal
+fallback delivery.
+Responses too large for Slack's update limit are replaced by the visible error
+notice instead of a misleading partial answer.
 
 Native requests send standard Markdown unchanged through Slack's `markdown_text`
 field and use `edit_throttle_ms`. Tool calls appear in the same streamed message

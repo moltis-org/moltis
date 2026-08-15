@@ -39,6 +39,19 @@ enum DiscardOutcome {
     Unrecovered,
 }
 
+#[derive(Debug)]
+enum AppendOutcome {
+    Appended,
+    NeedsRecovery(StreamRecovery),
+}
+
+#[derive(Debug)]
+struct StreamRecovery {
+    error: ChannelError,
+    cleanup: Option<NativeStreamContent>,
+    stopped: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum NativeStreamChunk {
@@ -107,6 +120,14 @@ fn native_stream_body(
     body
 }
 
+fn update_message_body(stream: &NativeStream, markdown_text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "channel": stream.channel,
+        "ts": stream.ts,
+        "markdown_text": markdown_text,
+    })
+}
+
 fn start_native_stream_body(
     channel: &str,
     thread_ts: &str,
@@ -151,6 +172,8 @@ trait NativeStreamApi: Send + Sync {
     ) -> ChannelResult<()>;
 
     async fn delete(&self, stream: &NativeStream) -> ChannelResult<()>;
+
+    async fn update(&self, stream: &NativeStream, text: &str) -> ChannelResult<()>;
 }
 
 pub(crate) struct HttpNativeStreamApi {
@@ -266,6 +289,21 @@ impl NativeStreamApi for HttpNativeStreamApi {
             .map_err(|error| ChannelError::external("chat.delete parse", error))?;
         check_ok(&response, "chat.delete")
     }
+
+    async fn update(&self, stream: &NativeStream, markdown_text: &str) -> ChannelResult<()> {
+        let response: serde_json::Value = self
+            .http
+            .post(slack_api_method_url(&self.api_base_url, "chat.update")?)
+            .bearer_auth(&self.bot_token)
+            .json(&update_message_body(stream, markdown_text))
+            .send()
+            .await
+            .map_err(|error| ChannelError::external("chat.update", error))?
+            .json()
+            .await
+            .map_err(|error| ChannelError::external("chat.update parse", error))?;
+        check_ok(&response, "chat.update")
+    }
 }
 
 fn check_ok(response: &serde_json::Value, method: &str) -> ChannelResult<()> {
@@ -303,6 +341,8 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
     use moltis_channels::plugin::StreamEvent;
 
     let mut pending_text = String::new();
+    let mut full_text = String::new();
+    let mut recovery_overflowed = false;
     let mut pending_chunks = Vec::new();
     let mut native_stream = None;
     let mut plan_started = false;
@@ -318,6 +358,7 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
             event = stream.recv() => {
                 match event {
                     Some(StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk)) => {
+                        recovery_overflowed |= append_recovery_text(&mut full_text, &chunk);
                         pending_text.push_str(&chunk);
                     },
                     Some(StreamEvent::TaskUpdate(update)) => {
@@ -331,7 +372,9 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
                     },
                     Some(StreamEvent::Done) | None => break,
                     Some(StreamEvent::Error(error)) => {
-                        pending_text.push_str(&format!("\n\n:warning: {error}"));
+                        let notice = format!("\n\n:warning: {error}");
+                        recovery_overflowed |= append_recovery_text(&mut full_text, &notice);
+                        pending_text.push_str(&notice);
                         break;
                     },
                 }
@@ -344,7 +387,7 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
                     apply_task_updates(&mut active_tasks, &initial);
                     last_append = tokio::time::Instant::now();
                 } else if last_append.elapsed() >= throttle {
-                    if let Some(id) = flush_appends(
+                    if let Some(recovery) = flush_appends(
                         api,
                         native_stream.as_ref(),
                         &mut pending_text,
@@ -353,14 +396,28 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
                     )
                     .await?
                     {
-                        drain_retained_stream(stream).await;
-                        return Ok(vec![id]);
+                        let native_stream = native_stream.as_ref().ok_or_else(|| {
+                            ChannelError::unavailable("native Slack stream was not started")
+                        })?;
+                        let updated = recover_stream_message(
+                            api,
+                            native_stream,
+                            &mut full_text,
+                            &mut recovery_overflowed,
+                            &recovery,
+                            stream,
+                        )
+                        .await;
+                        if updated {
+                            return Ok(vec![native_stream.ts.clone()]);
+                        }
+                        return Err(recovery.error);
                     }
                     last_append = tokio::time::Instant::now();
                 }
             }
             _ = flush_interval.tick(), if native_stream.is_some() => {
-                if let Some(id) = flush_appends(
+                if let Some(recovery) = flush_appends(
                     api,
                     native_stream.as_ref(),
                     &mut pending_text,
@@ -369,8 +426,22 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
                 )
                 .await?
                 {
-                    drain_retained_stream(stream).await;
-                    return Ok(vec![id]);
+                    let native_stream = native_stream.as_ref().ok_or_else(|| {
+                        ChannelError::unavailable("native Slack stream was not started")
+                    })?;
+                    let updated = recover_stream_message(
+                        api,
+                        native_stream,
+                        &mut full_text,
+                        &mut recovery_overflowed,
+                        &recovery,
+                        stream,
+                    )
+                    .await;
+                    if updated {
+                        return Ok(vec![native_stream.ts.clone()]);
+                    }
+                    return Err(recovery.error);
                 }
                 last_append = tokio::time::Instant::now();
             }
@@ -391,8 +462,22 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
     while exceeds_markdown_limit(&pending_text) {
         let content =
             take_native_content(&mut pending_text, &mut pending_chunks).unwrap_or_default();
-        if !append_or_stop(api, native_stream, &content, &mut active_tasks).await? {
-            return Ok(vec![native_stream.ts.clone()]);
+        match append_or_stop(api, native_stream, &content, &mut active_tasks).await? {
+            AppendOutcome::Appended => {},
+            AppendOutcome::NeedsRecovery(recovery) => {
+                let updated = finish_recovery(
+                    api,
+                    native_stream,
+                    &full_text,
+                    recovery_overflowed,
+                    &recovery,
+                )
+                .await;
+                if updated {
+                    return Ok(vec![native_stream.ts.clone()]);
+                }
+                return Err(recovery.error);
+            },
         }
     }
 
@@ -401,8 +486,34 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
         warn!(channel, "chat.stopStream failed: {error}");
         let cleanup = error_cleanup_content(final_content.as_ref(), &active_tasks);
         match discard_stream(api, native_stream, cleanup.as_ref()).await {
-            DiscardOutcome::Retained => return Ok(vec![native_stream.ts.clone()]),
-            DiscardOutcome::Deleted | DiscardOutcome::Unrecovered => return Err(error),
+            DiscardOutcome::Deleted => return Err(error),
+            DiscardOutcome::Retained => {
+                if update_recovered_message(api, native_stream, &full_text, recovery_overflowed)
+                    .await
+                {
+                    return Ok(vec![native_stream.ts.clone()]);
+                }
+                return Err(error);
+            },
+            DiscardOutcome::Unrecovered => {
+                let recovery = StreamRecovery {
+                    error,
+                    cleanup,
+                    stopped: false,
+                };
+                if finish_recovery(
+                    api,
+                    native_stream,
+                    &full_text,
+                    recovery_overflowed,
+                    &recovery,
+                )
+                .await
+                {
+                    return Ok(vec![native_stream.ts.clone()]);
+                }
+                return Err(recovery.error);
+            },
         }
     }
     Ok(vec![native_stream.ts.clone()])
@@ -414,12 +525,13 @@ async fn flush_appends<A: NativeStreamApi>(
     pending_text: &mut String,
     pending_chunks: &mut Vec<NativeStreamChunk>,
     active_tasks: &mut BTreeMap<String, String>,
-) -> ChannelResult<Option<String>> {
+) -> ChannelResult<Option<StreamRecovery>> {
     let stream =
         stream.ok_or_else(|| ChannelError::unavailable("native Slack stream was not started"))?;
     while let Some(content) = take_native_content(pending_text, pending_chunks) {
-        if !append_or_stop(api, stream, &content, active_tasks).await? {
-            return Ok(Some(stream.ts.clone()));
+        match append_or_stop(api, stream, &content, active_tasks).await? {
+            AppendOutcome::Appended => {},
+            AppendOutcome::NeedsRecovery(recovery) => return Ok(Some(recovery)),
         }
     }
     Ok(None)
@@ -430,16 +542,29 @@ async fn append_or_stop<A: NativeStreamApi>(
     stream: &NativeStream,
     content: &NativeStreamContent,
     active_tasks: &mut BTreeMap<String, String>,
-) -> ChannelResult<bool> {
+) -> ChannelResult<AppendOutcome> {
     if let Err(error) = api.append(stream, content).await {
         let cleanup = error_cleanup_content(Some(content), active_tasks);
         match discard_stream(api, stream, cleanup.as_ref()).await {
-            DiscardOutcome::Retained => return Ok(false),
-            DiscardOutcome::Deleted | DiscardOutcome::Unrecovered => return Err(error),
+            DiscardOutcome::Deleted => return Err(error),
+            DiscardOutcome::Retained => {
+                return Ok(AppendOutcome::NeedsRecovery(StreamRecovery {
+                    error,
+                    cleanup,
+                    stopped: true,
+                }));
+            },
+            DiscardOutcome::Unrecovered => {
+                return Ok(AppendOutcome::NeedsRecovery(StreamRecovery {
+                    error,
+                    cleanup,
+                    stopped: false,
+                }));
+            },
         }
     }
     apply_task_updates(active_tasks, content);
-    Ok(true)
+    Ok(AppendOutcome::Appended)
 }
 
 async fn discard_stream<A: NativeStreamApi>(
@@ -472,14 +597,87 @@ async fn discard_stream<A: NativeStreamApi>(
     }
 }
 
-async fn drain_retained_stream(stream: &mut moltis_channels::plugin::StreamReceiver) {
+async fn recover_stream_message<A: NativeStreamApi>(
+    api: &A,
+    native_stream: &NativeStream,
+    full_text: &mut String,
+    recovery_overflowed: &mut bool,
+    recovery: &StreamRecovery,
+    stream: &mut moltis_channels::plugin::StreamReceiver,
+) -> bool {
     use moltis_channels::plugin::StreamEvent;
 
     while let Some(event) = stream.recv().await {
-        if matches!(event, StreamEvent::Done | StreamEvent::Error(_)) {
-            break;
+        match event {
+            StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk) => {
+                *recovery_overflowed |= append_recovery_text(full_text, &chunk);
+            },
+            StreamEvent::Error(error) => {
+                *recovery_overflowed |=
+                    append_recovery_text(full_text, &format!("\n\n:warning: {error}"));
+                break;
+            },
+            StreamEvent::Done => break,
+            StreamEvent::TaskUpdate(_) => {},
         }
     }
+    finish_recovery(
+        api,
+        native_stream,
+        full_text,
+        *recovery_overflowed,
+        recovery,
+    )
+    .await
+}
+
+async fn finish_recovery<A: NativeStreamApi>(
+    api: &A,
+    stream: &NativeStream,
+    full_text: &str,
+    recovery_overflowed: bool,
+    recovery: &StreamRecovery,
+) -> bool {
+    if !recovery.stopped
+        && let Err(error) = api.stop(stream, recovery.cleanup.as_ref()).await
+    {
+        warn!("final chat.stopStream failed while recovering native stream: {error}");
+        if let Err(delete_error) = api.delete(stream).await {
+            warn!("final chat.delete failed while recovering native stream: {delete_error}");
+        }
+        return false;
+    }
+    update_recovered_message(api, stream, full_text, recovery_overflowed).await
+}
+
+async fn update_recovered_message<A: NativeStreamApi>(
+    api: &A,
+    stream: &NativeStream,
+    full_text: &str,
+    recovery_overflowed: bool,
+) -> bool {
+    let text = if recovery_overflowed || full_text.is_empty() {
+        STREAM_FAILURE_NOTICE
+    } else {
+        full_text
+    };
+    match api.update(stream, text).await {
+        Ok(()) => true,
+        Err(error) => {
+            warn!("chat.update failed while recovering native stream: {error}");
+            if let Err(delete_error) = api.delete(stream).await {
+                warn!("chat.delete failed after recovery update failure: {delete_error}");
+            }
+            false
+        },
+    }
+}
+
+fn append_recovery_text(buffer: &mut String, text: &str) -> bool {
+    let remaining = MAX_MARKDOWN_CHARS.saturating_sub(buffer.chars().count());
+    let mut chars = text.chars();
+    buffer.extend(chars.by_ref().take(remaining));
+    chars.next().is_some()
 }
 
 fn apply_task_updates(active_tasks: &mut BTreeMap<String, String>, content: &NativeStreamContent) {
@@ -584,13 +782,15 @@ mod tests {
         Append(NativeStreamContent),
         Stop(Option<NativeStreamContent>),
         Delete,
+        Update(String),
     }
 
     #[derive(Default)]
     struct FakeApi {
         calls: Mutex<Vec<Call>>,
         fail_append: bool,
-        fail_delete: bool,
+        fail_update: bool,
+        delete_failures: Mutex<usize>,
         stop_failures: Mutex<usize>,
     }
 
@@ -648,8 +848,18 @@ mod tests {
 
         async fn delete(&self, _stream: &NativeStream) -> ChannelResult<()> {
             self.calls.lock().unwrap().push(Call::Delete);
-            if self.fail_delete {
-                Err(ChannelError::unavailable("delete failed"))
+            let mut failures = self.delete_failures.lock().unwrap();
+            if *failures == 0 {
+                return Ok(());
+            }
+            *failures -= 1;
+            Err(ChannelError::unavailable("delete failed"))
+        }
+
+        async fn update(&self, _stream: &NativeStream, text: &str) -> ChannelResult<()> {
+            self.calls.lock().unwrap().push(Call::Update(text.into()));
+            if self.fail_update {
+                Err(ChannelError::unavailable("update failed"))
             } else {
                 Ok(())
             }
@@ -669,7 +879,7 @@ mod tests {
     async fn append_failure_with_failed_delete_suppresses_duplicate_fallback() {
         let api = FakeApi {
             fail_append: true,
-            fail_delete: true,
+            delete_failures: Mutex::new(1),
             stop_failures: Mutex::new(1),
             ..Default::default()
         };
@@ -691,15 +901,49 @@ mod tests {
             Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
             Call::Delete,
             Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
+            Call::Update("firstsecond".into()),
         ]);
         assert!(receiver.recv().await.is_none());
     }
 
     #[tokio::test]
-    async fn total_cleanup_failure_preserves_complete_fallback() {
+    async fn total_cleanup_failure_recovers_in_place() {
         let api = FakeApi {
             fail_append: true,
-            fail_delete: true,
+            delete_failures: Mutex::new(1),
+            stop_failures: Mutex::new(2),
+            ..Default::default()
+        };
+        let mut receiver = stream(vec![
+            StreamEvent::Delta("first".into()),
+            StreamEvent::Delta("second".into()),
+            StreamEvent::Done,
+        ])
+        .await;
+
+        let result =
+            send_native_stream_with_api(&api, "C1", "1.0", None, Duration::ZERO, &mut receiver)
+                .await;
+
+        assert_eq!(result.unwrap(), vec!["1.0"]);
+        assert_eq!(*api.calls.lock().unwrap(), vec![
+            Call::Start(text_content("first")),
+            Call::Append(text_content("second")),
+            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
+            Call::Delete,
+            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
+            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
+            Call::Update("firstsecond".into()),
+        ]);
+        assert!(receiver.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn total_cleanup_and_update_failure_preserves_fallback() {
+        let api = FakeApi {
+            fail_append: true,
+            delete_failures: Mutex::new(1),
+            fail_update: true,
             stop_failures: Mutex::new(2),
             ..Default::default()
         };
@@ -715,14 +959,61 @@ mod tests {
                 .await;
 
         assert!(result.unwrap_err().to_string().contains("append failed"));
-        assert_eq!(*api.calls.lock().unwrap(), vec![
-            Call::Start(text_content("first")),
-            Call::Append(text_content("second")),
-            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
-            Call::Delete,
-            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
-        ]);
-        assert!(matches!(receiver.recv().await, Some(StreamEvent::Done)));
+        assert_eq!(api.calls.lock().unwrap().last(), Some(&Call::Delete));
+        assert!(receiver.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn failed_final_recovery_stop_does_not_update_active_stream() {
+        let api = FakeApi {
+            fail_append: true,
+            delete_failures: Mutex::new(1),
+            stop_failures: Mutex::new(3),
+            ..Default::default()
+        };
+        let mut receiver = stream(vec![
+            StreamEvent::Delta("first".into()),
+            StreamEvent::Delta("second".into()),
+            StreamEvent::Done,
+        ])
+        .await;
+
+        let result =
+            send_native_stream_with_api(&api, "C1", "1.0", None, Duration::ZERO, &mut receiver)
+                .await;
+
+        assert!(result.unwrap_err().to_string().contains("append failed"));
+        let calls = api.calls.lock().unwrap();
+        assert_eq!(calls.last(), Some(&Call::Delete));
+        assert!(!calls.iter().any(|call| matches!(call, Call::Update(_))));
+    }
+
+    #[tokio::test]
+    async fn oversized_recovery_replaces_partial_answer_with_bounded_notice() {
+        let api = FakeApi {
+            fail_append: true,
+            delete_failures: Mutex::new(1),
+            stop_failures: Mutex::new(2),
+            ..Default::default()
+        };
+        let mut receiver = stream(vec![
+            StreamEvent::Delta("first".into()),
+            StreamEvent::Delta("second".into()),
+            StreamEvent::Delta("é".repeat(MAX_MARKDOWN_CHARS)),
+            StreamEvent::Done,
+        ])
+        .await;
+
+        let result =
+            send_native_stream_with_api(&api, "C1", "1.0", None, Duration::ZERO, &mut receiver)
+                .await;
+
+        assert_eq!(result.unwrap(), vec!["1.0"]);
+        assert_eq!(
+            api.calls.lock().unwrap().last(),
+            Some(&Call::Update(STREAM_FAILURE_NOTICE.into()))
+        );
+        assert!(STREAM_FAILURE_NOTICE.chars().count() <= MAX_MARKDOWN_CHARS);
     }
 
     #[tokio::test]
@@ -789,6 +1080,7 @@ mod tests {
                 Call::Start(content) | Call::Append(content) => content.markdown_text.as_deref(),
                 Call::Stop(Some(content)) => content.markdown_text.as_deref(),
                 Call::Stop(None) | Call::Delete => None,
+                Call::Update(text) => Some(text.as_str()),
             })
             .collect::<String>();
         assert_eq!(delivered, format!("{markdown}{long}"));
@@ -803,6 +1095,7 @@ mod tests {
                     .and_then(|content| content.markdown_text.as_deref())
                     .is_none_or(|text| text.chars().count() <= MAX_MARKDOWN_CHARS),
                 Call::Delete => true,
+                Call::Update(text) => text.chars().count() <= MAX_MARKDOWN_CHARS,
             }
         }));
     }
@@ -871,7 +1164,7 @@ mod tests {
     #[tokio::test]
     async fn failed_final_stop_with_retained_notice_suppresses_fallback() {
         let api = FakeApi {
-            fail_delete: true,
+            delete_failures: Mutex::new(1),
             stop_failures: Mutex::new(1),
             ..Default::default()
         };
@@ -898,13 +1191,80 @@ mod tests {
             Call::Stop(Some(text_content("tail"))),
             Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
             Call::Delete,
+            Call::Update("starttail".into()),
         ]);
     }
 
     #[tokio::test]
-    async fn total_final_stop_cleanup_failure_preserves_complete_fallback() {
+    async fn retained_notice_with_failed_update_preserves_fallback() {
         let api = FakeApi {
-            fail_delete: true,
+            delete_failures: Mutex::new(1),
+            fail_update: true,
+            stop_failures: Mutex::new(1),
+            ..Default::default()
+        };
+        let mut receiver = stream(vec![
+            StreamEvent::Delta("start".into()),
+            StreamEvent::Delta("tail".into()),
+            StreamEvent::Done,
+        ])
+        .await;
+
+        let result = send_native_stream_with_api(
+            &api,
+            "C1",
+            "1.0",
+            None,
+            Duration::from_secs(60),
+            &mut receiver,
+        )
+        .await;
+
+        assert!(result.unwrap_err().to_string().contains("stop failed"));
+        assert_eq!(api.calls.lock().unwrap().last(), Some(&Call::Delete));
+    }
+
+    #[tokio::test]
+    async fn total_final_stop_cleanup_failure_recovers_in_place() {
+        let api = FakeApi {
+            delete_failures: Mutex::new(1),
+            stop_failures: Mutex::new(3),
+            ..Default::default()
+        };
+        let mut receiver = stream(vec![
+            StreamEvent::Delta("start".into()),
+            StreamEvent::Delta("tail".into()),
+            StreamEvent::Done,
+        ])
+        .await;
+
+        let result = send_native_stream_with_api(
+            &api,
+            "C1",
+            "1.0",
+            None,
+            Duration::from_secs(60),
+            &mut receiver,
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), vec!["1.0"]);
+        assert_eq!(*api.calls.lock().unwrap(), vec![
+            Call::Start(text_content("start")),
+            Call::Stop(Some(text_content("tail"))),
+            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
+            Call::Delete,
+            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
+            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
+            Call::Update("starttail".into()),
+        ]);
+    }
+
+    #[tokio::test]
+    async fn total_final_stop_cleanup_and_update_failure_preserves_fallback() {
+        let api = FakeApi {
+            delete_failures: Mutex::new(1),
+            fail_update: true,
             stop_failures: Mutex::new(3),
             ..Default::default()
         };
@@ -926,13 +1286,7 @@ mod tests {
         .await;
 
         assert!(result.unwrap_err().to_string().contains("stop failed"));
-        assert_eq!(*api.calls.lock().unwrap(), vec![
-            Call::Start(text_content("start")),
-            Call::Stop(Some(text_content("tail"))),
-            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
-            Call::Delete,
-            Call::Stop(Some(text_content(STREAM_FAILURE_NOTICE))),
-        ]);
+        assert_eq!(api.calls.lock().unwrap().last(), Some(&Call::Delete));
     }
 
     #[tokio::test]
@@ -1076,6 +1430,14 @@ mod tests {
         assert_eq!(
             native_stream_body(&stream, None),
             serde_json::json!({"channel": "C123", "ts": "2.0"})
+        );
+        assert_eq!(
+            update_message_body(&stream, "complete"),
+            serde_json::json!({
+                "channel": "C123",
+                "ts": "2.0",
+                "markdown_text": "complete",
+            })
         );
         assert_eq!(
             native_stream_body(
