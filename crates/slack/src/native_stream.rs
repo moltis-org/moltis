@@ -665,10 +665,13 @@ async fn update_recovered_message<A: NativeStreamApi>(
         Ok(()) => true,
         Err(error) => {
             warn!("chat.update failed while recovering native stream: {error}");
-            if let Err(delete_error) = api.delete(stream).await {
-                warn!("chat.delete failed after recovery update failure: {delete_error}");
+            match api.delete(stream).await {
+                Ok(()) => false,
+                Err(delete_error) => {
+                    warn!("chat.delete failed after recovery update failure: {delete_error}");
+                    true
+                },
             }
-            false
         },
     }
 }
@@ -1196,32 +1199,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retained_notice_with_failed_update_preserves_fallback() {
-        let api = FakeApi {
-            delete_failures: Mutex::new(1),
-            fail_update: true,
-            stop_failures: Mutex::new(1),
-            ..Default::default()
-        };
-        let mut receiver = stream(vec![
-            StreamEvent::Delta("start".into()),
-            StreamEvent::Delta("tail".into()),
-            StreamEvent::Done,
-        ])
-        .await;
+    async fn retained_notice_update_failure_depends_on_final_delete() {
+        for (delete_failures, expects_delivery) in [(1, false), (2, true)] {
+            let api = FakeApi {
+                delete_failures: Mutex::new(delete_failures),
+                fail_update: true,
+                stop_failures: Mutex::new(1),
+                ..Default::default()
+            };
+            let mut receiver = stream(vec![
+                StreamEvent::Delta("start".into()),
+                StreamEvent::Delta("tail".into()),
+                StreamEvent::Done,
+            ])
+            .await;
 
-        let result = send_native_stream_with_api(
-            &api,
-            "C1",
-            "1.0",
-            None,
-            Duration::from_secs(60),
-            &mut receiver,
-        )
-        .await;
+            let result = send_native_stream_with_api(
+                &api,
+                "C1",
+                "1.0",
+                None,
+                Duration::from_secs(60),
+                &mut receiver,
+            )
+            .await;
 
-        assert!(result.unwrap_err().to_string().contains("stop failed"));
-        assert_eq!(api.calls.lock().unwrap().last(), Some(&Call::Delete));
+            assert_eq!(result.is_ok(), expects_delivery);
+            assert_eq!(api.calls.lock().unwrap().last(), Some(&Call::Delete));
+        }
     }
 
     #[tokio::test]

@@ -305,8 +305,10 @@ Slack cannot delete it, Moltis retains that message with a visible streaming-err
 notice and retries the stop after draining the remaining response. Only after
 Slack confirms the stream is stopped does Moltis replace the retained message
 with the complete text through `chat.update`. If Slack still cannot stop or update
-the message, Moltis makes a final deletion attempt before preserving normal
-fallback delivery.
+the message, Moltis makes a final deletion attempt. A successful deletion preserves
+normal fallback delivery; if deletion also fails after Slack confirmed the stop,
+Moltis retains the terminal failure notice and suppresses duplicate fallback
+content.
 Responses too large for Slack's update limit are replaced by the visible error
 notice instead of a misleading partial answer.
 
