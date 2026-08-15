@@ -4,10 +4,10 @@ import { chatAddMsg, chatAddMsgWithAttachments, setComposerStopButton } from "..
 import { highlightCodeBlocks } from "../../code-highlight";
 import { renderMarkdown, sendRpc, warmAudioPlayback } from "../../helpers";
 import {
-	clearPendingAttachments,
 	getPendingAttachments,
 	hasPendingAttachments,
 	type PendingAttachment,
+	removePendingAttachments,
 	type UploadedDocumentFile,
 	uploadDocumentAttachment,
 } from "../../media-drop";
@@ -156,7 +156,7 @@ export async function buildChatMessage(
 	sessionKey: string = S.activeSessionKey,
 ): Promise<{ params: ChatSendParams; el: HTMLElement | null }> {
 	const userText = displayText === undefined ? text : displayText;
-	const attachments = hasPendingAttachments() ? getPendingAttachments() : [];
+	const attachments = hasPendingAttachments() ? [...getPendingAttachments()] : [];
 	const images = attachments.filter((attachment): attachment is PendingImageAttachment => Boolean(attachment.dataUrl));
 	const documents = attachments.filter((attachment) => !attachment.dataUrl);
 	if (attachments.length > 0) {
@@ -172,7 +172,7 @@ export async function buildChatMessage(
 			forActiveSession(sessionKey, () =>
 				chatAddMsgWithAttachments("user", userText ? renderMarkdown(userText) : "", images, uploadedDocuments),
 			) ?? null;
-		clearPendingAttachments();
+		removePendingAttachments(attachments);
 		return { params, el };
 	}
 	return { params: { text, _seq: seq }, el: chatAddMsg("user", renderMarkdown(userText), true) };

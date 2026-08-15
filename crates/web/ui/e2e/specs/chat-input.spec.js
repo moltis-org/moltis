@@ -828,6 +828,15 @@ test.describe("Chat input and slash commands", () => {
 
 		await page.getByRole("button", { name: "+", exact: true }).click();
 		await expect(page).toHaveURL(/\/chats\/session\/[0-9a-f-]+$/);
+		await waitForWsConnected(page);
+		await waitForChatInputReady(page);
+		await page.locator("#attachInput").setInputFiles({
+			name: "new-session.txt",
+			mimeType: "text/plain",
+			buffer: Buffer.from("new session attachment"),
+		});
+		const newSessionAttachment = page.locator(".media-preview-item").getByText("new-session.txt", { exact: true });
+		await expect(newSessionAttachment).toBeVisible();
 		releaseUpload();
 
 		await expect
@@ -840,6 +849,7 @@ test.describe("Chat input and slash commands", () => {
 		const chatMessages = page.getByRole("log", { name: "Chat messages" });
 		await expect(chatMessages.getByText(message, { exact: true })).toHaveCount(0);
 		await expect(chatMessages.getByText("delayed.txt", { exact: true })).toHaveCount(0);
+		await expect(newSessionAttachment).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 
