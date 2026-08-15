@@ -44,8 +44,8 @@ function paletteItemGroup(item: PaletteItem): string {
 }
 
 function paletteItemKey(item: PaletteItem): string {
-	if (item.type === "command") return item.cmd.id;
-	return item.type === "session" ? item.hit.sessionKey : "ask-agent";
+	if (item.type === "command") return `command:${item.cmd.id}`;
+	return item.type === "session" ? `session:${item.hit.sessionKey}` : "agent:ask";
 }
 
 // ── Item renderer ────────────────────────────────────────────
@@ -125,7 +125,7 @@ function PaletteItemRow({ item, active, onSelect, onHover }: PaletteItemRowProps
 export function CommandPalette(): VNode | null {
 	const show = paletteOpen.value;
 	const [query, setQuery] = useState("");
-	const [activeIdx, setActiveIdx] = useState(0);
+	const [activeKey, setActiveKey] = useState<string | null>(null);
 	const [sessionHits, setSessionHits] = useState<SessionHit[]>([]);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
@@ -171,11 +171,14 @@ export function CommandPalette(): VNode | null {
 		}
 		return ordered;
 	}, [allItems]);
+	const flatItems = useMemo(() => orderedItems.flatMap((g) => g.items), [orderedItems]);
+	const selectedIdx = activeKey ? flatItems.findIndex((item) => paletteItemKey(item) === activeKey) : 0;
+	const activeIdx = selectedIdx >= 0 ? selectedIdx : 0;
 
 	useLayoutEffect(() => {
 		if (!show) return;
 		setQuery("");
-		setActiveIdx(0);
+		setActiveKey(null);
 		setSessionHits([]);
 
 		const focusInput = () => inputRef.current?.focus({ preventScroll: true });
@@ -189,9 +192,9 @@ export function CommandPalette(): VNode | null {
 		};
 	}, [show]);
 
-	useEffect(() => {
-		setActiveIdx(0);
-	}, [query, sessionHits.length]);
+	useLayoutEffect(() => {
+		setActiveKey(flatItems[0] ? paletteItemKey(flatItems[0]) : null);
+	}, [query]);
 
 	useEffect(() => {
 		if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -230,15 +233,17 @@ export function CommandPalette(): VNode | null {
 		if (active) active.scrollIntoView({ block: "nearest" });
 	}, [activeIdx]);
 
-	// Flat list in render order for index-based execution.
-	const flatItems = useMemo(() => orderedItems.flatMap((g) => g.items), [orderedItems]);
-
 	// Refs keep the capture-phase document listener always up-to-date
 	// without re-registering on every render.
 	const flatItemsRef = useRef<PaletteItem[]>([]);
 	flatItemsRef.current = flatItems;
 	const activeIdxRef = useRef(0);
 	activeIdxRef.current = activeIdx;
+
+	function selectIndex(idx: number): void {
+		const item = flatItemsRef.current[idx];
+		if (item) setActiveKey(paletteItemKey(item));
+	}
 
 	function execute(idx: number): void {
 		const item = flatItemsRef.current[idx];
@@ -265,10 +270,10 @@ export function CommandPalette(): VNode | null {
 				closePalette();
 			} else if (e.key === "ArrowDown") {
 				e.preventDefault();
-				setActiveIdx((i) => Math.min(i + 1, flatItemsRef.current.length - 1));
+				selectIndex(Math.min(activeIdxRef.current + 1, flatItemsRef.current.length - 1));
 			} else if (e.key === "ArrowUp") {
 				e.preventDefault();
-				setActiveIdx((i) => Math.max(i - 1, 0));
+				selectIndex(Math.max(activeIdxRef.current - 1, 0));
 			} else if (e.key === "Enter") {
 				e.preventDefault();
 				execute(activeIdxRef.current);
@@ -324,7 +329,7 @@ export function CommandPalette(): VNode | null {
 											item={item}
 											active={idx === activeIdx}
 											onSelect={() => execute(idx)}
-											onHover={() => setActiveIdx(idx)}
+											onHover={() => selectIndex(idx)}
 										/>
 									);
 								})}

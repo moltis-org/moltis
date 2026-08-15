@@ -111,17 +111,17 @@ test.describe("Command palette", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("offers to ask an agent while session search is pending", async ({ page }) => {
+	test("keeps Ask agent selected when pending session results arrive", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/");
 		await page.evaluate(() => {
-			window.__paletteSessionSearchRequests = 0;
+			window.__paletteSessionSearchId = null;
 			const originalSend = WebSocket.prototype.send;
 			WebSocket.prototype.send = function (data) {
 				try {
 					const request = JSON.parse(data);
 					if (request?.method === "sessions.search") {
-						window.__paletteSessionSearchRequests++;
+						window.__paletteSessionSearchId = request.id;
 						return;
 					}
 				} catch {
@@ -137,10 +137,30 @@ test.describe("Command palette", () => {
 		const askAgent = page.getByRole("option", { name: /Ask agent/ });
 		await expect(askAgent).toBeVisible();
 		await expect(askAgent).toContainText("xyznonexistent");
-		await expect.poll(() => page.evaluate(() => window.__paletteSessionSearchRequests)).toBe(1);
-		await expect(askAgent).toBeVisible();
+		await expect(askAgent).toHaveAttribute("aria-selected", "true");
+		await expect.poll(() => page.evaluate(() => window.__paletteSessionSearchId)).not.toBeNull();
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const state = await import(`${prefix}js/state.js`);
+			const id = window.__paletteSessionSearchId;
+			const resolver = state.pending?.[id];
+			if (typeof resolver !== "function") throw new Error("sessions.search resolver not found");
+			delete state.pending[id];
+			resolver({
+				ok: true,
+				payload: [{ sessionKey: "main", label: "Existing session", snippet: "xyznonexistent" }],
+			});
+		});
 
-		await page.keyboard.press("Escape");
+		await expect(page.getByRole("option", { name: /Existing session/ })).toBeVisible();
+		await expect(askAgent).toHaveAttribute("aria-selected", "true");
+		await page.keyboard.press("Enter");
+
+		await expect(page).toHaveURL(/\/chats\/session\/[0-9a-f-]+$/);
+		await expect(page.getByText("xyznonexistent", { exact: true })).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 

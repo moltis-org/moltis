@@ -622,7 +622,30 @@ test.describe("Chat input and slash commands", () => {
 		await expect(chatMessages.getByText(failure, { exact: true })).toHaveCount(0);
 		await page.getByRole("link").and(page.locator('a[href="/chats/main"]')).click();
 		await expect(page).toHaveURL(/\/chats\/main$/);
-		await expect(chatMessages.getByRole("alert").filter({ hasText: failure })).toHaveText(failure);
+		const sendFailure = chatMessages.getByRole("alert").filter({ hasText: failure });
+		await expect(sendFailure).toHaveText(failure);
+
+		const failedRequestId = await page.evaluate(() => window.__delayedChatSendId);
+		await chatInput.fill("retry after failure");
+		await chatInput.press("Enter");
+		await expect.poll(() => page.evaluate(() => window.__delayedChatSendId)).not.toBe(failedRequestId);
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var id = window.__delayedChatSendId;
+			var resolver = stateModule.pending?.[id];
+			if (typeof resolver !== "function") throw new Error("retry chat.send resolver not found");
+			delete stateModule.pending[id];
+			resolver({ ok: true, payload: { runId: "run-successful-retry" } });
+		});
+
+		await expect(sendFailure).toHaveCount(0);
+		await expect
+			.poll(() => page.evaluate(() => window.__moltis_stores.sessionStore.getByKey("main")?.sendErrors.value.length))
+			.toBe(0);
 		expect(pageErrors).toEqual([]);
 	});
 

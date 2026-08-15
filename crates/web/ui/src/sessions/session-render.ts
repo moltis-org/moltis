@@ -680,7 +680,8 @@ export function renderHistory(
 		if (ts) appendLastMessageTimestamp(ts);
 	}
 	for (const error of sessionStore.getByKey(key)?.sendErrors.value || []) {
-		chatAddMsg("error", error);
+		const element = chatAddMsg("error", error);
+		element?.setAttribute("data-chat-send-error", "true");
 	}
 	postHistoryLoadActions(key, searchContext, msgEls, thinkingText, skipAutoScroll === true);
 }

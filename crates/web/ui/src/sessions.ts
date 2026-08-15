@@ -353,6 +353,11 @@ export function addSessionSendError(key: string, message: string): void {
 	if (session) session.sendErrors.value = [...session.sendErrors.value.slice(-19), message];
 }
 
+export function clearSessionSendErrors(key: string): void {
+	const session = sessionStore.getByKey(key);
+	if (session) session.sendErrors.value = [];
+}
+
 export function setSessionActiveRunId(key: string, runId: string | null): void {
 	const session = sessionStore.getByKey(key);
 	if (session) session.activeRunId.value = runId || null;

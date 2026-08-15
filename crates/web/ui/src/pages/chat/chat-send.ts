@@ -16,6 +16,7 @@ import {
 	addSessionSendError,
 	bumpSessionCount,
 	cacheOutgoingUserMessage,
+	clearSessionSendErrors,
 	seedSessionPreviewFromUserText,
 	setSessionActiveRunId,
 	setSessionReplying,
@@ -56,7 +57,8 @@ function handleChatSendFailure(sessionKey: string, message: string): void {
 	addSessionSendError(sessionKey, message);
 	forActiveSession(sessionKey, () => {
 		setComposerStopButton(false, sessionKey);
-		chatAddMsg("error", message);
+		const error = chatAddMsg("error", message);
+		error?.setAttribute("data-chat-send-error", "true");
 	});
 }
 
@@ -142,6 +144,14 @@ export function handleChatSendRpcResponse(
 	sessionKey: string,
 ): void {
 	if (res.ok && res.payload?.runId) setSessionActiveRunId(sessionKey, res.payload.runId);
+	if (res.ok) {
+		clearSessionSendErrors(sessionKey);
+		forActiveSession(sessionKey, () => {
+			S.chatMsgBox?.querySelectorAll("[data-chat-send-error='true']").forEach((error) => {
+				error.remove();
+			});
+		});
+	}
 	if (res.payload?.queued) {
 		forActiveSession(sessionKey, () => markMessageQueued(userEl, sessionKey));
 		return;
