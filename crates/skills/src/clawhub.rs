@@ -11,7 +11,7 @@ use crate::{
     error::{Error, Result},
     manifest::ManifestStore,
     parse,
-    types::{RepoEntry, SkillMetadata, SkillState},
+    types::{RepoEntry, SkillMetadata, SkillState, SkillsManifest},
 };
 
 const BASE_URL: &str = "https://clawhub.ai";
@@ -405,6 +405,32 @@ pub fn parse_skill_reference(reference: &str) -> Result<SkillReference<'_>> {
     })
 }
 
+async fn remove_legacy_bare_install(
+    manifest: &mut SkillsManifest,
+    skill_ref: SkillReference<'_>,
+    install_dir: &Path,
+) -> Result<bool> {
+    if skill_ref.owner_handle.is_none() {
+        return Ok(false);
+    }
+
+    let legacy_source = clawhub_source_key(skill_ref.slug);
+    let legacy_dir_name = format!("clawhub-{}", skill_ref.slug);
+    let is_legacy_install = manifest
+        .find_repo(&legacy_source)
+        .is_some_and(|repo| repo.repo_name == legacy_dir_name);
+    if !is_legacy_install {
+        return Ok(false);
+    }
+
+    let legacy_target = install_dir.join(&legacy_dir_name);
+    if legacy_target.exists() {
+        tokio::fs::remove_dir_all(legacy_target).await?;
+    }
+    manifest.remove_repo(&legacy_source);
+    Ok(true)
+}
+
 // ── Install from ClawHub ────────────────────────────────────────────────────
 
 /// Install a single skill from ClawHub by owner-qualified reference or bare slug.
@@ -473,6 +499,7 @@ pub async fn install_from_clawhub(
     let mut manifest = store.load()?;
 
     // Remove existing entry if re-installing.
+    remove_legacy_bare_install(&mut manifest, skill_ref, install_dir).await?;
     let source_key = clawhub_source_key(reference);
     manifest.remove_repo(&source_key);
 
@@ -576,7 +603,7 @@ fn extract_zip(zip_bytes: &[u8], target: &Path) -> Result<()> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::formats::PluginFormat};
 
     #[test]
     fn clawhub_source_key_format() {
@@ -710,6 +737,67 @@ mod tests {
         );
         assert!(parse_skill_reference("@owner").is_err());
         assert!(parse_skill_reference("@../csv").is_err());
+    }
+
+    #[tokio::test]
+    async fn qualified_reinstall_removes_legacy_bare_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy_dir = tmp.path().join("clawhub-csv");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        std::fs::write(legacy_dir.join("SKILL.md"), "legacy").unwrap();
+
+        let mut manifest = SkillsManifest::default();
+        manifest.add_repo(RepoEntry {
+            source: "clawhub:csv".into(),
+            repo_name: "clawhub-csv".into(),
+            installed_at_ms: 0,
+            commit_sha: None,
+            format: PluginFormat::default(),
+            quarantined: false,
+            quarantine_reason: None,
+            provenance: None,
+            skills: Vec::new(),
+        });
+
+        let removed = remove_legacy_bare_install(
+            &mut manifest,
+            parse_skill_reference("@ivangdavila/csv").unwrap(),
+            tmp.path(),
+        )
+        .await
+        .unwrap();
+
+        assert!(removed);
+        assert!(manifest.find_repo("clawhub:csv").is_none());
+        assert!(!legacy_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn qualified_reinstall_preserves_nonstandard_manifest_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut manifest = SkillsManifest::default();
+        manifest.add_repo(RepoEntry {
+            source: "clawhub:csv".into(),
+            repo_name: "custom-location".into(),
+            installed_at_ms: 0,
+            commit_sha: None,
+            format: PluginFormat::default(),
+            quarantined: false,
+            quarantine_reason: None,
+            provenance: None,
+            skills: Vec::new(),
+        });
+
+        let removed = remove_legacy_bare_install(
+            &mut manifest,
+            parse_skill_reference("@ivangdavila/csv").unwrap(),
+            tmp.path(),
+        )
+        .await
+        .unwrap();
+
+        assert!(!removed);
+        assert!(manifest.find_repo("clawhub:csv").is_some());
     }
 
     /// Integration test: hit the real ClawHub search API.

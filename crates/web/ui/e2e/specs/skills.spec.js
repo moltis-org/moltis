@@ -3,17 +3,24 @@ const { navigateAndWait, watchPageErrors } = require("../helpers");
 
 async function mockClawHubSearch(page, response) {
 	await page.addInitScript((searchResponse) => {
+		const plannedResponses = Array.isArray(searchResponse) ? searchResponse : [{ response: searchResponse }];
+		window.__clawHubSearchRequests = [];
+		window.__clawHubSearchResponseCount = 0;
 		const originalSend = WebSocket.prototype.send;
 		WebSocket.prototype.send = function (payload) {
 			try {
 				const parsed = JSON.parse(payload);
 				if (parsed?.method === "skills.clawhub.search") {
-					queueMicrotask(() => {
+					const query = parsed.params?.query;
+					window.__clawHubSearchRequests.push(query);
+					const plan = plannedResponses.find((candidate) => candidate.query === query) || plannedResponses[0];
+					setTimeout(() => {
 						const event = new MessageEvent("message", {
-							data: JSON.stringify({ type: "res", id: parsed.id, ...searchResponse }),
+							data: JSON.stringify({ type: "res", id: parsed.id, ...plan.response }),
 						});
+						window.__clawHubSearchResponseCount += 1;
 						if (typeof this.onmessage === "function") this.onmessage(event);
-					});
+					}, plan.delayMs || 0);
 					return;
 				}
 			} catch {
@@ -112,6 +119,55 @@ test.describe("Skills page", () => {
 		await expect(page.getByRole("alert")).toContainText("The request timed out. Please try again.");
 		await expect(page.getByText("The request timed out. Please try again.", { exact: true })).toBeVisible();
 		expect(consoleErrors.some((message) => message.includes("ClawHub search failed"))).toBeTruthy();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("ClawHub search ignores stale responses", async ({ page }) => {
+		await mockClawHubSearch(page, [
+			{
+				query: "csv",
+				delayMs: 1000,
+				response: {
+					ok: false,
+					error: { code: "TIMEOUT", message: "Old CSV search timed out" },
+				},
+			},
+			{
+				query: "weather",
+				response: {
+					ok: true,
+					payload: {
+						results: [
+							{
+								score: 100,
+								slug: "weather",
+								installRef: "@forecast/weather",
+								displayName: "Current Weather",
+								ownerHandle: "forecast",
+							},
+						],
+					},
+				},
+			},
+		]);
+		const consoleErrors = [];
+		page.on("console", (message) => {
+			if (message.type() === "error") consoleErrors.push(message.text());
+		});
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/skills");
+		await page.getByRole("tab", { name: "ClawHub", exact: true }).click();
+		const searchInput = page.getByPlaceholder("Search ClawHub skills (e.g. csv, weather, github)...");
+
+		await searchInput.fill("csv");
+		await page.waitForFunction(() => window.__clawHubSearchRequests?.includes("csv"));
+		await searchInput.fill("weather");
+
+		await expect(page.getByText("Current Weather", { exact: true })).toBeVisible();
+		await page.waitForFunction(() => window.__clawHubSearchResponseCount === 2);
+		await expect(page.getByText("Current Weather", { exact: true })).toBeVisible();
+		await expect(page.getByRole("alert")).not.toBeVisible();
+		expect(consoleErrors.some((message) => message.includes("Old CSV search timed out"))).toBeFalsy();
 		expect(pageErrors).toEqual([]);
 	});
 

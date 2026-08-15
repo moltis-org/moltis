@@ -45,7 +45,6 @@ interface ClawHubSkillInfo {
 
 // ── Helpers ──────────────────────────────────────────────────
 
-let searchTimer: ReturnType<typeof setTimeout> | null = null;
 const CLAWHUB_SEARCH_TIMEOUT_MS = 20_000;
 
 function relativeTime(ms: number): string {
@@ -399,9 +398,21 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 	const searched = useSignal(false);
 	const error = useSignal<string | null>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
+	const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const searchGeneration = useRef(0);
+
+	useEffect(
+		() => () => {
+			searchGeneration.current += 1;
+			if (searchTimer.current) clearTimeout(searchTimer.current);
+		},
+		[],
+	);
 
 	function doSearch(q: string): void {
-		if (!q.trim()) {
+		const trimmedQuery = q.trim();
+		const generation = ++searchGeneration.current;
+		if (!trimmedQuery) {
 			results.value = [];
 			searched.value = false;
 			error.value = null;
@@ -409,29 +420,31 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 		}
 		searching.value = true;
 		error.value = null;
-		sendRpc("skills.clawhub.search", { query: q.trim() }, CLAWHUB_SEARCH_TIMEOUT_MS)
+		sendRpc("skills.clawhub.search", { query: trimmedQuery }, CLAWHUB_SEARCH_TIMEOUT_MS)
 			.then((res) => {
+				if (generation !== searchGeneration.current) return;
 				searching.value = false;
 				searched.value = true;
 				if (res?.ok) {
 					const payload = res.payload as { results?: ClawHubResult[] } | undefined;
 					results.value = payload?.results || [];
-					console.info("ClawHub search completed", { query: q.trim(), resultCount: results.value.length });
+					console.info("ClawHub search completed", { query: trimmedQuery, resultCount: results.value.length });
 					return;
 				}
 				const message = res?.error?.message || "ClawHub search failed";
 				results.value = [];
 				error.value = message;
-				console.error("ClawHub search failed", { query: q.trim(), error: res?.error });
+				console.error("ClawHub search failed", { query: trimmedQuery, error: res?.error });
 				showToast(message, "error");
 			})
 			.catch((cause: unknown) => {
+				if (generation !== searchGeneration.current) return;
 				searching.value = false;
 				searched.value = true;
 				results.value = [];
 				const message = cause instanceof Error ? cause.message : "ClawHub search failed";
 				error.value = message;
-				console.error("ClawHub search failed", { query: q.trim(), cause });
+				console.error("ClawHub search failed", { query: trimmedQuery, cause });
 				showToast(message, "error");
 			});
 	}
@@ -439,19 +452,21 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 	function onInput(e: Event): void {
 		const v = (e.target as HTMLInputElement).value;
 		query.value = v;
-		if (searchTimer) clearTimeout(searchTimer);
+		searchGeneration.current += 1;
+		searching.value = false;
+		searched.value = false;
+		results.value = [];
+		error.value = null;
+		if (searchTimer.current) clearTimeout(searchTimer.current);
 		if (!v.trim()) {
-			results.value = [];
-			searched.value = false;
-			error.value = null;
 			return;
 		}
-		searchTimer = setTimeout(() => doSearch(v), 300);
+		searchTimer.current = setTimeout(() => doSearch(v), 300);
 	}
 
 	function onKeyDown(e: Event): void {
 		if ((e as KeyboardEvent).key === "Enter") {
-			if (searchTimer) clearTimeout(searchTimer);
+			if (searchTimer.current) clearTimeout(searchTimer.current);
 			doSearch(query.value);
 		}
 	}
