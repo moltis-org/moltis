@@ -773,6 +773,76 @@ test.describe("Chat input and slash commands", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("delayed attachment upload does not render in a newly active session", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		let releaseUpload;
+		const uploadRelease = new Promise((resolve) => {
+			releaseUpload = resolve;
+		});
+		let markUploadStarted;
+		const uploadStarted = new Promise((resolve) => {
+			markUploadStarted = resolve;
+		});
+		await page.route("**/api/sessions/main/upload", async (route) => {
+			markUploadStarted();
+			await uploadRelease;
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					ok: true,
+					url: "/api/sessions/main/media/delayed.txt",
+					filename: "delayed.txt",
+					contentType: "text/plain",
+					size: 15,
+				}),
+			});
+		});
+		await page.evaluate(() => {
+			window.__delayedUploadPayloads = [];
+			const originalSend = WebSocket.prototype.send;
+			WebSocket.prototype.send = function (data) {
+				try {
+					const request = JSON.parse(data);
+					if (request?.method === "chat.send") {
+						window.__delayedUploadPayloads.push(request.params || {});
+						return;
+					}
+				} catch {
+					// Pass non-JSON WebSocket traffic through unchanged.
+				}
+				return originalSend.call(this, data);
+			};
+		});
+
+		await page.locator("#attachInput").setInputFiles({
+			name: "delayed.txt",
+			mimeType: "text/plain",
+			buffer: Buffer.from("delayed content"),
+		});
+		const message = "attachment belongs to main";
+		const chatInput = page.getByRole("textbox", { name: "Chat input" });
+		await chatInput.fill(message);
+		await chatInput.press("Enter");
+		await uploadStarted;
+
+		await page.getByRole("button", { name: "+", exact: true }).click();
+		await expect(page).toHaveURL(/\/chats\/session\/[0-9a-f-]+$/);
+		releaseUpload();
+
+		await expect
+			.poll(() => page.evaluate(() => window.__delayedUploadPayloads.at(-1) || null))
+			.toMatchObject({
+				_session_key: "main",
+				content: [{ type: "text", text: message }],
+				_document_files: [{ display_name: "delayed.txt" }],
+			});
+		const chatMessages = page.getByRole("log", { name: "Chat messages" });
+		await expect(chatMessages.getByText(message, { exact: true })).toHaveCount(0);
+		await expect(chatMessages.getByText("delayed.txt", { exact: true })).toHaveCount(0);
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("preserves typed text when attachment upload fails", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.route("**/api/sessions/main/upload", async (route) => {

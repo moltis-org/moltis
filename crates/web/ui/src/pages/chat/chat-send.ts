@@ -46,8 +46,8 @@ export interface ChatSendPayload {
 	queued?: boolean;
 }
 
-function forActiveSession(sessionKey: string, action: () => void): void {
-	if (S.activeSessionKey === sessionKey) action();
+function forActiveSession<T>(sessionKey: string, action: () => T): T | undefined {
+	if (S.activeSessionKey === sessionKey) return action();
 }
 
 function handleChatSendFailure(sessionKey: string, message: string): void {
@@ -168,7 +168,10 @@ export async function buildChatMessage(
 		for (const img of images) if (img.dataUrl) content.push({ type: "image_url", image_url: { url: img.dataUrl } });
 		const params: ChatSendParams = content.length > 0 ? { content, _seq: seq } : { text, _seq: seq };
 		if (uploadedDocuments.length > 0) params._document_files = uploadedDocuments;
-		const el = chatAddMsgWithAttachments("user", userText ? renderMarkdown(userText) : "", images, uploadedDocuments);
+		const el =
+			forActiveSession(sessionKey, () =>
+				chatAddMsgWithAttachments("user", userText ? renderMarkdown(userText) : "", images, uploadedDocuments),
+			) ?? null;
 		clearPendingAttachments();
 		return { params, el };
 	}
