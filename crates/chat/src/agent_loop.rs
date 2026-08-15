@@ -274,6 +274,10 @@ impl ChannelStreamDispatcher {
                 .outbound
                 .receives_task_updates(&target.account_id)
                 .await;
+            let claims_stream_delivery = self
+                .outbound
+                .claims_stream_delivery(&target.account_id, target.message_id.as_deref())
+                .await;
             let (tx, rx) = mpsc::channel(CHANNEL_STREAM_BUFFER_SIZE);
             let outbound = Arc::clone(&self.outbound);
             let completed = Arc::clone(&self.completed);
@@ -301,7 +305,10 @@ impl ChannelStreamDispatcher {
                         .await
                     {
                         Ok(message_ids) => {
-                            if streams_final_replies && sent_final_delta.load(Ordering::Acquire) {
+                            if streams_final_replies
+                                && (sent_final_delta.load(Ordering::Acquire)
+                                    || claims_stream_delivery)
+                            {
                                 completed.lock().await.insert(key_for_insert);
                                 crate::channel_feedback::record_reply_trace(
                                     feedback.as_deref(),
@@ -772,6 +779,7 @@ mod tests {
         streams_final_replies: bool,
         receives_progress_deltas: bool,
         receives_task_updates: bool,
+        claims_stream_delivery: bool,
         events: Arc<Mutex<Vec<moltis_channels::StreamEvent>>>,
         reporting_calls: std::sync::atomic::AtomicUsize,
     }
@@ -906,6 +914,10 @@ mod tests {
         async fn receives_task_updates(&self, _account_id: &str) -> bool {
             self.receives_task_updates
         }
+
+        async fn claims_stream_delivery(&self, _account_id: &str, _reply_to: Option<&str>) -> bool {
+            self.claims_stream_delivery
+        }
     }
 
     fn channel_target() -> moltis_channels::ChannelReplyTarget {
@@ -957,6 +969,7 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::new()));
         let outbound = Arc::new(RecordingStreamOutbound {
             streams_final_replies: false,
+            claims_stream_delivery: false,
             receives_progress_deltas: true,
             receives_task_updates: false,
             events: Arc::clone(&events),
@@ -978,6 +991,7 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::new()));
         let outbound = Arc::new(RecordingStreamOutbound {
             streams_final_replies: true,
+            claims_stream_delivery: false,
             receives_progress_deltas: true,
             receives_task_updates: false,
             events: Arc::clone(&events),
@@ -996,10 +1010,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn claimed_stream_delivery_completes_without_a_final_delta() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingStreamOutbound {
+            streams_final_replies: true,
+            claims_stream_delivery: true,
+            receives_progress_deltas: true,
+            receives_task_updates: false,
+            events: Arc::clone(&events),
+            reporting_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut dispatcher = dispatcher_with(outbound);
+
+        dispatcher
+            .send_progress_delta("retained error response")
+            .await;
+        dispatcher.finish().await;
+
+        assert_eq!(event_kinds(&events.lock().await), vec!["progress", "done"]);
+        assert_eq!(dispatcher.completed_target_keys().await.len(), 1);
+    }
+
+    #[tokio::test]
     async fn unfinished_tasks_are_marked_error_before_stream_completion() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let outbound = Arc::new(RecordingStreamOutbound {
             streams_final_replies: true,
+            claims_stream_delivery: false,
             receives_progress_deltas: false,
             receives_task_updates: true,
             events: Arc::clone(&events),

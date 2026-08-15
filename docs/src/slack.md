@@ -300,7 +300,9 @@ does not probe whether the Slack app, workspace, or compatible proxy supports
 the native methods, and a native API failure does not switch an active stream to
 edit-in-place mode. The completed reply still falls back to normal delivery when
 the native stream fails. Moltis first tries to stop and delete the partial native
-message so the fallback does not duplicate content already accepted by Slack.
+message so the fallback does not duplicate content already accepted by Slack. If
+Slack cannot delete it, Moltis retains that message with a visible streaming-error
+notice and suppresses the duplicate fallback.
 
 Native requests send standard Markdown unchanged through Slack's `markdown_text`
 field and use `edit_throttle_ms`. Tool calls appear in the same streamed message

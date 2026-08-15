@@ -922,6 +922,14 @@ pub trait ChannelStreamOutbound: Send + Sync {
         true
     }
 
+    /// Whether any successful stream result is itself a complete delivery.
+    ///
+    /// This lets a stream retain a user-visible terminal error and suppress the
+    /// normal fallback even when no final reply delta was emitted.
+    async fn claims_stream_delivery(&self, _account_id: &str, _reply_to: Option<&str>) -> bool {
+        false
+    }
+
     /// Whether this stream consumes progress deltas separately from final text.
     ///
     /// Channels that only append streamed text should leave this disabled to

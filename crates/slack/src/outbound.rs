@@ -990,6 +990,12 @@ impl ChannelStreamOutbound for SlackOutbound {
     async fn receives_task_updates(&self, account_id: &str) -> bool {
         self.get_stream_mode(account_id) == StreamMode::Native && !self.get_rich_blocks(account_id)
     }
+
+    async fn claims_stream_delivery(&self, account_id: &str, reply_to: Option<&str>) -> bool {
+        self.get_stream_mode(account_id) == StreamMode::Native
+            && !self.get_rich_blocks(account_id)
+            && self.get_reply_thread_ts(account_id, reply_to).is_some()
+    }
 }
 
 #[async_trait]
@@ -1099,12 +1105,19 @@ mod tests {
     async fn task_updates_require_native_streaming_without_rich_blocks() {
         let native = outbound_with_config(true, StreamMode::Native, false);
         assert!(native.receives_task_updates("acct").await);
+        assert!(native.claims_stream_delivery("acct", Some("1.0")).await);
+        assert!(!native.claims_stream_delivery("acct", None).await);
 
         let edit = outbound_with_config(true, StreamMode::EditInPlace, false);
         assert!(!edit.receives_task_updates("acct").await);
+        assert!(!edit.claims_stream_delivery("acct", Some("1.0")).await);
 
         let rich = outbound_with_config(true, StreamMode::Native, true);
         assert!(!rich.receives_task_updates("acct").await);
+        assert!(!rich.claims_stream_delivery("acct", Some("1.0")).await);
+
+        let top_level = outbound_with_config(false, StreamMode::Native, false);
+        assert!(!top_level.claims_stream_delivery("acct", Some("1.0")).await);
     }
 
     #[test]
