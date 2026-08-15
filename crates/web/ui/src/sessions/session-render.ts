@@ -679,5 +679,8 @@ export function renderHistory(
 		const ts = (lastMsg as SeqHistoryMessage).created_at;
 		if (ts) appendLastMessageTimestamp(ts);
 	}
+	for (const error of sessionStore.getByKey(key)?.sendErrors.value || []) {
+		chatAddMsg("error", error);
+	}
 	postHistoryLoadActions(key, searchContext, msgEls, thinkingText, skipAutoScroll === true);
 }

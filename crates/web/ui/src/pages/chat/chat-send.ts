@@ -13,6 +13,7 @@ import {
 } from "../../media-drop";
 import { setSessionModel } from "../../models";
 import {
+	addSessionSendError,
 	bumpSessionCount,
 	cacheOutgoingUserMessage,
 	seedSessionPreviewFromUserText,
@@ -52,6 +53,7 @@ function forActiveSession<T>(sessionKey: string, action: () => T): T | undefined
 
 function handleChatSendFailure(sessionKey: string, message: string): void {
 	setSessionReplying(sessionKey, false);
+	addSessionSendError(sessionKey, message);
 	forActiveSession(sessionKey, () => {
 		setComposerStopButton(false, sessionKey);
 		chatAddMsg("error", message);
