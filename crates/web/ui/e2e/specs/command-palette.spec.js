@@ -111,16 +111,58 @@ test.describe("Command palette", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("shows no matches when nothing found", async ({ page }) => {
+	test("offers to ask an agent when nothing is found", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/");
 
 		await page.keyboard.press("Control+k");
 		await page.locator(".cmd-palette-input").fill("xyznonexistent");
 
-		await expect(page.locator(".cmd-palette-empty")).toBeVisible();
+		const askAgent = page.getByRole("option", { name: /Ask agent/ });
+		await expect(askAgent).toBeVisible();
+		await expect(askAgent).toContainText("xyznonexistent");
 
 		await page.keyboard.press("Escape");
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("asks the agent in a new session from the fallback", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/skills");
+		await page.evaluate(() => {
+			window.__paletteChatSendPayloads = [];
+			const originalSend = WebSocket.prototype.send;
+			WebSocket.prototype.send = function (data) {
+				try {
+					const request = JSON.parse(data);
+					if (request?.method === "chat.send") {
+						window.__paletteChatSendPayloads.push(request.params || {});
+						return;
+					}
+				} catch {
+					// Pass non-JSON WebSocket traffic through unchanged.
+				}
+				return originalSend.call(this, data);
+			};
+		});
+
+		await page.keyboard.press("Control+k");
+		await page.locator(".cmd-palette-input").fill("Plan a weekend in Lisbon");
+		await expect(page.getByRole("option", { name: /Ask agent/ })).toBeVisible();
+		await page.keyboard.press("Enter");
+
+		await expect(page).toHaveURL(/\/chats\/session\/[0-9a-f-]+$/);
+		await expect(page.locator("#messages")).toContainText("Plan a weekend in Lisbon");
+		await expect
+			.poll(() =>
+				page.evaluate(() => {
+					const payloads = window.__paletteChatSendPayloads || [];
+					return payloads[payloads.length - 1] || null;
+				}),
+			)
+			.toMatchObject({ text: "Plan a weekend in Lisbon" });
+		const payload = await page.evaluate(() => window.__paletteChatSendPayloads.at(-1));
+		expect(payload._session_key).toMatch(/^session:[0-9a-f-]+$/);
 		expect(pageErrors).toEqual([]);
 	});
 

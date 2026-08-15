@@ -422,8 +422,7 @@ export function removeSessionFromClientState(
 }
 
 // ── New session button ──────────────────────────────────────
-const newSessionBtn = S.$("newSessionBtn") as HTMLElement;
-newSessionBtn.addEventListener("click", () => {
+export function startNewSession(initialMessage?: string): void {
 	const id = crypto.randomUUID
 		? crypto.randomUUID()
 		: ([1e7].toString() + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c) =>
@@ -436,7 +435,18 @@ newSessionBtn.addEventListener("click", () => {
 	} else {
 		navigate(sessionPath(key));
 	}
-});
+
+	const message = initialMessage?.trim();
+	if (!message) return;
+	const input = S.chatInput as HTMLTextAreaElement | null;
+	if (!input) return;
+	input.value = message;
+	input.dispatchEvent(new Event("input", { bubbles: true }));
+	(S.chatSendBtn as HTMLButtonElement | null)?.click();
+}
+
+const newSessionBtn = S.$("newSessionBtn") as HTMLElement;
+newSessionBtn.addEventListener("click", () => startNewSession());
 
 export function isArchivableSession(session: SessionMeta): boolean {
 	return (

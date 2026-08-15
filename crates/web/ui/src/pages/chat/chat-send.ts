@@ -30,6 +30,7 @@ export interface ChatSendParams {
 	text?: string;
 	content?: ChatContentPart[];
 	_document_files?: UploadedDocumentFile[];
+	_session_key?: string;
 	_seq: number;
 	model?: string;
 }
@@ -215,6 +216,7 @@ async function sendChatAsync(): Promise<void> {
 		rememberChatHistory(text);
 		resetComposerAfterSend();
 		const chatParams = msg.params;
+		chatParams._session_key = S.activeSessionKey;
 		const userEl = msg.el;
 		if (userEl) highlightCodeBlocks(userEl);
 		applySelectedModelToChatParams(chatParams);

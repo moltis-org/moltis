@@ -9,7 +9,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/ho
 import { sendRpc } from "../helpers";
 import { t } from "../i18n";
 import { navigate, sessionPath } from "../router";
-import { buildCommands, type Command, closePalette, paletteOpen } from "../stores/command-store";
+import { buildCommands, type Command, closePalette, paletteOpen, startAgentPrompt } from "../stores/command-store";
 import { sessionStore } from "../stores/session-store";
 import { targetValue } from "../typed-events";
 
@@ -21,7 +21,10 @@ interface SessionHit {
 	snippet: string;
 }
 
-type PaletteItem = { type: "command"; cmd: Command } | { type: "session"; hit: SessionHit };
+type PaletteItem =
+	| { type: "command"; cmd: Command }
+	| { type: "session"; hit: SessionHit }
+	| { type: "agent"; prompt: string };
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -30,9 +33,20 @@ const GROUP_LABELS: Record<string, string> = {
 	settings: "Settings",
 	actions: "Actions",
 	sessions: "Sessions",
+	agent: "Agent",
 };
 
-const GROUP_ORDER = ["navigation", "settings", "actions", "sessions"];
+const GROUP_ORDER = ["navigation", "settings", "actions", "sessions", "agent"];
+
+function paletteItemGroup(item: PaletteItem): string {
+	if (item.type === "command") return item.cmd.group;
+	return item.type === "session" ? "sessions" : "agent";
+}
+
+function paletteItemKey(item: PaletteItem): string {
+	if (item.type === "command") return item.cmd.id;
+	return item.type === "session" ? item.hit.sessionKey : "ask-agent";
+}
 
 // ── Item renderer ────────────────────────────────────────────
 
@@ -65,6 +79,26 @@ function PaletteItemRow({ item, active, onSelect, onHover }: PaletteItemRowProps
 			</div>
 		);
 	}
+	if (item.type === "agent") {
+		return (
+			<div
+				role="option"
+				tabIndex={-1}
+				aria-selected={active}
+				class={cls}
+				data-active={active ? "true" : undefined}
+				onClick={onSelect}
+				onKeyDown={(e: KeyboardEvent) => {
+					if (e.key === "Enter") onSelect();
+				}}
+				onMouseEnter={onHover}
+			>
+				<span class="icon icon-sm icon-sparkles" />
+				<span class="cmd-palette-item-label">Ask agent</span>
+				<span class="cmd-palette-item-hint">{truncate(item.prompt, 60)}</span>
+			</div>
+		);
+	}
 	const hit = item.hit;
 	return (
 		<div
@@ -93,6 +127,7 @@ export function CommandPalette(): VNode | null {
 	const [query, setQuery] = useState("");
 	const [activeIdx, setActiveIdx] = useState(0);
 	const [sessionHits, setSessionHits] = useState<SessionHit[]>([]);
+	const [searchingSessions, setSearchingSessions] = useState(false);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -115,15 +150,19 @@ export function CommandPalette(): VNode | null {
 		for (const hit of sessionHits) {
 			items.push({ type: "session", hit });
 		}
+		const prompt = query.trim();
+		if (prompt && items.length === 0 && !searchingSessions) {
+			items.push({ type: "agent", prompt });
+		}
 		return items;
-	}, [filtered, sessionHits]);
+	}, [filtered, query, searchingSessions, sessionHits]);
 
 	// Build a flat ordered list following GROUP_ORDER so render index
 	// always matches the position used by execute()/setActiveIdx().
 	const orderedItems = useMemo(() => {
 		const groups: Record<string, PaletteItem[]> = {};
 		for (const item of allItems) {
-			const group = item.type === "command" ? item.cmd.group : "sessions";
+			const group = paletteItemGroup(item);
 			if (!groups[group]) groups[group] = [];
 			groups[group].push(item);
 		}
@@ -141,6 +180,7 @@ export function CommandPalette(): VNode | null {
 		setQuery("");
 		setActiveIdx(0);
 		setSessionHits([]);
+		setSearchingSessions(false);
 
 		const focusInput = () => inputRef.current?.focus({ preventScroll: true });
 		focusInput();
@@ -159,12 +199,15 @@ export function CommandPalette(): VNode | null {
 
 	useEffect(() => {
 		if (searchTimer.current) clearTimeout(searchTimer.current);
+		const thisReq = ++reqIdRef.current;
 		if (query.length < 2) {
 			setSessionHits([]);
+			setSearchingSessions(false);
 			return;
 		}
+		setSessionHits([]);
+		setSearchingSessions(true);
 		searchTimer.current = setTimeout(() => {
-			const thisReq = ++reqIdRef.current;
 			sendRpc<SessionHit[]>("sessions.search", {
 				query,
 				includeArchived: sessionStore.showArchivedSessions.value,
@@ -176,8 +219,13 @@ export function CommandPalette(): VNode | null {
 					} else {
 						setSessionHits([]);
 					}
+					setSearchingSessions(false);
 				})
-				.catch(() => setSessionHits([]));
+				.catch(() => {
+					if (thisReq !== reqIdRef.current) return;
+					setSessionHits([]);
+					setSearchingSessions(false);
+				});
 		}, 300);
 		return () => {
 			if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -206,8 +254,10 @@ export function CommandPalette(): VNode | null {
 		closePalette();
 		if (item.type === "command") {
 			item.cmd.action();
-		} else {
+		} else if (item.type === "session") {
 			navigate(sessionPath(item.hit.sessionKey));
+		} else {
+			startAgentPrompt(item.prompt);
 		}
 	}
 
@@ -276,10 +326,9 @@ export function CommandPalette(): VNode | null {
 								<div class="cmd-palette-group">{GROUP_LABELS[group]}</div>
 								{items.map((item, i) => {
 									const idx = baseIdx + i;
-									const key = item.type === "command" ? item.cmd.id : item.hit.sessionKey;
 									return (
 										<PaletteItemRow
-											key={key}
+											key={paletteItemKey(item)}
 											item={item}
 											active={idx === activeIdx}
 											onSelect={() => execute(idx)}
