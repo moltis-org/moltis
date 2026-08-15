@@ -26,6 +26,8 @@ export interface Command {
 
 export const paletteOpen = signal(false);
 
+let agentPromptHandler: ((prompt: string) => void) | null = null;
+
 export function togglePalette(): void {
 	paletteOpen.value = !paletteOpen.value;
 }
@@ -36,6 +38,14 @@ export function openPalette(): void {
 
 export function closePalette(): void {
 	paletteOpen.value = false;
+}
+
+export function setAgentPromptHandler(handler: (prompt: string) => void): void {
+	agentPromptHandler = handler;
+}
+
+export function startAgentPrompt(prompt: string): void {
+	agentPromptHandler?.(prompt);
 }
 
 // ── Command registry ─────────────────────────────────────────

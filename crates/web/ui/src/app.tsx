@@ -29,9 +29,15 @@ import { mount, navigate, registerPage, sessionPath } from "./router";
 import { routes } from "./routes";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox";
 import * as _sessions from "./sessions";
-import { fetchSessions, refreshWelcomeCardIfNeeded, removeSessionFromClientState, renderSessionList } from "./sessions";
+import {
+	fetchSessions,
+	refreshWelcomeCardIfNeeded,
+	removeSessionFromClientState,
+	renderSessionList,
+	startNewSession,
+} from "./sessions";
 import * as S from "./state";
-import { togglePalette } from "./stores/command-store";
+import { setAgentPromptHandler, togglePalette } from "./stores/command-store";
 import * as modelStore from "./stores/model-store";
 import * as _modelStore from "./stores/model-store";
 import * as _nodeStore from "./stores/node-store";
@@ -243,6 +249,7 @@ function seedSessionsFromGon(): void {
 }
 
 seedSessionsFromGon();
+setAgentPromptHandler(startNewSession);
 
 function applyMemory(mem: MemInfo | null): void {
 	if (!mem) return;

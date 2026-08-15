@@ -348,6 +348,16 @@ export function setSessionReplying(key: string, replying: boolean): void {
 	if (entry) entry._replying = replying;
 }
 
+export function addSessionSendError(key: string, message: string): void {
+	const session = sessionStore.getByKey(key);
+	if (session) session.sendErrors.value = [...session.sendErrors.value.slice(-19), message];
+}
+
+export function clearSessionSendErrors(key: string): void {
+	const session = sessionStore.getByKey(key);
+	if (session) session.sendErrors.value = [];
+}
+
 export function setSessionActiveRunId(key: string, runId: string | null): void {
 	const session = sessionStore.getByKey(key);
 	if (session) session.activeRunId.value = runId || null;
@@ -422,8 +432,7 @@ export function removeSessionFromClientState(
 }
 
 // ── New session button ──────────────────────────────────────
-const newSessionBtn = S.$("newSessionBtn") as HTMLElement;
-newSessionBtn.addEventListener("click", () => {
+export function startNewSession(initialMessage?: string): void {
 	const id = crypto.randomUUID
 		? crypto.randomUUID()
 		: ([1e7].toString() + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c) =>
@@ -436,7 +445,18 @@ newSessionBtn.addEventListener("click", () => {
 	} else {
 		navigate(sessionPath(key));
 	}
-});
+
+	const message = initialMessage?.trim();
+	if (!message) return;
+	const input = S.chatInput as HTMLTextAreaElement | null;
+	if (!input) return;
+	input.value = message;
+	input.dispatchEvent(new Event("input", { bubbles: true }));
+	(S.chatSendBtn as HTMLButtonElement | null)?.click();
+}
+
+const newSessionBtn = S.$("newSessionBtn") as HTMLElement;
+newSessionBtn.addEventListener("click", () => startNewSession());
 
 export function isArchivableSession(session: SessionMeta): boolean {
 	return (

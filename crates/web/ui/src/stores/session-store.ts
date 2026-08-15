@@ -48,6 +48,7 @@ export class Session {
 	contextWindow: Signal<number>;
 	toolsEnabled: Signal<boolean>;
 	lastToolOutput: Signal<string>;
+	sendErrors: Signal<string[]>;
 	badgeCount: Signal<number>;
 	dataVersion: Signal<number>;
 
@@ -90,6 +91,7 @@ export class Session {
 		this.contextWindow = signal(0);
 		this.toolsEnabled = signal(true);
 		this.lastToolOutput = signal("");
+		this.sendErrors = signal<string[]>([]);
 		// Total message count — reactive signal that drives the sidebar badge.
 		// Components read this to show/hide badge and compute unread tinting.
 		this.badgeCount = signal(this.messageCount);

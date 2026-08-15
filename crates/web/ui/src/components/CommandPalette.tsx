@@ -9,7 +9,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/ho
 import { sendRpc } from "../helpers";
 import { t } from "../i18n";
 import { navigate, sessionPath } from "../router";
-import { buildCommands, type Command, closePalette, paletteOpen } from "../stores/command-store";
+import { buildCommands, type Command, closePalette, paletteOpen, startAgentPrompt } from "../stores/command-store";
 import { sessionStore } from "../stores/session-store";
 import { targetValue } from "../typed-events";
 
@@ -21,7 +21,10 @@ interface SessionHit {
 	snippet: string;
 }
 
-type PaletteItem = { type: "command"; cmd: Command } | { type: "session"; hit: SessionHit };
+type PaletteItem =
+	| { type: "command"; cmd: Command }
+	| { type: "session"; hit: SessionHit }
+	| { type: "agent"; prompt: string };
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -30,9 +33,20 @@ const GROUP_LABELS: Record<string, string> = {
 	settings: "Settings",
 	actions: "Actions",
 	sessions: "Sessions",
+	agent: "Agent",
 };
 
-const GROUP_ORDER = ["navigation", "settings", "actions", "sessions"];
+const GROUP_ORDER = ["navigation", "settings", "actions", "sessions", "agent"];
+
+function paletteItemGroup(item: PaletteItem): string {
+	if (item.type === "command") return item.cmd.group;
+	return item.type === "session" ? "sessions" : "agent";
+}
+
+function paletteItemKey(item: PaletteItem): string {
+	if (item.type === "command") return `command:${item.cmd.id}`;
+	return item.type === "session" ? `session:${item.hit.sessionKey}` : "agent:ask";
+}
 
 // ── Item renderer ────────────────────────────────────────────
 
@@ -65,6 +79,26 @@ function PaletteItemRow({ item, active, onSelect, onHover }: PaletteItemRowProps
 			</div>
 		);
 	}
+	if (item.type === "agent") {
+		return (
+			<div
+				role="option"
+				tabIndex={-1}
+				aria-selected={active}
+				class={cls}
+				data-active={active ? "true" : undefined}
+				onClick={onSelect}
+				onKeyDown={(e: KeyboardEvent) => {
+					if (e.key === "Enter") onSelect();
+				}}
+				onMouseEnter={onHover}
+			>
+				<span class="icon icon-sm icon-sparkles" />
+				<span class="cmd-palette-item-label">Ask agent</span>
+				<span class="cmd-palette-item-hint">{truncate(item.prompt, 60)}</span>
+			</div>
+		);
+	}
 	const hit = item.hit;
 	return (
 		<div
@@ -91,7 +125,7 @@ function PaletteItemRow({ item, active, onSelect, onHover }: PaletteItemRowProps
 export function CommandPalette(): VNode | null {
 	const show = paletteOpen.value;
 	const [query, setQuery] = useState("");
-	const [activeIdx, setActiveIdx] = useState(0);
+	const [activeKey, setActiveKey] = useState<string | null>(null);
 	const [sessionHits, setSessionHits] = useState<SessionHit[]>([]);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
@@ -115,15 +149,17 @@ export function CommandPalette(): VNode | null {
 		for (const hit of sessionHits) {
 			items.push({ type: "session", hit });
 		}
+		const prompt = query.trim();
+		if (prompt) items.push({ type: "agent", prompt });
 		return items;
-	}, [filtered, sessionHits]);
+	}, [filtered, query, sessionHits]);
 
 	// Build a flat ordered list following GROUP_ORDER so render index
 	// always matches the position used by execute()/setActiveIdx().
 	const orderedItems = useMemo(() => {
 		const groups: Record<string, PaletteItem[]> = {};
 		for (const item of allItems) {
-			const group = item.type === "command" ? item.cmd.group : "sessions";
+			const group = paletteItemGroup(item);
 			if (!groups[group]) groups[group] = [];
 			groups[group].push(item);
 		}
@@ -135,11 +171,14 @@ export function CommandPalette(): VNode | null {
 		}
 		return ordered;
 	}, [allItems]);
+	const flatItems = useMemo(() => orderedItems.flatMap((g) => g.items), [orderedItems]);
+	const selectedIdx = activeKey ? flatItems.findIndex((item) => paletteItemKey(item) === activeKey) : 0;
+	const activeIdx = selectedIdx >= 0 ? selectedIdx : 0;
 
 	useLayoutEffect(() => {
 		if (!show) return;
 		setQuery("");
-		setActiveIdx(0);
+		setActiveKey(null);
 		setSessionHits([]);
 
 		const focusInput = () => inputRef.current?.focus({ preventScroll: true });
@@ -153,18 +192,19 @@ export function CommandPalette(): VNode | null {
 		};
 	}, [show]);
 
-	useEffect(() => {
-		setActiveIdx(0);
-	}, [query, sessionHits.length]);
+	useLayoutEffect(() => {
+		setActiveKey(flatItems[0] ? paletteItemKey(flatItems[0]) : null);
+	}, [query]);
 
 	useEffect(() => {
 		if (searchTimer.current) clearTimeout(searchTimer.current);
+		const thisReq = ++reqIdRef.current;
 		if (query.length < 2) {
 			setSessionHits([]);
 			return;
 		}
+		setSessionHits([]);
 		searchTimer.current = setTimeout(() => {
-			const thisReq = ++reqIdRef.current;
 			sendRpc<SessionHit[]>("sessions.search", {
 				query,
 				includeArchived: sessionStore.showArchivedSessions.value,
@@ -177,7 +217,10 @@ export function CommandPalette(): VNode | null {
 						setSessionHits([]);
 					}
 				})
-				.catch(() => setSessionHits([]));
+				.catch(() => {
+					if (thisReq !== reqIdRef.current) return;
+					setSessionHits([]);
+				});
 		}, 300);
 		return () => {
 			if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -190,9 +233,6 @@ export function CommandPalette(): VNode | null {
 		if (active) active.scrollIntoView({ block: "nearest" });
 	}, [activeIdx]);
 
-	// Flat list in render order for index-based execution.
-	const flatItems = useMemo(() => orderedItems.flatMap((g) => g.items), [orderedItems]);
-
 	// Refs keep the capture-phase document listener always up-to-date
 	// without re-registering on every render.
 	const flatItemsRef = useRef<PaletteItem[]>([]);
@@ -200,14 +240,21 @@ export function CommandPalette(): VNode | null {
 	const activeIdxRef = useRef(0);
 	activeIdxRef.current = activeIdx;
 
+	function selectIndex(idx: number): void {
+		const item = flatItemsRef.current[idx];
+		if (item) setActiveKey(paletteItemKey(item));
+	}
+
 	function execute(idx: number): void {
 		const item = flatItemsRef.current[idx];
 		if (!item) return;
 		closePalette();
 		if (item.type === "command") {
 			item.cmd.action();
-		} else {
+		} else if (item.type === "session") {
 			navigate(sessionPath(item.hit.sessionKey));
+		} else {
+			startAgentPrompt(item.prompt);
 		}
 	}
 
@@ -223,10 +270,10 @@ export function CommandPalette(): VNode | null {
 				closePalette();
 			} else if (e.key === "ArrowDown") {
 				e.preventDefault();
-				setActiveIdx((i) => Math.min(i + 1, flatItemsRef.current.length - 1));
+				selectIndex(Math.min(activeIdxRef.current + 1, flatItemsRef.current.length - 1));
 			} else if (e.key === "ArrowUp") {
 				e.preventDefault();
-				setActiveIdx((i) => Math.max(i - 1, 0));
+				selectIndex(Math.max(activeIdxRef.current - 1, 0));
 			} else if (e.key === "Enter") {
 				e.preventDefault();
 				execute(activeIdxRef.current);
@@ -276,14 +323,13 @@ export function CommandPalette(): VNode | null {
 								<div class="cmd-palette-group">{GROUP_LABELS[group]}</div>
 								{items.map((item, i) => {
 									const idx = baseIdx + i;
-									const key = item.type === "command" ? item.cmd.id : item.hit.sessionKey;
 									return (
 										<PaletteItemRow
-											key={key}
+											key={paletteItemKey(item)}
 											item={item}
 											active={idx === activeIdx}
 											onSelect={() => execute(idx)}
-											onHover={() => setActiveIdx(idx)}
+											onHover={() => selectIndex(idx)}
 										/>
 									);
 								})}

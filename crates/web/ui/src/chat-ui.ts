@@ -114,6 +114,8 @@ export function chatAddMsg(cls: MessageRole, content: string, isHtml?: boolean):
 	el.className = `msg ${cls}`;
 	if (cls === "system") {
 		el.classList.add("system-notice");
+	} else if (cls === "error") {
+		el.setAttribute("role", "alert");
 	}
 	if (isHtml) {
 		// Safe: content is produced by renderMarkdown which escapes via esc() first,

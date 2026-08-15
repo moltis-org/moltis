@@ -287,7 +287,7 @@ export function renderMarkdown(raw: string): string {
 export function sendRpc<T = unknown>(
 	method: string,
 	params: unknown,
-	options?: { timeoutMs?: number },
+	timeout?: number | { timeoutMs?: number },
 ): Promise<RpcResponse<T>> {
 	return new Promise((resolve) => {
 		if (!S.ws || S.ws.readyState !== WebSocket.OPEN) {
@@ -304,12 +304,13 @@ export function sendRpc<T = unknown>(
 			return;
 		}
 		const id = nextId();
-		const timeoutMs = rpcTimeoutMs(options?.timeoutMs);
+		const requestedTimeoutMs = typeof timeout === "number" ? timeout : timeout?.timeoutMs;
+		const requestTimeoutMs = rpcTimeoutMs(requestedTimeoutMs);
 		const timer = setTimeout(() => {
 			if (S.pending[id]) {
 				delete S.pending[id];
 				const message = `${localizedRpcErrorMessage({ code: "TIMEOUT", message: "RPC request timed out" })} (${method})`;
-				console.warn("RPC request timed out", { method, timeoutMs });
+				console.warn("RPC request timed out", { method, timeoutMs: requestTimeoutMs });
 				resolve({
 					ok: false,
 					error: {
@@ -318,7 +319,7 @@ export function sendRpc<T = unknown>(
 					},
 				} as unknown as RpcResponse<T>);
 			}
-		}, timeoutMs);
+		}, requestTimeoutMs);
 		S.pending[id] = ((res: RpcResponse) => {
 			clearTimeout(timer);
 			resolve(res as RpcResponse<T>);

@@ -9,7 +9,6 @@ use crate::{
     openai_compat::{
         ResponsesStreamState, SseLineResult, StreamingToolState, finalize_responses_stream,
         finalize_stream, process_openai_sse_line, process_responses_sse_line,
-        split_responses_instructions_and_input, to_responses_api_tools,
     },
 };
 
@@ -27,26 +26,13 @@ impl OpenAiProvider {
         options: AgentToolControls,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
-            let (instructions, input) = split_responses_instructions_and_input(messages);
-            let mut body = serde_json::json!({
-                "model": self.model,
-                "input": input,
-                "stream": true,
-            });
-
-            if let Some(instructions) = instructions {
-                body["instructions"] = serde_json::Value::String(instructions);
-            }
-
-            if !tools.is_empty() {
-                body["tools"] = serde_json::Value::Array(to_responses_api_tools(&tools));
-            }
-            if let Err(error) = super::core::apply_openai_responses_tool_choice(&mut body, &options) {
-                yield StreamEvent::Error(error.to_string());
-                return;
-            }
-
-            self.apply_reasoning_effort_responses(&mut body);
+            let body = match self.prepare_responses_sse_body(messages, &tools, &options) {
+                Ok(body) => body,
+                Err(error) => {
+                    yield StreamEvent::Error(error.to_string());
+                    return;
+                },
+            };
 
             debug!(
                 model = %self.model,
