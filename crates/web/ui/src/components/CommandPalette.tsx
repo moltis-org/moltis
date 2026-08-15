@@ -127,7 +127,6 @@ export function CommandPalette(): VNode | null {
 	const [query, setQuery] = useState("");
 	const [activeIdx, setActiveIdx] = useState(0);
 	const [sessionHits, setSessionHits] = useState<SessionHit[]>([]);
-	const [searchingSessions, setSearchingSessions] = useState(false);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -151,11 +150,9 @@ export function CommandPalette(): VNode | null {
 			items.push({ type: "session", hit });
 		}
 		const prompt = query.trim();
-		if (prompt && items.length === 0 && !searchingSessions) {
-			items.push({ type: "agent", prompt });
-		}
+		if (prompt) items.push({ type: "agent", prompt });
 		return items;
-	}, [filtered, query, searchingSessions, sessionHits]);
+	}, [filtered, query, sessionHits]);
 
 	// Build a flat ordered list following GROUP_ORDER so render index
 	// always matches the position used by execute()/setActiveIdx().
@@ -180,7 +177,6 @@ export function CommandPalette(): VNode | null {
 		setQuery("");
 		setActiveIdx(0);
 		setSessionHits([]);
-		setSearchingSessions(false);
 
 		const focusInput = () => inputRef.current?.focus({ preventScroll: true });
 		focusInput();
@@ -202,11 +198,9 @@ export function CommandPalette(): VNode | null {
 		const thisReq = ++reqIdRef.current;
 		if (query.length < 2) {
 			setSessionHits([]);
-			setSearchingSessions(false);
 			return;
 		}
 		setSessionHits([]);
-		setSearchingSessions(true);
 		searchTimer.current = setTimeout(() => {
 			sendRpc<SessionHit[]>("sessions.search", {
 				query,
@@ -219,12 +213,10 @@ export function CommandPalette(): VNode | null {
 					} else {
 						setSessionHits([]);
 					}
-					setSearchingSessions(false);
 				})
 				.catch(() => {
 					if (thisReq !== reqIdRef.current) return;
 					setSessionHits([]);
-					setSearchingSessions(false);
 				});
 		}, 300);
 		return () => {

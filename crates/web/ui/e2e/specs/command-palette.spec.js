@@ -111,9 +111,25 @@ test.describe("Command palette", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("offers to ask an agent when nothing is found", async ({ page }) => {
+	test("offers to ask an agent while session search is pending", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/");
+		await page.evaluate(() => {
+			window.__paletteSessionSearchRequests = 0;
+			const originalSend = WebSocket.prototype.send;
+			WebSocket.prototype.send = function (data) {
+				try {
+					const request = JSON.parse(data);
+					if (request?.method === "sessions.search") {
+						window.__paletteSessionSearchRequests++;
+						return;
+					}
+				} catch {
+					// Pass non-JSON WebSocket traffic through unchanged.
+				}
+				return originalSend.call(this, data);
+			};
+		});
 
 		await page.keyboard.press("Control+k");
 		await page.locator(".cmd-palette-input").fill("xyznonexistent");
@@ -121,6 +137,8 @@ test.describe("Command palette", () => {
 		const askAgent = page.getByRole("option", { name: /Ask agent/ });
 		await expect(askAgent).toBeVisible();
 		await expect(askAgent).toContainText("xyznonexistent");
+		await expect.poll(() => page.evaluate(() => window.__paletteSessionSearchRequests)).toBe(1);
+		await expect(askAgent).toBeVisible();
 
 		await page.keyboard.press("Escape");
 		expect(pageErrors).toEqual([]);
