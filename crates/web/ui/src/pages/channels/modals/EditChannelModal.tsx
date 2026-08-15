@@ -233,6 +233,10 @@ export function EditChannelModal(): VNode | null {
 		saving.value = true;
 		const updateConfig = buildUpdateConfig(form);
 		Object.assign(updateConfig, advancedPatch.value);
+		if (isSlack && updateConfig.stream_mode === "native") {
+			updateConfig.thread_replies = true;
+			updateConfig.rich_blocks = false;
+		}
 		sendRpc("channels.update", {
 			type: channelType(ch.type),
 			account_id: ch.account_id,

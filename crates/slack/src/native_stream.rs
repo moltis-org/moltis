@@ -140,6 +140,8 @@ trait NativeStreamApi: Send + Sync {
         stream: &NativeStream,
         content: Option<&NativeStreamContent>,
     ) -> ChannelResult<()>;
+
+    async fn delete(&self, stream: &NativeStream) -> ChannelResult<()>;
 }
 
 pub(crate) struct HttpNativeStreamApi {
@@ -239,6 +241,21 @@ impl NativeStreamApi for HttpNativeStreamApi {
             .await
             .map_err(|error| ChannelError::external("chat.stopStream parse", error))?;
         check_ok(&response, "chat.stopStream")
+    }
+
+    async fn delete(&self, stream: &NativeStream) -> ChannelResult<()> {
+        let response: serde_json::Value = self
+            .http
+            .post(slack_api_method_url(&self.api_base_url, "chat.delete")?)
+            .bearer_auth(&self.bot_token)
+            .json(&native_stream_body(stream, None))
+            .send()
+            .await
+            .map_err(|error| ChannelError::external("chat.delete", error))?
+            .json()
+            .await
+            .map_err(|error| ChannelError::external("chat.delete parse", error))?;
+        check_ok(&response, "chat.delete")
     }
 }
 
@@ -364,9 +381,7 @@ async fn send_native_stream_with_api<A: NativeStreamApi>(
     if let Err(error) = api.stop(native_stream, final_content.as_ref()).await {
         warn!(channel, "chat.stopStream failed: {error}");
         let cleanup = error_cleanup_content(final_content.as_ref(), &active_tasks);
-        if let Err(fallback_error) = api.stop(native_stream, cleanup.as_ref()).await {
-            warn!(channel, "fallback chat.stopStream failed: {fallback_error}");
-        }
+        discard_stream(api, native_stream, cleanup.as_ref()).await;
         return Err(error);
     }
     Ok(vec![native_stream.ts.clone()])
@@ -395,13 +410,24 @@ async fn append_or_stop<A: NativeStreamApi>(
 ) -> ChannelResult<()> {
     if let Err(error) = api.append(stream, content).await {
         let cleanup = error_cleanup_content(Some(content), active_tasks);
-        if let Err(stop_error) = api.stop(stream, cleanup.as_ref()).await {
-            warn!("fallback chat.stopStream failed after append error: {stop_error}");
-        }
+        discard_stream(api, stream, cleanup.as_ref()).await;
         return Err(error);
     }
     apply_task_updates(active_tasks, content);
     Ok(())
+}
+
+async fn discard_stream<A: NativeStreamApi>(
+    api: &A,
+    stream: &NativeStream,
+    cleanup: Option<&NativeStreamContent>,
+) {
+    if let Err(error) = api.stop(stream, cleanup).await {
+        warn!("fallback chat.stopStream failed while discarding stream: {error}");
+    }
+    if let Err(error) = api.delete(stream).await {
+        warn!("chat.delete failed while discarding native stream: {error}");
+    }
 }
 
 fn apply_task_updates(active_tasks: &mut BTreeMap<String, String>, content: &NativeStreamContent) {
@@ -505,12 +531,14 @@ mod tests {
         Start(NativeStreamContent),
         Append(NativeStreamContent),
         Stop(Option<NativeStreamContent>),
+        Delete,
     }
 
     #[derive(Default)]
     struct FakeApi {
         calls: Mutex<Vec<Call>>,
         fail_append: bool,
+        fail_delete: bool,
         stop_failures: Mutex<usize>,
     }
 
@@ -565,6 +593,15 @@ mod tests {
             *failures -= 1;
             Err(ChannelError::unavailable("stop failed"))
         }
+
+        async fn delete(&self, _stream: &NativeStream) -> ChannelResult<()> {
+            self.calls.lock().unwrap().push(Call::Delete);
+            if self.fail_delete {
+                Err(ChannelError::unavailable("delete failed"))
+            } else {
+                Ok(())
+            }
+        }
     }
 
     async fn stream(events: Vec<StreamEvent>) -> StreamReceiver {
@@ -580,6 +617,8 @@ mod tests {
     async fn append_failure_returns_error_and_stops_stream() {
         let api = FakeApi {
             fail_append: true,
+            fail_delete: true,
+            stop_failures: Mutex::new(1),
             ..Default::default()
         };
         let mut receiver = stream(vec![
@@ -593,11 +632,12 @@ mod tests {
             send_native_stream_with_api(&api, "C1", "1.0", None, Duration::ZERO, &mut receiver)
                 .await;
 
-        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("append failed"));
         assert_eq!(*api.calls.lock().unwrap(), vec![
             Call::Start(text_content("first")),
             Call::Append(text_content("second")),
             Call::Stop(None),
+            Call::Delete,
         ]);
     }
 
@@ -628,9 +668,10 @@ mod tests {
 
         assert!(result.is_err());
         let calls = api.calls.lock().unwrap();
-        let Some(Call::Stop(Some(cleanup))) = calls.last() else {
+        let Some(Call::Stop(Some(cleanup))) = calls.iter().rev().nth(1) else {
             panic!("expected cleanup stop");
         };
+        assert_eq!(calls.last(), Some(&Call::Delete));
         assert_eq!(cleanup.chunks, vec![NativeStreamChunk::TaskUpdate {
             id: "task-1".into(),
             title: "web_search".into(),
@@ -663,7 +704,7 @@ mod tests {
             .filter_map(|call| match call {
                 Call::Start(content) | Call::Append(content) => content.markdown_text.as_deref(),
                 Call::Stop(Some(content)) => content.markdown_text.as_deref(),
-                Call::Stop(None) => None,
+                Call::Stop(None) | Call::Delete => None,
             })
             .collect::<String>();
         assert_eq!(delivered, format!("{markdown}{long}"));
@@ -677,6 +718,7 @@ mod tests {
                     .as_ref()
                     .and_then(|content| content.markdown_text.as_deref())
                     .is_none_or(|text| text.chars().count() <= MAX_MARKDOWN_CHARS),
+                Call::Delete => true,
             }
         }));
     }
@@ -738,6 +780,7 @@ mod tests {
             Call::Start(text_content("start")),
             Call::Stop(Some(text_content("tail"))),
             Call::Stop(None),
+            Call::Delete,
         ]);
     }
 
@@ -774,9 +817,10 @@ mod tests {
 
         assert!(result.is_err());
         let calls = api.calls.lock().unwrap();
-        let Some(Call::Stop(Some(cleanup))) = calls.last() else {
+        let Some(Call::Stop(Some(cleanup))) = calls.iter().rev().nth(1) else {
             panic!("expected cleanup stop");
         };
+        assert_eq!(calls.last(), Some(&Call::Delete));
         assert_eq!(cleanup.chunks, vec![NativeStreamChunk::TaskUpdate {
             id: "task-1".into(),
             title: "web_search".into(),

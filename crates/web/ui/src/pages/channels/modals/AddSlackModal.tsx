@@ -77,6 +77,10 @@ export function AddSlackModal(): VNode {
 			if (found?.provider) addConfig.model_provider = found.provider;
 		}
 		Object.assign(addConfig, advancedPatch.value);
+		if (addConfig.stream_mode === "native") {
+			addConfig.thread_replies = true;
+			addConfig.rich_blocks = false;
+		}
 		addChannel(ChannelType.Slack, accountId, addConfig).then((res: unknown) => {
 			saving.value = false;
 			const r = res as { ok?: boolean; error?: { message?: string; detail?: string } } | undefined;

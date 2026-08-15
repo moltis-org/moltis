@@ -646,6 +646,10 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 		if (connectionMode === "events_api") config.signing_secret = signingSecret.trim();
 		if (apiBaseUrl.trim()) config.api_base_url = apiBaseUrl.trim();
 		Object.assign(config, advancedPatch.value);
+		if (config.stream_mode === "native") {
+			config.thread_replies = true;
+			config.rich_blocks = false;
+		}
 		(
 			addChannel("slack", accountId.trim(), config) as Promise<{
 				ok?: boolean;

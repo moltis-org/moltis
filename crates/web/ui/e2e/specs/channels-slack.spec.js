@@ -109,13 +109,16 @@ test.describe("Slack channel settings", () => {
 		await modal.locator('[data-field="accountId"]').fill("test-add");
 		await modal.locator('[data-field="botToken"]').fill("xoxb-test");
 		await modal.locator('[data-field="appToken"]').fill("xapp-test");
-		await streaming.selectOption("native");
+		await modal.getByText("Advanced Config JSON", { exact: true }).click();
+		await modal
+			.locator('[data-field="advancedConfigPatch"]')
+			.fill('{"stream_mode":"native","thread_replies":false,"rich_blocks":true}');
 		await modal.getByRole("button", { name: "Connect Slack", exact: true }).click();
 		await expect
 			.poll(() => page.evaluate(() => window.__slackAddRequest))
 			.toMatchObject({
 				account_id: "test-add",
-				config: { stream_mode: "native" },
+				config: { stream_mode: "native", thread_replies: true, rich_blocks: false },
 			});
 		expect(pageErrors).toEqual([]);
 	});
@@ -162,12 +165,17 @@ test.describe("Slack channel settings", () => {
 		await expect(richBlocksCheckbox).not.toBeChecked();
 		await expect(streaming).toHaveValue("edit_in_place");
 
-		// Flip the toggles and choose native streaming. Native mode clears rich
-		// blocks because completed Block Kit rendering takes precedence over streams.
+		// Exercise the visible native-mode exclusivity, then reproduce an advanced
+		// patch introducing native mode with conflicting prerequisites.
 		await ackCheckbox.uncheck();
 		await triggerCheckbox.check();
 		await richBlocksCheckbox.check();
 		await streaming.selectOption("native");
+		await streaming.selectOption("edit_in_place");
+		await modal.getByText("Advanced Config JSON", { exact: true }).click();
+		await modal
+			.locator('[data-field="advancedConfigPatch"]')
+			.fill('{"stream_mode":"native","thread_replies":false,"rich_blocks":true}');
 
 		await modal.getByRole("button", { name: "Save Changes", exact: true }).click();
 

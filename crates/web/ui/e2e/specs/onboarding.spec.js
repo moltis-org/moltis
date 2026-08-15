@@ -735,14 +735,17 @@ test.describe("Onboarding wizard", () => {
 		await page.locator('input[name="slack_account_id"]').fill("onboarding-slack");
 		await page.locator('input[name="slack_bot_token"]').fill("xoxb-test");
 		await page.locator('input[name="slack_app_token"]').fill("xapp-test");
-		await page.getByRole("combobox", { name: "Response streaming", exact: true }).selectOption("native");
+		await page.getByText("Advanced Config JSON", { exact: true }).click();
+		await page
+			.locator('textarea[name="channel_advanced_config"]')
+			.fill('{"stream_mode":"native","thread_replies":false,"rich_blocks":true}');
 		await page.getByRole("button", { name: "Connect Slack", exact: true }).click();
 
 		await expect
 			.poll(() => page.evaluate(() => window.__onboardingSlackAddRequest))
 			.toMatchObject({
 				account_id: "onboarding-slack",
-				config: { stream_mode: "native" },
+				config: { stream_mode: "native", thread_replies: true, rich_blocks: false },
 			});
 		expect(pageErrors).toEqual([]);
 	});
