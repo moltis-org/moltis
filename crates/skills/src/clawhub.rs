@@ -405,6 +405,21 @@ pub fn parse_skill_reference(reference: &str) -> Result<SkillReference<'_>> {
     })
 }
 
+fn resolve_install_owner<'a>(
+    requested_owner: Option<&'a str>,
+    info: &'a SkillInfoResponse,
+) -> Result<&'a str> {
+    let owner = requested_owner
+        .or_else(|| {
+            info.owner
+                .as_ref()
+                .and_then(|owner| owner.handle.as_deref())
+        })
+        .ok_or_else(|| Error::Install("ClawHub skill response has no owner handle".into()))?;
+    validate_slug(owner)?;
+    Ok(owner)
+}
+
 struct LegacyCleanup {
     source: String,
     target: PathBuf,
@@ -469,23 +484,25 @@ pub async fn install_from_clawhub(
     reference: &str,
     install_dir: &Path,
 ) -> Result<Vec<SkillMetadata>> {
-    let skill_ref = parse_skill_reference(reference)?;
-    let slug = skill_ref.slug;
-    let owner_handle = skill_ref.owner_handle;
+    let requested_ref = parse_skill_reference(reference)?;
+    let slug = requested_ref.slug;
 
     let client = ClawHubClient::new();
 
     // Get skill metadata and version.
-    let info = client.skill_info(slug, owner_handle).await?;
+    let info = client.skill_info(slug, requested_ref.owner_handle).await?;
+    let owner_handle = resolve_install_owner(requested_ref.owner_handle, &info)?;
+    let skill_ref = SkillReference {
+        slug,
+        owner_handle: Some(owner_handle),
+    };
     let version = info
         .latest_version
         .as_ref()
         .map(|v| v.version.clone())
         .ok_or_else(|| Error::Install(format!("skill '{slug}' has no published version")))?;
 
-    let dir_name = owner_handle
-        .map(|owner| format!("clawhub-{owner}-{slug}"))
-        .unwrap_or_else(|| format!("clawhub-{slug}"));
+    let dir_name = format!("clawhub-{owner_handle}-{slug}");
     let target = install_dir.join(&dir_name);
 
     // Remove existing if re-installing.
@@ -495,7 +512,9 @@ pub async fn install_from_clawhub(
     tokio::fs::create_dir_all(&target).await?;
 
     // Download zip archive.
-    let zip_bytes = client.download_zip(slug, owner_handle, &version).await?;
+    let zip_bytes = client
+        .download_zip(slug, Some(owner_handle), &version)
+        .await?;
 
     // Extract zip on a blocking thread (zip I/O is synchronous).
     let target_owned = target.clone();
@@ -528,7 +547,7 @@ pub async fn install_from_clawhub(
     // Remove existing entry if re-installing.
     let legacy_cleanup =
         mark_legacy_bare_install_for_cleanup(&mut manifest, skill_ref, install_dir);
-    let source_key = clawhub_source_key(reference);
+    let source_key = clawhub_source_key(&format!("@{owner_handle}/{slug}"));
     manifest.remove_repo(&source_key);
 
     let now = std::time::SystemTime::now()
@@ -765,6 +784,36 @@ mod tests {
         );
         assert!(parse_skill_reference("@owner").is_err());
         assert!(parse_skill_reference("@../csv").is_err());
+    }
+
+    #[test]
+    fn bare_install_resolves_to_owner_qualified_identity() {
+        let info: SkillInfoResponse =
+            serde_json::from_str(r#"{"skill":{"slug":"csv"},"owner":{"handle":"ivangdavila"}}"#)
+                .unwrap();
+
+        let owner = resolve_install_owner(None, &info).unwrap();
+        assert_eq!(owner, "ivangdavila");
+        assert_eq!(
+            clawhub_source_key(&format!("@{owner}/{}", info.skill.slug)),
+            "clawhub:@ivangdavila/csv"
+        );
+        assert_eq!(
+            resolve_install_owner(Some("requested-owner"), &info).unwrap(),
+            "requested-owner"
+        );
+    }
+
+    #[test]
+    fn bare_install_rejects_missing_or_invalid_owner() {
+        let missing: SkillInfoResponse =
+            serde_json::from_str(r#"{"skill":{"slug":"csv"}}"#).unwrap();
+        assert!(resolve_install_owner(None, &missing).is_err());
+
+        let invalid: SkillInfoResponse =
+            serde_json::from_str(r#"{"skill":{"slug":"csv"},"owner":{"handle":"../publisher"}}"#)
+                .unwrap();
+        assert!(resolve_install_owner(None, &invalid).is_err());
     }
 
     #[tokio::test]
