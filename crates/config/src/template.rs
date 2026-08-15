@@ -451,13 +451,24 @@ port = {port}                           # Port number (auto-generated for this i
 # scope = "session"                 # "command" | "session" (recommended) | "global"
 # workspace_mount = "ro"            # "ro" | "rw" | "none"
 # home_persistence = "shared"       # "off" | "session" | "shared"
-# backend = "auto"                  # "auto" | "docker" | "apple-container"
+# backend = "auto"                  # "auto" | "docker" | "apple-container" | "vercel" | "daytona" | "coder"
 # no_network = true                 # Disable network access in sandbox
 # image = "custom-image:tag"        # Custom Docker image (default: auto-built)
 # packages = [...]                  # Packages installed in sandbox containers
 # host_data_dir = "/host/moltis-data" # Host path for Moltis data when running Moltis inside Docker
 # gpus = "all"                      # GPU passthrough: "all", "device=0", "device=0,1"
                                     # (Docker/Podman only, ignored for other backends)
+
+# Remote Coder workspaces. Preset values may be Coder preset names or UUIDs.
+# coder_url = "https://coder.example.com"
+# coder_token = "${{CODER_SESSION_TOKEN}}"
+# coder_organization = "default"
+# coder_user = "me"
+# coder_template_name = "moltis-devbox"
+# coder_workspace_prefix = "moltis"
+# coder_ttl_ms = 300000
+# coder_size = "medium"
+# coder_template_presets = {{ small = "small", medium = "medium", large = "large", xlarge = "xlarge" }}
 
 # [tools.exec.sandbox.resource_limits]
 # memory_limit = "512M"             # Memory limit (e.g., "512M", "1G")

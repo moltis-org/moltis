@@ -1097,6 +1097,36 @@ fn apply_env_overrides_daytona_api_key_alias() {
 }
 
 #[test]
+fn apply_env_overrides_coder_aliases() {
+    let vars = vec![
+        ("CODER_URL".into(), "https://coder.example.com".into()),
+        ("CODER_SESSION_TOKEN".into(), "coder_token_123".into()),
+        ("CODER_ORGANIZATION".into(), "default".into()),
+        ("CODER_TEMPLATE_NAME".into(), "moltis-devbox".into()),
+    ];
+    let config = apply_env_overrides_with(MoltisConfig::default(), vars.into_iter());
+    let sandbox = &config.tools.exec.sandbox;
+    assert_eq!(
+        sandbox.coder_url.as_deref(),
+        Some("https://coder.example.com")
+    );
+    assert_eq!(sandbox.coder_organization.as_deref(), Some("default"));
+    assert_eq!(
+        sandbox.coder_template_name.as_deref(),
+        Some("moltis-devbox")
+    );
+    assert_eq!(
+        sandbox
+            .coder_token
+            .as_ref()
+            .map(ExposeSecret::expose_secret)
+            .map(String::as_str),
+        Some("coder_token_123"),
+        "CODER_SESSION_TOKEN env var should map to tools.exec.sandbox.coder_token"
+    );
+}
+
+#[test]
 fn apply_env_overrides_alias_does_not_overwrite_explicit() {
     let vars = vec![("VERCEL_TOKEN".into(), "from_env".into())];
     let mut config = MoltisConfig::default();
@@ -1121,10 +1151,12 @@ fn apply_env_overrides_without_aliases_keeps_third_party_env_out() {
     let vars = vec![
         ("VERCEL_TOKEN".into(), "ver_secret".into()),
         ("DAYTONA_API_KEY".into(), "dyt_secret".into()),
+        ("CODER_SESSION_TOKEN".into(), "coder_secret".into()),
         ("MOLTIS_AUTH__DISABLED".into(), "true".into()),
     ];
     let config = apply_env_overrides_without_aliases(MoltisConfig::default(), vars.into_iter());
     assert!(config.auth.disabled);
     assert!(config.tools.exec.sandbox.vercel_token.is_none());
     assert!(config.tools.exec.sandbox.daytona_api_key.is_none());
+    assert!(config.tools.exec.sandbox.coder_token.is_none());
 }

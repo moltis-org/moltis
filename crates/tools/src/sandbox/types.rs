@@ -1,6 +1,6 @@
 //! Core types, enums, traits, and constants for the sandbox subsystem.
 
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use {
     async_trait::async_trait,
@@ -79,6 +79,7 @@ pub enum SandboxBackendId {
     Wasm,
     Vercel,
     Daytona,
+    Coder,
     Firecracker,
     None,
 }
@@ -95,6 +96,7 @@ impl SandboxBackendId {
             "wasm" => Self::Wasm,
             "vercel" => Self::Vercel,
             "daytona" => Self::Daytona,
+            "coder" => Self::Coder,
             "firecracker" => Self::Firecracker,
             _ => Self::None,
         }
@@ -254,6 +256,30 @@ pub struct SandboxConfig {
     /// Custom image for Daytona sandbox creation.
     pub daytona_image: Option<String>,
 
+    // ── Coder sandbox configuration ─────────────────────────────────────
+    /// Coder deployment URL (`CODER_URL`).
+    pub coder_url: Option<String>,
+    /// Coder session token (`CODER_SESSION_TOKEN`).
+    pub coder_token: Option<Secret<String>>,
+    /// Coder organization name or ID.
+    pub coder_organization: Option<String>,
+    /// Coder user name, ID, or `me`.
+    pub coder_user: Option<String>,
+    /// Coder template ID.
+    pub coder_template_id: Option<String>,
+    /// Coder template name, resolved to the active template ID/version.
+    pub coder_template_name: Option<String>,
+    /// Prefix for Moltis-created Coder workspaces.
+    pub coder_workspace_prefix: Option<String>,
+    /// Workspace TTL in milliseconds.
+    pub coder_ttl_ms: Option<i64>,
+    /// Logical workspace size key (for example, `small`, `medium`, `large`).
+    pub coder_size: Option<String>,
+    /// Mapping from logical size key to Coder template preset name or ID.
+    pub coder_template_presets: HashMap<String, String>,
+    /// Extra rich parameter values passed during workspace creation.
+    pub coder_parameter_values: HashMap<String, String>,
+
     // ── Firecracker sandbox configuration (Linux only) ──────────────────
     /// Path to the `firecracker` binary.
     pub firecracker_bin: Option<PathBuf>,
@@ -302,6 +328,17 @@ impl Default for SandboxConfig {
             daytona_api_url: None,
             daytona_target: None,
             daytona_image: None,
+            coder_url: None,
+            coder_token: None,
+            coder_organization: None,
+            coder_user: None,
+            coder_template_id: None,
+            coder_template_name: None,
+            coder_workspace_prefix: None,
+            coder_ttl_ms: None,
+            coder_size: None,
+            coder_template_presets: HashMap::new(),
+            coder_parameter_values: HashMap::new(),
             firecracker_bin: None,
             firecracker_kernel: None,
             firecracker_rootfs: None,
@@ -379,6 +416,17 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             daytona_api_url: cfg.daytona_api_url.clone(),
             daytona_target: cfg.daytona_target.clone(),
             daytona_image: cfg.daytona_image.clone(),
+            coder_url: cfg.coder_url.clone(),
+            coder_token: cfg.coder_token.clone(),
+            coder_organization: cfg.coder_organization.clone(),
+            coder_user: cfg.coder_user.clone(),
+            coder_template_id: cfg.coder_template_id.clone(),
+            coder_template_name: cfg.coder_template_name.clone(),
+            coder_workspace_prefix: cfg.coder_workspace_prefix.clone(),
+            coder_ttl_ms: cfg.coder_ttl_ms,
+            coder_size: cfg.coder_size.clone(),
+            coder_template_presets: cfg.coder_template_presets.clone(),
+            coder_parameter_values: cfg.coder_parameter_values.clone(),
             firecracker_bin: cfg.firecracker_bin.as_deref().map(PathBuf::from),
             firecracker_kernel: cfg.firecracker_kernel.as_deref().map(PathBuf::from),
             firecracker_rootfs: cfg.firecracker_rootfs.as_deref().map(PathBuf::from),
@@ -613,6 +661,7 @@ mod tests {
         let config = SandboxConfig {
             vercel_token: Some(Secret::new("vercel-secret-value".into())),
             daytona_api_key: Some(Secret::new("daytona-secret-value".into())),
+            coder_token: Some(Secret::new("coder-secret-value".into())),
             ..SandboxConfig::default()
         };
 
@@ -620,8 +669,10 @@ mod tests {
 
         assert!(!debug.contains("vercel-secret-value"));
         assert!(!debug.contains("daytona-secret-value"));
+        assert!(!debug.contains("coder-secret-value"));
         assert!(debug.contains("vercel_token"));
         assert!(debug.contains("daytona_api_key"));
+        assert!(debug.contains("coder_token"));
     }
 
     #[test]
@@ -629,7 +680,8 @@ mod tests {
         let config: SandboxConfig = serde_json::from_str(
             r#"{
                 "vercel_token": "vercel-secret-value",
-                "daytona_api_key": "daytona-secret-value"
+                "daytona_api_key": "daytona-secret-value",
+                "coder_token": "coder-secret-value"
             }"#,
         )
         .unwrap();
@@ -649,6 +701,14 @@ mod tests {
                 .map(ExposeSecret::expose_secret)
                 .map(String::as_str),
             Some("daytona-secret-value")
+        );
+        assert_eq!(
+            config
+                .coder_token
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("coder-secret-value")
         );
     }
 }

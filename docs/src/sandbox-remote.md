@@ -9,6 +9,7 @@ use remote sandbox backends to provide isolated command execution via cloud APIs
 |---------|----------|-----------|-----------------|
 | **Vercel Sandbox** | Vercel (managed) | Firecracker microVM | `dnf` (Amazon Linux 2023) |
 | **Daytona** | Daytona (managed or self-hosted) | Cloud sandbox | `apt-get` (Ubuntu) |
+| **Coder** | Coder (managed or self-hosted) | Coder workspace template | Template-defined |
 | **Firecracker** | Self-hosted (Linux) | Local microVM | `apt-get` (Ubuntu) |
 
 ## Vercel Sandbox
@@ -111,6 +112,68 @@ using moltis's multi-backend routing and workspace sync.
 - Files transfer via multipart upload / download
 - On cleanup, the sandbox is deleted
 
+## Coder
+
+Coder creates ephemeral workspaces from your Coder templates. Moltis uses the
+Coder REST API for lifecycle operations and the workspace-agent reconnecting PTY
+WebSocket for command execution. Workspaces created by Moltis are deleted on
+cleanup.
+
+### Configuration
+
+Set environment variables:
+
+```bash
+CODER_URL=https://coder.example.com
+CODER_SESSION_TOKEN=coder_your_token_here
+CODER_ORGANIZATION=default          # optional when template_id is configured
+CODER_TEMPLATE_NAME=moltis-devbox   # or configure coder_template_id
+```
+
+Or configure in `moltis.toml`:
+
+```toml
+[tools.exec.sandbox]
+backend = "coder"  # or leave "auto" for auto-detection when no local runtime exists
+
+coder_url = "https://coder.example.com"
+coder_token = "${CODER_SESSION_TOKEN}"
+coder_organization = "default"
+coder_user = "me"
+coder_template_name = "moltis-devbox"
+coder_workspace_prefix = "moltis"
+coder_ttl_ms = 300000
+coder_size = "medium"
+
+[tools.exec.sandbox.coder_template_presets]
+small = "small"
+medium = "medium"
+large = "large"
+xlarge = "xlarge"
+```
+
+### Template Presets
+
+`coder_size` selects an entry from `coder_template_presets`. Each value may be
+either a Coder template preset name or a preset UUID. Names are resolved against
+the active template version before workspace creation.
+
+Use `coder_parameter_values` for advanced template parameters that are not
+represented by presets:
+
+```toml
+[tools.exec.sandbox.coder_parameter_values]
+region = "us"
+```
+
+### How It Works
+
+- `backend = "auto"` detects `CODER_URL` and `CODER_SESSION_TOKEN` when no local Docker runtime is available
+- Each session creates an ephemeral Coder workspace
+- Commands execute via Coder's reconnecting PTY WebSocket
+- File operations use shell commands over the same PTY transport
+- On cleanup, the Coder workspace is deleted
+
 ## Local Firecracker
 
 For Linux servers without Docker where you want VM-level isolation, the
@@ -152,7 +215,7 @@ When `backend = "auto"` (the default), moltis selects the sandbox backend
 in this order:
 
 1. **Local**: Apple Container → Podman → Docker → (next)
-2. **Remote**: Vercel (if `VERCEL_TOKEN` set) → Daytona (if `DAYTONA_API_KEY` set)
+2. **Remote**: Vercel (if `VERCEL_TOKEN` set) → Daytona (if `DAYTONA_API_KEY` set) → Coder (if `CODER_URL` and `CODER_SESSION_TOKEN` set)
 3. **Fallback**: Restricted Host (rlimits only, no isolation)
 
 ## Multi-Backend Routing
@@ -183,4 +246,5 @@ installed, but subsequent sessions use cached images/snapshots:
 |---------|-----------------|
 | Vercel | Snapshot after first provisioning (instant subsequent boots) |
 | Daytona | Runtime provisioning on first session |
+| Coder | Template-defined image/packages |
 | Firecracker | Pre-built rootfs with packages baked in |

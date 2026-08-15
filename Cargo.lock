@@ -8600,6 +8600,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-stream",
+ "tokio-tungstenite 0.26.2",
  "tracing",
  "url",
  "uuid",
