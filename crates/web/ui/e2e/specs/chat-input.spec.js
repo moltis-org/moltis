@@ -506,6 +506,65 @@ test.describe("Chat input and slash commands", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("delayed chat.send response stays bound to its originating session", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var ws = stateModule.ws;
+			if (!ws) throw new Error("websocket unavailable");
+
+			window.__delayedChatSendId = null;
+			var originalSend = ws.send.bind(ws);
+			ws.send = (payload) => {
+				var parsed = JSON.parse(payload);
+				if (parsed?.method === "chat.send") {
+					window.__delayedChatSendId = parsed.id;
+					return;
+				}
+				return originalSend(payload);
+			};
+		});
+
+		const chatInput = page.getByRole("textbox", { name: "Chat input" });
+		await chatInput.fill("delayed session response");
+		await chatInput.press("Enter");
+		await expect.poll(() => page.evaluate(() => window.__delayedChatSendId)).not.toBeNull();
+
+		await page.getByRole("button", { name: "+", exact: true }).click();
+		await expect(page).toHaveURL(/\/chats\/session\/[0-9a-f-]+$/);
+
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var id = window.__delayedChatSendId;
+			var resolver = stateModule.pending?.[id];
+			if (typeof resolver !== "function") throw new Error("chat.send resolver not found");
+			delete stateModule.pending[id];
+			resolver({ ok: true, payload: { runId: "run-delayed-main" } });
+		});
+
+		await expect
+			.poll(() =>
+				page.evaluate(() => {
+					var store = window.__moltis_stores.sessionStore;
+					var activeKey = store.activeSessionKey.value;
+					return {
+						activeRunId: store.getByKey(activeKey)?.activeRunId.value || null,
+						mainRunId: store.getByKey("main")?.activeRunId.value || null,
+					};
+				}),
+			)
+			.toEqual({ activeRunId: null, mainRunId: "run-delayed-main" });
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("chat composer is centered with footer controls", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		const composer = page.locator("#chatComposer");

@@ -132,7 +132,7 @@ test.describe("Command palette", () => {
 		});
 
 		await page.keyboard.press("Control+k");
-		await page.locator(".cmd-palette-input").fill("xyznonexistent");
+		await page.getByRole("dialog", { name: "Command palette" }).getByRole("textbox").fill("xyznonexistent");
 
 		const askAgent = page.getByRole("option", { name: /Ask agent/ });
 		await expect(askAgent).toBeVisible();
@@ -165,12 +165,12 @@ test.describe("Command palette", () => {
 		});
 
 		await page.keyboard.press("Control+k");
-		await page.locator(".cmd-palette-input").fill("Plan a weekend in Lisbon");
+		await page.getByRole("dialog", { name: "Command palette" }).getByRole("textbox").fill("Plan a weekend in Lisbon");
 		await expect(page.getByRole("option", { name: /Ask agent/ })).toBeVisible();
 		await page.keyboard.press("Enter");
 
+		await expect(page.getByText("Plan a weekend in Lisbon", { exact: true })).toBeVisible();
 		await expect(page).toHaveURL(/\/chats\/session\/[0-9a-f-]+$/);
-		await expect(page.locator("#messages")).toContainText("Plan a weekend in Lisbon");
 		await expect
 			.poll(() =>
 				page.evaluate(() => {
