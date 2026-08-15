@@ -1123,15 +1123,21 @@ test.describe("Onboarding wizard", () => {
 			test.skip(true, "Matrix onboarding option is not available in this run");
 			return;
 		}
-		await expect(page.getByText("Encrypted Matrix chats require Password auth.", { exact: false })).toBeVisible();
+		await expect(
+			page.getByText("Encrypted Matrix chats require OIDC or Password auth.", { exact: false }),
+		).toBeVisible();
 		await expect(
 			page.getByText("Password is the default because it supports encrypted Matrix chats", { exact: false }),
 		).toBeVisible();
 		await expect(
-			page.getByText("Use Password so Moltis creates and persists its own Matrix device keys", { exact: false }),
+			page.getByText("Use OIDC (recommended) or Password so Moltis creates and persists its own Matrix device keys", {
+				exact: false,
+			}),
 		).toBeVisible();
 		await expect(
-			page.getByText("do not transfer that device's private encryption keys into Moltis", { exact: false }),
+			page.getByText("reuses an existing Matrix session without that device's private encryption keys", {
+				exact: false,
+			}),
 		).toBeVisible();
 		await expect(page.getByText("verify yes", { exact: false })).toBeVisible();
 
