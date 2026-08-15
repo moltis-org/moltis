@@ -409,9 +409,9 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 		[],
 	);
 
-	function doSearch(q: string): void {
+	function doSearch(q: string, generation: number): void {
+		if (generation !== searchGeneration.current) return;
 		const trimmedQuery = q.trim();
-		const generation = ++searchGeneration.current;
 		if (!trimmedQuery) {
 			results.value = [];
 			searched.value = false;
@@ -449,10 +449,14 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 			});
 	}
 
+	function searchNow(q: string): void {
+		doSearch(q, ++searchGeneration.current);
+	}
+
 	function onInput(e: Event): void {
 		const v = (e.target as HTMLInputElement).value;
 		query.value = v;
-		searchGeneration.current += 1;
+		const generation = ++searchGeneration.current;
 		searching.value = false;
 		searched.value = false;
 		results.value = [];
@@ -461,13 +465,13 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 		if (!v.trim()) {
 			return;
 		}
-		searchTimer.current = setTimeout(() => doSearch(v), 300);
+		searchTimer.current = setTimeout(() => doSearch(v, generation), 300);
 	}
 
 	function onKeyDown(e: Event): void {
 		if ((e as KeyboardEvent).key === "Enter") {
 			if (searchTimer.current) clearTimeout(searchTimer.current);
-			doSearch(query.value);
+			searchNow(query.value);
 		}
 	}
 
@@ -502,7 +506,7 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 				<button
 					className="provider-btn"
 					disabled={searching.value || !query.value.trim()}
-					onClick={() => doSearch(query.value)}
+					onClick={() => searchNow(query.value)}
 				>
 					{searching.value ? "Searching\u2026" : "Search"}
 				</button>

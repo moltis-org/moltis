@@ -3,7 +3,7 @@
 //! Uses the public ClawHub REST API at `https://clawhub.ai/api/v1/`.
 //! No authentication required for read operations. Rate limit: 180 req/min.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -405,14 +405,12 @@ pub fn parse_skill_reference(reference: &str) -> Result<SkillReference<'_>> {
     })
 }
 
-async fn remove_legacy_bare_install(
+fn remove_legacy_bare_manifest_entry(
     manifest: &mut SkillsManifest,
     skill_ref: SkillReference<'_>,
     install_dir: &Path,
-) -> Result<bool> {
-    if skill_ref.owner_handle.is_none() {
-        return Ok(false);
-    }
+) -> Option<PathBuf> {
+    skill_ref.owner_handle?;
 
     let legacy_source = clawhub_source_key(skill_ref.slug);
     let legacy_dir_name = format!("clawhub-{}", skill_ref.slug);
@@ -420,15 +418,26 @@ async fn remove_legacy_bare_install(
         .find_repo(&legacy_source)
         .is_some_and(|repo| repo.repo_name == legacy_dir_name);
     if !is_legacy_install {
-        return Ok(false);
+        return None;
     }
 
     let legacy_target = install_dir.join(&legacy_dir_name);
-    if legacy_target.exists() {
-        tokio::fs::remove_dir_all(legacy_target).await?;
-    }
     manifest.remove_repo(&legacy_source);
-    Ok(true)
+    Some(legacy_target)
+}
+
+async fn save_manifest_then_remove_legacy(
+    store: &ManifestStore,
+    manifest: &SkillsManifest,
+    legacy_target: Option<PathBuf>,
+) -> Result<()> {
+    store.save(manifest)?;
+    if let Some(target) = legacy_target
+        && target.exists()
+    {
+        tokio::fs::remove_dir_all(target).await?;
+    }
+    Ok(())
 }
 
 // ── Install from ClawHub ────────────────────────────────────────────────────
@@ -499,7 +508,7 @@ pub async fn install_from_clawhub(
     let mut manifest = store.load()?;
 
     // Remove existing entry if re-installing.
-    remove_legacy_bare_install(&mut manifest, skill_ref, install_dir).await?;
+    let legacy_target = remove_legacy_bare_manifest_entry(&mut manifest, skill_ref, install_dir);
     let source_key = clawhub_source_key(reference);
     manifest.remove_repo(&source_key);
 
@@ -519,7 +528,7 @@ pub async fn install_from_clawhub(
         provenance: None,
         skills: skill_states,
     });
-    store.save(&manifest)?;
+    save_manifest_then_remove_legacy(&store, &manifest, legacy_target).await?;
 
     tracing::info!(%slug, name = %metadata.name, "installed skill from ClawHub");
     Ok(vec![metadata])
@@ -759,16 +768,18 @@ mod tests {
             skills: Vec::new(),
         });
 
-        let removed = remove_legacy_bare_install(
+        let legacy_target = remove_legacy_bare_manifest_entry(
             &mut manifest,
             parse_skill_reference("@ivangdavila/csv").unwrap(),
             tmp.path(),
-        )
-        .await
-        .unwrap();
+        );
+        let store = ManifestStore::new(tmp.path().join("manifest.json"));
+        save_manifest_then_remove_legacy(&store, &manifest, legacy_target)
+            .await
+            .unwrap();
 
-        assert!(removed);
         assert!(manifest.find_repo("clawhub:csv").is_none());
+        assert!(store.load().unwrap().find_repo("clawhub:csv").is_none());
         assert!(!legacy_dir.exists());
     }
 
@@ -788,16 +799,53 @@ mod tests {
             skills: Vec::new(),
         });
 
-        let removed = remove_legacy_bare_install(
+        let legacy_target = remove_legacy_bare_manifest_entry(
             &mut manifest,
             parse_skill_reference("@ivangdavila/csv").unwrap(),
             tmp.path(),
-        )
-        .await
-        .unwrap();
+        );
 
-        assert!(!removed);
+        assert!(legacy_target.is_none());
         assert!(manifest.find_repo("clawhub:csv").is_some());
+    }
+
+    #[tokio::test]
+    async fn failed_manifest_save_preserves_legacy_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy_dir = tmp.path().join("clawhub-csv");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        std::fs::write(legacy_dir.join("SKILL.md"), "legacy").unwrap();
+
+        let mut manifest = SkillsManifest::default();
+        manifest.add_repo(RepoEntry {
+            source: "clawhub:csv".into(),
+            repo_name: "clawhub-csv".into(),
+            installed_at_ms: 0,
+            commit_sha: None,
+            format: PluginFormat::default(),
+            quarantined: false,
+            quarantine_reason: None,
+            provenance: None,
+            skills: Vec::new(),
+        });
+        let manifest_path = tmp.path().join("manifest.json");
+        let store = ManifestStore::new(manifest_path.clone());
+        store.save(&manifest).unwrap();
+
+        let legacy_target = remove_legacy_bare_manifest_entry(
+            &mut manifest,
+            parse_skill_reference("@ivangdavila/csv").unwrap(),
+            tmp.path(),
+        );
+
+        std::fs::create_dir(manifest_path.with_extension("json.tmp")).unwrap();
+        assert!(
+            save_manifest_then_remove_legacy(&store, &manifest, legacy_target)
+                .await
+                .is_err()
+        );
+        assert!(store.load().unwrap().find_repo("clawhub:csv").is_some());
+        assert!(legacy_dir.join("SKILL.md").is_file());
     }
 
     /// Integration test: hit the real ClawHub search API.

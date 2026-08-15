@@ -31,6 +31,27 @@ async function mockClawHubSearch(page, response) {
 	}, response);
 }
 
+async function deferClawHubDebounceTimers(page) {
+	await page.evaluate(() => {
+		const deferred = [];
+		const originalSetTimeout = window.setTimeout.bind(window);
+		const originalClearTimeout = window.clearTimeout.bind(window);
+		window.__runDeferredClawHubSearchTimer = (index) => deferred[index]?.callback();
+		window.setTimeout = (callback, delay, ...args) => {
+			if (delay === 300 && typeof callback === "function") {
+				const id = 1_000_000 + deferred.length;
+				deferred.push({ id, callback: () => callback(...args) });
+				return id;
+			}
+			return originalSetTimeout(callback, delay, ...args);
+		};
+		window.clearTimeout = (id) => {
+			if (deferred.some((timer) => timer.id === id)) return;
+			originalClearTimeout(id);
+		};
+	});
+}
+
 test.describe("Skills page", () => {
 	test("skills page loads", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
@@ -168,6 +189,41 @@ test.describe("Skills page", () => {
 		await expect(page.getByText("Current Weather", { exact: true })).toBeVisible();
 		await expect(page.getByRole("alert")).not.toBeVisible();
 		expect(consoleErrors.some((message) => message.includes("Old CSV search timed out"))).toBeFalsy();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("ClawHub search ignores a queued stale debounce callback", async ({ page }) => {
+		await mockClawHubSearch(page, [
+			{
+				query: "csv",
+				response: {
+					ok: true,
+					payload: { results: [{ score: 10, slug: "csv", displayName: "Old CSV Result" }] },
+				},
+			},
+			{
+				query: "weather",
+				response: {
+					ok: true,
+					payload: { results: [{ score: 100, slug: "weather", displayName: "Current Weather" }] },
+				},
+			},
+		]);
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/skills");
+		await page.getByRole("tab", { name: "ClawHub", exact: true }).click();
+		await deferClawHubDebounceTimers(page);
+		const searchInput = page.getByPlaceholder("Search ClawHub skills (e.g. csv, weather, github)...");
+
+		await searchInput.fill("csv");
+		await searchInput.fill("weather");
+		await searchInput.press("Enter");
+		await expect(page.getByText("Current Weather", { exact: true })).toBeVisible();
+		await page.evaluate(() => window.__runDeferredClawHubSearchTimer(0));
+
+		expect(await page.evaluate(() => window.__clawHubSearchRequests)).toEqual(["weather"]);
+		await expect(page.getByText("Current Weather", { exact: true })).toBeVisible();
+		await expect(page.getByText("Old CSV Result", { exact: true })).not.toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 
