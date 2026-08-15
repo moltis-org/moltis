@@ -405,37 +405,55 @@ pub fn parse_skill_reference(reference: &str) -> Result<SkillReference<'_>> {
     })
 }
 
-fn remove_legacy_bare_manifest_entry(
+struct LegacyCleanup {
+    source: String,
+    target: PathBuf,
+}
+
+fn mark_legacy_bare_install_for_cleanup(
     manifest: &mut SkillsManifest,
     skill_ref: SkillReference<'_>,
     install_dir: &Path,
-) -> Option<PathBuf> {
+) -> Option<LegacyCleanup> {
     skill_ref.owner_handle?;
 
     let legacy_source = clawhub_source_key(skill_ref.slug);
     let legacy_dir_name = format!("clawhub-{}", skill_ref.slug);
-    let is_legacy_install = manifest
-        .find_repo(&legacy_source)
-        .is_some_and(|repo| repo.repo_name == legacy_dir_name);
-    if !is_legacy_install {
+    let legacy_repo = manifest.find_repo_mut(&legacy_source)?;
+    if legacy_repo.repo_name != legacy_dir_name {
         return None;
     }
 
-    let legacy_target = install_dir.join(&legacy_dir_name);
-    manifest.remove_repo(&legacy_source);
-    Some(legacy_target)
+    // Keep a non-discoverable tombstone until directory cleanup succeeds so a
+    // later reinstall can retry after a transient filesystem failure.
+    legacy_repo.skills.clear();
+    Some(LegacyCleanup {
+        source: legacy_source,
+        target: install_dir.join(legacy_dir_name),
+    })
 }
 
 async fn save_manifest_then_remove_legacy(
     store: &ManifestStore,
     manifest: &SkillsManifest,
-    legacy_target: Option<PathBuf>,
+    legacy_cleanup: Option<LegacyCleanup>,
 ) -> Result<()> {
     store.save(manifest)?;
-    if let Some(target) = legacy_target
-        && target.exists()
+    let Some(cleanup) = legacy_cleanup else {
+        return Ok(());
+    };
+
+    if cleanup.target.exists()
+        && let Err(error) = tokio::fs::remove_dir_all(&cleanup.target).await
     {
-        tokio::fs::remove_dir_all(target).await?;
+        tracing::warn!(path = %cleanup.target.display(), %error, "failed to remove legacy ClawHub install; will retry on reinstall");
+        return Ok(());
+    }
+
+    let mut cleaned_manifest = manifest.clone();
+    cleaned_manifest.remove_repo(&cleanup.source);
+    if let Err(error) = store.save(&cleaned_manifest) {
+        tracing::warn!(%error, "failed to remove legacy ClawHub cleanup marker; will retry on reinstall");
     }
     Ok(())
 }
@@ -508,7 +526,8 @@ pub async fn install_from_clawhub(
     let mut manifest = store.load()?;
 
     // Remove existing entry if re-installing.
-    let legacy_target = remove_legacy_bare_manifest_entry(&mut manifest, skill_ref, install_dir);
+    let legacy_cleanup =
+        mark_legacy_bare_install_for_cleanup(&mut manifest, skill_ref, install_dir);
     let source_key = clawhub_source_key(reference);
     manifest.remove_repo(&source_key);
 
@@ -528,7 +547,7 @@ pub async fn install_from_clawhub(
         provenance: None,
         skills: skill_states,
     });
-    save_manifest_then_remove_legacy(&store, &manifest, legacy_target).await?;
+    save_manifest_then_remove_legacy(&store, &manifest, legacy_cleanup).await?;
 
     tracing::info!(%slug, name = %metadata.name, "installed skill from ClawHub");
     Ok(vec![metadata])
@@ -768,17 +787,17 @@ mod tests {
             skills: Vec::new(),
         });
 
-        let legacy_target = remove_legacy_bare_manifest_entry(
+        let legacy_cleanup = mark_legacy_bare_install_for_cleanup(
             &mut manifest,
             parse_skill_reference("@ivangdavila/csv").unwrap(),
             tmp.path(),
         );
         let store = ManifestStore::new(tmp.path().join("manifest.json"));
-        save_manifest_then_remove_legacy(&store, &manifest, legacy_target)
+        save_manifest_then_remove_legacy(&store, &manifest, legacy_cleanup)
             .await
             .unwrap();
 
-        assert!(manifest.find_repo("clawhub:csv").is_none());
+        assert!(manifest.find_repo("clawhub:csv").unwrap().skills.is_empty());
         assert!(store.load().unwrap().find_repo("clawhub:csv").is_none());
         assert!(!legacy_dir.exists());
     }
@@ -799,13 +818,13 @@ mod tests {
             skills: Vec::new(),
         });
 
-        let legacy_target = remove_legacy_bare_manifest_entry(
+        let legacy_cleanup = mark_legacy_bare_install_for_cleanup(
             &mut manifest,
             parse_skill_reference("@ivangdavila/csv").unwrap(),
             tmp.path(),
         );
 
-        assert!(legacy_target.is_none());
+        assert!(legacy_cleanup.is_none());
         assert!(manifest.find_repo("clawhub:csv").is_some());
     }
 
@@ -826,13 +845,18 @@ mod tests {
             quarantined: false,
             quarantine_reason: None,
             provenance: None,
-            skills: Vec::new(),
+            skills: vec![SkillState {
+                name: "csv".into(),
+                relative_path: "clawhub-csv".into(),
+                trusted: true,
+                enabled: true,
+            }],
         });
         let manifest_path = tmp.path().join("manifest.json");
         let store = ManifestStore::new(manifest_path.clone());
         store.save(&manifest).unwrap();
 
-        let legacy_target = remove_legacy_bare_manifest_entry(
+        let legacy_cleanup = mark_legacy_bare_install_for_cleanup(
             &mut manifest,
             parse_skill_reference("@ivangdavila/csv").unwrap(),
             tmp.path(),
@@ -840,12 +864,91 @@ mod tests {
 
         std::fs::create_dir(manifest_path.with_extension("json.tmp")).unwrap();
         assert!(
-            save_manifest_then_remove_legacy(&store, &manifest, legacy_target)
+            save_manifest_then_remove_legacy(&store, &manifest, legacy_cleanup)
                 .await
                 .is_err()
         );
-        assert!(store.load().unwrap().find_repo("clawhub:csv").is_some());
+        assert_eq!(
+            store
+                .load()
+                .unwrap()
+                .find_repo("clawhub:csv")
+                .unwrap()
+                .skills
+                .len(),
+            1
+        );
         assert!(legacy_dir.join("SKILL.md").is_file());
+    }
+
+    #[tokio::test]
+    async fn failed_legacy_cleanup_is_successful_and_retryable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy_target = tmp.path().join("clawhub-csv");
+        std::fs::write(&legacy_target, "not a directory").unwrap();
+
+        let mut manifest = SkillsManifest::default();
+        manifest.add_repo(RepoEntry {
+            source: "clawhub:csv".into(),
+            repo_name: "clawhub-csv".into(),
+            installed_at_ms: 0,
+            commit_sha: None,
+            format: PluginFormat::default(),
+            quarantined: false,
+            quarantine_reason: None,
+            provenance: None,
+            skills: vec![SkillState {
+                name: "csv".into(),
+                relative_path: "clawhub-csv".into(),
+                trusted: true,
+                enabled: true,
+            }],
+        });
+        manifest.add_repo(RepoEntry {
+            source: "clawhub:@ivangdavila/csv".into(),
+            repo_name: "clawhub-ivangdavila-csv".into(),
+            installed_at_ms: 1,
+            commit_sha: None,
+            format: PluginFormat::default(),
+            quarantined: false,
+            quarantine_reason: None,
+            provenance: None,
+            skills: Vec::new(),
+        });
+        let cleanup = mark_legacy_bare_install_for_cleanup(
+            &mut manifest,
+            parse_skill_reference("@ivangdavila/csv").unwrap(),
+            tmp.path(),
+        );
+        let store = ManifestStore::new(tmp.path().join("manifest.json"));
+
+        save_manifest_then_remove_legacy(&store, &manifest, cleanup)
+            .await
+            .unwrap();
+        let persisted = store.load().unwrap();
+        assert!(
+            persisted
+                .find_repo("clawhub:csv")
+                .unwrap()
+                .skills
+                .is_empty()
+        );
+        assert!(persisted.find_repo("clawhub:@ivangdavila/csv").is_some());
+
+        std::fs::remove_file(&legacy_target).unwrap();
+        let mut retry_manifest = store.load().unwrap();
+        let retry_cleanup = mark_legacy_bare_install_for_cleanup(
+            &mut retry_manifest,
+            parse_skill_reference("@ivangdavila/csv").unwrap(),
+            tmp.path(),
+        );
+        save_manifest_then_remove_legacy(&store, &retry_manifest, retry_cleanup)
+            .await
+            .unwrap();
+
+        let persisted = store.load().unwrap();
+        assert!(persisted.find_repo("clawhub:csv").is_none());
+        assert!(persisted.find_repo("clawhub:@ivangdavila/csv").is_some());
     }
 
     /// Integration test: hit the real ClawHub search API.
