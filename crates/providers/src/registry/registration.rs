@@ -57,6 +57,7 @@ pub(crate) fn openai_builtin_capabilities(
     }
     openai::OpenAiProviderCapabilities {
         responses_websocket_policy: openai::ResponsesWebSocketPolicy::OpenAiPlatform,
+        responses_required_for_reasoning_tools: true,
         ..openai::OpenAiProviderCapabilities::DEFAULT
     }
 }
