@@ -284,6 +284,7 @@ impl SlackOutbound {
                         },
                     }
                 },
+                Some(StreamEvent::TaskUpdate(_)) => {},
                 Some(StreamEvent::Done) => break,
                 Some(StreamEvent::Error(e)) => {
                     accumulated.push_str(&format!("\n\n:warning: {e}"));
@@ -953,6 +954,7 @@ impl ChannelStreamOutbound for SlackOutbound {
                         Some(StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk)) => {
                             accumulated.push_str(&chunk)
                         },
+                        Some(StreamEvent::TaskUpdate(_)) => {},
                         Some(StreamEvent::Error(e)) => {
                             accumulated.push_str(&format!("\n\n:warning: {e}"));
                             break;
@@ -983,6 +985,10 @@ impl ChannelStreamOutbound for SlackOutbound {
         // When rich rendering is requested it wins: the reply is delivered once,
         // complete, through `send_text` so it actually renders as blocks.
         self.get_stream_mode(account_id) != StreamMode::Off && !self.get_rich_blocks(account_id)
+    }
+
+    async fn receives_task_updates(&self, account_id: &str) -> bool {
+        self.get_stream_mode(account_id) == StreamMode::Native && !self.get_rich_blocks(account_id)
     }
 }
 
@@ -1039,10 +1045,20 @@ mod tests {
     use super::*;
 
     fn outbound_with_thread_replies(thread_replies: bool) -> SlackOutbound {
+        outbound_with_config(thread_replies, StreamMode::EditInPlace, false)
+    }
+
+    fn outbound_with_config(
+        thread_replies: bool,
+        stream_mode: StreamMode,
+        rich_blocks: bool,
+    ) -> SlackOutbound {
         let accounts =
             std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
         let config = crate::config::SlackAccountConfig {
             thread_replies,
+            stream_mode,
+            rich_blocks,
             ..Default::default()
         };
         accounts
@@ -1077,6 +1093,18 @@ mod tests {
                 .get_reply_thread_ts("acct", Some("1234567.890"))
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn task_updates_require_native_streaming_without_rich_blocks() {
+        let native = outbound_with_config(true, StreamMode::Native, false);
+        assert!(native.receives_task_updates("acct").await);
+
+        let edit = outbound_with_config(true, StreamMode::EditInPlace, false);
+        assert!(!edit.receives_task_updates("acct").await);
+
+        let rich = outbound_with_config(true, StreamMode::Native, true);
+        assert!(!rich.receives_task_updates("acct").await);
     }
 
     #[test]

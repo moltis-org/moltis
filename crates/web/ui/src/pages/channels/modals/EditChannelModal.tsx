@@ -202,6 +202,8 @@ export function EditChannelModal(): VNode | null {
 		}
 		if (isSlack) {
 			updateConfig.api_base_url = editSlackApiBaseUrl.value.trim() || "https://slack.com/api";
+			updateConfig.stream_mode = editStreamMode.value;
+			updateConfig.thread_replies = editStreamMode.value === "native" ? true : cfg.thread_replies !== false;
 			updateConfig.ack_reactions = editSlackAckReactions.value;
 			updateConfig.reaction_triggers = editSlackReactionTriggers.value;
 			updateConfig.rich_blocks = editSlackRichBlocks.value;
@@ -413,6 +415,27 @@ export function EditChannelModal(): VNode | null {
 						<div className="text-xs text-[var(--muted)]">
 							Use Slack's default endpoint unless you use a Slack-compatible proxy or test gateway.
 						</div>
+						<label className="text-xs text-[var(--muted)]" htmlFor="edit-slack-stream-mode">
+							Response streaming
+						</label>
+						<select
+							id="edit-slack-stream-mode"
+							className="channel-select"
+							value={editStreamMode.value}
+							onChange={(e) => {
+								const mode = targetValue(e);
+								editStreamMode.value = mode;
+								if (mode === "native") editSlackRichBlocks.value = false;
+							}}
+							aria-label="Response streaming"
+						>
+							<option value="edit_in_place">Edit-in-place text (default)</option>
+							<option value="native">Slack live text and tool cards</option>
+							<option value="off">Off (send once complete)</option>
+						</select>
+						<div className="text-xs text-[var(--muted)]">
+							Native streaming requires threaded replies and shows tool names without arguments or results.
+						</div>
 						<label className="flex items-start gap-2 cursor-pointer mt-1">
 							<input
 								type="checkbox"
@@ -449,7 +472,11 @@ export function EditChannelModal(): VNode | null {
 								type="checkbox"
 								checked={editSlackRichBlocks.value}
 								onChange={(e) => {
-									editSlackRichBlocks.value = targetChecked(e);
+									const enabled = targetChecked(e);
+									editSlackRichBlocks.value = enabled;
+									if (enabled && editStreamMode.value === "native") {
+										editStreamMode.value = "edit_in_place";
+									}
 								}}
 							/>
 							<span className="flex flex-col gap-1">

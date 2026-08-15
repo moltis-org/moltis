@@ -589,6 +589,13 @@ impl ChannelStreamOutbound for RegistryOutboundRouter {
         };
         stream_out.receives_progress_deltas(account_id).await
     }
+
+    async fn receives_task_updates(&self, account_id: &str) -> bool {
+        let Some(stream_out) = self.registry.resolve_stream(account_id).await else {
+            return false;
+        };
+        stream_out.receives_task_updates(account_id).await
+    }
 }
 
 #[cfg(test)]
@@ -640,6 +647,7 @@ mod tests {
         outbound: NullOutbound,
         streams_final_replies: bool,
         receives_progress_deltas: bool,
+        receives_task_updates: bool,
     }
 
     impl TestPlugin {
@@ -650,6 +658,7 @@ mod tests {
                 outbound: NullOutbound,
                 streams_final_replies: true,
                 receives_progress_deltas: false,
+                receives_task_updates: false,
             }
         }
 
@@ -660,6 +669,7 @@ mod tests {
                 outbound: NullOutbound,
                 streams_final_replies: false,
                 receives_progress_deltas: true,
+                receives_task_updates: true,
             }
         }
     }
@@ -731,6 +741,7 @@ mod tests {
             Arc::new(NullStreamOutbound {
                 streams_final_replies: self.streams_final_replies,
                 receives_progress_deltas: self.receives_progress_deltas,
+                receives_task_updates: self.receives_task_updates,
             })
         }
     }
@@ -792,6 +803,7 @@ mod tests {
     struct NullStreamOutbound {
         streams_final_replies: bool,
         receives_progress_deltas: bool,
+        receives_task_updates: bool,
     }
 
     #[async_trait]
@@ -828,6 +840,10 @@ mod tests {
 
         async fn receives_progress_deltas(&self, _: &str) -> bool {
             self.receives_progress_deltas
+        }
+
+        async fn receives_task_updates(&self, _: &str) -> bool {
+            self.receives_task_updates
         }
     }
 
@@ -1068,6 +1084,7 @@ mod tests {
 
         assert!(!router.streams_final_replies("bot1").await);
         assert!(router.receives_progress_deltas("bot1").await);
+        assert!(router.receives_task_updates("bot1").await);
     }
 
     #[tokio::test]

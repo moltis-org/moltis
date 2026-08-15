@@ -12,6 +12,97 @@ fn mock_result(path: &str, text: &str) -> moltis_memory::search::SearchResult {
     }
 }
 
+#[test]
+fn tool_lifecycle_events_map_to_name_only_channel_tasks() {
+    use moltis_channels::plugin::ChannelTaskStatus;
+
+    let known_tools = HashSet::from(["web_search".to_string(), "exec".to_string()]);
+    let Some(started) = channel_task_update(
+        &RunnerEvent::ToolCallStart {
+            id: "call-1".into(),
+            name: "web_search".into(),
+            arguments: serde_json::json!({"query": "private search"}),
+            metadata: None,
+        },
+        &known_tools,
+    ) else {
+        panic!("expected start task update");
+    };
+    assert_eq!(started.id, "call-1");
+    assert_eq!(started.title, "web_search");
+    assert_eq!(started.status, ChannelTaskStatus::InProgress);
+
+    let Some(completed) = channel_task_update(
+        &RunnerEvent::ToolCallEnd {
+            id: "call-1".into(),
+            name: "web_search".into(),
+            success: true,
+            error: None,
+            result: Some(serde_json::json!({"secret": "not exposed"})),
+        },
+        &known_tools,
+    ) else {
+        panic!("expected completed task update");
+    };
+    assert_eq!(completed.title, "web_search");
+    assert_eq!(completed.status, ChannelTaskStatus::Complete);
+
+    let Some(rejected) = channel_task_update(
+        &RunnerEvent::ToolCallRejected {
+            id: "call-2".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({"command": "sensitive"}),
+            error: "rejected".into(),
+        },
+        &known_tools,
+    ) else {
+        panic!("expected rejected task update");
+    };
+    assert_eq!(rejected.title, "exec");
+    assert_eq!(rejected.status, ChannelTaskStatus::Error);
+
+    let Some(malformed) = channel_task_update(
+        &RunnerEvent::ToolCallStart {
+            id: "path=/private/tmp".into(),
+            name: "exec /private/tmp".into(),
+            arguments: serde_json::json!({"command": "sensitive"}),
+            metadata: None,
+        },
+        &known_tools,
+    ) else {
+        panic!("expected malformed task update");
+    };
+    assert_eq!(malformed.title, "tool");
+
+    let Some(unknown) = channel_task_update(
+        &RunnerEvent::ToolCallStart {
+            id: "call-3".into(),
+            name: "private_command_value".into(),
+            arguments: serde_json::json!({}),
+            metadata: None,
+        },
+        &known_tools,
+    ) else {
+        panic!("expected unknown task update");
+    };
+    assert_eq!(unknown.title, "tool");
+
+    for name in ["exec_2", "functions_exec", "exec_wasm"] {
+        let Some(canonical) = channel_task_update(
+            &RunnerEvent::ToolCallStart {
+                id: format!("call-{name}"),
+                name: name.into(),
+                arguments: serde_json::json!({}),
+                metadata: None,
+            },
+            &known_tools,
+        ) else {
+            panic!("expected canonical task update");
+        };
+        assert_eq!(canonical.title, "exec");
+    }
+}
+
 #[tokio::test]
 async fn steering_task_is_aborted_when_guard_is_dropped() {
     let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();

@@ -379,6 +379,7 @@ impl MsTeamsOutbound {
                         session.mark_edited();
                     }
                 },
+                Some(StreamEvent::TaskUpdate(_)) => {},
                 Some(StreamEvent::Error(err)) => {
                     if !session.has_text() {
                         session.push_delta(&err);
@@ -711,6 +712,7 @@ impl ChannelStreamOutbound for MsTeamsOutbound {
                         StreamEvent::Delta(delta) | StreamEvent::ProgressDelta(delta) => {
                             text.push_str(&delta)
                         },
+                        StreamEvent::TaskUpdate(_) => {},
                         StreamEvent::Done => break,
                         StreamEvent::Error(err) => {
                             debug!(account_id, chat_id = to, "Teams stream error: {err}");

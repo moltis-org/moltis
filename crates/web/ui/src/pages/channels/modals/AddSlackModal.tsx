@@ -23,6 +23,7 @@ export function AddSlackModal(): VNode {
 	const apiBaseUrlDraft = useSignal("");
 	const connectionMode = useSignal("socket_mode");
 	const signingSecretDraft = useSignal("");
+	const streamMode = useSignal("edit_in_place");
 	const advancedConfigPatch = useSignal("");
 
 	function onSubmit(e: Event): void {
@@ -62,6 +63,7 @@ export function AddSlackModal(): VNode {
 			mention_mode: (form.querySelector("[data-field=mentionMode]") as HTMLSelectElement).value,
 			allowlist: allowlistItems.value,
 			channel_allowlist: channelAllowlistItems.value,
+			stream_mode: streamMode.value,
 		};
 		if (connectionMode.value === "events_api") {
 			addConfig.signing_secret = signingSecretDraft.value.trim();
@@ -89,6 +91,7 @@ export function AddSlackModal(): VNode {
 				apiBaseUrlDraft.value = "";
 				signingSecretDraft.value = "";
 				connectionMode.value = "socket_mode";
+				streamMode.value = "edit_in_place";
 				advancedConfigPatch.value = "";
 				loadChannels();
 			} else {
@@ -257,6 +260,25 @@ export function AddSlackModal(): VNode {
 				/>
 				<div className="text-xs text-[var(--muted)] -mt-2">
 					Leave blank for Slack. Set this only for Slack-compatible proxies or test gateways.
+				</div>
+				<label className="text-xs text-[var(--muted)]" htmlFor="slack-stream-mode">
+					Response streaming
+				</label>
+				<select
+					id="slack-stream-mode"
+					className="channel-select"
+					value={streamMode.value}
+					onChange={(e) => {
+						streamMode.value = targetValue(e);
+					}}
+					aria-label="Response streaming"
+				>
+					<option value="edit_in_place">Edit-in-place text (default)</option>
+					<option value="native">Slack live text and tool cards</option>
+					<option value="off">Off (send once complete)</option>
+				</select>
+				<div className="text-xs text-[var(--muted)] -mt-2">
+					Native streaming requires threaded replies and a Slack-compatible streaming API.
 				</div>
 				<label className="text-xs text-[var(--muted)]">Group/Channel Policy</label>
 				<select data-field="groupPolicy" className="channel-select">

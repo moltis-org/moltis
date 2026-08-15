@@ -1,7 +1,7 @@
 //! Agent loop support: model flagging, shell commands, channel streaming, and compaction.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -158,6 +158,7 @@ impl From<&moltis_channels::ChannelReplyTarget> for ChannelReplyTargetKey {
 struct ChannelStreamWorker {
     sender: moltis_channels::StreamSender,
     receives_progress_deltas: bool,
+    receives_task_updates: bool,
 }
 
 struct AbortOnDropTask(Option<tokio::task::JoinHandle<()>>);
@@ -205,6 +206,9 @@ pub(crate) struct ChannelStreamDispatcher {
     trace_correlation_key: String,
     started: bool,
     sent_final_delta: Arc<AtomicBool>,
+    active_tasks: HashMap<String, String>,
+    task_ids: HashMap<String, String>,
+    next_task_id: usize,
 }
 
 impl ChannelStreamDispatcher {
@@ -233,6 +237,9 @@ impl ChannelStreamDispatcher {
             trace_correlation_key: trace_correlation_key.to_string(),
             started: false,
             sent_final_delta: Arc::new(AtomicBool::new(false)),
+            active_tasks: HashMap::new(),
+            task_ids: HashMap::new(),
+            next_task_id: 0,
         };
         dispatcher.ensure_started().await;
         Some(dispatcher)
@@ -263,6 +270,10 @@ impl ChannelStreamDispatcher {
                 .outbound
                 .receives_progress_deltas(&target.account_id)
                 .await;
+            let receives_task_updates = self
+                .outbound
+                .receives_task_updates(&target.account_id)
+                .await;
             let (tx, rx) = mpsc::channel(CHANNEL_STREAM_BUFFER_SIZE);
             let outbound = Arc::clone(&self.outbound);
             let completed = Arc::clone(&self.completed);
@@ -281,6 +292,7 @@ impl ChannelStreamDispatcher {
             self.workers.push(ChannelStreamWorker {
                 sender: tx,
                 receives_progress_deltas,
+                receives_task_updates,
             });
             self.tasks
                 .push(AbortOnDropTask::new(tokio::spawn(async move {
@@ -340,6 +352,42 @@ impl ChannelStreamDispatcher {
         }
     }
 
+    pub(crate) async fn send_task_update(
+        &mut self,
+        mut update: moltis_channels::plugin::ChannelTaskUpdate,
+    ) {
+        use moltis_channels::plugin::ChannelTaskStatus;
+
+        self.ensure_started().await;
+        let source_id = update.id.clone();
+        update.id = self.opaque_task_id(&source_id);
+        match update.status {
+            ChannelTaskStatus::InProgress => {
+                self.active_tasks
+                    .insert(source_id.clone(), update.title.clone());
+            },
+            ChannelTaskStatus::Complete | ChannelTaskStatus::Error => {
+                self.active_tasks.remove(&source_id);
+            },
+        }
+        let event = moltis_channels::StreamEvent::TaskUpdate(update);
+        for worker in &self.workers {
+            if worker.receives_task_updates && worker.sender.send(event.clone()).await.is_err() {
+                debug!("channel stream task update dropped: worker closed");
+            }
+        }
+    }
+
+    fn opaque_task_id(&mut self, source_id: &str) -> String {
+        if let Some(id) = self.task_ids.get(source_id) {
+            return id.clone();
+        }
+        self.next_task_id += 1;
+        let id = format!("task-{}", self.next_task_id);
+        self.task_ids.insert(source_id.to_string(), id.clone());
+        id
+    }
+
     async fn send_to_workers(&mut self, event: moltis_channels::StreamEvent, label: &str) {
         for worker in &self.workers {
             if worker.sender.send(event.clone()).await.is_err() {
@@ -361,6 +409,15 @@ impl ChannelStreamDispatcher {
     }
 
     async fn finish_inner(&mut self) {
+        let unfinished = std::mem::take(&mut self.active_tasks);
+        for (id, title) in unfinished {
+            self.send_task_update(moltis_channels::plugin::ChannelTaskUpdate {
+                id,
+                title,
+                status: moltis_channels::plugin::ChannelTaskStatus::Error,
+            })
+            .await;
+        }
         self.send_terminal(moltis_channels::StreamEvent::Done).await;
         self.join_workers().await;
     }
@@ -714,6 +771,7 @@ mod tests {
     struct RecordingStreamOutbound {
         streams_final_replies: bool,
         receives_progress_deltas: bool,
+        receives_task_updates: bool,
         events: Arc<Mutex<Vec<moltis_channels::StreamEvent>>>,
         reporting_calls: std::sync::atomic::AtomicUsize,
     }
@@ -844,6 +902,10 @@ mod tests {
         async fn receives_progress_deltas(&self, _account_id: &str) -> bool {
             self.receives_progress_deltas
         }
+
+        async fn receives_task_updates(&self, _account_id: &str) -> bool {
+            self.receives_task_updates
+        }
     }
 
     fn channel_target() -> moltis_channels::ChannelReplyTarget {
@@ -871,6 +933,9 @@ mod tests {
             trace_correlation_key: "run".into(),
             started: false,
             sent_final_delta: Arc::new(AtomicBool::new(false)),
+            active_tasks: HashMap::new(),
+            task_ids: HashMap::new(),
+            next_task_id: 0,
         }
     }
 
@@ -880,6 +945,7 @@ mod tests {
             .map(|event| match event {
                 moltis_channels::StreamEvent::Delta(_) => "delta",
                 moltis_channels::StreamEvent::ProgressDelta(_) => "progress",
+                moltis_channels::StreamEvent::TaskUpdate(_) => "task",
                 moltis_channels::StreamEvent::Done => "done",
                 moltis_channels::StreamEvent::Error(_) => "error",
             })
@@ -892,6 +958,7 @@ mod tests {
         let outbound = Arc::new(RecordingStreamOutbound {
             streams_final_replies: false,
             receives_progress_deltas: true,
+            receives_task_updates: false,
             events: Arc::clone(&events),
             reporting_calls: std::sync::atomic::AtomicUsize::new(0),
         });
@@ -912,6 +979,7 @@ mod tests {
         let outbound = Arc::new(RecordingStreamOutbound {
             streams_final_replies: true,
             receives_progress_deltas: true,
+            receives_task_updates: false,
             events: Arc::clone(&events),
             reporting_calls: std::sync::atomic::AtomicUsize::new(0),
         });
@@ -925,6 +993,43 @@ mod tests {
         assert_eq!(event_kinds(&events), vec!["progress", "delta", "done"]);
         assert_eq!(outbound.reporting_calls.load(Ordering::SeqCst), 1);
         assert_eq!(dispatcher.completed_target_keys().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn unfinished_tasks_are_marked_error_before_stream_completion() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingStreamOutbound {
+            streams_final_replies: true,
+            receives_progress_deltas: false,
+            receives_task_updates: true,
+            events: Arc::clone(&events),
+            reporting_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut dispatcher = dispatcher_with(outbound);
+
+        dispatcher
+            .send_task_update(moltis_channels::plugin::ChannelTaskUpdate {
+                id: "call-1".into(),
+                title: "web_search".into(),
+                status: moltis_channels::plugin::ChannelTaskStatus::InProgress,
+            })
+            .await;
+        dispatcher.finish().await;
+
+        let events = events.lock().await;
+        assert_eq!(event_kinds(&events), vec!["task", "task", "done"]);
+        let Some(moltis_channels::StreamEvent::TaskUpdate(update)) = events.get(1) else {
+            panic!("expected terminal task update");
+        };
+        let Some(moltis_channels::StreamEvent::TaskUpdate(started)) = events.first() else {
+            panic!("expected starting task update");
+        };
+        assert_eq!(started.id, "task-1");
+        assert_eq!(update.id, started.id);
+        assert_eq!(
+            update.status,
+            moltis_channels::plugin::ChannelTaskStatus::Error
+        );
     }
 
     #[tokio::test]

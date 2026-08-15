@@ -1,8 +1,8 @@
 const { expect, test } = require("../base-test");
 const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
-// Inject a WebSocket stub that serves a single configured Slack channel and
-// captures the channels.update payload the edit modal sends on save.
+// Inject a WebSocket stub that serves an optional Slack channel and captures
+// the channels.add/channels.update payloads sent by the settings modals.
 async function installSlackChannelMock(page, channel) {
 	await page.evaluate(async (mockChannel) => {
 		const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
@@ -16,6 +16,7 @@ async function installSlackChannelMock(page, channel) {
 		const channelsPage = await import(`${prefix}js/page-channels.js`);
 		const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
 		window.__slackUpdateRequest = null;
+		window.__slackAddRequest = null;
 		state.setConnected(true);
 		state.setWs({
 			readyState: wsOpen,
@@ -24,13 +25,16 @@ async function installSlackChannelMock(page, channel) {
 				const resolver = state.pending[req.id];
 				if (!resolver) return;
 				if (req.method === "channels.status") {
-					resolver({ ok: true, payload: { channels: [mockChannel] } });
+					resolver({ ok: true, payload: { channels: mockChannel ? [mockChannel] : [] } });
 				} else if (req.method === "channels.senders.list") {
 					resolver({ ok: true, payload: { senders: [] } });
 				} else if (req.method === "agents.list") {
 					resolver({ ok: true, payload: { agents: [] } });
 				} else if (req.method === "channels.update") {
 					window.__slackUpdateRequest = req.params || null;
+					resolver({ ok: true, payload: {} });
+				} else if (req.method === "channels.add") {
+					window.__slackAddRequest = req.params || null;
 					resolver({ ok: true, payload: {} });
 				} else {
 					resolver({ ok: true, payload: {} });
@@ -52,8 +56,10 @@ test.describe("Slack channel settings", () => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/channels");
 		await waitForWsConnected(page);
+		await installSlackChannelMock(page, null);
 
 		await page.getByRole("button", { name: "Connect Slack", exact: true }).click();
+		const modal = page.locator(".modal-box");
 		const guide = page.getByTestId("slack-setup-guide");
 		await expect(guide).toBeVisible();
 
@@ -96,6 +102,21 @@ test.describe("Slack channel settings", () => {
 
 		await expect(guide).toContainText("mention_mode = always");
 		await expect(guide).toContainText("Each scope permits access; its paired event delivers messages");
+		const streaming = page.getByRole("combobox", { name: "Response streaming", exact: true });
+		await expect(streaming).toHaveValue("edit_in_place");
+		await expect(streaming.locator('option[value="native"]')).toHaveText("Slack live text and tool cards");
+
+		await modal.locator('[data-field="accountId"]').fill("test-add");
+		await modal.locator('[data-field="botToken"]').fill("xoxb-test");
+		await modal.locator('[data-field="appToken"]').fill("xapp-test");
+		await streaming.selectOption("native");
+		await modal.getByRole("button", { name: "Connect Slack", exact: true }).click();
+		await expect
+			.poll(() => page.evaluate(() => window.__slackAddRequest))
+			.toMatchObject({
+				account_id: "test-add",
+				config: { stream_mode: "native" },
+			});
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -111,6 +132,8 @@ test.describe("Slack channel settings", () => {
 			status: "connected",
 			config: {
 				api_base_url: "https://slack.com/api",
+				stream_mode: "edit_in_place",
+				thread_replies: false,
 				ack_reactions: true,
 				reaction_triggers: false,
 			},
@@ -131,22 +154,34 @@ test.describe("Slack channel settings", () => {
 		const richBlocksCheckbox = modal
 			.locator("label", { hasText: "Rich Block Kit rendering" })
 			.locator('input[type="checkbox"]');
+		const streaming = modal.getByRole("combobox", { name: "Response streaming", exact: true });
 
 		// Reflects current config: ack on, triggers off, rich blocks off.
 		await expect(ackCheckbox).toBeChecked();
 		await expect(triggerCheckbox).not.toBeChecked();
 		await expect(richBlocksCheckbox).not.toBeChecked();
+		await expect(streaming).toHaveValue("edit_in_place");
 
-		// Flip all three.
+		// Flip the toggles and choose native streaming. Native mode clears rich
+		// blocks because completed Block Kit rendering takes precedence over streams.
 		await ackCheckbox.uncheck();
 		await triggerCheckbox.check();
 		await richBlocksCheckbox.check();
+		await streaming.selectOption("native");
 
 		await modal.getByRole("button", { name: "Save Changes", exact: true }).click();
 
 		await expect
 			.poll(() => page.evaluate(() => window.__slackUpdateRequest))
-			.toMatchObject({ config: { ack_reactions: false, reaction_triggers: true, rich_blocks: true } });
+			.toMatchObject({
+				config: {
+					ack_reactions: false,
+					reaction_triggers: true,
+					rich_blocks: false,
+					stream_mode: "native",
+					thread_replies: true,
+				},
+			});
 
 		expect(pageErrors).toEqual([]);
 	});

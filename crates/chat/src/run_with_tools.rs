@@ -63,6 +63,10 @@ use crate::{
     types::*,
 };
 
+#[path = "run_with_tools/channel_tasks.rs"]
+mod channel_tasks;
+use channel_tasks::channel_task_update;
+
 #[cfg(feature = "push-notifications")]
 use crate::channel_push::send_chat_push_notification;
 
@@ -339,6 +343,12 @@ pub(crate) async fn run_with_tools(
             .await
             .map(|dispatcher| Arc::new(Mutex::new(dispatcher)));
     let channel_stream_for_events = channel_stream_dispatcher.as_ref().map(Arc::clone);
+    let channel_tool_names: HashSet<String> = tool_registry
+        .read()
+        .await
+        .list_names()
+        .into_iter()
+        .collect();
     let event_forwarder_task = tokio::spawn(async move {
         // Track tool call arguments from ToolCallStart so they can be persisted in ToolCallEnd.
         let mut tool_args_map: HashMap<String, Value> = HashMap::new();
@@ -353,6 +363,11 @@ pub(crate) async fn run_with_tools(
             let sk = session_key_for_events.clone();
             let store = session_store_for_events.clone();
             let seq = client_seq;
+            if let Some(update) = channel_task_update(&event, &channel_tool_names)
+                && let Some(dispatcher) = &channel_stream_for_events
+            {
+                dispatcher.lock().await.send_task_update(update).await;
+            }
             let payload = match event {
                 RunnerEvent::Thinking => serde_json::json!({
                     "runId": run_id,

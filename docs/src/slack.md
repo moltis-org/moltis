@@ -113,13 +113,13 @@ offered = ["slack"]
 | `otp_cooldown_secs` | no | `300` | Cooldown after failed OTP attempts |
 | `model` | no | — | Override the default model for this channel |
 | `model_provider` | no | — | Provider for the overridden model |
-| `stream_mode` | no | `"edit_in_place"` | Streaming mode: `"edit_in_place"`, `"native"`, or `"off"` |
+| `stream_mode` | no | `"edit_in_place"` | Streaming mode: `"edit_in_place"`, `"native"`, or `"off"`. Native mode renders live text and tool task cards in one message. |
 | `edit_throttle_ms` | no | `500` | Minimum milliseconds between streaming edit updates |
 | `thread_replies` | no | `true` | Reply in threads |
 | `ack_reactions` | no | `true` | Acknowledge inbound messages with emoji reactions (👀 → ✅/❌). Only applied when the bot is directly addressed (DM or @mention). |
 | `reaction_triggers` | no | `false` | Route inbound user reactions into the agent as messages (e.g. react ✅ to approve). |
 | `reaction_trigger_emojis` | no | `[]` | When `reaction_triggers` is on, only these emoji shortcodes trigger the agent. Empty = any emoji. |
-| `rich_blocks` | no | `false` | Render replies as Block Kit blocks (headings, dividers, code) with a plain-text fallback. Disables streaming, since streamed text cannot carry blocks. |
+| `rich_blocks` | no | `false` | Render completed replies as Block Kit blocks (headings, dividers, code) with a plain-text fallback. Rich rendering takes precedence and disables streaming. |
 | `channel_overrides` | no | `{}` | Per-channel model/provider overrides (see below) |
 | `user_overrides` | no | `{}` | Per-user model/provider overrides (see below) |
 
@@ -287,7 +287,7 @@ Slack supports three streaming modes:
 | Mode | Behavior |
 |------|----------|
 | `"edit_in_place"` | Sends a placeholder message and edits it as tokens arrive (default) |
-| `"native"` | Uses Slack's streaming API (`chat.startStream`/`chat.appendStream`/`chat.stopStream`) |
+| `"native"` | Uses Slack's streaming API for live response text and tool task cards |
 | `"off"` | No streaming — sends the full response as a single message |
 
 The `edit_in_place` mode throttles updates to `edit_throttle_ms` milliseconds
@@ -298,9 +298,17 @@ token and requires a thread target. With `thread_replies = false`, Moltis falls
 back to top-level edit-in-place streaming instead. For threaded replies, Moltis
 does not probe whether the Slack app, workspace, or compatible proxy supports
 the native methods, and a native API failure does not switch an active stream to
-edit-in-place mode. Native requests send standard Markdown unchanged through
-Slack's `markdown_text` field and use `edit_throttle_ms`. When
-`rich_blocks = true`, rich rendering takes precedence: streaming (including
+edit-in-place mode. The completed reply still falls back to normal delivery when
+the native stream fails.
+
+Native requests send standard Markdown unchanged through Slack's `markdown_text`
+field and use `edit_throttle_ms`. Tool calls appear in the same streamed message
+as Slack plan/task cards. Cards show only the tool name and lifecycle state
+(`in_progress`, `complete`, or `error`); Moltis does not send tool arguments,
+reasoning, paths, commands, or raw tool results to the card. Parallel calls are
+tracked by their stable tool-call IDs, and unfinished calls are marked as errors
+before the stream closes. When `rich_blocks = true`, rich rendering takes
+precedence: streaming (including
 native streaming) is disabled and the completed response is sent once through
 the Block Kit path.
 

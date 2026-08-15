@@ -825,6 +825,7 @@ impl DiscordOutbound {
                                 last_edit = tokio::time::Instant::now();
                             }
                         },
+                        StreamEvent::TaskUpdate(_) => {},
                         StreamEvent::Done => break,
                         StreamEvent::Error(err) => {
                             warn!(account_id, chat_id = to, error = %err, "discord stream error");

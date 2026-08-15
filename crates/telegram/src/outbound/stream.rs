@@ -846,6 +846,7 @@ impl TelegramOutbound {
                                 }
                             }
                         },
+                        StreamEvent::TaskUpdate(_) => {},
                         StreamEvent::Done => {
                             overflow_ids = self.finish_final_stream_message(
                                 &bot,

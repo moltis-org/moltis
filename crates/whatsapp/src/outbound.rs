@@ -290,6 +290,7 @@ impl ChannelStreamOutbound for WhatsAppOutbound {
                 StreamEvent::Delta(delta) | StreamEvent::ProgressDelta(delta) => {
                     text.push_str(&delta)
                 },
+                StreamEvent::TaskUpdate(_) => {},
                 StreamEvent::Done => break,
                 StreamEvent::Error(err) => {
                     debug!(account_id, chat_id = to, "WhatsApp stream error: {err}");

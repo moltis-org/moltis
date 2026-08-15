@@ -285,6 +285,7 @@ impl MatrixOutbound {
                 StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk) => {
                     buffer.push_str(&chunk)
                 },
+                StreamEvent::TaskUpdate(_) => {},
                 StreamEvent::Done => break,
                 StreamEvent::Error(error) => {
                     warn!("stream error: {error}");
@@ -644,6 +645,7 @@ impl ChannelStreamOutbound for MatrixOutbound {
                                 last_edit = tokio::time::Instant::now();
                             }
                         }
+                        Some(StreamEvent::TaskUpdate(_)) => {}
                         Some(StreamEvent::Done) => {
                             if let Some(eid) = &sent_event_id {
                                 let edit = make_edit_content(eid, &buffer);

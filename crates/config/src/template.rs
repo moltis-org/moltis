@@ -875,6 +875,7 @@ port = {port}                           # Port number (auto-generated for this i
 # allowlist = []
 # operators = []             # Exact sender IDs allowed to run privileged commands; empty means nobody.
 # thread_replies = true
+# stream_mode = "edit_in_place" # use "native" for Slack live text and tool task cards
 # ack_reactions = true       # 👀 on receipt, phase emoji while working, ✅/❌ on completion
 # reaction_triggers = false  # route user reactions into the agent (react ✅ to approve)
 # rich_blocks = false        # render replies as Block Kit blocks (fallback to plain text)
