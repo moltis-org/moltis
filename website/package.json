@@ -9,6 +9,6 @@
     "test": "node --test tests/*.test.mjs && npm run i18n:validate"
   },
   "devDependencies": {
-    "jsdom": "^28.1.0"
+    "jsdom": "^30.0.1"
   }
 }
