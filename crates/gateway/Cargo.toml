@@ -254,6 +254,7 @@ zvec = ["dep:moltis-memory-zvec"]
 
 [dev-dependencies]
 serial_test = { workspace = true }
+tokio       = { features = ["test-util"], workspace = true }
 
 [lints]
 workspace = true
