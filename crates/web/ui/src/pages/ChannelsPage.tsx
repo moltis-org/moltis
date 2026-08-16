@@ -29,6 +29,7 @@ import { AddTeamsModal } from "./channels/modals/AddTeamsModal";
 // ── Sub-module imports (modals + shared fields) ──────────────
 import { AddTelegramModal } from "./channels/modals/AddTelegramModal";
 import { AddWhatsAppModal } from "./channels/modals/AddWhatsAppModal";
+import { ApproveSenderModal } from "./channels/modals/ApproveSenderModal";
 import { EditChannelModal } from "./channels/modals/EditChannelModal";
 
 // ── Types ────────────────────────────────────────────────────
@@ -71,6 +72,8 @@ export interface ChannelConfig {
 	dm_policy?: string;
 	mention_mode?: string;
 	allowlist?: string[];
+	// Senders allowed to run /sh, shell command mode, and host-reaching tools.
+	operators?: string[];
 	model?: string;
 	model_provider?: string;
 	// Teams
@@ -110,6 +113,10 @@ export interface ChannelConfig {
 	secret_key?: string;
 	relays?: string[];
 	allowed_pubkeys?: string[];
+	groups?: string[];
+	group_mention_mode?: string;
+	group_message_kind?: string;
+	group_ack_reactions?: boolean;
 	// Signal
 	account?: string;
 	account_uuid?: string;
@@ -145,7 +152,7 @@ export interface TailscaleStatus {
 	tailscale_up?: boolean;
 }
 
-interface SenderEntry {
+export interface SenderEntry {
 	peer_id: string;
 	sender_name?: string;
 	username?: string;
@@ -191,6 +198,17 @@ export const showAddNostr: Signal<boolean> = signal(false);
 export const showAddSignal: Signal<boolean> = signal(false);
 export const editingChannel: Signal<Channel | null> = signal(null);
 const sendersAccount: Signal<string> = signal("");
+
+/// Sender awaiting an approve-role decision, or null when the dialog is closed.
+export const pendingApproval: Signal<SenderEntry | null> = signal(null);
+
+/// The channel whose senders tab is currently shown.
+export function selectedSenderChannel(): Channel | null {
+	const parsed = parseSenderSelectionKey(sendersAccount.value || "");
+	return (
+		channels.value.find((ch) => ch.account_id === parsed.account_id && channelType(ch.type) === parsed.type) || null
+	);
+}
 
 // Track WhatsApp pairing state (updated by WebSocket events).
 export const waQrData: Signal<string | null> = signal(null);
@@ -483,7 +501,7 @@ export function loadChannels(): void {
 	});
 }
 
-function loadSenders(): void {
+export function loadSenders(): void {
 	const selected = sendersAccount.value;
 	if (!selected) {
 		senders.value = [];
@@ -731,8 +749,7 @@ function ChannelsTab(): VNode {
 
 // ── Sender row renderer ──────────────────────────────────────
 
-function renderSenderRow(s: SenderEntry, onAction: (identifier: string, action: string) => void): VNode {
-	const identifier = s.username || s.peer_id;
+function renderSenderRow(s: SenderEntry, onAction: (sender: SenderEntry, action: string) => void): VNode {
 	const lastSeenMs = s.last_seen ? s.last_seen * 1000 : 0;
 	const usernameLabel = s.username ? (String(s.username).startsWith("@") ? s.username : `@${s.username}`) : "\u2014";
 	const statusBadge = s.otp_pending ? (
@@ -749,11 +766,11 @@ function renderSenderRow(s: SenderEntry, onAction: (identifier: string, action: 
 		</span>
 	);
 	const actionBtn = s.allowed ? (
-		<button className="provider-btn provider-btn-sm provider-btn-danger" onClick={() => onAction(identifier, "deny")}>
+		<button className="provider-btn provider-btn-sm provider-btn-danger" onClick={() => onAction(s, "deny")}>
 			Deny
 		</button>
 	) : (
-		<button className="provider-btn provider-btn-sm" onClick={() => onAction(identifier, "approve")}>
+		<button className="provider-btn provider-btn-sm" onClick={() => onAction(s, "approve")}>
 			Approve
 		</button>
 	);
@@ -790,13 +807,18 @@ function SendersTab(): VNode {
 		return <div className="text-sm text-[var(--muted)]">No channels configured.</div>;
 	}
 
-	function onAction(identifier: string, action: string): void {
-		const rpc = action === "approve" ? "channels.senders.approve" : "channels.senders.deny";
+	// Approving asks for a role first: access and host privilege are separate
+	// grants, so "Approve" must never silently confer the latter.
+	function onAction(sender: SenderEntry, action: string): void {
+		if (action === "approve") {
+			pendingApproval.value = sender;
+			return;
+		}
 		const parsed = parseSenderSelectionKey(sendersAccount.value);
-		sendRpc(rpc, {
+		sendRpc("channels.senders.deny", {
 			type: parsed.type,
 			account_id: parsed.account_id,
-			identifier,
+			identifier: sender.username || sender.peer_id,
 		}).then(() => {
 			loadSenders();
 			loadChannels();
@@ -940,6 +962,7 @@ function ChannelsPageComponent(): VNode {
 			<AddSignalModal />
 			<AddWhatsAppModal />
 			<EditChannelModal />
+			<ApproveSenderModal />
 			<ConfirmDialog />
 		</div>
 	);

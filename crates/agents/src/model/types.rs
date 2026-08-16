@@ -71,13 +71,48 @@ pub const TOOL_CALL_METADATA_KEYS: &[&str] = &["thought_signature"];
 
 #[derive(Debug, Clone, Default)]
 pub struct Usage {
+    /// Fresh input tokens, excluding cache reads and cache writes.
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_write_tokens: u32,
 }
 
+/// Provider-reported input-token accounting semantics.
+///
+/// OpenAI-style APIs report cached tokens as part of their input total, while
+/// Anthropic reports fresh input, cache reads, and cache writes separately.
+/// Provider adapters must identify which contract they received so `Usage`
+/// always exposes mutually exclusive buckets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputTokenAccounting {
+    Inclusive,
+    Exclusive,
+}
+
 impl Usage {
+    #[must_use]
+    pub const fn from_input_tokens(
+        accounting: InputTokenAccounting,
+        reported_input_tokens: u32,
+        output_tokens: u32,
+        cache_read_tokens: u32,
+        cache_write_tokens: u32,
+    ) -> Self {
+        let input_tokens = match accounting {
+            InputTokenAccounting::Inclusive => reported_input_tokens
+                .saturating_sub(cache_read_tokens)
+                .saturating_sub(cache_write_tokens),
+            InputTokenAccounting::Exclusive => reported_input_tokens,
+        };
+        Self {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+        }
+    }
+
     #[must_use]
     pub fn saturating_add(&self, other: &Self) -> Self {
         Self {

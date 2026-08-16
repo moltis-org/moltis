@@ -21,6 +21,155 @@ use crate::{
 
 use super::{TelegramOutbound, retry::RequestResultExt};
 
+impl TelegramOutbound {
+    /// Send raw HTML chunks, returning every message id they produced.
+    async fn send_html_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let bot = self.get_bot(account_id)?;
+        let (chat_id, thread_id) = parse_chat_target(to)?;
+        let rp = self.reply_params(account_id, reply_to);
+
+        // Send raw HTML chunks without markdown conversion.
+        let chunks = markdown::chunk_message(html, TELEGRAM_MAX_MESSAGE_LEN);
+        let mut ids = Vec::with_capacity(chunks.len());
+        for chunk in &chunks {
+            let id = self
+                .send_chunk_with_fallback(
+                    &bot,
+                    account_id,
+                    to,
+                    chat_id,
+                    thread_id,
+                    chunk,
+                    rp.as_ref(),
+                    false,
+                )
+                .await?;
+            ids.push(id.0.to_string());
+        }
+        Ok(ids)
+    }
+
+    /// Send `text` with `suffix_html` appended, returning every message id it
+    /// produced.
+    ///
+    /// Shared by both trait entry points so the chunking and suffix-overflow
+    /// rules exist once; the non-reporting one simply discards the ids.
+    async fn send_text_with_suffix_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let bot = self.get_bot(account_id)?;
+        let (chat_id, thread_id) = parse_chat_target(to)?;
+        let rp = self.reply_params(account_id, reply_to);
+
+        // Send typing indicator
+        let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+
+        // Append the pre-formatted suffix (e.g. activity logbook) to the last chunk.
+        let chunks = markdown::chunk_markdown_html(text, TELEGRAM_MAX_MESSAGE_LEN);
+        let last_idx = chunks.len().saturating_sub(1);
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            text_len = text.len(),
+            suffix_len = suffix_html.len(),
+            chunk_count = chunks.len(),
+            "telegram outbound text+suffix send start"
+        );
+
+        let mut ids = Vec::with_capacity(chunks.len());
+        for (i, chunk) in chunks.iter().enumerate() {
+            let content = if i == last_idx {
+                // Append suffix to the last chunk. If it would exceed the limit,
+                // the suffix becomes a separate final message.
+                let combined = format!("{chunk}\n\n{suffix_html}");
+                if combined.len() <= TELEGRAM_MAX_MESSAGE_LEN {
+                    combined
+                } else {
+                    // Send this chunk first, then the suffix as a separate message.
+                    let id = self
+                        .send_chunk_with_fallback(
+                            &bot,
+                            account_id,
+                            to,
+                            chat_id,
+                            thread_id,
+                            chunk,
+                            rp.as_ref(),
+                            false,
+                        )
+                        .await?;
+                    ids.push(id.0.to_string());
+                    // Send suffix as the final message (no reply threading).
+                    let suffix_id = self
+                        .send_chunk_with_fallback(
+                            &bot,
+                            account_id,
+                            to,
+                            chat_id,
+                            thread_id,
+                            suffix_html,
+                            rp.as_ref(),
+                            true,
+                        )
+                        .await?;
+                    // A reader rating "the bot's answer" may land on the
+                    // logbook, and it maps back to the same turn, so linking it
+                    // recovers a score that would otherwise be dropped.
+                    ids.push(suffix_id.0.to_string());
+                    info!(
+                        account_id,
+                        chat_id = to,
+                        reply_to = ?reply_to,
+                        text_len = text.len(),
+                        suffix_len = suffix_html.len(),
+                        chunk_count = chunks.len(),
+                        "telegram outbound text+suffix sent (separate suffix message)"
+                    );
+                    return Ok(ids);
+                }
+            } else {
+                chunk.clone()
+            };
+            let id = self
+                .send_chunk_with_fallback(
+                    &bot,
+                    account_id,
+                    to,
+                    chat_id,
+                    thread_id,
+                    &content,
+                    rp.as_ref(),
+                    false,
+                )
+                .await?;
+            ids.push(id.0.to_string());
+        }
+
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            text_len = text.len(),
+            suffix_len = suffix_html.len(),
+            chunk_count = chunks.len(),
+            "telegram outbound text+suffix sent"
+        );
+        Ok(ids)
+    }
+}
+
 #[async_trait]
 impl ChannelOutbound for TelegramOutbound {
     async fn send_text(
@@ -73,6 +222,49 @@ impl ChannelOutbound for TelegramOutbound {
         Ok(())
     }
 
+    /// Telegram splits long replies into several messages, so every chunk id
+    /// is reported: a reader may react to any of them.
+    async fn send_text_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let bot = self.get_bot(account_id)?;
+        let (chat_id, thread_id) = parse_chat_target(to)?;
+        let rp = self.reply_params(account_id, reply_to);
+
+        let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+
+        let chunks = markdown::chunk_markdown_html(text, TELEGRAM_MAX_MESSAGE_LEN);
+        let mut ids = Vec::with_capacity(chunks.len());
+        for chunk in chunks.iter() {
+            let reply_params = rp.as_ref();
+            let id = self
+                .send_chunk_with_fallback(
+                    &bot,
+                    account_id,
+                    to,
+                    chat_id,
+                    thread_id,
+                    chunk,
+                    reply_params,
+                    false,
+                )
+                .await?;
+            ids.push(id.0.to_string());
+        }
+
+        info!(
+            account_id,
+            chat_id = to,
+            chunk_count = ids.len(),
+            "telegram outbound text sent with ids"
+        );
+        Ok(ids)
+    }
+
     async fn send_text_with_suffix(
         &self,
         account_id: &str,
@@ -81,95 +273,21 @@ impl ChannelOutbound for TelegramOutbound {
         suffix_html: &str,
         reply_to: Option<&str>,
     ) -> Result<()> {
-        let bot = self.get_bot(account_id)?;
-        let (chat_id, thread_id) = parse_chat_target(to)?;
-        let rp = self.reply_params(account_id, reply_to);
-
-        // Send typing indicator
-        let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
-
-        // Append the pre-formatted suffix (e.g. activity logbook) to the last chunk.
-        let chunks = markdown::chunk_markdown_html(text, TELEGRAM_MAX_MESSAGE_LEN);
-        let last_idx = chunks.len().saturating_sub(1);
-        info!(
-            account_id,
-            chat_id = to,
-            reply_to = ?reply_to,
-            text_len = text.len(),
-            suffix_len = suffix_html.len(),
-            chunk_count = chunks.len(),
-            "telegram outbound text+suffix send start"
-        );
-
-        for (i, chunk) in chunks.iter().enumerate() {
-            let content = if i == last_idx {
-                // Append suffix to the last chunk. If it would exceed the limit,
-                // the suffix becomes a separate final message.
-                let combined = format!("{chunk}\n\n{suffix_html}");
-                if combined.len() <= TELEGRAM_MAX_MESSAGE_LEN {
-                    combined
-                } else {
-                    // Send this chunk first, then the suffix as a separate message.
-                    self.send_chunk_with_fallback(
-                        &bot,
-                        account_id,
-                        to,
-                        chat_id,
-                        thread_id,
-                        chunk,
-                        rp.as_ref(),
-                        false,
-                    )
-                    .await?;
-                    // Send suffix as the final message (no reply threading).
-                    self.send_chunk_with_fallback(
-                        &bot,
-                        account_id,
-                        to,
-                        chat_id,
-                        thread_id,
-                        suffix_html,
-                        rp.as_ref(),
-                        true,
-                    )
-                    .await?;
-                    info!(
-                        account_id,
-                        chat_id = to,
-                        reply_to = ?reply_to,
-                        text_len = text.len(),
-                        suffix_len = suffix_html.len(),
-                        chunk_count = chunks.len(),
-                        "telegram outbound text+suffix sent (separate suffix message)"
-                    );
-                    return Ok(());
-                }
-            } else {
-                chunk.clone()
-            };
-            self.send_chunk_with_fallback(
-                &bot,
-                account_id,
-                to,
-                chat_id,
-                thread_id,
-                &content,
-                rp.as_ref(),
-                false,
-            )
+        self.send_text_with_suffix_ids(account_id, to, text, suffix_html, reply_to)
             .await?;
-        }
-
-        info!(
-            account_id,
-            chat_id = to,
-            reply_to = ?reply_to,
-            text_len = text.len(),
-            suffix_len = suffix_html.len(),
-            chunk_count = chunks.len(),
-            "telegram outbound text+suffix sent"
-        );
         Ok(())
+    }
+
+    async fn send_text_with_suffix_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_text_with_suffix_ids(account_id, to, text, suffix_html, reply_to)
+            .await
     }
 
     async fn send_html(
@@ -179,26 +297,18 @@ impl ChannelOutbound for TelegramOutbound {
         html: &str,
         reply_to: Option<&str>,
     ) -> Result<()> {
-        let bot = self.get_bot(account_id)?;
-        let (chat_id, thread_id) = parse_chat_target(to)?;
-        let rp = self.reply_params(account_id, reply_to);
-
-        // Send raw HTML chunks without markdown conversion.
-        let chunks = markdown::chunk_message(html, TELEGRAM_MAX_MESSAGE_LEN);
-        for chunk in &chunks {
-            self.send_chunk_with_fallback(
-                &bot,
-                account_id,
-                to,
-                chat_id,
-                thread_id,
-                chunk,
-                rp.as_ref(),
-                false,
-            )
-            .await?;
-        }
+        self.send_html_ids(account_id, to, html, reply_to).await?;
         Ok(())
+    }
+
+    async fn send_html_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_html_ids(account_id, to, html, reply_to).await
     }
 
     async fn send_typing(&self, account_id: &str, to: &str) -> Result<()> {
@@ -266,6 +376,16 @@ impl ChannelOutbound for TelegramOutbound {
         reply_to: Option<&str>,
     ) -> Result<()> {
         super::media::send_media_impl(self, account_id, to, payload, reply_to).await
+    }
+
+    async fn send_media_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        payload: &ReplyPayload,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        super::media::send_media_reporting_ids_impl(self, account_id, to, payload, reply_to).await
     }
 
     async fn send_location(

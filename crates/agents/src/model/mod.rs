@@ -5,8 +5,8 @@ pub use moltis_config::schema::{AgentToolControls, ReasoningEffort, ToolChoice};
 
 mod types;
 pub use types::{
-    CompletionResponse, MAX_CAPTURED_PROVIDER_RAW_EVENTS, ModelMetadata, TOOL_CALL_METADATA_KEYS,
-    ToolCall, ToolCallArgumentDiagnostic, ToolCallArgumentSource, Usage,
+    CompletionResponse, InputTokenAccounting, MAX_CAPTURED_PROVIDER_RAW_EVENTS, ModelMetadata,
+    TOOL_CALL_METADATA_KEYS, ToolCall, ToolCallArgumentDiagnostic, ToolCallArgumentSource, Usage,
     push_capped_provider_raw_event,
 };
 
@@ -20,7 +20,9 @@ pub use convert::{
 };
 
 mod stream;
-pub use stream::{LlmProvider, StreamEvent};
+pub use stream::{
+    LlmProvider, ProviderAttemptEvent, ProviderIdentity, StreamEvent, TrackedStreamEvent,
+};
 
 #[cfg(test)]
 fn document_absolute_path_from_media_ref(media_ref: &str) -> String {
@@ -240,6 +242,24 @@ mod tests {
         assert_eq!(total.output_tokens, 22);
         assert_eq!(total.cache_read_tokens, 33);
         assert_eq!(total.cache_write_tokens, 44);
+    }
+
+    #[test]
+    fn usage_normalizes_inclusive_input_into_exclusive_buckets() {
+        let usage = Usage::from_input_tokens(InputTokenAccounting::Inclusive, 1_000, 50, 800, 20);
+
+        assert_eq!(usage.input_tokens, 180);
+        assert_eq!(usage.cache_read_tokens, 800);
+        assert_eq!(usage.cache_write_tokens, 20);
+    }
+
+    #[test]
+    fn usage_preserves_anthropic_exclusive_input() {
+        let usage = Usage::from_input_tokens(InputTokenAccounting::Exclusive, 180, 50, 800, 20);
+
+        assert_eq!(usage.input_tokens, 180);
+        assert_eq!(usage.cache_read_tokens, 800);
+        assert_eq!(usage.cache_write_tokens, 20);
     }
 
     // ── to_openai_value ──────────────────────────────────────────────

@@ -54,15 +54,21 @@ export function TextField({
 		<div className={className ?? "mb-3"}>
 			<label htmlFor={fieldId} className="block text-xs text-[var(--muted)] mb-1">
 				{label}
-				{required && <span className="text-[var(--error)] ml-0.5">*</span>}
+				{required && (
+					<span className="text-[var(--error)] ml-0.5" aria-hidden="true">
+						*
+					</span>
+				)}
 			</label>
 			<input
 				id={fieldId}
+				aria-label={label}
 				type={type}
 				value={value}
 				onInput={(e) => onInput(targetValue(e))}
 				placeholder={placeholder}
 				disabled={disabled}
+				required={required}
 				autoComplete={autoComplete}
 				className={inputCls}
 			/>
@@ -82,6 +88,7 @@ interface TextAreaFieldProps {
 	placeholder?: string;
 	help?: string;
 	disabled?: boolean;
+	required?: boolean;
 	rows?: number;
 	className?: string;
 	monospace?: boolean;
@@ -95,6 +102,7 @@ export function TextAreaField({
 	placeholder,
 	help,
 	disabled,
+	required,
 	rows = 3,
 	className,
 	monospace,
@@ -111,13 +119,20 @@ export function TextAreaField({
 		<div className={className ?? "mb-3"}>
 			<label htmlFor={fieldId} className="block text-xs text-[var(--muted)] mb-1">
 				{label}
+				{required && (
+					<span className="text-[var(--error)] ml-0.5" aria-hidden="true">
+						*
+					</span>
+				)}
 			</label>
 			<textarea
 				id={fieldId}
+				aria-label={label}
 				value={value}
 				onInput={(e) => onInput(targetValue(e))}
 				placeholder={placeholder}
 				disabled={disabled}
+				required={required}
 				rows={rows}
 				className={textCls}
 			/>

@@ -25,6 +25,12 @@ pub mod channel_webhook_middleware;
 pub mod channel_webhook_rate_limit;
 pub mod chat;
 pub mod chat_error;
+#[cfg(feature = "connectors")]
+pub mod connector_agent_tools;
+#[cfg(feature = "connectors")]
+pub mod connectors;
+#[cfg(feature = "connectors")]
+mod connectors_planner;
 pub mod cron;
 pub mod external_agents;
 #[cfg(feature = "local-llm")]
@@ -59,6 +65,7 @@ pub mod state;
 pub mod tailscale;
 #[cfg(feature = "msteams")]
 pub mod teams_agent_tools;
+pub mod trace_link_store;
 pub mod tts_phrases;
 pub mod update_check;
 pub mod updater;

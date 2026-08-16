@@ -10,12 +10,12 @@ use crate::{
     openai_compat::{
         normalize_tool_call_arguments_from_schemas, parse_openai_compat_usage_from_payload,
         parse_tool_calls, split_responses_instructions_and_input, strip_think_tags,
-        to_responses_api_tools,
     },
 };
 
 use moltis_agents::model::{
-    AgentToolControls, ChatMessage, CompletionResponse, Usage, decode_tool_call_arguments_from_str,
+    AgentToolControls, ChatMessage, CompletionResponse, InputTokenAccounting, Usage,
+    decode_tool_call_arguments_from_str,
 };
 
 use {
@@ -414,19 +414,7 @@ impl OpenAiProvider {
         tools: &[serde_json::Value],
         options: &AgentToolControls,
     ) -> anyhow::Result<CompletionResponse> {
-        let (instructions, input) = split_responses_instructions_and_input(messages.to_vec());
-        let mut body = serde_json::json!({
-            "model": self.model,
-            "input": input,
-            "stream": true,
-        });
-        if let Some(instructions) = instructions {
-            body["instructions"] = serde_json::Value::String(instructions);
-        }
-        if !tools.is_empty() {
-            body["tools"] = serde_json::Value::Array(to_responses_api_tools(tools));
-        }
-        super::core::apply_openai_responses_tool_choice(&mut body, options)?;
+        let body = self.prepare_responses_sse_body(messages.to_vec(), tools, options)?;
 
         debug!(
             model = %self.model,
@@ -565,12 +553,13 @@ impl OpenAiProvider {
         Ok(CompletionResponse {
             text,
             tool_calls,
-            usage: Usage {
+            usage: Usage::from_input_tokens(
+                InputTokenAccounting::Inclusive,
                 input_tokens,
                 output_tokens,
                 cache_read_tokens,
                 cache_write_tokens,
-            },
+            ),
         })
     }
 }

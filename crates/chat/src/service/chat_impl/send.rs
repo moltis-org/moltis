@@ -71,6 +71,41 @@ impl LiveChatService {
 
         // Resolve session key from explicit overrides, public request params, or connection context.
         let session_key = self.resolve_session_key_from_params(&params).await;
+        // Use exactly the gateway/runner predicate so authorized `/sh` forms
+        // cannot fall through into a less restricted agent turn.
+        let explicit_shell_command = match &message_content {
+            MessageContent::Text(raw) => moltis_agents::runner::explicit_shell_command(raw),
+            MessageContent::Multimodal(_) => None,
+        };
+        let channel_bound_web = self
+            .apply_channel_bound_public_context(&mut params, &session_key)
+            .await?;
+        if channel_bound_web && explicit_shell_command.is_some() {
+            return Err(
+                "shell commands cannot run in a channel-bound web session; switch sessions first"
+                    .into(),
+            );
+        }
+
+        // Resolve request restrictions after channel binding, which can only
+        // narrow caller-supplied policy and private-context access.
+        let request_tool_policy = if channel_bound_web {
+            tool_policy::parse_request_tool_policy(&params)?
+        } else {
+            request_tool_policy
+        };
+        let request_tool_audience = tool_policy::parse_request_tool_audience(&params)?;
+        let private_context = tool_policy::allows_private_context(&params);
+        if !private_context {
+            public_context::mark_public_channel(&mut params);
+        }
+        let request_tool_registry = tool_policy::resolve_request_tool_registry(
+            &self.tool_registry,
+            request_tool_policy.as_ref(),
+            request_tool_audience,
+        )
+        .await;
+
         let queued_replay = params
             .get("_queued_replay")
             .and_then(|v| v.as_bool())
@@ -138,13 +173,16 @@ impl LiveChatService {
             "chat.send: received"
         );
 
-        // Decide whether this turn can run before doing provider lookup, prompt
-        // construction, hook dispatch, or other I/O. If a run already owns the
-        // session, queue immediately instead of letting a follow-up request
-        // contend with the active run's locks.
         let message_queue_mode = self.config.chat.message_queue_mode;
-        let admission = if queue_if_busy {
-            self.admit_turn(&session_key, params.clone(), queued_replay)
+        let admission = if queue_if_busy && explicit_shell_command.is_none() {
+            let mut queued_params = params.clone();
+            // Delayed channel turns cannot retain authorization that may be
+            // revoked before replay. The original params remain available if
+            // admission succeeds immediately.
+            if tool_policy::downgrade_queued_channel_request(&mut queued_params, private_context) {
+                public_context::mark_public_channel(&mut queued_params);
+            }
+            self.admit_turn(&session_key, queued_params, queued_replay)
                 .await
         } else {
             let session_sem = self.session_semaphore(&session_key).await;
@@ -153,11 +191,21 @@ impl LiveChatService {
                 .get(&session_key)
                 .is_some_and(|queue| queue.draining || !queue.messages.is_empty())
             {
-                return Err("session already has an active turn".into());
+                return Err(if explicit_shell_command.is_some() {
+                    "shell commands cannot be queued; retry when the active run finishes".into()
+                } else {
+                    "session already has an active turn".into()
+                });
             }
             let permit = match session_sem.try_acquire_owned() {
                 Ok(permit) => permit,
-                Err(_) => return Err("session already has an active turn".into()),
+                Err(_) => {
+                    return Err(if explicit_shell_command.is_some() {
+                        "shell commands cannot be queued; retry when the active run finishes".into()
+                    } else {
+                        "session already has an active turn".into()
+                    });
+                },
             };
             drop(queues);
             TurnAdmission::Acquired(permit)
@@ -170,7 +218,6 @@ impl LiveChatService {
                     queued_replay,
                     "chat.send: acquired session permit"
                 );
-                // This call owns the session and will execute: claim its acks.
                 self.state
                     .activate_channel_acks(&run_id, &session_key, ack_keys.clone())
                     .await;
@@ -206,11 +253,6 @@ impl LiveChatService {
             },
         };
 
-        let explicit_shell_command = match &message_content {
-            MessageContent::Text(raw) => parse_explicit_shell_command(raw).map(str::to_string),
-            MessageContent::Multimodal(_) => None,
-        };
-
         if let Some(shell_command) = explicit_shell_command {
             if request_tool_policy
                 .as_ref()
@@ -220,7 +262,6 @@ impl LiveChatService {
                     .await;
                 return Err("exec tool is denied by the request tool policy".into());
             }
-            // Generate run_id early so we can link the user message to this run.
             let run_id_clone = run_id.clone();
             let channel_meta = params.get("channel").cloned();
             let user_audio = user_audio_path_from_params(&params, &session_key);
@@ -256,46 +297,11 @@ impl LiveChatService {
                     .await;
             }
 
-            // If this is a web UI message on a channel-bound session, attach the
-            // channel reply target so /sh output can be delivered back to the channel.
-            let is_web_message = conn_id.is_some()
-                && params.get("_session_key").is_none()
-                && params.get("channel").is_none();
-
-            if is_web_message
-                && let Some(entry) = self.session_metadata.get(&session_key).await
-                && let Some(ref binding_json) = entry.channel_binding
-                && let Ok(target) =
-                    serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding_json)
-            {
-                let is_active = self
-                    .session_metadata
-                    .get_active_session(
-                        target.channel_type.as_str(),
-                        &target.account_id,
-                        &target.chat_id,
-                        target.thread_id.as_deref(),
-                    )
-                    .await
-                    .map(|k| k == session_key)
-                    .unwrap_or(true);
-
-                if is_active {
-                    match serde_json::to_value(&target) {
-                        Ok(target_val) => {
-                            params[crate::params::CHANNEL_REPLY_TARGET] = target_val;
-                        },
-                        Err(e) => {
-                            warn!(
-                                session = %session_key,
-                                error = %e,
-                                "failed to serialize channel reply target for /sh"
-                            );
-                        },
-                    }
-                }
-            }
-
+            // `/sh` reaching this point can only be a native channel turn the
+            // gateway authorized, so its reply target is already in `params`.
+            // Web turns on a channel-bound session were rejected above, and
+            // `apply_channel_bound_public_context` is what derives a target from
+            // the session's binding for every other request.
             let deferred_channel_target = params
                 .get(crate::params::CHANNEL_REPLY_TARGET)
                 .cloned()
@@ -356,7 +362,7 @@ impl LiveChatService {
             let terminal_runs = Arc::clone(&self.terminal_runs);
             let session_store = Arc::clone(&self.session_store);
             let session_metadata = Arc::clone(&self.session_metadata);
-            let tool_registry = Arc::clone(&self.tool_registry);
+            let tool_registry = Arc::clone(&request_tool_registry);
             let session_key_clone = session_key.clone();
             let message_queue = Arc::clone(&self.message_queue);
             let state_for_drain = Arc::clone(&self.state);
@@ -587,9 +593,12 @@ impl LiveChatService {
         }
 
         // Resolve project context plus optional command-generated context.
-        let (project_context, working_dir) = self
-            .resolve_turn_context(&session_key, conn_id.as_deref())
-            .await;
+        let (project_context, working_dir) = if private_context {
+            self.resolve_turn_context(&session_key, conn_id.as_deref())
+                .await
+        } else {
+            (None, None)
+        };
 
         // Load conversation history (the current user message is NOT yet
         // persisted — run_streaming / run_agent_loop add it themselves).
@@ -601,6 +610,10 @@ impl LiveChatService {
                 return Err(error);
             },
         };
+        let persisted_history_len = history.len();
+        if !private_context {
+            history = public_context::filter_public_history(history);
+        }
         info!(
             session = %session_key,
             history_len = history.len(),
@@ -612,50 +625,8 @@ impl LiveChatService {
         if !ephemeral {
             let _ = self.session_metadata.upsert(&session_key, None).await;
             self.session_metadata
-                .touch(&session_key, history.len() as u32)
+                .touch(&session_key, persisted_history_len as u32)
                 .await;
-        }
-
-        // If this is a web UI message on a channel-bound session, attach the
-        // channel reply target so the run-start path can route the final
-        // response back to the channel.
-        let is_web_message = conn_id.is_some()
-            && params.get("_session_key").is_none()
-            && params.get("channel").is_none();
-
-        if is_web_message
-            && let Some(entry) = self.session_metadata.get(&session_key).await
-            && let Some(ref binding_json) = entry.channel_binding
-            && let Ok(target) =
-                serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding_json)
-        {
-            // Only echo to channel if this is the active session for this chat.
-            let is_active = self
-                .session_metadata
-                .get_active_session(
-                    target.channel_type.as_str(),
-                    &target.account_id,
-                    &target.chat_id,
-                    target.thread_id.as_deref(),
-                )
-                .await
-                .map(|k| k == session_key)
-                .unwrap_or(true);
-
-            if is_active {
-                match serde_json::to_value(&target) {
-                    Ok(target_val) => {
-                        params[crate::params::CHANNEL_REPLY_TARGET] = target_val;
-                    },
-                    Err(e) => {
-                        warn!(
-                            session = %session_key,
-                            error = %e,
-                            "failed to serialize channel reply target"
-                        );
-                    },
-                }
-            }
         }
 
         let deferred_channel_target = params
@@ -919,17 +890,15 @@ impl LiveChatService {
             let mut combined = self.tool_registry.read().await.clone_allowed_by(|_| true);
             let overlay = overlay.read().await;
             combined.extend_from(&overlay);
-            Arc::new(tokio::sync::RwLock::new(combined))
+            let combined = Arc::new(tokio::sync::RwLock::new(combined));
+            tool_policy::resolve_request_tool_registry(
+                &combined,
+                request_tool_policy.as_ref(),
+                request_tool_audience,
+            )
+            .await
         } else {
-            Arc::clone(&self.tool_registry)
-        };
-        let tool_registry = if let Some(policy) = request_tool_policy.as_ref() {
-            let registry = tool_registry.read().await;
-            Arc::new(tokio::sync::RwLock::new(
-                registry.clone_allowed_by(|name| policy.is_allowed(name)),
-            ))
-        } else {
-            tool_registry
+            Arc::clone(&request_tool_registry)
         };
         let hook_registry = self.hook_registry.clone();
 
@@ -957,7 +926,7 @@ impl LiveChatService {
 
         // Capture user message index (0-based) so we can include assistant
         // message index in the "final" broadcast for client-side deduplication.
-        let user_message_index = history.len(); // user msg is at this index in the JSONL
+        let user_message_index = persisted_history_len; // user msg is at this index in the JSONL
 
         let provider_name = provider.name().to_string();
         let model_id = provider.id().to_string();
@@ -997,7 +966,7 @@ impl LiveChatService {
         let compact_threshold =
             compute_auto_compact_threshold(context_window, compaction_cfg.threshold_percent);
 
-        if !ephemeral && estimated_next_input >= compact_threshold {
+        if private_context && !ephemeral && estimated_next_input >= compact_threshold {
             let pre_compact_msg_count = history.len();
             let pre_compact_total = token_usage
                 .current_request_input_tokens
@@ -1217,6 +1186,7 @@ impl LiveChatService {
                         client_seq,
                         (!ephemeral).then(|| Arc::clone(&active_partial_assistant)),
                         &terminal_runs,
+                        private_context,
                     )
                     .await
                 } else {
@@ -1251,6 +1221,7 @@ impl LiveChatService {
                         &terminal_runs,
                         sender_name,
                         Some(tool_controls),
+                        private_context,
                     )
                     .await
                 }
@@ -1338,6 +1309,14 @@ impl LiveChatService {
                         {
                             warn!("failed to persist assistant message: {e}");
                         }
+                        if !ephemeral {
+                            crate::channel_feedback::record_web_reply_trace(
+                                &state,
+                                &session_key_clone,
+                                &run_id_clone,
+                            )
+                            .await;
+                        }
                         crate::channel_acks::note_turn_finished(&state, &run_id_clone, true).await;
                     },
                     async {
@@ -1361,7 +1340,8 @@ impl LiveChatService {
                     let max_tool_result_bytes = extraction_max_tool_result_bytes;
                     // A "turn" = user + assistant = 2 messages.
                     let turn_number = count / 2;
-                    if interval > 0
+                    if private_context
+                        && interval > 0
                         && turn_number > 0
                         && turn_number % interval == 0
                         && !stream_only
@@ -1430,7 +1410,8 @@ impl LiveChatService {
             // generation. We check >= 2 (not == 2) because agentic turns
             // with tool calls produce more than 2 stored messages.
             // `generate_title_if_needed` guards against duplicate titles.
-            if !ephemeral
+            if private_context
+                && !ephemeral
                 && auto_title_enabled
                 && let Ok(count) = session_store.count(&session_key_clone).await
                 && count >= 2

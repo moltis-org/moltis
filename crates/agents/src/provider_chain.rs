@@ -14,12 +14,19 @@ use std::{
     time::{Duration, Instant},
 };
 
-use {async_trait::async_trait, tokio_stream::Stream, tracing::warn};
+use {
+    async_trait::async_trait,
+    tokio_stream::{Stream, StreamExt},
+    tracing::warn,
+};
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, histogram, labels, llm as llm_metrics};
 
-use crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent};
+use crate::model::{
+    AgentToolControls, ChatMessage, CompletionResponse, LlmProvider, ProviderAttemptEvent,
+    ProviderIdentity, StreamEvent, TrackedStreamEvent,
+};
 
 /// How a provider error should be handled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,6 +219,99 @@ impl ProviderChain {
     fn primary(&self) -> &ChainEntry {
         &self.chain[0]
     }
+
+    fn failover_stream(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+        options: AgentToolControls,
+    ) -> Pin<Box<dyn Stream<Item = TrackedStreamEvent> + Send + '_>> {
+        Box::pin(async_stream::stream! {
+            let mut errors = Vec::new();
+            let force_primary = self.chain.iter().all(|entry| entry.state.is_tripped());
+
+            for (index, entry) in self.chain.iter().enumerate() {
+                if entry.state.is_tripped() && !(force_primary && index == 0) {
+                    continue;
+                }
+
+                let identity = ProviderIdentity::new(entry.provider.name(), entry.provider.id());
+                yield TrackedStreamEvent::Attempt(ProviderAttemptEvent::Started(
+                    identity.clone(),
+                ));
+
+                let mut stream = entry.provider.stream_with_tools_and_options(
+                    messages.clone(),
+                    tools.clone(),
+                    options.clone(),
+                );
+                let mut emitted_output = false;
+                let mut retry_next = false;
+
+                while let Some(event) = stream.next().await {
+                    match event {
+                        StreamEvent::Error(error) => {
+                            let anyhow_error = anyhow::anyhow!(error.clone());
+                            let kind = classify_error(&anyhow_error);
+                            entry.state.record_failure();
+                            yield TrackedStreamEvent::Attempt(ProviderAttemptEvent::Failed {
+                                identity: identity.clone(),
+                                error: error.clone(),
+                            });
+
+                            if kind.should_failover() && !emitted_output {
+                                warn!(
+                                    provider = entry.provider.id(),
+                                    error = %error,
+                                    kind = ?kind,
+                                    "provider stream failed, trying next in chain"
+                                );
+                                errors.push(format!("{}: {error}", entry.provider.id()));
+                                retry_next = true;
+                                break;
+                            }
+
+                            yield TrackedStreamEvent::Event(StreamEvent::Error(error));
+                            return;
+                        },
+                        StreamEvent::Done(usage) => {
+                            entry.state.record_success();
+                            yield TrackedStreamEvent::Event(StreamEvent::Done(usage));
+                            return;
+                        },
+                        StreamEvent::ProviderRaw(raw) => {
+                            yield TrackedStreamEvent::Event(StreamEvent::ProviderRaw(raw));
+                        },
+                        event => {
+                            emitted_output = true;
+                            yield TrackedStreamEvent::Event(event);
+                        },
+                    }
+                }
+
+                if retry_next {
+                    continue;
+                }
+
+                let error = "provider stream ended without a terminal event".to_string();
+                entry.state.record_failure();
+                yield TrackedStreamEvent::Attempt(ProviderAttemptEvent::Failed {
+                    identity: identity.clone(),
+                    error: error.clone(),
+                });
+                if emitted_output {
+                    yield TrackedStreamEvent::Event(StreamEvent::Error(error));
+                    return;
+                }
+                errors.push(format!("{}: {error}", entry.provider.id()));
+            }
+
+            yield TrackedStreamEvent::Event(StreamEvent::Error(format!(
+                "all providers in failover chain failed: {}",
+                errors.join("; ")
+            )));
+        })
+    }
 }
 
 #[async_trait]
@@ -237,19 +337,46 @@ impl LlmProvider for ProviderChain {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
+        self.complete_with_options(messages, tools, &AgentToolControls::default())
+            .await
+    }
+
+    async fn complete_with_options(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        options: &AgentToolControls,
+    ) -> anyhow::Result<CompletionResponse> {
+        let mut ignore_attempt = |_: ProviderAttemptEvent| {};
+        self.complete_with_options_tracked(messages, tools, options, &mut ignore_attempt)
+            .await
+    }
+
+    async fn complete_with_options_tracked(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        options: &AgentToolControls,
+        on_attempt: &mut (dyn FnMut(ProviderAttemptEvent) + Send),
+    ) -> anyhow::Result<CompletionResponse> {
         let mut errors = Vec::new();
+        let force_primary = self.chain.iter().all(|entry| entry.state.is_tripped());
         #[cfg(feature = "metrics")]
         let start = Instant::now();
 
-        for entry in &self.chain {
-            if entry.state.is_tripped() {
+        for (index, entry) in self.chain.iter().enumerate() {
+            if entry.state.is_tripped() && !(force_primary && index == 0) {
                 continue;
             }
 
             let provider_name = entry.provider.name().to_string();
             let model_id = entry.provider.id().to_string();
 
-            match entry.provider.complete(messages, tools).await {
+            match entry
+                .provider
+                .complete_with_options_tracked(messages, tools, options, on_attempt)
+                .await
+            {
                 Ok(resp) => {
                     entry.state.record_success();
 
@@ -353,16 +480,37 @@ impl LlmProvider for ProviderChain {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-        // For streaming, we try the first non-tripped provider.
-        // If the stream yields an Error event, we can't transparently retry mid-stream,
-        // so we pick the best available provider upfront.
-        for entry in &self.chain {
-            if !entry.state.is_tripped() {
-                return entry.provider.stream_with_tools(messages, tools);
-            }
-        }
-        // All tripped — try primary anyway (it may have cooled down by now).
-        self.primary().provider.stream_with_tools(messages, tools)
+        Box::pin(
+            self.failover_stream(messages, tools, AgentToolControls::default())
+                .filter_map(|event| match event {
+                    TrackedStreamEvent::Attempt(_) => None,
+                    TrackedStreamEvent::Event(event) => Some(event),
+                }),
+        )
+    }
+
+    fn stream_with_tools_and_options(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+        options: AgentToolControls,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        Box::pin(
+            self.failover_stream(messages, tools, options)
+                .filter_map(|event| match event {
+                    TrackedStreamEvent::Attempt(_) => None,
+                    TrackedStreamEvent::Event(event) => Some(event),
+                }),
+        )
+    }
+
+    fn stream_with_tools_and_options_tracked(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+        options: AgentToolControls,
+    ) -> Pin<Box<dyn Stream<Item = TrackedStreamEvent> + Send + '_>> {
+        self.failover_stream(messages, tools, options)
     }
 }
 
@@ -453,6 +601,34 @@ mod tests {
         }
     }
 
+    struct EmptyStreamProvider;
+
+    #[async_trait]
+    impl LlmProvider for EmptyStreamProvider {
+        fn name(&self) -> &str {
+            "empty"
+        }
+
+        fn id(&self) -> &str {
+            "empty"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> anyhow::Result<CompletionResponse> {
+            anyhow::bail!("not used")
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
     #[tokio::test]
     async fn primary_succeeds_no_failover() {
         let chain = ProviderChain::new(vec![
@@ -477,6 +653,38 @@ mod tests {
 
         let resp = chain.complete(&[], &[]).await.unwrap();
         assert_eq!(resp.text.as_deref(), Some("ok"));
+    }
+
+    #[tokio::test]
+    async fn non_streaming_attempts_report_fallback_identity() {
+        let chain = ProviderChain::new(vec![
+            Arc::new(FailingProvider {
+                id: "primary",
+                error_msg: "429 rate limit exceeded",
+            }),
+            Arc::new(SuccessProvider { id: "fallback" }),
+        ]);
+        let mut attempts = Vec::new();
+
+        let response = chain
+            .complete_with_options_tracked(
+                &[],
+                &[],
+                &AgentToolControls::default(),
+                &mut |attempt| attempts.push(attempt),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.text.as_deref(), Some("ok"));
+        assert_eq!(attempts, vec![
+            ProviderAttemptEvent::Started(ProviderIdentity::new("failing", "primary")),
+            ProviderAttemptEvent::Failed {
+                identity: ProviderIdentity::new("failing", "primary"),
+                error: "429 rate limit exceeded".into(),
+            },
+            ProviderAttemptEvent::Started(ProviderIdentity::new("success", "fallback")),
+        ]);
     }
 
     #[tokio::test]
@@ -584,15 +792,140 @@ mod tests {
             Arc::new(SuccessProvider { id: "backup" }),
         ]);
 
-        // Trip the first provider.
+        // Trip the first provider through stream failures.
         for _ in 0..3 {
-            let _ = chain.complete(&[], &[]).await;
+            chain.stream(vec![]).collect::<Vec<_>>().await;
         }
+        assert!(chain.chain[0].state.is_tripped());
 
         // Stream should use backup.
-        let mut stream = chain.stream(vec![]);
+        let mut stream = chain.stream_with_tools_and_options_tracked(
+            vec![],
+            vec![],
+            AgentToolControls::default(),
+        );
         let event = stream.next().await.unwrap();
-        assert!(matches!(event, StreamEvent::Done(_)));
+        assert!(matches!(
+            event,
+            TrackedStreamEvent::Attempt(ProviderAttemptEvent::Started(identity))
+                if identity == ProviderIdentity::new("success", "backup")
+        ));
+        assert!(matches!(
+            stream.next().await,
+            Some(TrackedStreamEvent::Event(StreamEvent::Done(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn stream_error_fails_over_and_records_attempts() {
+        let chain = ProviderChain::new(vec![
+            Arc::new(FailingProvider {
+                id: "primary",
+                error_msg: "503 service unavailable",
+            }),
+            Arc::new(SuccessProvider { id: "fallback" }),
+        ]);
+
+        let events = chain
+            .stream_with_tools_and_options_tracked(vec![], vec![], AgentToolControls::default())
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(matches!(
+            &events[0],
+            TrackedStreamEvent::Attempt(ProviderAttemptEvent::Started(identity))
+                if identity == &ProviderIdentity::new("failing", "primary")
+        ));
+        assert!(matches!(
+            &events[1],
+            TrackedStreamEvent::Attempt(ProviderAttemptEvent::Failed { identity, error })
+                if identity == &ProviderIdentity::new("failing", "primary")
+                    && error == "503 service unavailable"
+        ));
+        assert!(matches!(
+            &events[2],
+            TrackedStreamEvent::Attempt(ProviderAttemptEvent::Started(identity))
+                if identity == &ProviderIdentity::new("success", "fallback")
+        ));
+        assert!(matches!(
+            events[3],
+            TrackedStreamEvent::Event(StreamEvent::Done(_))
+        ));
+        assert_eq!(
+            chain.chain[0]
+                .state
+                .consecutive_failures
+                .load(Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            chain.chain[1]
+                .state
+                .consecutive_failures
+                .load(Ordering::SeqCst),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_stream_fails_over_instead_of_reporting_success() {
+        let chain = ProviderChain::new(vec![
+            Arc::new(EmptyStreamProvider),
+            Arc::new(SuccessProvider { id: "fallback" }),
+        ]);
+
+        let events = chain
+            .stream_with_tools_and_options_tracked(vec![], vec![], AgentToolControls::default())
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            TrackedStreamEvent::Attempt(ProviderAttemptEvent::Failed { identity, error })
+                if identity == &ProviderIdentity::new("empty", "empty")
+                    && error.contains("without a terminal event")
+        )));
+        assert!(matches!(
+            events.last(),
+            Some(TrackedStreamEvent::Event(StreamEvent::Done(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn all_tripped_streaming_chain_still_probes_primary() {
+        let chain = ProviderChain::single(Arc::new(SuccessProvider { id: "primary" }));
+        for _ in 0..3 {
+            chain.chain[0].state.record_failure();
+        }
+        assert!(chain.chain[0].state.is_tripped());
+
+        let events = chain
+            .stream_with_tools_and_options_tracked(vec![], vec![], AgentToolControls::default())
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(matches!(
+            events.first(),
+            Some(TrackedStreamEvent::Attempt(ProviderAttemptEvent::Started(identity)))
+                if identity == &ProviderIdentity::new("success", "primary")
+        ));
+        assert!(matches!(
+            events.last(),
+            Some(TrackedStreamEvent::Event(StreamEvent::Done(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn all_tripped_non_streaming_chain_still_probes_primary() {
+        let chain = ProviderChain::single(Arc::new(SuccessProvider { id: "primary" }));
+        for _ in 0..3 {
+            chain.chain[0].state.record_failure();
+        }
+        assert!(chain.chain[0].state.is_tripped());
+
+        let response = chain.complete(&[], &[]).await.unwrap();
+
+        assert_eq!(response.text.as_deref(), Some("ok"));
     }
 
     #[test]

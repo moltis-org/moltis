@@ -6517,6 +6517,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mail-parser"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4084ec5c2f90b341d0c70990e92a23b128f75ca14fc1dd5edd8fd5c9b417da4d"
+dependencies = [
+ "hashify",
+]
+
+[[package]]
 name = "maplit"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7186,6 +7195,7 @@ dependencies = [
  "moltis-codex-import",
  "moltis-common",
  "moltis-config",
+ "moltis-connectors",
  "moltis-cron",
  "moltis-gateway",
  "moltis-hermes-import",
@@ -7256,6 +7266,7 @@ dependencies = [
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
+ "moltis-observability",
  "moltis-sessions",
  "moltis-skills",
  "reqwest 0.13.2",
@@ -7381,16 +7392,19 @@ dependencies = [
 name = "moltis-channels"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bytes",
  "http 1.4.2",
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
+ "moltis-observability",
  "rand 0.10.1",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tokio-util",
  "tracing",
@@ -7415,6 +7429,7 @@ dependencies = [
  "moltis-config",
  "moltis-memory",
  "moltis-metrics",
+ "moltis-observability",
  "moltis-plugins",
  "moltis-projects",
  "moltis-providers",
@@ -7530,6 +7545,91 @@ dependencies = [
  "toml 0.8.23",
  "toml_edit 0.22.27",
  "tracing",
+]
+
+[[package]]
+name = "moltis-connector-caldav"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "metrics 0.24.3",
+ "moltis-caldav",
+ "moltis-common",
+ "moltis-connectors",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "moltis-connector-gmail"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "futures",
+ "html2text",
+ "metrics 0.24.3",
+ "moltis-agents",
+ "moltis-common",
+ "moltis-connectors",
+ "moltis-oauth",
+ "reqwest 0.13.2",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "moltis-connector-himalaya"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "mail-parser",
+ "metrics 0.24.3",
+ "moltis-agents",
+ "moltis-common",
+ "moltis-connectors",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "which 8.0.2",
+]
+
+[[package]]
+name = "moltis-connectors"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "metrics 0.24.3",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -7664,6 +7764,10 @@ dependencies = [
  "moltis-codex-import",
  "moltis-common",
  "moltis-config",
+ "moltis-connector-caldav",
+ "moltis-connector-gmail",
+ "moltis-connector-himalaya",
+ "moltis-connectors",
  "moltis-cron",
  "moltis-discord",
  "moltis-external-agents",
@@ -7680,6 +7784,7 @@ dependencies = [
  "moltis-network-filter",
  "moltis-nostr",
  "moltis-oauth",
+ "moltis-observability",
  "moltis-onboarding",
  "moltis-openclaw-import",
  "moltis-plugins",
@@ -8082,6 +8187,7 @@ dependencies = [
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
+ "nostr-relay-builder",
  "nostr-sdk",
  "secrecy 0.8.0",
  "serde",
@@ -8115,6 +8221,30 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "moltis-observability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "futures",
+ "moltis-common",
+ "moltis-config",
+ "moltis-metrics",
+ "rand 0.10.1",
+ "reqwest 0.13.2",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wiremock",
 ]
 
 [[package]]
@@ -9062,6 +9192,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ade30de16869618919c6b5efc8258f47b654a98b51541eb77f85e8ec5e3c83a6"
 dependencies = [
  "nostr",
+]
+
+[[package]]
+name = "nostr-relay-builder"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08ed09e8363503c6f464087b530a1f43cf68be6292bd4928b5ea1141b03dc11c"
+dependencies = [
+ "async-utility",
+ "async-wsocket",
+ "atomic-destructor",
+ "hex",
+ "negentropy",
+ "nostr",
+ "nostr-database",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -11831,6 +11978,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13123,6 +13276,7 @@ dependencies = [
  "futures-core",
  "futures-io",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
@@ -13941,6 +14095,7 @@ dependencies = [
  "getrandom 0.4.2",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

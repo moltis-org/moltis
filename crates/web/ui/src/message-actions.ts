@@ -8,6 +8,7 @@
 import { isChatAtBottom, scrollChatToBottom } from "./chat-ui";
 import * as gon from "./gon";
 import { sendRpc } from "./helpers";
+import { buildFeedbackButtons, feedbackStatus } from "./message-feedback";
 import { renderPersistedAudio } from "./message-voice";
 import { copyToClipboard, showToast } from "./ui";
 
@@ -138,6 +139,17 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 		});
 		bar.appendChild(voiceBtn);
 	}
+
+	// ── Feedback thumbs ──────────────────────────────────────
+	// Appended asynchronously: availability depends on whether any backend is
+	// collecting scores, and the action bar must not wait on that check.
+	void feedbackStatus().then((status) => {
+		if (!(status?.enabled && status.instrumentation_active)) return;
+		if (!bar.isConnected) return;
+		const buttons = buildFeedbackButtons({ sessionKey, runId: ctx.runId }, actionButton);
+		if (!buttons) return;
+		for (const button of buttons) bar.appendChild(button);
+	});
 
 	// ── Fork button ──────────────────────────────────────────
 	const forkBtn = actionButton("icon-git-fork", "Fork into new session");

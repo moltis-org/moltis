@@ -18,18 +18,22 @@ const FIREWORKS_KIMI_ROUTER: &str = "accounts/fireworks/routers/kimi-k2p5-turbo"
 
 #[test]
 fn openai_default_base_url_enables_responses_websocket() {
+    let capabilities = openai_builtin_capabilities(false);
     assert_eq!(
-        openai_builtin_capabilities(false).responses_websocket_policy,
+        capabilities.responses_websocket_policy,
         ResponsesWebSocketPolicy::OpenAiPlatform,
     );
+    assert!(capabilities.responses_required_for_reasoning_tools);
 }
 
 #[test]
 fn openai_custom_base_url_disables_responses_websocket() {
+    let capabilities = openai_builtin_capabilities(true);
     assert_eq!(
-        openai_builtin_capabilities(true).responses_websocket_policy,
+        capabilities.responses_websocket_policy,
         ResponsesWebSocketPolicy::Unsupported,
     );
+    assert!(!capabilities.responses_required_for_reasoning_tools);
 }
 
 fn capture_one_json_request() -> anyhow::Result<(String, mpsc::Receiver<anyhow::Result<Value>>)> {

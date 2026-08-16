@@ -149,6 +149,9 @@ async fn deliver_channel_replies_inner(
             Arc::clone(&outbound),
             streamed_targets,
             &logbook_html,
+            state.feedback(),
+            session_key,
+            activity_id,
         )
         .await;
     }
@@ -163,11 +166,11 @@ async fn deliver_channel_replies_inner(
         }
         return;
     }
-    deliver_channel_replies_to_targets(
+    crate::channel_reply_delivery::deliver_channel_replies_to_targets(
         outbound,
         targets,
-        activity_id,
         session_key,
+        activity_id,
         text,
         Arc::clone(state),
         desired_reply_medium,
@@ -179,7 +182,7 @@ async fn deliver_channel_replies_inner(
 
 /// Format buffered status log entries into a Telegram expandable blockquote HTML.
 /// Returns an empty string if there are no entries.
-fn format_logbook_html(entries: &[String]) -> String {
+pub(crate) fn format_logbook_html(entries: &[String]) -> String {
     if entries.is_empty() {
         return String::new();
     }
@@ -200,28 +203,48 @@ async fn send_channel_logbook_follow_up_to_targets(
     outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
     targets: Vec<moltis_channels::ChannelReplyTarget>,
     logbook_html: &str,
+    feedback: Option<Arc<moltis_channels::FeedbackService>>,
+    session_key: &str,
+    trace_correlation_key: &str,
 ) {
     if targets.is_empty() || logbook_html.is_empty() {
         return;
     }
 
     let html = logbook_html.to_string();
+    let session_key = session_key.to_string();
+    let trace_correlation_key = trace_correlation_key.to_string();
     let mut tasks = JoinSet::new();
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let html = html.clone();
+        let feedback = feedback.clone();
+        let session_key = session_key.clone();
+        let trace_correlation_key = trace_correlation_key.clone();
         let to = target.outbound_to().into_owned();
         tasks.spawn(async move {
-            if let Err(e) = outbound
-                .send_html(&target.account_id, &to, &html, None)
+            match outbound
+                .send_html_reporting_ids(&target.account_id, &to, &html, None)
                 .await
             {
-                warn!(
-                    account_id = target.account_id,
-                    chat_id = target.chat_id,
-                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                    "failed to send logbook follow-up: {e}"
-                );
+                Ok(message_ids) => {
+                    crate::channel_feedback::record_reply_trace(
+                        feedback.as_deref(),
+                        &target,
+                        &message_ids,
+                        &session_key,
+                        &trace_correlation_key,
+                    )
+                    .await;
+                },
+                Err(e) => {
+                    warn!(
+                        account_id = target.account_id,
+                        chat_id = target.chat_id,
+                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                        "failed to send logbook follow-up: {e}"
+                    );
+                },
             }
         });
     }
@@ -269,6 +292,7 @@ fn format_channel_error_message(error_obj: &Value) -> String {
 /// `chat.compaction.show_settings_hint = false` don't see the repetitive
 /// hint on every compaction. Mode + token lines are always included.
 /// The LLM retry path never sees this text regardless.
+#[allow(dead_code)]
 fn format_channel_compaction_notice(
     outcome: &compaction_run::CompactionOutcome,
     include_settings_hint: bool,
@@ -318,6 +342,7 @@ fn format_channel_compaction_notice(
 /// reply to them afterward. Uses `send_text_silent` so the channel
 /// integration doesn't count it toward user-visible interactive replies
 /// (no TTS, no delivery receipts beyond the channel's own).
+#[allow(dead_code)]
 pub(crate) async fn notify_channels_of_compaction(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
@@ -485,6 +510,7 @@ async fn deliver_channel_error_inner(
     }
 }
 
+#[allow(dead_code)]
 async fn deliver_channel_replies_to_targets(
     outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
     targets: Vec<moltis_channels::ChannelReplyTarget>,
@@ -544,6 +570,7 @@ async fn deliver_channel_replies_to_targets(
 /// because it can carry the transcript as a caption on the voice note, which
 /// saves a second message when the transcript is short enough.
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 async fn deliver_reply_to_target(
     outbound: &dyn moltis_channels::ChannelOutbound,
     state: &Arc<dyn ChatRuntime>,
@@ -637,6 +664,7 @@ async fn deliver_reply_to_target(
 }
 
 /// Send a TTS voice message, reporting a delivery failure if it does not land.
+#[allow(dead_code)]
 async fn send_voice_reply(
     outbound: &dyn moltis_channels::ChannelOutbound,
     state: &Arc<dyn ChatRuntime>,
@@ -664,6 +692,7 @@ async fn send_voice_reply(
 ///
 /// Best-effort: the reply itself already reached the user, so a lost logbook is
 /// not a delivery failure and must not turn the acknowledgment into ❌.
+#[allow(dead_code)]
 async fn send_logbook_follow_up(
     outbound: &dyn moltis_channels::ChannelOutbound,
     target: &moltis_channels::ChannelReplyTarget,
@@ -688,6 +717,7 @@ async fn send_logbook_follow_up(
 
 /// Deliver the reply as plain text, or just the logbook when the text was
 /// already streamed in place. Returns whether the user received the reply.
+#[allow(dead_code)]
 async fn deliver_text_fallback(
     outbound: &dyn moltis_channels::ChannelOutbound,
     target: &moltis_channels::ChannelReplyTarget,

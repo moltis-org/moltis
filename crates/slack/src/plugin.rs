@@ -226,21 +226,21 @@ impl ChannelPlugin for SlackPlugin {
         accounts.keys().cloned().collect()
     }
 
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .map(|s| Box::new(s.config.clone()) as Box<dyn ChannelConfigView>)
     }
 
-    fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
+    async fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .and_then(|s| serde_json::to_value(crate::config::RedactedConfig(&s.config)).ok())
     }
 
-    fn update_account_config(
+    async fn update_account_config(
         &self,
         account_id: &str,
         config: serde_json::Value,
@@ -274,6 +274,12 @@ impl ChannelPlugin for SlackPlugin {
 
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
         Some(&self.outbound)
+    }
+
+    fn shared_thread_context(&self) -> Option<Arc<dyn ChannelThreadContext>> {
+        Some(Arc::new(SlackOutbound {
+            accounts: Arc::clone(&self.accounts),
+        }))
     }
 
     fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
@@ -381,16 +387,18 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn update_config_unknown_account_errors() {
+    #[tokio::test]
+    async fn update_config_unknown_account_errors() {
         let plugin = SlackPlugin::new();
-        let result = plugin.update_account_config(
-            "nope",
-            serde_json::json!({
-                "bot_token": "xoxb-test",
-                "app_token": "xapp-test",
-            }),
-        );
+        let result = plugin
+            .update_account_config(
+                "nope",
+                serde_json::json!({
+                    "bot_token": "xoxb-test",
+                    "app_token": "xapp-test",
+                }),
+            )
+            .await;
         assert!(result.is_err());
     }
 
@@ -441,8 +449,8 @@ mod tests {
         assert!(desc.capabilities.supports_interactive);
     }
 
-    #[test]
-    fn update_account_config_preserves_otp_state() {
+    #[tokio::test]
+    async fn update_account_config_preserves_otp_state() {
         let plugin = SlackPlugin::new();
         {
             let mut map = plugin.accounts.write().unwrap();
@@ -468,6 +476,7 @@ mod tests {
                     "otp_cooldown_secs": 60,
                 }),
             )
+            .await
             .unwrap();
 
         let pending = plugin.pending_otp_challenges("test");

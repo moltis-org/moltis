@@ -119,6 +119,179 @@ fn shell_mode_rewrite_skips_peek_and_stop() {
     assert!(rewrite_for_shell_mode("/stop").is_none());
 }
 
+// ── shell access gating ────────────────────────────────────────
+
+/// `dispatch_to_chat` blocks `/sh <cmd>` from non-operators using
+/// `explicit_shell_command`. It must recognise every form the agent runner
+/// force-executes, or a guest could slip a command past the gate and still
+/// have it run.
+#[test]
+fn explicit_shell_command_detects_forms_the_runner_executes() {
+    use moltis_agents::runner::explicit_shell_command;
+
+    assert_eq!(explicit_shell_command("/sh pwd").as_deref(), Some("pwd"));
+    assert_eq!(
+        explicit_shell_command("/sh   cat /etc/passwd").as_deref(),
+        Some("cat /etc/passwd")
+    );
+    // Channel-mention form (Telegram/Discord append the bot name).
+    assert_eq!(
+        explicit_shell_command("/sh@mybot uname -a").as_deref(),
+        Some("uname -a")
+    );
+    // Case-insensitive head.
+    assert_eq!(
+        explicit_shell_command("/SH whoami").as_deref(),
+        Some("whoami")
+    );
+    // Leading whitespace must not hide the command from the gate.
+    assert_eq!(explicit_shell_command("  /sh id").as_deref(), Some("id"));
+}
+
+#[test]
+fn explicit_shell_command_ignores_ordinary_chat() {
+    use moltis_agents::runner::explicit_shell_command;
+
+    assert!(explicit_shell_command("hello there").is_none());
+    assert!(explicit_shell_command("/sh").is_none());
+    assert!(explicit_shell_command("/shell pwd").is_none());
+    assert!(explicit_shell_command("/context").is_none());
+    // Talking *about* the command is not a request to run it.
+    assert!(explicit_shell_command("what does /sh do?").is_none());
+}
+
+#[test]
+fn unknown_and_group_chat_types_are_shared() {
+    let discord = ChannelReplyTarget {
+        channel_type: ChannelType::Discord,
+        account_id: "bot".into(),
+        chat_id: "123".into(),
+        message_id: None,
+        thread_id: None,
+        ack_message_id: None,
+    };
+    let telegram_group = ChannelReplyTarget {
+        channel_type: ChannelType::Telegram,
+        chat_id: "-123".into(),
+        ..discord.clone()
+    };
+    assert!(is_shared_channel_target(&discord));
+    assert!(is_shared_channel_target(&telegram_group));
+}
+
+#[test]
+fn proven_direct_chat_is_not_shared() {
+    let target = ChannelReplyTarget {
+        channel_type: ChannelType::Telegram,
+        account_id: "bot".into(),
+        chat_id: "123".into(),
+        message_id: None,
+        thread_id: None,
+        ack_message_id: None,
+    };
+    assert!(!is_shared_channel_target(&target));
+}
+
+#[test]
+fn only_operator_direct_turns_are_trusted() {
+    let direct = ChannelReplyTarget {
+        channel_type: ChannelType::Telegram,
+        account_id: "bot".into(),
+        chat_id: "123".into(),
+        message_id: None,
+        thread_id: None,
+        ack_message_id: None,
+    };
+    let shared = ChannelReplyTarget {
+        chat_id: "-123".into(),
+        ..direct.clone()
+    };
+
+    assert!(is_trusted_channel_turn(
+        ChannelSenderRole::Operator,
+        &direct
+    ));
+    assert!(!is_trusted_channel_turn(ChannelSenderRole::Guest, &direct));
+    assert!(!is_trusted_channel_turn(
+        ChannelSenderRole::Operator,
+        &shared
+    ));
+}
+
+#[test]
+fn command_authorization_matches_privilege_and_conversation_scope() {
+    let direct = ChannelReplyTarget {
+        channel_type: ChannelType::Telegram,
+        account_id: "bot".into(),
+        chat_id: "123".into(),
+        message_id: None,
+        thread_id: None,
+        ack_message_id: None,
+    };
+    let shared = ChannelReplyTarget {
+        chat_id: "-123".into(),
+        ..direct.clone()
+    };
+
+    for command in moltis_channels::commands::all_commands() {
+        let privilege = command.privilege();
+        assert_eq!(
+            is_channel_command_authorized(privilege, ChannelSenderRole::Guest, &direct),
+            matches!(
+                privilege,
+                moltis_channels::commands::CommandPrivilege::Public
+            ),
+            "guest direct-chat authorization drifted for /{}",
+            command.name
+        );
+        assert_eq!(
+            is_channel_command_authorized(privilege, ChannelSenderRole::Operator, &shared),
+            matches!(
+                privilege,
+                moltis_channels::commands::CommandPrivilege::Public
+            ),
+            "operator shared-chat authorization drifted for /{}",
+            command.name
+        );
+        assert!(
+            is_channel_command_authorized(privilege, ChannelSenderRole::Operator, &direct),
+            "operator direct-chat authorization drifted for /{}",
+            command.name
+        );
+    }
+}
+
+#[test]
+fn untrusted_channel_context_denies_every_tool_and_private_context() {
+    let mut params = serde_json::json!({
+        "_tool_policy": {"allow": ["*"]},
+        "_private_context": true,
+    });
+
+    apply_untrusted_channel_context(&mut params);
+
+    assert_eq!(params["_tool_audience"], "public");
+    assert_eq!(params["_tool_policy"]["deny"], serde_json::json!(["*"]));
+    assert_eq!(params["_private_context"], false);
+}
+
+#[test]
+fn public_audience_tools_require_explicit_registration() {
+    const REGISTRATION: &str = include_str!("../server/prepare_core/post_state.rs");
+
+    assert_eq!(
+        REGISTRATION.matches("register_public(").count(),
+        3,
+        "only reviewed tools should enter the public audience"
+    );
+    for tool in ["CalcTool", "WebSearchTool", "WebFetchTool"] {
+        assert!(
+            REGISTRATION.contains(tool),
+            "{tool} must have an explicit public registration"
+        );
+    }
+}
+
 // ── unique_providers ───────────────────────────────────────────
 
 /// Regression test for GitHub issue #637: providers must be deduplicated
@@ -335,4 +508,37 @@ fn channel_session_defaults_use_chat_id_for_dm_commands() {
     let defaults = resolve_channel_session_defaults_from_config(&config, "dm-1", Some("dm-1"));
     assert_eq!(defaults.model.as_deref(), Some("dm-model"));
     assert_eq!(defaults.agent_id.as_deref(), Some("dm-agent"));
+}
+
+#[test]
+fn operator_denial_tells_the_owner_how_to_unlock_the_command() {
+    let message = operator_denied_message("/sh", Some("400347514466992128"));
+
+    assert!(message.starts_with("/sh is restricted to this bot's operators in direct chats."));
+    assert!(message.contains("Shared chats"));
+    assert!(
+        message.contains("Settings → Channels"),
+        "must point at the web UI: {message}"
+    );
+    assert!(
+        message.contains("operators"),
+        "must name the config field: {message}"
+    );
+    // Operator entries are exact platform IDs, so echoing the sender's own ID
+    // back saves an owner from having to hunt for it.
+    assert!(
+        message.contains("Your sender ID here is: 400347514466992128"),
+        "must echo the sender id: {message}"
+    );
+}
+
+#[test]
+fn operator_denial_omits_an_absent_or_blank_sender_id() {
+    for sender_id in [None, Some(""), Some("   ")] {
+        let message = operator_denied_message("/update", sender_id);
+        assert!(
+            !message.contains("Your sender ID"),
+            "unattributed senders have no id to show: {message}"
+        );
+    }
 }

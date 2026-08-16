@@ -111,16 +111,96 @@ test.describe("Command palette", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("shows no matches when nothing found", async ({ page }) => {
+	test("keeps Ask agent selected when pending session results arrive", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/");
+		await page.evaluate(() => {
+			window.__paletteSessionSearchId = null;
+			const originalSend = WebSocket.prototype.send;
+			WebSocket.prototype.send = function (data) {
+				try {
+					const request = JSON.parse(data);
+					if (request?.method === "sessions.search") {
+						window.__paletteSessionSearchId = request.id;
+						return;
+					}
+				} catch {
+					// Pass non-JSON WebSocket traffic through unchanged.
+				}
+				return originalSend.call(this, data);
+			};
+		});
 
 		await page.keyboard.press("Control+k");
-		await page.locator(".cmd-palette-input").fill("xyznonexistent");
+		await page.getByRole("dialog", { name: "Command palette" }).getByRole("textbox").fill("xyznonexistent");
 
-		await expect(page.locator(".cmd-palette-empty")).toBeVisible();
+		const askAgent = page.getByRole("option", { name: /Ask agent/ });
+		await expect(askAgent).toBeVisible();
+		await expect(askAgent).toContainText("xyznonexistent");
+		await expect(askAgent).toHaveAttribute("aria-selected", "true");
+		await expect.poll(() => page.evaluate(() => window.__paletteSessionSearchId)).not.toBeNull();
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const state = await import(`${prefix}js/state.js`);
+			const id = window.__paletteSessionSearchId;
+			const resolver = state.pending?.[id];
+			if (typeof resolver !== "function") throw new Error("sessions.search resolver not found");
+			delete state.pending[id];
+			resolver({
+				ok: true,
+				payload: [{ sessionKey: "main", label: "Existing session", snippet: "xyznonexistent" }],
+			});
+		});
 
-		await page.keyboard.press("Escape");
+		await expect(page.getByRole("option", { name: /Existing session/ })).toBeVisible();
+		await expect(askAgent).toHaveAttribute("aria-selected", "true");
+		await page.keyboard.press("Enter");
+
+		await expect(page).toHaveURL(/\/chats\/session\/[0-9a-f-]+$/);
+		await expect(page.getByText("xyznonexistent", { exact: true })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("asks the agent in a new session from the fallback", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/skills");
+		await page.evaluate(() => {
+			window.__paletteChatSendPayloads = [];
+			const originalSend = WebSocket.prototype.send;
+			WebSocket.prototype.send = function (data) {
+				try {
+					const request = JSON.parse(data);
+					if (request?.method === "chat.send") {
+						window.__paletteChatSendPayloads.push(request.params || {});
+						return;
+					}
+				} catch {
+					// Pass non-JSON WebSocket traffic through unchanged.
+				}
+				return originalSend.call(this, data);
+			};
+		});
+
+		await page.keyboard.press("Control+k");
+		await page.getByRole("dialog", { name: "Command palette" }).getByRole("textbox").fill("Plan a weekend in Lisbon");
+		await expect(page.getByRole("option", { name: /Ask agent/ })).toBeVisible();
+		await page.keyboard.press("Enter");
+
+		await expect(page.getByText("Plan a weekend in Lisbon", { exact: true })).toBeVisible();
+		await expect(page).toHaveURL(/\/chats\/session\/[0-9a-f-]+$/);
+		await expect
+			.poll(() =>
+				page.evaluate(() => {
+					const payloads = window.__paletteChatSendPayloads || [];
+					return payloads[payloads.length - 1] || null;
+				}),
+			)
+			.toMatchObject({ text: "Plan a weekend in Lisbon" });
+		const payload = await page.evaluate(() => window.__paletteChatSendPayloads.at(-1));
+		expect(payload._session_key).toMatch(/^session:[0-9a-f-]+$/);
 		expect(pageErrors).toEqual([]);
 	});
 

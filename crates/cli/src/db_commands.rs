@@ -2,7 +2,7 @@ use {clap::Subcommand, std::path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum DbAction {
-    /// Delete all database files completely (moltis.db and memory.db).
+    /// Delete all database files completely.
     Reset,
     /// Clear all data from tables but keep the schema intact.
     Clear,
@@ -11,11 +11,12 @@ pub enum DbAction {
 }
 
 /// Returns the paths to the database files.
-fn db_paths() -> (PathBuf, PathBuf) {
+fn db_paths() -> (PathBuf, PathBuf, PathBuf) {
     let data_dir = moltis_config::data_dir();
     let main_db = data_dir.join("moltis.db");
     let memory_db = data_dir.join("memory.db");
-    (main_db, memory_db)
+    let connectors_db = data_dir.join("connectors.db");
+    (main_db, memory_db, connectors_db)
 }
 
 pub async fn handle_db(action: DbAction) -> anyhow::Result<()> {
@@ -28,12 +29,12 @@ pub async fn handle_db(action: DbAction) -> anyhow::Result<()> {
 
 /// Delete all database files completely.
 async fn reset_databases() -> anyhow::Result<()> {
-    let (main_db, memory_db) = db_paths();
+    let (main_db, memory_db, connectors_db) = db_paths();
 
     let mut deleted = false;
 
     // Also delete WAL and SHM files that SQLite may have created.
-    for base in [&main_db, &memory_db] {
+    for base in [&main_db, &memory_db, &connectors_db] {
         for suffix in ["", "-wal", "-shm"] {
             let path = if suffix.is_empty() {
                 base.clone()
@@ -45,6 +46,14 @@ async fn reset_databases() -> anyhow::Result<()> {
                 println!("Deleted: {}", path.display());
                 deleted = true;
             }
+        }
+    }
+    if let Some(data_dir) = connectors_db.parent() {
+        let connector_files = data_dir.join("connectors");
+        if connector_files.exists() {
+            std::fs::remove_dir_all(&connector_files)?;
+            println!("Deleted: {}", connector_files.display());
+            deleted = true;
         }
     }
 
@@ -59,7 +68,9 @@ async fn reset_databases() -> anyhow::Result<()> {
 
 /// Clear all data from tables but keep the schema intact.
 async fn clear_databases() -> anyhow::Result<()> {
-    let (main_db, memory_db) = db_paths();
+    let (main_db, memory_db, connectors_db) = db_paths();
+    #[cfg(not(feature = "connectors"))]
+    let _ = &connectors_db;
 
     // Clear main database
     if main_db.exists() {
@@ -127,12 +138,44 @@ async fn clear_databases() -> anyhow::Result<()> {
         println!("Memory database not found: {}", memory_db.display());
     }
 
+    #[cfg(feature = "connectors")]
+    if connectors_db.exists() {
+        let db_url = format!("sqlite:{}?mode=rwc", connectors_db.display());
+        let pool = sqlx::SqlitePool::connect(&db_url).await?;
+        for table in [
+            "connector_sync_runs",
+            "connector_items",
+            "connector_datasets",
+            "connector_accounts",
+        ] {
+            let query = format!("DELETE FROM {table}");
+            if let Err(error) = sqlx::query(&query).execute(&pool).await {
+                eprintln!("Warning: could not clear {table}: {error}");
+            } else {
+                println!("Cleared table: {table}");
+            }
+        }
+        pool.close().await;
+        println!("Connectors database cleared.");
+    } else if cfg!(feature = "connectors") {
+        println!("Connectors database not found: {}", connectors_db.display());
+    }
+    if let Some(data_dir) = connectors_db.parent() {
+        let connector_files = data_dir.join("connectors");
+        if connector_files.exists() {
+            std::fs::remove_dir_all(&connector_files)?;
+            println!("Cleared connector exports: {}", connector_files.display());
+        }
+    }
+
     Ok(())
 }
 
 /// Run all pending database migrations.
 async fn run_migrations() -> anyhow::Result<()> {
-    let (main_db, memory_db) = db_paths();
+    let (main_db, memory_db, connectors_db) = db_paths();
+    #[cfg(not(feature = "connectors"))]
+    let _ = &connectors_db;
 
     // Ensure data directory exists
     if let Some(parent) = main_db.parent() {
@@ -179,7 +222,31 @@ async fn run_migrations() -> anyhow::Result<()> {
 
     memory_pool.close().await;
 
+    #[cfg(feature = "connectors")]
+    {
+        println!("Running migrations for connectors database...");
+        let connectors_url = format!("sqlite:{}?mode=rwc", connectors_db.display());
+        let connectors_pool = sqlx::SqlitePool::connect(&connectors_url).await?;
+        restrict_database_permissions(&connectors_db)?;
+        moltis_connectors::run_migrations(&connectors_pool)
+            .await
+            .map_err(|error| anyhow::anyhow!("connector migrations failed: {error}"))?;
+        println!("  - connector migrations complete");
+        connectors_pool.close().await;
+    }
+
     println!("All migrations complete.");
+    Ok(())
+}
+
+fn restrict_database_permissions(path: &std::path::Path) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
@@ -200,6 +267,10 @@ mod tests {
             paths.1.to_string_lossy().contains("memory.db"),
             "memory db path should contain memory.db"
         );
+        assert!(
+            paths.2.to_string_lossy().contains("connectors.db"),
+            "connectors db path should contain connectors.db"
+        );
     }
 
     /// Test reset_databases by manually deleting files in a temp dir.
@@ -211,28 +282,44 @@ mod tests {
         // Create dummy database files
         let main_db = temp.path().join("moltis.db");
         let memory_db = temp.path().join("memory.db");
+        let connectors_db = temp.path().join("connectors.db");
         let main_wal = temp.path().join("moltis.db-wal");
         let main_shm = temp.path().join("moltis.db-shm");
+        let connector_exports = temp.path().join("connectors/exports/dataset");
 
         std::fs::write(&main_db, "test").unwrap();
         std::fs::write(&memory_db, "test").unwrap();
+        std::fs::write(&connectors_db, "test").unwrap();
         std::fs::write(&main_wal, "test").unwrap();
         std::fs::write(&main_shm, "test").unwrap();
+        std::fs::create_dir_all(&connector_exports).unwrap();
+        std::fs::write(connector_exports.join("items.jsonl"), "sensitive").unwrap();
 
         assert!(main_db.exists());
         assert!(memory_db.exists());
+        assert!(connectors_db.exists());
         assert!(main_wal.exists());
         assert!(main_shm.exists());
+        assert!(connector_exports.exists());
 
         // Simulate what reset_databases does
-        for path in [&main_db, &memory_db, &main_wal, &main_shm] {
+        for path in [&main_db, &memory_db, &connectors_db, &main_wal, &main_shm] {
             std::fs::remove_file(path).unwrap();
         }
+        std::fs::remove_dir_all(temp.path().join("connectors")).unwrap();
 
         assert!(!main_db.exists(), "main database should be deleted");
         assert!(!memory_db.exists(), "memory database should be deleted");
+        assert!(
+            !connectors_db.exists(),
+            "connectors database should be deleted"
+        );
         assert!(!main_wal.exists(), "WAL file should be deleted");
         assert!(!main_shm.exists(), "SHM file should be deleted");
+        assert!(
+            !connector_exports.exists(),
+            "connector exports should be deleted"
+        );
     }
 
     /// Test that handle_db dispatches to the correct action.
@@ -242,6 +329,21 @@ mod tests {
         let _ = DbAction::Reset;
         let _ = DbAction::Clear;
         let _ = DbAction::Migrate;
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connector_database_permissions_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("connectors.db");
+        std::fs::write(&path, "test").unwrap();
+        restrict_database_permissions(&path).unwrap();
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     /// Test that migrations run successfully against a fresh database in a temp directory.

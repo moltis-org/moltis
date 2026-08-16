@@ -1,8 +1,11 @@
 //! Agent loop support: model flagging, shell commands, channel streaming, and compaction.
 
 use std::{
-    collections::HashSet,
-    sync::Arc,
+    collections::{HashMap, HashSet},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -155,6 +158,7 @@ impl From<&moltis_channels::ChannelReplyTarget> for ChannelReplyTargetKey {
 struct ChannelStreamWorker {
     sender: moltis_channels::StreamSender,
     receives_progress_deltas: bool,
+    receives_task_updates: bool,
 }
 
 struct AbortOnDropTask(Option<tokio::task::JoinHandle<()>>);
@@ -197,14 +201,21 @@ pub(crate) struct ChannelStreamDispatcher {
     workers: Vec<ChannelStreamWorker>,
     tasks: Vec<AbortOnDropTask>,
     completed: Arc<Mutex<HashSet<ChannelReplyTargetKey>>>,
+    feedback: Option<Arc<moltis_channels::FeedbackService>>,
+    session_key: String,
+    trace_correlation_key: String,
     started: bool,
-    sent_final_delta: bool,
+    sent_final_delta: Arc<AtomicBool>,
+    active_tasks: HashMap<String, String>,
+    task_ids: HashMap<String, String>,
+    next_task_id: usize,
 }
 
 impl ChannelStreamDispatcher {
     pub(crate) async fn for_session(
         state: &Arc<dyn ChatRuntime>,
         session_key: &str,
+        trace_correlation_key: &str,
     ) -> Option<Self> {
         let outbound = state.channel_stream_outbound()?;
         let targets: Vec<moltis_channels::ChannelReplyTarget> = state
@@ -221,8 +232,14 @@ impl ChannelStreamDispatcher {
             workers: Vec::new(),
             tasks: Vec::new(),
             completed: Arc::new(Mutex::new(HashSet::new())),
+            feedback: state.feedback(),
+            session_key: session_key.to_string(),
+            trace_correlation_key: trace_correlation_key.to_string(),
             started: false,
-            sent_final_delta: false,
+            sent_final_delta: Arc::new(AtomicBool::new(false)),
+            active_tasks: HashMap::new(),
+            task_ids: HashMap::new(),
+            next_task_id: 0,
         };
         dispatcher.ensure_started().await;
         Some(dispatcher)
@@ -253,9 +270,21 @@ impl ChannelStreamDispatcher {
                 .outbound
                 .receives_progress_deltas(&target.account_id)
                 .await;
+            let receives_task_updates = self
+                .outbound
+                .receives_task_updates(&target.account_id)
+                .await;
+            let claims_stream_delivery = self
+                .outbound
+                .claims_stream_delivery(&target.account_id, target.message_id.as_deref())
+                .await;
             let (tx, rx) = mpsc::channel(CHANNEL_STREAM_BUFFER_SIZE);
             let outbound = Arc::clone(&self.outbound);
             let completed = Arc::clone(&self.completed);
+            let feedback = self.feedback.clone();
+            let session_key = self.session_key.clone();
+            let trace_correlation_key = self.trace_correlation_key.clone();
+            let sent_final_delta = Arc::clone(&self.sent_final_delta);
             let account_id = target.account_id.clone();
             let to = target.outbound_to().into_owned();
             let reply_to = target.message_id.clone();
@@ -267,16 +296,28 @@ impl ChannelStreamDispatcher {
             self.workers.push(ChannelStreamWorker {
                 sender: tx,
                 receives_progress_deltas,
+                receives_task_updates,
             });
             self.tasks
                 .push(AbortOnDropTask::new(tokio::spawn(async move {
                     match outbound
-                        .send_stream(&account_id, &to, reply_to.as_deref(), rx)
+                        .send_stream_reporting_ids(&account_id, &to, reply_to.as_deref(), rx)
                         .await
                     {
-                        Ok(()) => {
-                            if streams_final_replies {
+                        Ok(message_ids) => {
+                            if streams_final_replies
+                                && (sent_final_delta.load(Ordering::Acquire)
+                                    || claims_stream_delivery)
+                            {
                                 completed.lock().await.insert(key_for_insert);
+                                crate::channel_feedback::record_reply_trace(
+                                    feedback.as_deref(),
+                                    &target,
+                                    &message_ids,
+                                    &session_key,
+                                    &trace_correlation_key,
+                                )
+                                .await;
                             }
                         },
                         Err(e) => {
@@ -296,7 +337,7 @@ impl ChannelStreamDispatcher {
         if delta.is_empty() {
             return;
         }
-        self.sent_final_delta = true;
+        self.sent_final_delta.store(true, Ordering::Release);
         self.ensure_started().await;
         self.send_to_workers(
             moltis_channels::StreamEvent::Delta(delta.to_string()),
@@ -316,6 +357,42 @@ impl ChannelStreamDispatcher {
                 debug!("channel stream progress delta dropped: worker closed");
             }
         }
+    }
+
+    pub(crate) async fn send_task_update(
+        &mut self,
+        mut update: moltis_channels::plugin::ChannelTaskUpdate,
+    ) {
+        use moltis_channels::plugin::ChannelTaskStatus;
+
+        self.ensure_started().await;
+        let source_id = update.id.clone();
+        update.id = self.opaque_task_id(&source_id);
+        match update.status {
+            ChannelTaskStatus::InProgress => {
+                self.active_tasks
+                    .insert(source_id.clone(), update.title.clone());
+            },
+            ChannelTaskStatus::Complete | ChannelTaskStatus::Error => {
+                self.active_tasks.remove(&source_id);
+            },
+        }
+        let event = moltis_channels::StreamEvent::TaskUpdate(update);
+        for worker in &self.workers {
+            if worker.receives_task_updates && worker.sender.send(event.clone()).await.is_err() {
+                debug!("channel stream task update dropped: worker closed");
+            }
+        }
+    }
+
+    fn opaque_task_id(&mut self, source_id: &str) -> String {
+        if let Some(id) = self.task_ids.get(source_id) {
+            return id.clone();
+        }
+        self.next_task_id += 1;
+        let id = format!("task-{}", self.next_task_id);
+        self.task_ids.insert(source_id.to_string(), id.clone());
+        id
     }
 
     async fn send_to_workers(&mut self, event: moltis_channels::StreamEvent, label: &str) {
@@ -339,6 +416,15 @@ impl ChannelStreamDispatcher {
     }
 
     async fn finish_inner(&mut self) {
+        let unfinished = std::mem::take(&mut self.active_tasks);
+        for (id, title) in unfinished {
+            self.send_task_update(moltis_channels::plugin::ChannelTaskUpdate {
+                id,
+                title,
+                status: moltis_channels::plugin::ChannelTaskStatus::Error,
+            })
+            .await;
+        }
         self.send_terminal(moltis_channels::StreamEvent::Done).await;
         self.join_workers().await;
     }
@@ -371,9 +457,6 @@ impl ChannelStreamDispatcher {
     }
 
     pub(crate) async fn completed_target_keys(&self) -> HashSet<ChannelReplyTargetKey> {
-        if !self.sent_final_delta {
-            return HashSet::new();
-        }
         self.completed.lock().await.clone()
     }
 }
@@ -477,13 +560,17 @@ pub(crate) async fn run_explicit_shell_command(
                 client_seq,
                 Some(run_id),
             );
-            let tool_result_msg = PersistedMessage::tool_result(
+            // Both halves of the pair must carry the run id: run-scoped history
+            // filtering keeps or drops a run as a unit, and a result without one
+            // would be dropped on its own, orphaning the tool call above.
+            let tool_result_msg = PersistedMessage::tool_result_with_run_id(
                 tool_call_id.clone(),
                 "exec",
                 Some(serde_json::json!({ "command": command })),
                 true,
                 Some(capped.clone()),
                 None,
+                run_id,
             );
             if let Some(session_store) = session_store {
                 persist_tool_history_pair(
@@ -532,13 +619,14 @@ pub(crate) async fn run_explicit_shell_command(
                 client_seq,
                 Some(run_id),
             );
-            let tool_result_msg = PersistedMessage::tool_result(
+            let tool_result_msg = PersistedMessage::tool_result_with_run_id(
                 tool_call_id.clone(),
                 "exec",
                 Some(serde_json::json!({ "command": command })),
                 false,
                 None,
                 Some(error_text.clone()),
+                run_id,
             );
             if let Some(session_store) = session_store {
                 persist_tool_history_pair(
@@ -690,7 +778,10 @@ mod tests {
     struct RecordingStreamOutbound {
         streams_final_replies: bool,
         receives_progress_deltas: bool,
+        receives_task_updates: bool,
+        claims_stream_delivery: bool,
         events: Arc<Mutex<Vec<moltis_channels::StreamEvent>>>,
+        reporting_calls: std::sync::atomic::AtomicUsize,
     }
 
     struct DropNotice(Option<tokio::sync::oneshot::Sender<()>>);
@@ -706,7 +797,7 @@ mod tests {
     struct ClosureFinalizingOutbound {
         started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
         dropped: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-        finalized_on_close: std::sync::atomic::AtomicBool,
+        finalized_on_close: AtomicBool,
     }
 
     #[async_trait]
@@ -731,8 +822,7 @@ mod tests {
                     return Ok(());
                 }
             }
-            self.finalized_on_close
-                .store(true, std::sync::atomic::Ordering::SeqCst);
+            self.finalized_on_close.store(true, Ordering::SeqCst);
             Ok(())
         }
 
@@ -743,7 +833,7 @@ mod tests {
 
     struct TerminalCheckingOutbound {
         terminal_runs: Arc<RwLock<HashSet<String>>>,
-        final_observed_after_terminal: std::sync::atomic::AtomicBool,
+        final_observed_after_terminal: AtomicBool,
     }
 
     #[async_trait]
@@ -759,7 +849,7 @@ mod tests {
                 if matches!(event, moltis_channels::StreamEvent::Done) {
                     self.final_observed_after_terminal.store(
                         self.terminal_runs.read().await.contains("run-1"),
-                        std::sync::atomic::Ordering::SeqCst,
+                        Ordering::SeqCst,
                     );
                     break;
                 }
@@ -797,6 +887,18 @@ mod tests {
             Ok(())
         }
 
+        async fn send_stream_reporting_ids(
+            &self,
+            account_id: &str,
+            to: &str,
+            reply_to: Option<&str>,
+            stream: moltis_channels::StreamReceiver,
+        ) -> moltis_channels::Result<Vec<String>> {
+            self.reporting_calls.fetch_add(1, Ordering::SeqCst);
+            self.send_stream(account_id, to, reply_to, stream).await?;
+            Ok(vec!["stream-message".into()])
+        }
+
         async fn is_stream_enabled(&self, _account_id: &str) -> bool {
             true
         }
@@ -807,6 +909,14 @@ mod tests {
 
         async fn receives_progress_deltas(&self, _account_id: &str) -> bool {
             self.receives_progress_deltas
+        }
+
+        async fn receives_task_updates(&self, _account_id: &str) -> bool {
+            self.receives_task_updates
+        }
+
+        async fn claims_stream_delivery(&self, _account_id: &str, _reply_to: Option<&str>) -> bool {
+            self.claims_stream_delivery
         }
     }
 
@@ -830,8 +940,14 @@ mod tests {
             workers: Vec::new(),
             tasks: Vec::new(),
             completed: Arc::new(Mutex::new(HashSet::new())),
+            feedback: None,
+            session_key: "session".into(),
+            trace_correlation_key: "run".into(),
             started: false,
-            sent_final_delta: false,
+            sent_final_delta: Arc::new(AtomicBool::new(false)),
+            active_tasks: HashMap::new(),
+            task_ids: HashMap::new(),
+            next_task_id: 0,
         }
     }
 
@@ -841,6 +957,7 @@ mod tests {
             .map(|event| match event {
                 moltis_channels::StreamEvent::Delta(_) => "delta",
                 moltis_channels::StreamEvent::ProgressDelta(_) => "progress",
+                moltis_channels::StreamEvent::TaskUpdate(_) => "task",
                 moltis_channels::StreamEvent::Done => "done",
                 moltis_channels::StreamEvent::Error(_) => "error",
             })
@@ -852,10 +969,13 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::new()));
         let outbound = Arc::new(RecordingStreamOutbound {
             streams_final_replies: false,
+            claims_stream_delivery: false,
             receives_progress_deltas: true,
+            receives_task_updates: false,
             events: Arc::clone(&events),
+            reporting_calls: std::sync::atomic::AtomicUsize::new(0),
         });
-        let mut dispatcher = dispatcher_with(outbound);
+        let mut dispatcher = dispatcher_with(outbound.clone());
 
         dispatcher.send_progress_delta("progress").await;
         dispatcher.send_delta("final").await;
@@ -871,10 +991,13 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::new()));
         let outbound = Arc::new(RecordingStreamOutbound {
             streams_final_replies: true,
+            claims_stream_delivery: false,
             receives_progress_deltas: true,
+            receives_task_updates: false,
             events: Arc::clone(&events),
+            reporting_calls: std::sync::atomic::AtomicUsize::new(0),
         });
-        let mut dispatcher = dispatcher_with(outbound);
+        let mut dispatcher = dispatcher_with(outbound.clone());
 
         dispatcher.send_progress_delta("progress").await;
         dispatcher.send_delta("final").await;
@@ -882,7 +1005,68 @@ mod tests {
 
         let events = events.lock().await;
         assert_eq!(event_kinds(&events), vec!["progress", "delta", "done"]);
+        assert_eq!(outbound.reporting_calls.load(Ordering::SeqCst), 1);
         assert_eq!(dispatcher.completed_target_keys().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn claimed_stream_delivery_completes_without_a_final_delta() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingStreamOutbound {
+            streams_final_replies: true,
+            claims_stream_delivery: true,
+            receives_progress_deltas: true,
+            receives_task_updates: false,
+            events: Arc::clone(&events),
+            reporting_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut dispatcher = dispatcher_with(outbound);
+
+        dispatcher
+            .send_progress_delta("retained error response")
+            .await;
+        dispatcher.finish().await;
+
+        assert_eq!(event_kinds(&events.lock().await), vec!["progress", "done"]);
+        assert_eq!(dispatcher.completed_target_keys().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn unfinished_tasks_are_marked_error_before_stream_completion() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingStreamOutbound {
+            streams_final_replies: true,
+            claims_stream_delivery: false,
+            receives_progress_deltas: false,
+            receives_task_updates: true,
+            events: Arc::clone(&events),
+            reporting_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut dispatcher = dispatcher_with(outbound);
+
+        dispatcher
+            .send_task_update(moltis_channels::plugin::ChannelTaskUpdate {
+                id: "call-1".into(),
+                title: "web_search".into(),
+                status: moltis_channels::plugin::ChannelTaskStatus::InProgress,
+            })
+            .await;
+        dispatcher.finish().await;
+
+        let events = events.lock().await;
+        assert_eq!(event_kinds(&events), vec!["task", "task", "done"]);
+        let Some(moltis_channels::StreamEvent::TaskUpdate(update)) = events.get(1) else {
+            panic!("expected terminal task update");
+        };
+        let Some(moltis_channels::StreamEvent::TaskUpdate(started)) = events.first() else {
+            panic!("expected starting task update");
+        };
+        assert_eq!(started.id, "task-1");
+        assert_eq!(update.id, started.id);
+        assert_eq!(
+            update.status,
+            moltis_channels::plugin::ChannelTaskStatus::Error
+        );
     }
 
     #[tokio::test]
@@ -892,7 +1076,7 @@ mod tests {
         let outbound = Arc::new(ClosureFinalizingOutbound {
             started: Mutex::new(Some(started_tx)),
             dropped: Mutex::new(Some(dropped_tx)),
-            finalized_on_close: std::sync::atomic::AtomicBool::new(false),
+            finalized_on_close: AtomicBool::new(false),
         });
         let mut dispatcher = dispatcher_with(outbound.clone());
         dispatcher.send_delta("final").await;
@@ -905,11 +1089,7 @@ mod tests {
                 .await
                 .is_ok()
         );
-        assert!(
-            !outbound
-                .finalized_on_close
-                .load(std::sync::atomic::Ordering::SeqCst)
-        );
+        assert!(!outbound.finalized_on_close.load(Ordering::SeqCst));
     }
 
     #[tokio::test]
@@ -917,7 +1097,7 @@ mod tests {
         let terminal_runs = Arc::new(RwLock::new(HashSet::new()));
         let outbound = Arc::new(TerminalCheckingOutbound {
             terminal_runs: Arc::clone(&terminal_runs),
-            final_observed_after_terminal: std::sync::atomic::AtomicBool::new(false),
+            final_observed_after_terminal: AtomicBool::new(false),
         });
         let mut dispatcher = dispatcher_with(outbound.clone());
         dispatcher.send_delta("final").await;
@@ -933,7 +1113,7 @@ mod tests {
         assert!(
             outbound
                 .final_observed_after_terminal
-                .load(std::sync::atomic::Ordering::SeqCst)
+                .load(Ordering::SeqCst)
         );
         assert_eq!(completed.len(), 1);
     }

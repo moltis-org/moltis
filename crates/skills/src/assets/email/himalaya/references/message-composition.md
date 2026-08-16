@@ -1,199 +1,67 @@
-# Message Composition with MML (MIME Meta Language)
+# Message Composition with Himalaya v2
 
-Himalaya uses MML for composing emails. MML is a simple XML-based syntax that compiles to MIME messages.
+Himalaya v2 can compose simple messages from flags or send a prepared RFC
+5322/MIME message from stdin. Rich MML composition is provided by the separate
+[`mml`](https://github.com/pimalaya/mml) program, not by Himalaya's removed v1
+template commands.
 
-## Basic Message Structure
+## Simple message
 
-An email message is a list of **headers** followed by a **body**, separated by a blank line:
+Compose and send without opening an editor:
 
+```bash
+himalaya --account=work message compose \
+  --to=recipient@example.com \
+  --subject="Status update" \
+  --body="The deployment completed." \
+  --send
 ```
+
+Use `message compose --help`, `message reply --help`, or `message forward
+--help` for the exact v2 flags supported by the installed build. Do not use the
+v1 `message write`, `template send`, `template reply`, or `template forward`
+commands.
+
+## Prepared MIME message
+
+Create a normal message with headers, a blank line, and a body:
+
+```text
 From: sender@example.com
 To: recipient@example.com
-Subject: Hello World
+Subject: Status update
 
-This is the message body.
+The deployment completed.
 ```
 
-## Headers
-
-Common headers:
-
-- `From`: Sender address
-- `To`: Primary recipient(s)
-- `Cc`: Carbon copy recipients
-- `Bcc`: Blind carbon copy recipients
-- `Subject`: Message subject
-- `Reply-To`: Address for replies (if different from From)
-- `In-Reply-To`: Message ID being replied to
-
-### Address Formats
-
-```
-To: user@example.com
-To: John Doe <john@example.com>
-To: "John Doe" <john@example.com>
-To: user1@example.com, user2@example.com, "Jane" <jane@example.com>
-```
-
-## Plain Text Body
-
-Simple plain text email:
-
-```
-From: alice@localhost
-To: bob@localhost
-Subject: Plain Text Example
-
-Hello, this is a plain text email.
-No special formatting needed.
-
-Best,
-Alice
-```
-
-## MML for Rich Emails
-
-### Multipart Messages
-
-Alternative text/html parts:
-
-```
-From: alice@localhost
-To: bob@localhost
-Subject: Multipart Example
-
-<#multipart type=alternative>
-This is the plain text version.
-<#part type=text/html>
-<html><body><h1>This is the HTML version</h1></body></html>
-<#/multipart>
-```
-
-### Attachments
-
-Attach a file:
-
-```
-From: alice@localhost
-To: bob@localhost
-Subject: With Attachment
-
-Here is the document you requested.
-
-<#part filename=/path/to/document.pdf><#/part>
-```
-
-Attachment with custom name:
-
-```
-<#part filename=/path/to/file.pdf name=report.pdf><#/part>
-```
-
-Multiple attachments:
-
-```
-<#part filename=/path/to/doc1.pdf><#/part>
-<#part filename=/path/to/doc2.pdf><#/part>
-```
-
-### Inline Images
-
-Embed an image inline:
-
-```
-From: alice@localhost
-To: bob@localhost
-Subject: Inline Image
-
-<#multipart type=related>
-<#part type=text/html>
-<html><body>
-<p>Check out this image:</p>
-<img src="cid:image1">
-</body></html>
-<#part disposition=inline id=image1 filename=/path/to/image.png><#/part>
-<#/multipart>
-```
-
-### Mixed Content (Text + Attachments)
-
-```
-From: alice@localhost
-To: bob@localhost
-Subject: Mixed Content
-
-<#multipart type=mixed>
-<#part type=text/plain>
-Please find the attached files.
-
-Best,
-Alice
-<#part filename=/path/to/file1.pdf><#/part>
-<#part filename=/path/to/file2.zip><#/part>
-<#/multipart>
-```
-
-## MML Tag Reference
-
-### `<#multipart>`
-
-Groups multiple parts together.
-
-- `type=alternative`: Different representations of same content
-- `type=mixed`: Independent parts (text + attachments)
-- `type=related`: Parts that reference each other (HTML + images)
-
-### `<#part>`
-
-Defines a message part.
-
-- `type=<mime-type>`: Content type (e.g., `text/html`, `application/pdf`)
-- `filename=<path>`: File to attach
-- `name=<name>`: Display name for attachment
-- `disposition=inline`: Display inline instead of as attachment
-- `id=<cid>`: Content ID for referencing in HTML
-
-## Composing from CLI
-
-### Interactive compose
-
-Opens your `$EDITOR`:
+Send it through the account's configured send backend:
 
 ```bash
-himalaya message write
+himalaya --account=work message send < message.eml
 ```
 
-### Reply (opens editor with quoted message)
+SMTP is only a send backend. It is not used by `mailbox`, `envelope`, or
+`message read` commands.
+
+## Drafts
+
+Add a prepared message to a configured drafts mailbox:
 
 ```bash
-himalaya message reply 42
-himalaya message reply 42 --all  # reply-all
+himalaya --account=work --backend=imap \
+  message add --mailbox=drafts --flag=draft < message.eml
 ```
 
-### Forward
+## Rich MIME and attachments
+
+Use the standalone `mml` composer for multipart bodies, HTML, attachments,
+signing, encryption, or editor-driven composition, then pipe its output to
+Himalaya v2:
 
 ```bash
-himalaya message forward 42
+mml compose >(himalaya --account=work message send)
 ```
 
-### Send from stdin
-
-```bash
-cat message.txt | himalaya template send
-```
-
-### Prefill headers from CLI
-
-```bash
-himalaya message write \
-  -H "To:recipient@example.com" \
-  -H "Subject:Quick Message" \
-  "Message body here"
-```
-
-## Tips
-
-- The editor opens with a template; fill in headers and body.
-- Save and exit the editor to send; exit without saving to cancel.
-- MML parts are compiled to proper MIME when sending.
-- Use `himalaya message export --full` to inspect the raw MIME structure of received emails.
+Consult `mml --help` for MML directives and attachment syntax. Keeping
+composition in `mml` and delivery in `himalaya message send` avoids relying on
+v1 template behavior.

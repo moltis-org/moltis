@@ -2,16 +2,16 @@
 name: wacrawl
 description: Read-only local archive and full-text search of WhatsApp Desktop messages via the wacrawl CLI. Use for searching chat history, exporting conversations, and creating encrypted backups. macOS only (reads local WhatsApp Desktop SQLite databases).
 platforms: [darwin]
-homepage: https://github.com/steipete/wacrawl
+homepage: https://github.com/openclaw/wacrawl
 requires:
   bins: [wacrawl]
   install:
     - kind: brew
-      formula: steipete/tap/wacrawl
+      formula: openclaw/tap/wacrawl
       bins: [wacrawl]
       os: [darwin]
     - kind: go
-      module: "github.com/steipete/wacrawl/cmd/wacrawl@latest"
+      module: "github.com/openclaw/wacrawl/cmd/wacrawl@latest"
       bins: [wacrawl]
 origin:
   source: moltis

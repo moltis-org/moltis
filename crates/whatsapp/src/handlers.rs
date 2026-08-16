@@ -784,7 +784,8 @@ async fn handle_location(
 
     // Try to resolve a pending tool-triggered location request.
     let resolved = if let Some(ref sink) = state.event_sink {
-        sink.update_location(&reply_to, lat, lon).await
+        sink.update_location(&reply_to, meta.sender_id.as_deref(), lat, lon)
+            .await
     } else {
         false
     };

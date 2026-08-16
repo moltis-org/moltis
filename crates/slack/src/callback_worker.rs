@@ -38,6 +38,7 @@ pub(crate) enum CallbackJob {
         sink: Arc<dyn ChannelEventSink>,
         action_id: String,
         reply_to: ChannelReplyTarget,
+        sender_id: String,
         response_url: Option<String>,
     },
     ResponseUrl {
@@ -188,10 +189,11 @@ async fn process(job: CallbackJob) {
             sink,
             action_id,
             reply_to,
+            sender_id,
             response_url,
         } => {
             let response = sink
-                .dispatch_interaction(&action_id, reply_to)
+                .dispatch_interaction(&action_id, reply_to, Some(&sender_id))
                 .await
                 .unwrap_or_else(|error| format!("Error: {error}"));
             if let Some(response_url) = response_url
@@ -217,7 +219,63 @@ async fn process(job: CallbackJob) {
 mod tests {
     use super::*;
 
-    use tokio_util::sync::CancellationToken;
+    use {
+        moltis_channels::{
+            ChannelType,
+            error::Result as ChannelResult,
+            plugin::{ChannelEvent, ChannelMessageMeta},
+        },
+        std::sync::Mutex,
+        tokio_util::sync::CancellationToken,
+    };
+
+    #[derive(Default)]
+    struct InteractionSink {
+        sender_ids: Mutex<Vec<Option<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChannelEventSink for InteractionSink {
+        async fn emit(&self, _event: ChannelEvent) {}
+
+        async fn dispatch_to_chat(
+            &self,
+            _text: &str,
+            _reply_to: ChannelReplyTarget,
+            _meta: ChannelMessageMeta,
+        ) {
+        }
+
+        async fn dispatch_command(
+            &self,
+            _command: &str,
+            _reply_to: ChannelReplyTarget,
+            _sender_id: Option<&str>,
+        ) -> ChannelResult<String> {
+            Ok(String::new())
+        }
+
+        async fn dispatch_interaction(
+            &self,
+            _callback_data: &str,
+            _reply_to: ChannelReplyTarget,
+            sender_id: Option<&str>,
+        ) -> ChannelResult<String> {
+            self.sender_ids
+                .lock()
+                .unwrap()
+                .push(sender_id.map(String::from));
+            Ok(String::new())
+        }
+
+        async fn request_disable_account(
+            &self,
+            _channel_type: &str,
+            _account_id: &str,
+            _reason: &str,
+        ) {
+        }
+    }
 
     fn job(account_id: &str) -> CallbackJob {
         CallbackJob::ResponseUrl {
@@ -225,6 +283,30 @@ mod tests {
             response_url: "https://hooks.slack.com/actions/test".to_string(),
             text: "body".to_string(),
         }
+    }
+
+    #[tokio::test]
+    async fn interaction_jobs_preserve_the_sender_principal() {
+        let sink = Arc::new(InteractionSink::default());
+        process(CallbackJob::Interaction {
+            sink: sink.clone(),
+            action_id: "approve".to_string(),
+            reply_to: ChannelReplyTarget {
+                ack_message_id: None,
+                channel_type: ChannelType::Slack,
+                account_id: "default".to_string(),
+                chat_id: "C123".to_string(),
+                message_id: None,
+                thread_id: None,
+            },
+            sender_id: "U123".to_string(),
+            response_url: None,
+        })
+        .await;
+
+        assert_eq!(*sink.sender_ids.lock().unwrap(), vec![Some(
+            "U123".to_string()
+        )]);
     }
 
     /// A queue whose jobs block on `gate` until it is cancelled, so admission

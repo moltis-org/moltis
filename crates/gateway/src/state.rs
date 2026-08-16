@@ -428,6 +428,11 @@ pub struct GatewayState {
     /// Code index for workspace codebase intelligence (discover, filter, status, peek).
     /// Always initialized in config-only mode; search is deferred to QMD backend.
     pub code_index: Arc<moltis_code_index::CodeIndex>,
+    /// Live agent instrumentation (Langfuse / OTLP / Datadog).
+    /// `Arc` because the RPC handlers and the shutdown path both reach it.
+    pub instrumentation: Arc<crate::server::instrumentation::InstrumentationState>,
+    /// Reaction feedback: reply/trace correlation and score submission.
+    pub feedback: Arc<moltis_channels::FeedbackService>,
     /// Whether the server is bound to a loopback address (localhost/127.0.0.1/::1).
     pub localhost_only: bool,
     /// Whether the server is known to be behind a reverse proxy.
@@ -463,6 +468,10 @@ pub struct GatewayState {
     /// Encryption-at-rest vault for environment variables.
     #[cfg(feature = "vault")]
     pub vault: Option<Arc<moltis_vault::Vault>>,
+
+    /// Late-bound connector manager, initialized after its dedicated database opens.
+    #[cfg(feature = "connectors")]
+    pub connector_manager: std::sync::OnceLock<Arc<crate::connectors::ConnectorManager>>,
 
     // ── Channel webhook deduplication (separate lock) ──────────────────────
     /// Idempotency dedup store for channel webhooks. Uses its own
@@ -586,6 +595,11 @@ impl GatewayState {
             pairing_store,
             memory_manager,
             code_index,
+            // Constructed empty; `apply` runs later from `prepare_core`, which
+            // is inside a Tokio runtime (each backend spawns an export task).
+            instrumentation: Arc::default(),
+            // Filled in by `prepare_core`, which has the database pool.
+            feedback: Arc::default(),
             localhost_only,
             behind_proxy,
             tls_active,
@@ -603,6 +617,8 @@ impl GatewayState {
             metrics_store,
             #[cfg(feature = "vault")]
             vault,
+            #[cfg(feature = "connectors")]
+            connector_manager: std::sync::OnceLock::new(),
             channel_webhook_dedup: std::sync::RwLock::new(
                 crate::channel_webhook_dedup::ChannelWebhookDedupeStore::new(),
             ),
@@ -635,6 +651,18 @@ impl GatewayState {
     /// the `X-Forwarded-Proto` header.
     pub fn is_secure(&self) -> bool {
         self.tls_active || self.behind_proxy
+    }
+
+    #[cfg(feature = "connectors")]
+    pub fn connector_manager(&self) -> Option<Arc<crate::connectors::ConnectorManager>> {
+        self.connector_manager.get().cloned()
+    }
+
+    #[cfg(feature = "connectors")]
+    pub async fn shutdown_connectors(&self) {
+        if let Some(manager) = self.connector_manager() {
+            manager.shutdown().await;
+        }
     }
 
     /// Process uptime in milliseconds since this gateway state was created.

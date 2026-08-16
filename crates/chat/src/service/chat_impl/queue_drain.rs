@@ -101,7 +101,14 @@ async fn take_next(
     queue.draining = true;
     match mode {
         MessageQueueMode::Followup => queue.messages.pop_front().into_iter().collect(),
-        MessageQueueMode::Collect => queue.messages.drain(..).collect(),
+        MessageQueueMode::Collect => {
+            let queued = queue.messages.drain(..).collect();
+            let (group, rest) = super::tool_policy::split_by_request_security_context(queued);
+            // Keep older authorization groups ahead of arrivals that append
+            // while this group is replaying.
+            queue.messages.extend(rest);
+            group
+        },
     }
 }
 
@@ -490,6 +497,47 @@ mod tests {
         };
         assert_eq!(first[0].params["text"], "one");
         assert_eq!(second[0].params["text"], "two");
+    }
+
+    #[tokio::test]
+    async fn collect_take_splits_authorization_groups_without_reordering() {
+        let queues = Arc::new(RwLock::new(HashMap::from([(
+            "s".to_string(),
+            SessionMessageQueue {
+                messages: [
+                    msg(serde_json::json!({
+                        "text": "guest-one",
+                        "_tool_audience": "public",
+                        "_tool_policy": {"deny": ["*"]},
+                    })),
+                    msg(serde_json::json!({
+                        "text": "guest-two",
+                        "_tool_audience": "public",
+                        "_tool_policy": {"deny": ["*"]},
+                    })),
+                    msg(serde_json::json!({"text": "operator"})),
+                ]
+                .into_iter()
+                .collect(),
+                draining: false,
+            },
+        )])));
+
+        let guest = take_next(&queues, "s", MessageQueueMode::Collect).await;
+        queues
+            .write()
+            .await
+            .get_mut("s")
+            .unwrap()
+            .messages
+            .push_back(msg(serde_json::json!({"text": "new-arrival"})));
+        let operator = take_next(&queues, "s", MessageQueueMode::Collect).await;
+
+        assert_eq!(guest.len(), 2);
+        assert_eq!(guest[0].params["text"], "guest-one");
+        assert_eq!(guest[1].params["text"], "guest-two");
+        assert_eq!(operator[0].params["text"], "operator");
+        assert_eq!(operator[1].params["text"], "new-arrival");
     }
 
     #[tokio::test]

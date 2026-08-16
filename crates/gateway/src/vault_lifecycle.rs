@@ -193,16 +193,19 @@ pub struct VaultDisableReport {
     pub channels: usize,
     pub webhooks: usize,
     pub provider_keys: bool,
+    #[cfg(feature = "connectors")]
+    pub connectors: usize,
 }
 
 /// Decrypt all known vault-backed data and disable vault use in config.
 ///
 /// This must only run while the vault is unsealed. The config flag is written
 /// after all decryptions succeed, so a partial failure leaves vault mode intact.
-#[tracing::instrument(skip(vault, pool))]
+#[tracing::instrument(skip_all)]
 pub async fn disable_vault_and_decrypt_all(
     vault: &moltis_vault::Vault,
     pool: &sqlx::SqlitePool,
+    #[cfg(feature = "connectors")] connector_manager: Option<&crate::connectors::ConnectorManager>,
 ) -> anyhow::Result<VaultDisableReport> {
     if !vault.is_unsealed().await {
         anyhow::bail!("vault must be unlocked before disabling encryption at rest");
@@ -214,6 +217,8 @@ pub async fn disable_vault_and_decrypt_all(
         channels: decrypt_channels(vault, pool).await?,
         webhooks: decrypt_webhooks(vault, pool).await?,
         provider_keys: decrypt_provider_keys(vault).await?,
+        #[cfg(feature = "connectors")]
+        connectors: decrypt_connector_credentials(vault, pool, connector_manager).await?,
     };
 
     moltis_config::update_config(|config| {
@@ -224,6 +229,37 @@ pub async fn disable_vault_and_decrypt_all(
 
     tracing::info!(?report, "vault disabled after decrypting stored secrets");
     Ok(report)
+}
+
+#[cfg(feature = "connectors")]
+async fn decrypt_connector_credentials(
+    vault: &moltis_vault::Vault,
+    pool: &sqlx::SqlitePool,
+    connector_manager: Option<&crate::connectors::ConnectorManager>,
+) -> anyhow::Result<usize> {
+    if let Some(manager) = connector_manager {
+        return manager
+            .decrypt_credentials_and_disable_vault(vault)
+            .await
+            .map_err(anyhow::Error::new)
+            .context("failed to decrypt connector credentials");
+    }
+    let databases: Vec<(i64, String, String)> = sqlx::query_as("PRAGMA database_list")
+        .fetch_all(pool)
+        .await?;
+    let Some(path) = databases
+        .into_iter()
+        .find_map(|(_, name, path)| (name == "main" && !path.is_empty()).then_some(path))
+    else {
+        return Ok(0);
+    };
+    let Some(data_dir) = std::path::Path::new(&path).parent() else {
+        return Ok(0);
+    };
+    crate::connectors::ConnectorManager::decrypt_all_credentials_at(data_dir, vault)
+        .await
+        .map_err(anyhow::Error::new)
+        .context("failed to decrypt connector credentials")
 }
 
 async fn decrypt_env_vars(
@@ -501,13 +537,48 @@ fn unix_now_i64() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
 }
 
-/// Start stored channel accounts after vault unseal.
+/// Resume vault-backed integrations after vault unseal.
 ///
 /// When the vault is unsealed, previously encrypted channel configs become
 /// decryptable. This handles the case where the vault was sealed at startup
-/// and channels could not be started until a later manual unlock.
+/// and channels could not be started until a later manual unlock. Connector
+/// credentials saved before vault initialization are migrated at the same
+/// lifecycle boundary.
 #[tracing::instrument(skip(state))]
 pub async fn start_stored_channels_on_vault_unseal(state: &Arc<GatewayState>) {
+    start_channels_on_vault_unseal(state).await;
+    #[cfg(feature = "connectors")]
+    if let Some(manager) = state.connector_manager() {
+        if let Err(error) = manager.migrate_plaintext_credentials().await {
+            tracing::warn!(
+                ?error,
+                "failed to migrate connector credentials on vault unseal"
+            );
+        }
+        match manager
+            .reconcile_configured_caldav_accounts(&state.config.caldav)
+            .await
+        {
+            Ok(report) => tracing::debug!(
+                created = report.created,
+                adopted = report.adopted,
+                updated = report.updated,
+                unchanged = report.unchanged,
+                disabled = report.disabled,
+                deferred = report.deferred,
+                invalid = report.invalid,
+                ambiguous = report.ambiguous,
+                "reconciled configured CalDAV accounts after vault unseal"
+            ),
+            Err(error) => tracing::warn!(
+                ?error,
+                "configured CalDAV reconciliation failed after vault unseal"
+            ),
+        }
+    }
+}
+
+async fn start_channels_on_vault_unseal(state: &Arc<GatewayState>) {
     let Some(registry) = state.services.channel_registry.as_ref() else {
         tracing::debug!("no channel registry available, skipping channel startup on vault unseal");
         return;
@@ -746,11 +817,49 @@ mod tests {
             .unwrap();
 
         set_vault_encryption_runtime_enabled(true);
-        let report = disable_vault_and_decrypt_all(&vault, &pool).await.unwrap();
+        #[cfg(feature = "connectors")]
+        let connector_manager = {
+            let manager = crate::connectors::ConnectorManager::open(
+                config_dir.path(),
+                1,
+                Some(Arc::clone(&vault)),
+            )
+            .await
+            .unwrap();
+            manager
+                .add_account(crate::connectors::AccountCreateRequest {
+                    kind: moltis_connectors::ConnectorKind::Caldav,
+                    channel_type: None,
+                    channel_account_id: None,
+                    himalaya_account_name: None,
+                    himalaya_backend: None,
+                    name: "Calendar".to_owned(),
+                    server_url: "https://calendar.example.com".to_owned(),
+                    username: "user@example.com".to_owned(),
+                    password: Secret::new("connector-password".to_owned()),
+                    timeout_seconds: 30,
+                    allow_insecure_http: false,
+                    allow_private_network: false,
+                    enabled: true,
+                })
+                .await
+                .unwrap();
+            manager
+        };
+        let report = disable_vault_and_decrypt_all(
+            &vault,
+            &pool,
+            #[cfg(feature = "connectors")]
+            Some(&connector_manager),
+        )
+        .await
+        .unwrap();
         assert_eq!(report.env_vars, 1);
         assert_eq!(report.ssh_keys, 1);
         assert_eq!(report.channels, 1);
         assert_eq!(report.webhooks, 1);
+        #[cfg(feature = "connectors")]
+        assert_eq!(report.connectors, 1);
 
         let env: (String, i64) =
             sqlx::query_as("SELECT value, encrypted FROM env_variables WHERE key = 'API_KEY'")
@@ -765,6 +874,21 @@ mod tests {
                 .unwrap();
         let channel_json: serde_json::Value = serde_json::from_str(&channel.0).unwrap();
         assert_eq!(channel_json["token"], "Bot discord-token");
+        #[cfg(feature = "connectors")]
+        {
+            let connectors_url = format!(
+                "sqlite:{}?mode=ro",
+                config_dir.path().join("connectors.db").display()
+            );
+            let connectors_pool = SqlitePool::connect(&connectors_url).await.unwrap();
+            let (config,): (String,) =
+                sqlx::query_as("SELECT config FROM connector_accounts LIMIT 1")
+                    .fetch_one(&connectors_pool)
+                    .await
+                    .unwrap();
+            let config: serde_json::Value = serde_json::from_str(&config).unwrap();
+            assert_eq!(config["password"], "connector-password");
+        }
     }
 
     #[tokio::test]
@@ -792,9 +916,14 @@ mod tests {
             .unwrap();
 
         set_vault_encryption_runtime_enabled(true);
-        let error = disable_vault_and_decrypt_all(&vault, &pool)
-            .await
-            .unwrap_err();
+        let error = disable_vault_and_decrypt_all(
+            &vault,
+            &pool,
+            #[cfg(feature = "connectors")]
+            None,
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             error

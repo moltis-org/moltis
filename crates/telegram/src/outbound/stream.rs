@@ -512,6 +512,7 @@ impl TelegramOutbound {
         Ok(())
     }
 
+    /// Send the chunks that did not fit the edited message, reporting their ids.
     async fn send_remaining_final_chunks(
         &self,
         bot: &Bot,
@@ -521,23 +522,26 @@ impl TelegramOutbound {
         thread_id: Option<ThreadId>,
         reply_params: Option<&ReplyParameters>,
         final_state: &StreamFinalState,
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         let chunks =
             markdown::chunk_markdown_html(&final_state.accumulated, TELEGRAM_MAX_MESSAGE_LEN);
+        let mut ids = Vec::new();
         for chunk in chunks.into_iter().skip(1) {
-            self.send_chunk_with_fallback(
-                bot,
-                account_id,
-                to,
-                chat_id,
-                thread_id,
-                &chunk,
-                reply_params,
-                true,
-            )
-            .await?;
+            let id = self
+                .send_chunk_with_fallback(
+                    bot,
+                    account_id,
+                    to,
+                    chat_id,
+                    thread_id,
+                    &chunk,
+                    reply_params,
+                    true,
+                )
+                .await?;
+            ids.push(id.0.to_string());
         }
-        Ok(())
+        Ok(ids)
     }
 
     async fn finish_final_stream_message(
@@ -552,9 +556,9 @@ impl TelegramOutbound {
         progress_message_id: &mut Option<MessageId>,
         final_state: &mut StreamFinalState,
         throttle: Duration,
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         if final_state.accumulated.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let display = final_state.current_final_html();
@@ -667,15 +671,19 @@ fn trim_to_recent_chars(text: &mut String, max_chars: usize) -> bool {
     true
 }
 
-#[async_trait]
-impl ChannelStreamOutbound for TelegramOutbound {
-    async fn send_stream(
+impl TelegramOutbound {
+    /// Drive an edit-in-place stream, returning the ids of the messages the
+    /// final reply ended up occupying.
+    ///
+    /// Both trait entry points share this so the streaming state machine
+    /// exists once; [`ChannelStreamOutbound::send_stream`] discards the ids.
+    async fn send_stream_ids(
         &self,
         account_id: &str,
         to: &str,
         reply_to: Option<&str>,
         mut stream: StreamReceiver,
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         let bot = self.get_bot(account_id)?;
         let (chat_id, thread_id) = parse_chat_target(to)?;
         let rp = self.reply_params(account_id, reply_to);
@@ -693,12 +701,15 @@ impl ChannelStreamOutbound for TelegramOutbound {
         typing_interval.tick().await;
         let mut flush_interval = tokio::time::interval(throttle);
         flush_interval.tick().await;
+        // Chunks that spilled past the edited message; the edited message's own
+        // id is read off `final_state` once the loop ends.
+        let mut overflow_ids: Vec<String> = Vec::new();
 
         loop {
             tokio::select! {
                 event = stream.recv() => {
                     let Some(event) = event else {
-                        self.finish_final_stream_message(
+                        overflow_ids = self.finish_final_stream_message(
                             &bot,
                             account_id,
                             to,
@@ -835,8 +846,9 @@ impl ChannelStreamOutbound for TelegramOutbound {
                                 }
                             }
                         },
+                        StreamEvent::TaskUpdate(_) => {},
                         StreamEvent::Done => {
-                            self.finish_final_stream_message(
+                            overflow_ids = self.finish_final_stream_message(
                                 &bot,
                                 account_id,
                                 to,
@@ -915,7 +927,35 @@ impl ChannelStreamOutbound for TelegramOutbound {
                 .await;
         }
 
+        let mut ids = Vec::with_capacity(overflow_ids.len() + 1);
+        ids.extend(final_state.message_id.map(|id| id.0.to_string()));
+        ids.extend(overflow_ids);
+        Ok(ids)
+    }
+}
+
+#[async_trait]
+impl ChannelStreamOutbound for TelegramOutbound {
+    async fn send_stream(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> Result<()> {
+        self.send_stream_ids(account_id, to, reply_to, stream)
+            .await?;
         Ok(())
+    }
+
+    async fn send_stream_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> Result<Vec<String>> {
+        self.send_stream_ids(account_id, to, reply_to, stream).await
     }
 
     async fn is_stream_enabled(&self, account_id: &str) -> bool {

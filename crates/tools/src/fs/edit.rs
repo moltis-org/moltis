@@ -476,7 +476,9 @@ impl AgentTool for EditTool {
          `old_string` is not unique in the file unless `replace_all=true`. \
          This uniqueness requirement prevents the most common class of \
          edit mistakes. Supply enough context in `old_string` to make the \
-         match unique."
+         match unique. In sandboxed sessions, use absolute workspace/data paths \
+         or `/home/sandbox/...` paths; both are read and written through the \
+         sandbox when needed."
     }
 
     fn parameters_schema(&self) -> Value {

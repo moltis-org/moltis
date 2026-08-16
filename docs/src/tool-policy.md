@@ -1,9 +1,14 @@
 # Tool Policy
 
-Tool policies control which tools are available during a session. Policies
-use a layered system where each layer can restrict or widen access, and
-**deny always wins** — once a tool is denied at any layer, no later layer
-can re-allow it.
+Tool policies control which tools are available during a session. Before these
+name-based layers run, Moltis applies the registry's host-owned audience
+ceiling. Guest, shared-room, and unknown-topology channel turns receive no
+tools. Webhooks receive no tools by default and can explicitly opt into tools
+registered for public use. Policies may narrow but never widen these ceilings.
+
+Within the audience ceiling, policies use a layered system where each layer can
+restrict or widen access, and **deny always wins** — once a tool is denied at
+any layer, no later layer can re-allow it.
 
 ## Layers
 
@@ -15,8 +20,8 @@ but deny entries accumulate across all of them.
 | 1 | Global | `[tools.policy]` | All sessions |
 | 2 | Per-provider | `[providers.<name>.policy]` | Requests routed through that provider |
 | 3 | Per-agent preset | `[agents.presets.<id>.tools]` | Sub-agents spawned with that preset |
-| 4 | Per-channel group | `[channels.<type>.<account>.tools.groups.<chat_type>]` | Channel sessions matching that chat type |
-| 5 | Per-sender | `...groups.<chat_type>.by_sender.<sender_id>` | Messages from that sender in that group |
+| 4 | Per-channel chat type | `[channels.<type>.<account>.tools.groups.<chat_type>]` | Channel sessions matching that chat type |
+| 5 | Per-sender | `...groups.<chat_type>.by_sender.<sender_id>` | Messages from that sender in that chat type |
 | 6 | Sandbox | `[tools.exec.sandbox.tools_policy]` | Commands running inside a sandbox container |
 
 **Web UI sessions** see layers 1-3 (no channel context), plus layer 6 if sandboxed.
@@ -103,55 +108,39 @@ allowed, and `exec`/`write_file` are explicitly denied. See
 > `spawn_agent`. They do not affect the main agent session. Use the global
 > `[tools.policy]` for the main session.
 
-## Layer 4 — Per-Channel Group
+## Layer 4 — Per-Channel Chat Type
 
 Channel accounts can restrict tools by chat type (`private`, `group`,
-`channel`, etc.). This is useful for hardening group chats where the bot
-is exposed to untrusted users.
+`channel`, etc.). Guest, shared-room, and unknown-topology turns already have a
+non-widenable deny-all policy. This layer is primarily useful for narrowing the
+tools available to an operator in a proven direct chat.
 
 ```toml
-[channels.telegram.my-bot.tools.groups.group]
+[channels.telegram.my-bot.tools.groups.private]
 deny = ["exec", "browser"]
 ```
 
-In this example, `exec` and `browser` are denied in Telegram group chats
-handled by the `my-bot` account. Private chats and web UI sessions are
-unaffected.
+In this example, `exec` and `browser` are denied in Telegram direct chats
+handled by the `my-bot` account. Web UI sessions are unaffected.
 
 ## Layer 5 — Per-Sender
 
-Within a channel group, individual senders can receive overrides. This lets
-you trust specific users in an otherwise restricted group.
+Within a channel chat type, individual senders can receive name-policy
+overrides. Overrides cannot cross the deny-all ceiling applied to guests,
+shared rooms, and unknown chat kinds.
 
 ```toml
-[channels.telegram.my-bot.tools.groups.group]
+[channels.telegram.my-bot.tools.groups.private]
 deny = ["exec", "browser"]
 
-[channels.telegram.my-bot.tools.groups.group.by_sender."123456"]
+[channels.telegram.my-bot.tools.groups.private.by_sender."123456"]
 allow = ["*"]
 ```
 
-Sender `123456` gets `allow = ["*"]`, which replaces the previous allow
-list. However, because **deny always accumulates**, the `exec` and
-`browser` denials from the group layer still apply. The sender override
-is useful for widening the allow list (e.g., granting access to tools that
-were not in the previous allow set) or for applying a different profile.
-
-If you need a trusted sender to have `exec` access in a group, avoid
-denying `exec` at the group layer. Instead, use a restrictive allow list
-at the group level and widen it per-sender:
-
-```toml
-[channels.telegram.my-bot.tools.groups.group]
-allow = ["web_search", "web_fetch", "memory_search"]
-
-[channels.telegram.my-bot.tools.groups.group.by_sender."123456"]
-allow = ["*"]
-```
-
-Here, untrusted group members can only use the three listed tools. Sender
-`123456` gets full access because the group layer did not deny anything —
-it only narrowed the allow list.
+Sender `123456` gets `allow = ["*"]`, which replaces the previous allow list.
+However, because **deny always accumulates**, the `exec` and `browser` denials
+from the chat-type layer still apply. The sender must also be a configured
+operator in a proven direct chat; a sender override alone never grants tools.
 
 ## Layer 6 — Sandbox
 
@@ -179,28 +168,29 @@ policy.deny = ["exec"]
 When using OpenAI, the agent cannot run shell commands. All other
 providers retain their normal tool access.
 
-### Restrict group chats on Telegram
+### Restrict operator DMs on Telegram
 
 ```toml
-[channels.telegram.my-bot.tools.groups.group]
+[channels.telegram.my-bot.tools.groups.private]
 deny = ["exec", "browser*"]
 ```
 
-Group chats cannot use `exec` or any tool starting with `browser`.
-Private chats are unaffected.
+Operators in proven direct chats cannot use `exec` or any tool starting with
+`browser`. Guest and shared-room turns already receive no tools.
 
-### Trust a sender in a restricted group
+### Narrow one operator in direct chats
 
 ```toml
-[channels.telegram.my-bot.tools.groups.group]
+[channels.telegram.my-bot.tools.groups.private]
 allow = ["web_search", "web_fetch"]
 
-[channels.telegram.my-bot.tools.groups.group.by_sender."123456"]
-allow = ["*"]
+[channels.telegram.my-bot.tools.groups.private.by_sender."123456"]
+allow = ["web_search"]
 ```
 
-Normal group members can only search and fetch. Sender `123456` can use
-every tool (nothing was denied at the group layer, so nothing accumulates).
+Operator `123456` can only search in a proven direct chat. Other operators in
+direct chats can search and fetch. This configuration grants nothing to guests
+or shared-room participants.
 
 ### Agent preset with limited tools
 
@@ -227,19 +217,19 @@ Then `web_fetch` is denied. The effective policy allows `exec`, `browser`,
 and `memory`, and denies `web_fetch`. All other tools are not in the allow
 list and are therefore blocked.
 
-### Widen a sender via profile
+### Apply a profile to an operator DM
 
 ```toml
-[channels.telegram.my-bot.tools.groups.group]
+[channels.telegram.my-bot.tools.groups.private]
 allow = ["web_search"]
 
-[channels.telegram.my-bot.tools.groups.group.by_sender."123456"]
+[channels.telegram.my-bot.tools.groups.private.by_sender."123456"]
 profile = "full"
 ```
 
-Sender `123456` gets `allow = ["*"]` from the `full` profile, replacing
-the group's narrow allow list. Since the group layer only set `allow` (no
-`deny`), nothing is denied and the sender has full tool access.
+Operator `123456` gets `allow = ["*"]` from the `full` profile, replacing the
+chat-type allow list in a proven direct chat. The same sender still receives no
+tools as a guest or in a shared or unknown chat.
 
 ## Debugging
 

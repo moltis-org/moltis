@@ -361,7 +361,7 @@ pub async fn handle_room_message(
             && let Some((latitude, longitude)) = extract_location_coordinates(&body)
         {
             let resolved = sink
-                .resolve_pending_location(&reply_to, latitude, longitude)
+                .resolve_pending_location(&reply_to, Some(&sender_id), latitude, longitude)
                 .await;
             if resolved {
                 info!(
@@ -578,7 +578,10 @@ pub async fn handle_poll_response(
         message_id: None,
     };
 
-    if let Err(error) = sink.dispatch_interaction(&callback_data, reply_to).await {
+    if let Err(error) = sink
+        .dispatch_interaction(&callback_data, reply_to, Some(&sender_id))
+        .await
+    {
         debug!(
             account_id,
             callback_data, "matrix poll interaction dispatch failed: {error}"
@@ -803,7 +806,9 @@ async fn handle_location_message(
         return;
     };
 
-    let resolved = sink.update_location(&reply_to, latitude, longitude).await;
+    let resolved = sink
+        .update_location(&reply_to, meta.sender_id.as_deref(), latitude, longitude)
+        .await;
     info!(
         account_id,
         event_id,

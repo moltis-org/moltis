@@ -95,6 +95,11 @@ pub struct SlackAccountConfig {
     #[serde(default)]
     pub allowlist: Vec<String>,
 
+    /// Exact sender IDs allowed to run privileged channel commands.
+    /// Empty grants nobody privileged access.
+    #[serde(default)]
+    pub operators: Vec<String>,
+
     /// Channel allowlist (Slack channel IDs).
     #[serde(default)]
     pub channel_allowlist: Vec<String>,
@@ -171,6 +176,7 @@ impl std::fmt::Debug for SlackAccountConfig {
             .field("group_policy", &self.group_policy)
             .field("mention_mode", &self.mention_mode)
             .field("allowlist", &self.allowlist)
+            .field("operators", &self.operators)
             .field("channel_allowlist", &self.channel_allowlist)
             .field("model", &self.model)
             .field("model_provider", &self.model_provider)
@@ -202,6 +208,7 @@ impl Default for SlackAccountConfig {
             group_policy: GroupPolicy::Open,
             mention_mode: MentionMode::Mention,
             allowlist: Vec::new(),
+            operators: Vec::new(),
             channel_allowlist: Vec::new(),
             model: None,
             model_provider: None,
@@ -224,6 +231,10 @@ impl Default for SlackAccountConfig {
 impl ChannelConfigView for SlackAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.allowlist
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {
@@ -301,6 +312,7 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("group_policy", &c.group_policy)?;
         s.serialize_field("mention_mode", &c.mention_mode)?;
         s.serialize_field("allowlist", &c.allowlist)?;
+        s.serialize_field("operators", &c.operators)?;
         s.serialize_field("channel_allowlist", &c.channel_allowlist)?;
         if c.model.is_some() {
             s.serialize_field("model", &c.model)?;

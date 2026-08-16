@@ -12,8 +12,9 @@ use {
 };
 
 use moltis_agents::model::{
-    AgentToolControls, ChatMessage, CompletionResponse, LlmProvider, ReasoningEffort, StreamEvent,
-    ToolCall, Usage, UserContent, decode_tool_call_arguments_from_str,
+    AgentToolControls, ChatMessage, CompletionResponse, InputTokenAccounting, LlmProvider,
+    ReasoningEffort, StreamEvent, ToolCall, Usage, UserContent,
+    decode_tool_call_arguments_from_str,
 };
 
 use crate::openai_compat::to_responses_api_tools;
@@ -608,12 +609,13 @@ impl LlmProvider for OpenAiCodexProvider {
         Ok(CompletionResponse {
             text,
             tool_calls,
-            usage: Usage {
+            usage: Usage::from_input_tokens(
+                InputTokenAccounting::Inclusive,
                 input_tokens,
                 output_tokens,
                 cache_read_tokens,
-                ..Default::default()
-            },
+                0,
+            ),
         })
     }
 
@@ -758,12 +760,13 @@ impl LlmProvider for OpenAiCodexProvider {
                         for index in tool_calls.keys() {
                             yield StreamEvent::ToolCallComplete { index: *index };
                         }
-                        yield StreamEvent::Done(Usage {
+                        yield StreamEvent::Done(Usage::from_input_tokens(
+                            InputTokenAccounting::Inclusive,
                             input_tokens,
                             output_tokens,
                             cache_read_tokens,
-                            ..Default::default()
-                        });
+                            0,
+                        ));
                         return;
                     }
 
@@ -845,12 +848,13 @@ impl LlmProvider for OpenAiCodexProvider {
                                 for index in tool_calls.keys() {
                                     yield StreamEvent::ToolCallComplete { index: *index };
                                 }
-                                yield StreamEvent::Done(Usage {
+                                yield StreamEvent::Done(Usage::from_input_tokens(
+                                    InputTokenAccounting::Inclusive,
                                     input_tokens,
                                     output_tokens,
                                     cache_read_tokens,
-                                    ..Default::default()
-                                });
+                                    0,
+                                ));
                                 return;
                             }
                             "error" | "response.failed" => {

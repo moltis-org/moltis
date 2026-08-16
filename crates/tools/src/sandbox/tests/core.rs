@@ -610,6 +610,54 @@ async fn test_docker_write_file_uses_mounted_workspace_path() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn test_docker_write_file_falls_back_to_container_copy_when_host_mount_is_inaccessible() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let fake_cli = temp_dir.path().join("fake-docker");
+    std::fs::write(
+        &fake_cli,
+        "#!/bin/sh\n\
+         if [ \"$1\" = \"exec\" ]; then printf 'missing-file\\n'; exit 0; fi\n\
+         if [ \"$1\" = \"cp\" ]; then cat >/dev/null; exit 0; fi\n\
+         exit 2\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut permissions = std::fs::metadata(&fake_cli).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_cli, permissions).unwrap();
+    }
+
+    let cli: &'static str = Box::leak(fake_cli.display().to_string().into_boxed_str());
+    let host_data_dir = temp_dir.path().join("host-only-data");
+    let docker = DockerSandbox::with_cli(
+        SandboxConfig {
+            workspace_mount: WorkspaceMount::Rw,
+            host_data_dir: Some(host_data_dir),
+            ..Default::default()
+        },
+        cli,
+    );
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-docker-write-fallback".into(),
+    };
+    let guest_file = moltis_config::data_dir().join("notes/todo.txt");
+
+    let result = docker
+        .write_file(
+            &id,
+            &guest_file.display().to_string(),
+            b"docker fallback write",
+        )
+        .await
+        .unwrap();
+
+    assert!(result.is_none());
+}
+
 #[tokio::test]
 async fn test_docker_write_file_uses_mounted_home_path() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -666,6 +714,69 @@ async fn test_docker_list_files_remaps_mounted_workspace_paths() {
         guest_root.join("nested/done.txt").display().to_string(),
         guest_root.join("todo.txt").display().to_string(),
     ]);
+    assert!(!files.truncated);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_docker_list_files_falls_back_when_host_mount_is_inaccessible() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let fake_cli = temp_dir.path().join("fake-docker");
+    std::fs::write(
+        &fake_cli,
+        "#!/bin/sh\n\
+         if [ \"$1\" != \"exec\" ]; then exit 2; fi\n\
+         case \"$*\" in\n\
+           *\"find \"*) printf '/container/listed.txt\\n' ;;\n\
+           *) printf 'dir\\n' ;;\n\
+         esac\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut permissions = std::fs::metadata(&fake_cli).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_cli, permissions).unwrap();
+    }
+
+    let host_data_dir = temp_dir.path().join("missing-host-data");
+    assert!(!host_data_dir.exists());
+    let cli: &'static str = Box::leak(fake_cli.display().to_string().into_boxed_str());
+    let docker = DockerSandbox::with_cli(
+        SandboxConfig {
+            workspace_mount: WorkspaceMount::Rw,
+            host_data_dir: Some(host_data_dir.clone()),
+            ..Default::default()
+        },
+        cli,
+    );
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-docker-list-fallback".into(),
+    };
+    let guest_root = moltis_config::data_dir().join("notes");
+
+    let files = docker
+        .list_files(&id, &guest_root.display().to_string())
+        .await
+        .unwrap();
+
+    assert_eq!(files.files, vec!["/container/listed.txt"]);
+    assert!(!files.truncated);
+
+    std::fs::create_dir_all(&host_data_dir).unwrap();
+    std::os::unix::fs::symlink(
+        temp_dir.path().join("missing-target"),
+        host_data_dir.join("notes"),
+    )
+    .unwrap();
+
+    let files = docker
+        .list_files(&id, &guest_root.display().to_string())
+        .await
+        .unwrap();
+
+    assert_eq!(files.files, vec!["/container/listed.txt"]);
     assert!(!files.truncated);
 }
 

@@ -16,6 +16,7 @@ moltis-agents         = { workspace = true }
 moltis-channels       = { workspace = true }
 moltis-common         = { workspace = true }
 moltis-config         = { workspace = true }
+moltis-observability   = { workspace = true }
 moltis-memory         = { workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 moltis-plugins        = { workspace = true }

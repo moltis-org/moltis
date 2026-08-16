@@ -19,6 +19,14 @@ pub enum Error {
 
     #[error("event not found: {0}")]
     NotFound(String),
+
+    /// Publishing into a group the account may no longer post in.
+    ///
+    /// Distinct from a relay refusal: nothing was attempted, because the
+    /// operator has withdrawn the bot from that group. Maps to `unavailable`
+    /// rather than `external` — it is our own policy, not the relay's.
+    #[error("group send not permitted: {0}")]
+    GroupSendDenied(String),
 }
 
 impl Error {
@@ -34,6 +42,9 @@ impl From<Error> for ChannelError {
         match e {
             Error::Config(msg) => ChannelError::invalid_input(msg),
             Error::NotFound(id) => ChannelError::unavailable(format!("event not found: {id}")),
+            Error::GroupSendDenied(msg) => {
+                ChannelError::unavailable(format!("group send not permitted: {msg}"))
+            },
             other => ChannelError::external("nostr", other),
         }
     }

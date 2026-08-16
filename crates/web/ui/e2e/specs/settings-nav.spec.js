@@ -24,9 +24,7 @@ test.describe("Settings navigation", () => {
 		await expect(page.getByRole("heading", { name: "User Profile", exact: true })).toBeVisible();
 	});
 
-	test("settings nav keeps distinct icons for nodes, remote access, network audit, and openclaw import", async ({
-		page,
-	}) => {
+	test("settings nav keeps distinct icons for systems and integrations", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/profile");
 		await expect(page.locator(".settings-sidebar-nav")).toBeVisible();
@@ -57,7 +55,9 @@ test.describe("Settings navigation", () => {
 				remoteAccess: readRuleMask('.settings-nav-item[data-section="remote-access"]::before'),
 				networkAudit: readRuleMask('.settings-nav-item[data-section="network-audit"]::before'),
 				mcp: readRuleMask('.settings-nav-item[data-section="mcp"]::before'),
+				connectors: readRuleMask('.settings-nav-item[data-section="connectors"]::before'),
 				openclawImport: readRuleMask('.settings-nav-item[data-section="import"]::before'),
+				instrumentation: readRuleMask('.settings-nav-item[data-section="instrumentation"]::before'),
 			};
 		});
 
@@ -73,7 +73,9 @@ test.describe("Settings navigation", () => {
 		expect(hasMask(masks.tools)).toBeTruthy();
 		expect(hasMask(masks.remoteAccess)).toBeTruthy();
 		expect(hasMask(masks.networkAudit)).toBeTruthy();
+		expect(hasMask(masks.instrumentation)).toBeTruthy();
 		expect(hasMask(masks.mcp)).toBeTruthy();
+		expect(hasMask(masks.connectors)).toBeTruthy();
 		expect(masks.remoteAccess).not.toBe(masks.networkAudit);
 
 		// Import appears only when OpenClaw is detected in this run.
@@ -100,6 +102,7 @@ test.describe("Settings navigation", () => {
 		{ id: "providers", heading: "LLMs" },
 		{ id: "tools", heading: "Tools" },
 		{ id: "channels", heading: "Channels" },
+		{ id: "connectors", heading: "Connectors" },
 		{ id: "mcp", heading: "MCP" },
 		{ id: "hooks", heading: "Hooks" },
 		{ id: "skills", heading: "Skills" },
@@ -660,6 +663,7 @@ test.describe("Settings navigation", () => {
 			"Network Audit",
 			"Sandboxes",
 			"Channels",
+			"Connectors",
 			"Hooks",
 			"LLMs",
 			"Tools",
@@ -670,6 +674,7 @@ test.describe("Settings navigation", () => {
 			"Terminal",
 			"Monitoring",
 			"Logs",
+			"Instrumentation",
 			...presentOptionalItems(["GraphQL"]),
 			"Configuration",
 		];
