@@ -281,7 +281,13 @@ operations are available:</p>
 <p>Lists all calendars available on the account.</p>
 <p>Returns: <code>href</code>, <code>display_name</code>, <code>color</code>, <code>description</code> for each calendar.</p>
 <h3 id="list_events"><code>list_events</code></h3>
-<p>Lists events in a specific calendar, optionally filtered by date range.</p>
+<p>Lists events in a specific calendar, optionally filtered by date range.
+When both <code>start</code> and <code>end</code> are given, the filter runs server-side as a
+CalDAV <code>calendar-query</code> REPORT with a <code>time-range</code> element (RFC 4791), so
+only events intersecting the window are fetched. Recurring resources are
+expanded by the server for that window, so results contain the matching
+occurrences rather than an out-of-range recurrence master. If either bound is
+omitted, all events are returned without recurrence expansion.</p>
 
 
 
@@ -307,7 +313,7 @@ operations are available:</p>
 
 
 
-<table><thead><tr><th>Parameter</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>calendar</code></td><td>yes</td><td>Calendar href (from <code>list_calendars</code>)</td></tr><tr><td><code>start</code></td><td>no</td><td>ISO 8601 start date/time</td></tr><tr><td><code>end</code></td><td>no</td><td>ISO 8601 end date/time</td></tr></tbody></table>
+<table><thead><tr><th>Parameter</th><th>Required</th><th>Description</th></tr></thead><tbody><tr><td><code>calendar</code></td><td>yes</td><td>Calendar href (from <code>list_calendars</code>)</td></tr><tr><td><code>start</code></td><td>no</td><td>ISO 8601 start date/time (naive times are treated as UTC)</td></tr><tr><td><code>end</code></td><td>no</td><td>ISO 8601 end date/time (naive times are treated as UTC)</td></tr></tbody></table>
 <p>Returns: <code>href</code>, <code>etag</code>, <code>uid</code>, <code>summary</code>, <code>start</code>, <code>end</code>, <code>all_day</code>,
 <code>location</code> for each event.</p>
 <h3 id="create_event"><code>create_event</code></h3>
