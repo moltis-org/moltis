@@ -11,7 +11,7 @@
 state, long-term memory files, and sandbox persistence, start with
 <a href="/memory-surfaces.html">Memory Surfaces</a>.</p>
 <h2 id="backends">Backends</h2>
-<p>Moltis supports two memory backends:</p>
+<p>Moltis supports three memory backends:</p>
 
 
 
@@ -72,7 +72,18 @@ state, long-term memory files, and sandbox persistence, start with
 
 
 
-<table><thead><tr><th>Feature</th><th>Built-in</th><th>QMD</th></tr></thead><tbody><tr><td><strong>Search Type</strong></td><td>Hybrid (vector + FTS5 keyword)</td><td>Hybrid (BM25 + vector + LLM reranking)</td></tr><tr><td><strong>Local Embeddings</strong></td><td>GGUF models via llama-cpp-2</td><td>GGUF models</td></tr><tr><td><strong>Remote Embeddings</strong></td><td>OpenAI, Ollama, custom endpoints</td><td>Built-in</td></tr><tr><td><strong>Embedding Cache</strong></td><td>SQLite with LRU eviction</td><td>Built-in</td></tr><tr><td><strong>Batch API</strong></td><td>OpenAI batch (50% cost saving)</td><td>No</td></tr><tr><td><strong>Circuit Breaker</strong></td><td>Fallback chain with auto-recovery</td><td>No</td></tr><tr><td><strong>LLM Reranking</strong></td><td>Optional (configurable)</td><td>Built-in with <code>query</code> command</td></tr><tr><td><strong>File Watching</strong></td><td>Real-time sync via notify</td><td>Built-in</td></tr><tr><td><strong>External Dependency</strong></td><td>None (pure Rust)</td><td>Requires QMD binary (Node.js/Bun)</td></tr><tr><td><strong>Offline Support</strong></td><td>Yes (with local embeddings)</td><td>Yes</td></tr></tbody></table>
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Feature</th><th>Built-in</th><th>Zvec</th><th>QMD</th></tr></thead><tbody><tr><td><strong>Search Type</strong></td><td>Hybrid (vector + FTS5 keyword)</td><td>Hybrid (HNSW vector + native FTS keyword)</td><td>Hybrid (BM25 + vector + LLM reranking)</td></tr><tr><td><strong>Local Embeddings</strong></td><td>GGUF models via llama-cpp-2</td><td>GGUF models via llama-cpp-2</td><td>GGUF models</td></tr><tr><td><strong>Remote Embeddings</strong></td><td>OpenAI, Ollama, custom endpoints</td><td>OpenAI, Ollama, custom endpoints</td><td>Built-in</td></tr><tr><td><strong>Embedding Cache</strong></td><td>SQLite with LRU eviction</td><td>Redb persistent K-V store</td><td>Built-in</td></tr><tr><td><strong>Batch API</strong></td><td>OpenAI batch (50% cost saving)</td><td>No</td><td>No</td></tr><tr><td><strong>Circuit Breaker</strong></td><td>Fallback chain with auto-recovery</td><td>Fallback chain with auto-recovery</td><td>No</td></tr><tr><td><strong>LLM Reranking</strong></td><td>Optional (configurable)</td><td>Optional (configurable)</td><td>Built-in with <code>query</code> command</td></tr><tr><td><strong>File Watching</strong></td><td>Real-time sync via notify</td><td>Real-time sync via notify</td><td>Built-in</td></tr><tr><td><strong>External Dependency</strong></td><td>None (pure Rust)</td><td>Requires zvec C library (v0.5.0)</td><td>Requires QMD binary (Node.js/Bun)</td></tr><tr><td><strong>Offline Support</strong></td><td>Yes (with local embeddings)</td><td>Yes (with local embeddings)</td><td>Yes</td></tr></tbody></table>
 <h3 id="built-in-backend">Built-in Backend</h3>
 <p>The default backend uses SQLite for storage with FTS5 for keyword search and optional vector embeddings for semantic search. Key advantages:</p>
 <ul>
@@ -96,6 +107,61 @@ state, long-term memory files, and sandbox persistence, start with
 </ol>
 <p>Moltis invokes the <code>qmd</code> CLI directly for indexing and search, so the memory
 backend does not require a separate background daemon.</p>
+<h3 id="zvec-backend">Zvec Backend</h3>
+<p>Zvec is a native vector database backend that uses HNSW indexing for vector
+similarity and native FTS for keyword search. It replaces SQLite as the storage
+layer while keeping the same embedding provider chain, LLM reranking, and file
+watching pipeline as the built-in backend.</p>
+<p><strong>When to use zvec:</strong></p>
+<ul>
+<li>You have a large memory corpus and need faster vector search than brute-force</li>
+<li>You want persistent, zero-copy vector storage (collection directory on disk)</li>
+<li>You are comfortable building the zvec C library from source</li>
+</ul>
+<p><strong>When to stick with built-in (SQLite):</strong></p>
+<ul>
+<li>You prefer a pure-Rust build with no C library dependencies</li>
+<li>Your memory corpus is small enough that brute-force search is fast</li>
+<li>You want the simplest possible setup with zero external build steps</li>
+</ul>
+<p><strong>Setup:</strong></p>
+<ol>
+<li>
+<p>Build moltis with the <code>zvec</code> feature flag:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="bash" data-code="cargo build --release --features zvec"><code><span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">cargo</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> build</span><span style="color:#2B5581;--shiki-dark:#79B8FF"> --release</span><span style="color:#2B5581;--shiki-dark:#79B8FF"> --features</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> zvec</span></span></code></pre>
+</li>
+<li>
+<p>Configure the backend in <code>moltis.toml</code>:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[memory]
+backend = &#x22;zvec&#x22;
+db_path = &#x22;memory.zvec&#x22;     # collection directory (created if it doesn&#x27;t exist)
+vector_weight = 0.7         # optional, default 0.7
+keyword_weight = 0.3        # optional, default 0.3
+search_merge_strategy = &#x22;rrf&#x22;   # &#x22;rrf&#x22; or &#x22;linear&#x22;"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">memory</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">backend </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "zvec"</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">db_path </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "memory.zvec"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">     # collection directory (created if it doesn't exist)</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">vector_weight </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 0.7</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">         # optional, default 0.7</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">keyword_weight </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 0.3</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">        # optional, default 0.3</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">search_merge_strategy </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "rrf"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">   # "rrf" or "linear"</span></span></code></pre>
+</li>
+<li>
+<p>The zvec C library is built automatically from source by the <code>zvec-sys</code>
+crate’s Cargo build script when you compile moltis with the <code>zvec</code> feature.</p>
+</li>
+</ol>
+<p>The <code>db_path</code> is resolved relative to Moltis’ data directory
+(<code>~/.moltis/memory.zvec</code>). The directory is created on first run with the
+collection schema (chunk fields, FTS index, HNSW vector index with 768
+dimensions).</p>
+<p><strong>Required sidecar file:</strong> zvec also creates a redb database next to the
+collection directory at <code>&#x3C;db_path>.cache</code> (e.g. <code>memory.zvec.cache</code>). This file
+is <strong>not a disposable cache</strong> — it stores the embedding cache, the file
+metadata index, and the per-path chunk index that <code>list_files</code>,
+<code>get_file</code>, and <code>get_chunks_for_file</code> rely on. Treat the collection directory
+<em>and</em> the <code>.cache</code> file as a unit: back them up together, and do not delete the
+<code>.cache</code> file. If it is removed, the vectors remain in the collection but the
+backend can no longer enumerate files or look up chunks by path until you
+re-index.</p>
 <h2 id="features">Features</h2>
 <h3 id="citations">Citations</h3>
 <p>Citations append source file and line number information to search results:</p>
@@ -310,7 +376,11 @@ not inject those transcripts into the prompt directly.</li>
 
 
 
-<table><thead><tr><th>Goal</th><th>Settings</th></tr></thead><tbody><tr><td>Default everyday setup</td><td><code>style = "hybrid"</code>, <code>backend = "builtin"</code>, <code>prompt_memory_mode = "live-reload"</code></td></tr><tr><td>Deterministic prompt memory</td><td><code>style = "hybrid"</code>, <code>prompt_memory_mode = "frozen-at-session-start"</code></td></tr><tr><td>Search-only long-term memory</td><td><code>style = "search-only"</code></td></tr><tr><td>Prompt-only memory, no recall tools</td><td><code>style = "prompt-only"</code></td></tr><tr><td>Disable agent memory writes</td><td><code>agent_write_mode = "off"</code></td></tr><tr><td>Keep <code>USER.md</code> from silent enrichment</td><td><code>user_profile_write_mode = "explicit-only"</code></td></tr><tr><td>Keep user profile only in config</td><td><code>user_profile_write_mode = "off"</code></td></tr><tr><td>QMD backend experiment</td><td><code>backend = "qmd"</code></td></tr></tbody></table>
+
+
+
+
+<table><thead><tr><th>Goal</th><th>Settings</th></tr></thead><tbody><tr><td>Default everyday setup</td><td><code>style = "hybrid"</code>, <code>backend = "builtin"</code>, <code>prompt_memory_mode = "live-reload"</code></td></tr><tr><td>Deterministic prompt memory</td><td><code>style = "hybrid"</code>, <code>prompt_memory_mode = "frozen-at-session-start"</code></td></tr><tr><td>Search-only long-term memory</td><td><code>style = "search-only"</code></td></tr><tr><td>Prompt-only memory, no recall tools</td><td><code>style = "prompt-only"</code></td></tr><tr><td>Disable agent memory writes</td><td><code>agent_write_mode = "off"</code></td></tr><tr><td>Keep <code>USER.md</code> from silent enrichment</td><td><code>user_profile_write_mode = "explicit-only"</code></td></tr><tr><td>Keep user profile only in config</td><td><code>user_profile_write_mode = "off"</code></td></tr><tr><td>Zvec backend experiment</td><td><code>backend = "zvec"</code>, <code>db_path = "memory.zvec"</code></td></tr><tr><td>QMD backend experiment</td><td><code>backend = "qmd"</code></td></tr></tbody></table>
 <h2 id="embedding-providers">Embedding Providers</h2>
 <p>The built-in backend supports multiple embedding providers:</p>
 
@@ -680,6 +750,15 @@ systems.</p>
 <li>Check that memory files exist in the expected directories</li>
 <li>Trigger a manual sync by restarting moltis</li>
 <li>Check logs for sync errors</li>
+</ol>
+<h3 id="zvec-not-available">Zvec not available</h3>
+<ol>
+<li>Ensure moltis was built with <code>--features zvec</code></li>
+<li>Verify the zvec C library built successfully (check for <code>libzvec_c_api.so</code> /
+<code>libzvec_c_api.dylib</code> / <code>zvec_c_api.dll</code> in the build output)</li>
+<li>Check that <code>db_path</code> points to a writable directory</li>
+<li>If the collection directory already exists but is corrupted, delete it and
+restart — moltis will recreate it on the next run</li>
 </ol>
 <h3 id="qmd-not-available">QMD not available</h3>
 <ol>
