@@ -250,7 +250,14 @@ async function waitForChatSessionReady(page) {
 	);
 }
 
-function isRetryableRpcError(message) {
+function isRetryableRpcError(error) {
+	// The client localizes its own errors before returning them, so
+	// "WebSocket not connected" reaches us as "Service temporarily
+	// unavailable. Please try again." Matching the raw English here made this
+	// retry dead code, and the flake it exists to absorb surfaced as a failed
+	// assertion instead. The code survives localization, so match on that.
+	if (error?.code === "UNAVAILABLE") return true;
+	const message = error?.message;
 	if (typeof message !== "string") return false;
 	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
 }
@@ -298,7 +305,7 @@ async function sendRpcFromPage(page, method, params) {
 			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
 
 		if (lastResponse?.ok) return lastResponse;
-		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
+		if (!isRetryableRpcError(lastResponse?.error)) return lastResponse;
 	}
 	console.log(`[sendRpc] ${method} FAILED after 3 attempts, last: ${lastResponse?.error?.message?.slice(0, 100)}`);
 	return lastResponse;

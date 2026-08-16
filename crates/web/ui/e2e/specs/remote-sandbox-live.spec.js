@@ -187,12 +187,15 @@ test.describe("Daytona Sandbox live integration", () => {
 		const createData = await createResp.json();
 		sandboxId = createData.id;
 		expect(sandboxId).toBeTruthy();
+		const toolboxBaseUrl = createData.toolboxProxyUrl
+			? `${createData.toolboxProxyUrl.replace(/\/$/, "")}/${sandboxId}`
+			: `${DAYTONA_API}/toolbox/${sandboxId}/toolbox`;
 
 		// Wait for sandbox toolbox to become available (may take a few seconds after creation).
 		const execDeadline = Date.now() + 60000;
 		let execResp;
 		while (Date.now() < execDeadline) {
-			execResp = await fetch(`${DAYTONA_API}/toolbox/${sandboxId}/toolbox/process/execute`, {
+			execResp = await fetch(`${toolboxBaseUrl}/process/execute`, {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${DAYTONA_API_KEY}`,
@@ -200,8 +203,9 @@ test.describe("Daytona Sandbox live integration", () => {
 					"X-Daytona-Source": "moltis-e2e",
 				},
 				body: JSON.stringify({
-					command: "echo hello-from-daytona",
+					command: 'printf "%s" "$MOLTIS_DAYTONA_E2E_ENV"',
 					cwd: "/home/daytona",
+					envs: { MOLTIS_DAYTONA_E2E_ENV: "hello-from-daytona" },
 					timeout: 30,
 				}),
 			});

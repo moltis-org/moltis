@@ -171,6 +171,9 @@ pub(crate) struct AssistantTurnOutput {
     pub audio_path: Option<String>,
     pub reasoning: Option<String>,
     pub llm_api_response: Option<Value>,
+    /// Prepared after abortable channel delivery and emitted by the run owner
+    /// only after the assistant message has been persisted.
+    pub final_broadcast: Option<Value>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -244,6 +247,7 @@ pub(crate) fn build_assistant_turn_output(
         audio_path,
         reasoning,
         llm_api_response,
+        final_broadcast: None,
     }
 }
 
@@ -963,21 +967,6 @@ pub(crate) fn sanitize_user_document_display_name(name: &str) -> Option<String> 
         None
     } else {
         Some(trimmed.to_string())
-    }
-}
-
-pub(crate) fn parse_explicit_shell_command(text: &str) -> Option<&str> {
-    let trimmed = text.trim_start();
-    let rest = trimmed.strip_prefix("/sh")?;
-    let first = rest.chars().next()?;
-    if !first.is_whitespace() {
-        return None;
-    }
-    let command = &rest[first.len_utf8()..];
-    if command.trim().is_empty() {
-        None
-    } else {
-        Some(command)
     }
 }
 

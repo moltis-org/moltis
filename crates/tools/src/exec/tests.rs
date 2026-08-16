@@ -19,12 +19,22 @@ impl TestBroadcaster {
     }
 }
 
-#[test]
-fn truncate_output_for_display_handles_multibyte_boundary() {
-    let mut output = format!("{}л{}", "a".repeat(1999), "z".repeat(10));
-    truncate_output_for_display(&mut output, 2000);
+#[tokio::test]
+async fn limited_output_handles_multibyte_boundary() {
+    let input = format!("{}л{}", "a".repeat(1999), "z".repeat(10));
+    let output = read_output_limited(input.as_bytes(), 2000).await.unwrap();
     assert!(output.contains("[output truncated]"));
     assert!(!output.contains('л'));
+}
+
+#[tokio::test]
+async fn limited_output_caps_lossy_utf8_expansion() {
+    const LIMIT: usize = 10;
+    const MARKER: &str = "\n... [output truncated]";
+    let input = [0xff_u8; 100];
+    let output = read_output_limited(input.as_slice(), LIMIT).await.unwrap();
+    assert!(output.ends_with(MARKER));
+    assert!(output.len() <= LIMIT + MARKER.len());
 }
 
 #[async_trait]
@@ -50,6 +60,17 @@ async fn test_exec_echo() {
     assert_eq!(result.exit_code, 0);
 }
 
+#[test]
+fn host_exec_injects_the_resolved_moltis_data_dir() {
+    let mut env = vec![("MOLTIS_DATA_DIR".to_owned(), "stale".to_owned())];
+    inject_moltis_data_dir(&mut env, true);
+
+    assert_eq!(env, vec![(
+        "MOLTIS_DATA_DIR".to_owned(),
+        moltis_config::data_dir().to_string_lossy().into_owned(),
+    )]);
+}
+
 #[tokio::test]
 async fn test_exec_stderr() {
     let result = exec_command("echo err >&2", &ExecOpts::default())
@@ -72,6 +93,21 @@ async fn test_exec_timeout() {
     };
     let result = exec_command("sleep 10", &opts).await;
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_exec_timeout_kills_before_later_side_effect() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let marker = temp_dir.path().join("should-not-exist");
+    let command = format!("(sleep 1; touch '{}') & wait", marker.display());
+    let opts = ExecOpts {
+        timeout: Duration::from_millis(50),
+        ..Default::default()
+    };
+
+    assert!(exec_command(&command, &opts).await.is_err());
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert!(!marker.exists(), "timed-out descendant continued running");
 }
 
 #[tokio::test]
@@ -102,6 +138,21 @@ async fn test_exec_tool_empty_working_dir() {
         .unwrap();
     assert_eq!(result["exit_code"], 0);
     assert!(!result["stdout"].as_str().unwrap().trim().is_empty());
+}
+
+#[tokio::test]
+async fn test_exec_tool_uses_internal_working_dir_default() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let tool = ExecTool::default();
+    let result = tool
+        .execute(serde_json::json!({
+            "command": "pwd",
+            "_working_dir": temp_dir.path(),
+        }))
+        .await
+        .unwrap();
+    let reported = std::fs::canonicalize(result["stdout"].as_str().unwrap().trim()).unwrap();
+    assert_eq!(reported, temp_dir.path().canonicalize().unwrap());
 }
 
 #[tokio::test]

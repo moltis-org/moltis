@@ -90,6 +90,33 @@ async fn login(provider: &str) -> Result<()> {
     Ok(())
 }
 
+async fn prefetch_provider_api_metadata(
+    provider: &str,
+    client: &reqwest::Client,
+    store: &TokenStore,
+) {
+    #[cfg(feature = "provider-github-copilot")]
+    {
+        if !is_github_copilot_provider(provider) {
+            return;
+        }
+        if let Err(error) =
+            moltis_providers::github_copilot::prefetch_api_token_metadata(client, store).await
+        {
+            eprintln!("Warning: failed to prefetch GitHub Copilot API endpoint metadata: {error}");
+        }
+    }
+    #[cfg(not(feature = "provider-github-copilot"))]
+    {
+        let _ = (provider, client, store);
+    }
+}
+
+#[cfg(feature = "provider-github-copilot")]
+fn is_github_copilot_provider(provider: &str) -> bool {
+    provider == "github-copilot"
+}
+
 fn read_pasted_callback_code(expected_state: &str) -> Result<String> {
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
@@ -143,6 +170,7 @@ async fn login_device_flow(provider: &str, config: &moltis_oauth::OAuthConfig) -
 
     let store = TokenStore::new();
     store.save(provider, &tokens)?;
+    prefetch_provider_api_metadata(provider, &client, &store).await;
 
     println!("Successfully logged in to {provider}");
     Ok(())

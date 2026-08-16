@@ -84,6 +84,65 @@ async function getChatPaneBounds(page) {
 	});
 }
 
+test.describe("Chat layout — sandbox availability", () => {
+	test.afterEach(async ({ page }) => {
+		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => undefined);
+	});
+
+	test("shows direct mode and disables sandbox controls when no real sandbox backend is available", async ({
+		page,
+	}) => {
+		const pageErrors = watchPageErrors(page);
+
+		await page.addInitScript(() => {
+			var m = window.__MOLTIS__ || {};
+			m.sandbox = Object.assign(m.sandbox || {}, { backend: "restricted-host" });
+			window.__MOLTIS__ = m;
+		});
+
+		await page.route("**/api/gon*", async (route) => {
+			var response = await route.fetch();
+			var json = await response.json();
+			json.sandbox = Object.assign(json.sandbox || {}, { backend: "restricted-host" });
+			return route.fulfill({ response, json });
+		});
+
+		await page.route("**/api/bootstrap*", async (route) => {
+			var response = await route.fetch();
+			var json = await response.json();
+			json.sandbox = Object.assign(json.sandbox || {}, { backend: "restricted-host" });
+			return route.fulfill({ response, json });
+		});
+
+		await page.route("**/api/sandbox/available-backends", (route, request) => {
+			if (request.method() === "GET") {
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({
+						default: "auto",
+						backends: [
+							{ id: "restricted-host", label: "Restricted Host (no isolation)", kind: "local", available: true },
+						],
+					}),
+				});
+			}
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/chats/main");
+		await waitForWsConnected(page);
+		await waitForSessionReady(page);
+
+		await expect(page.locator("#sandboxLabel")).toHaveText("direct");
+		await expect(page.locator("#sandboxImageLabel")).toHaveText("unavailable");
+		await expect(page.locator("#sandboxToggle")).toBeDisabled();
+		await expect(page.locator("#sandboxImageBtn")).toBeDisabled();
+
+		expect(pageErrors).toEqual([]);
+	});
+});
+
 test.describe("Chat layout — no horizontal overflow (#945)", () => {
 	test.beforeEach(async ({ page }) => {
 		await navigateAndWait(page, "/chats/main");

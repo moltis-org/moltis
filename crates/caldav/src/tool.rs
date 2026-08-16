@@ -97,11 +97,7 @@ impl CalDavTool {
         })?;
 
         #[cfg(feature = "tracing")]
-        tracing::info!(
-            account = account_name,
-            url = %base_url,
-            "connecting to CalDAV server"
-        );
+        tracing::info!(account = account_name, "connecting to CalDAV server");
 
         let client: SharedCalDavClient =
             Arc::new(LibDavCalDavClient::connect(&base_url, username, password).await?);
@@ -355,6 +351,21 @@ impl crate::client::CalDavClient for MockCalDavClient {
             Some(ref r) => crate::time_filter::filter_events(events, r),
             None => events,
         })
+    }
+
+    async fn list_event_resources(
+        &self,
+        _calendar_href: &str,
+    ) -> crate::error::Result<Vec<crate::types::CalendarResourceMetadata>> {
+        Ok(Vec::new())
+    }
+
+    async fn fetch_event_resources(
+        &self,
+        _calendar_href: &str,
+        _hrefs: &[String],
+    ) -> crate::error::Result<Vec<crate::types::CalendarObjectResult>> {
+        Ok(Vec::new())
     }
 
     async fn create_event(

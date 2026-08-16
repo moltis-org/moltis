@@ -1,6 +1,6 @@
-//! Per-(channel, account) token-bucket rate limiter for channel webhooks.
+//! Per-(channel, account, endpoint) token-bucket rate limiter for channel webhooks.
 //!
-//! Each `(channel_type, account_id)` pair gets its own bucket. Buckets are
+//! Each `(channel_type, account_id, endpoint)` tuple gets its own bucket. Buckets are
 //! lazily created on first request and automatically evicted when stale.
 
 use std::time::{Duration, Instant};
@@ -11,14 +11,19 @@ use moltis_channels::channel_webhook_middleware::{
     ChannelWebhookRatePolicy, ChannelWebhookRejection,
 };
 
-/// Composite key for per-(channel, account) rate limiting.
+/// Composite key for per-(channel, account, endpoint) rate limiting.
 type BucketKey = String;
 
-fn bucket_key(channel: &str, account_id: &str) -> BucketKey {
-    format!("{channel}:{account_id}")
+fn bucket_key(channel: &str, account_id: &str, endpoint: &str) -> BucketKey {
+    format!(
+        "{}:{channel}{}:{account_id}{}:{endpoint}",
+        channel.len(),
+        account_id.len(),
+        endpoint.len()
+    )
 }
 
-/// Token-bucket state for a single (channel, account) pair.
+/// Token-bucket state for a single (channel, account, endpoint) tuple.
 struct Bucket {
     tokens: f64,
     last_refill: Instant,
@@ -41,7 +46,7 @@ impl ChannelWebhookRateLimiter {
         }
     }
 
-    /// Check the rate limit for a (channel, account) pair.
+    /// Check the rate limit for a (channel, account, endpoint) tuple.
     ///
     /// Returns `Ok(())` if the request is allowed, or
     /// `Err(ChannelWebhookRejection::RateLimited { .. })` if the bucket is exhausted.
@@ -49,9 +54,10 @@ impl ChannelWebhookRateLimiter {
         &self,
         channel_type: &str,
         account_id: &str,
+        endpoint: &str,
         policy: &ChannelWebhookRatePolicy,
     ) -> Result<(), ChannelWebhookRejection> {
-        let key = bucket_key(channel_type, account_id);
+        let key = bucket_key(channel_type, account_id, endpoint);
         let rate_per_sec = f64::from(policy.max_requests_per_minute) / 60.0;
         let capacity = f64::from(policy.max_requests_per_minute + policy.burst);
 
@@ -68,8 +74,9 @@ impl ChannelWebhookRateLimiter {
         bucket.tokens = (bucket.tokens + elapsed * rate_per_sec).min(capacity);
         bucket.last_refill = now;
 
-        // Try to consume one token.
-        if bucket.tokens >= 1.0 {
+        // Try to consume one token, then release the entry guard before
+        // eviction iterates over the map.
+        let result = if bucket.tokens >= 1.0 {
             bucket.tokens -= 1.0;
             Ok(())
         } else {
@@ -79,7 +86,10 @@ impl ChannelWebhookRateLimiter {
             Err(ChannelWebhookRejection::RateLimited {
                 retry_after: Duration::from_secs_f64(wait_secs),
             })
-        }
+        };
+        drop(entry);
+        self.evict_if_full();
+        result
     }
 
     /// Remove stale buckets that haven't been used recently.
@@ -139,7 +149,7 @@ mod tests {
         let policy = default_policy();
 
         // First request should always be allowed (bucket starts full).
-        assert!(limiter.check("slack", "acct1", &policy).is_ok());
+        assert!(limiter.check("slack", "acct1", "events", &policy).is_ok());
     }
 
     #[test]
@@ -152,11 +162,11 @@ mod tests {
 
         // Exhaust the full capacity (rate + burst = 8 tokens).
         for _ in 0..8 {
-            assert!(limiter.check("slack", "acct1", &policy).is_ok());
+            assert!(limiter.check("slack", "acct1", "events", &policy).is_ok());
         }
 
         // Next request should be rejected.
-        let result = limiter.check("slack", "acct1", &policy);
+        let result = limiter.check("slack", "acct1", "events", &policy);
         assert!(matches!(
             result,
             Err(ChannelWebhookRejection::RateLimited { .. })
@@ -173,12 +183,12 @@ mod tests {
 
         // Exhaust account 1.
         for _ in 0..6 {
-            assert!(limiter.check("slack", "acct1", &policy).is_ok());
+            assert!(limiter.check("slack", "acct1", "events", &policy).is_ok());
         }
-        assert!(limiter.check("slack", "acct1", &policy).is_err());
+        assert!(limiter.check("slack", "acct1", "events", &policy).is_err());
 
         // Account 2 should still be fine.
-        assert!(limiter.check("slack", "acct2", &policy).is_ok());
+        assert!(limiter.check("slack", "acct2", "events", &policy).is_ok());
     }
 
     #[test]
@@ -190,12 +200,16 @@ mod tests {
         };
 
         for _ in 0..6 {
-            assert!(limiter.check("slack", "acct1", &policy).is_ok());
+            assert!(limiter.check("slack", "acct1", "events", &policy).is_ok());
         }
-        assert!(limiter.check("slack", "acct1", &policy).is_err());
+        assert!(limiter.check("slack", "acct1", "events", &policy).is_err());
 
         // Same account, different channel — separate bucket.
-        assert!(limiter.check("msteams", "acct1", &policy).is_ok());
+        assert!(
+            limiter
+                .check("msteams", "acct1", "webhook", &policy)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -203,7 +217,7 @@ mod tests {
         let limiter = ChannelWebhookRateLimiter::new();
         let policy = default_policy();
 
-        limiter.check("slack", "acct1", &policy).ok();
+        limiter.check("slack", "acct1", "events", &policy).ok();
         assert_eq!(limiter.bucket_count(), 1);
 
         // Evict with zero max_idle removes everything.
@@ -220,15 +234,49 @@ mod tests {
         };
 
         for _ in 0..6 {
-            limiter.check("slack", "acct1", &policy).ok();
+            limiter.check("slack", "acct1", "events", &policy).ok();
         }
 
         if let Err(ChannelWebhookRejection::RateLimited { retry_after }) =
-            limiter.check("slack", "acct1", &policy)
+            limiter.check("slack", "acct1", "events", &policy)
         {
             assert!(retry_after.as_secs_f64() > 0.0);
         } else {
             panic!("expected RateLimited");
         }
+    }
+
+    #[test]
+    fn separate_endpoints_have_separate_buckets() {
+        let limiter = ChannelWebhookRateLimiter::new();
+        let policy = ChannelWebhookRatePolicy {
+            max_requests_per_minute: 2,
+            burst: 0,
+        };
+
+        assert!(limiter.check("slack", "acct1", "events", &policy).is_ok());
+        assert!(limiter.check("slack", "acct1", "events", &policy).is_ok());
+        assert!(limiter.check("slack", "acct1", "events", &policy).is_err());
+        assert!(limiter.check("slack", "acct1", "commands", &policy).is_ok());
+        assert!(
+            limiter
+                .check("slack", "acct1", "interactions", &policy)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn check_evicts_buckets_over_the_limit() {
+        let limiter = ChannelWebhookRateLimiter {
+            buckets: DashMap::new(),
+            max_buckets: 2,
+        };
+        let policy = default_policy();
+
+        limiter.check("slack", "acct1", "events", &policy).ok();
+        limiter.check("slack", "acct2", "events", &policy).ok();
+        limiter.check("slack", "acct3", "events", &policy).ok();
+
+        assert!(limiter.bucket_count() <= limiter.max_buckets);
     }
 }

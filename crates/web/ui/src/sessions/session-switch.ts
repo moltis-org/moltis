@@ -2,7 +2,7 @@
 
 import { chatAddMsg, removeThinking, setComposerStopButton, updateCommandInputUI, updateTokenBar } from "../chat-ui";
 import { sendRpc } from "../helpers";
-import { modelDisplayLabel, modelTitle } from "../models";
+import { modelDisplayLabel, modelTitle, updateModelComboAvailability } from "../models";
 import { restoreNodeSelection } from "../nodes-selector";
 import { updateSessionProjectSelect } from "../project-combo";
 import { restoreReasoningFromModelId } from "../reasoning-toggle";
@@ -127,6 +127,7 @@ export function restoreSessionState(entry: SessionMeta, projectId?: string): voi
 	updateCommandInputUI();
 	restoreMcpToggle(!entry.mcpDisabled);
 	restoreNodeSelection(entry.node_id || null);
+	updateModelComboAvailability();
 	updateChatSessionHeader();
 }
 

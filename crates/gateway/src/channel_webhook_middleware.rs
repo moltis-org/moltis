@@ -5,7 +5,7 @@
 //!
 //! 1. Signature verification (via the channel's [`ChannelWebhookVerifier`])
 //! 2. Timestamp staleness rejection
-//! 3. Per-(channel, account) rate limiting
+//! 3. Per-(channel, account, endpoint) rate limiting
 //! 4. Idempotency deduplication
 
 use http::HeaderMap;
@@ -20,24 +20,22 @@ use crate::{
     channel_webhook_rate_limit::ChannelWebhookRateLimiter,
 };
 
-/// Run the full channel webhook verification pipeline.
+/// Verify, freshness-check, and rate-limit a channel webhook without consuming
+/// its idempotency key. Callers that queue work asynchronously can use this and
+/// commit dedup atomically with queue admission.
 ///
 /// Steps:
 /// 1. Verify the cryptographic signature via the channel's verifier.
 /// 2. Check the timestamp is within the acceptable staleness window.
-/// 3. Apply per-(channel, account) rate limiting.
-/// 4. Deduplicate by provider message ID (if present).
-///
-/// On success returns the verified envelope and the dedup result.
-/// On failure returns a rejection that transport layers can map to responses.
-pub fn channel_webhook_gate(
+/// 3. Apply per-(channel, account, endpoint) rate limiting.
+pub fn verify_channel_webhook(
     verifier: &dyn ChannelWebhookVerifier,
-    dedup_store: &std::sync::RwLock<ChannelWebhookDedupeStore>,
     rate_limiter: &ChannelWebhookRateLimiter,
     account_id: &str,
+    endpoint: &str,
     headers: &HeaderMap,
     body: &[u8],
-) -> Result<(VerifiedChannelWebhook, ChannelWebhookDedupeResult), ChannelWebhookRejection> {
+) -> Result<VerifiedChannelWebhook, ChannelWebhookRejection> {
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
@@ -102,10 +100,11 @@ pub fn channel_webhook_gate(
         return Err(rejection);
     }
 
-    // Step 3: Per-(channel, account) rate limiting.
+    // Step 3: Per-(channel, account, endpoint) rate limiting.
     if let Err(rejection) = rate_limiter.check(
         verifier.channel_type().as_str(),
         account_id,
+        endpoint,
         &verifier.rate_policy(),
     ) {
         #[cfg(feature = "metrics")]
@@ -120,10 +119,34 @@ pub fn channel_webhook_gate(
         return Err(rejection);
     }
 
-    // Step 4: Idempotency deduplication.
+    Ok(envelope)
+}
+
+/// Run the full channel webhook verification pipeline.
+///
+/// On success returns the verified envelope and the dedup result. Synchronous
+/// consumers can use this directly; async consumers should use
+/// [`verify_channel_webhook`] and commit dedup with bounded work admission.
+pub fn channel_webhook_gate(
+    verifier: &dyn ChannelWebhookVerifier,
+    dedup_store: &std::sync::RwLock<ChannelWebhookDedupeStore>,
+    rate_limiter: &ChannelWebhookRateLimiter,
+    account_id: &str,
+    endpoint: &str,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<(VerifiedChannelWebhook, ChannelWebhookDedupeResult), ChannelWebhookRejection> {
+    let envelope =
+        verify_channel_webhook(verifier, rate_limiter, account_id, endpoint, headers, body)?;
+
     let dedup_result = if let Some(ref key) = envelope.idempotency_key {
         let mut store = dedup_store.write().unwrap_or_else(|e| e.into_inner());
-        if store.check_and_insert(key) {
+        if store.check_and_insert_scoped(
+            verifier.channel_type().as_str(),
+            account_id,
+            endpoint,
+            key,
+        ) {
             #[cfg(feature = "metrics")]
             {
                 use moltis_metrics::{counter, labels};
@@ -214,6 +237,7 @@ mod tests {
             &store,
             &limiter,
             "acct1",
+            "events",
             &HeaderMap::new(),
             body,
         );
@@ -232,6 +256,7 @@ mod tests {
             &store,
             &limiter,
             "acct1",
+            "events",
             &HeaderMap::new(),
             b"{}",
         );
@@ -248,13 +273,72 @@ mod tests {
         let body = br#"{"id":"ev-dup"}"#;
         let headers = HeaderMap::new();
 
-        let (_, d1) =
-            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body).unwrap();
+        let (_, d1) = channel_webhook_gate(
+            &PassVerifier,
+            &store,
+            &limiter,
+            "acct1",
+            "events",
+            &headers,
+            body,
+        )
+        .unwrap();
         assert_eq!(d1, ChannelWebhookDedupeResult::New);
 
-        let (_, d2) =
-            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body).unwrap();
+        let (_, d2) = channel_webhook_gate(
+            &PassVerifier,
+            &store,
+            &limiter,
+            "acct1",
+            "events",
+            &headers,
+            body,
+        )
+        .unwrap();
         assert_eq!(d2, ChannelWebhookDedupeResult::Duplicate);
+    }
+
+    #[test]
+    fn gate_namespaces_dedup_by_account_and_endpoint() {
+        let store = make_store();
+        let limiter = make_limiter();
+        let body = br#"{"id":"same-provider-id"}"#;
+        let headers = HeaderMap::new();
+
+        let (_, event) = channel_webhook_gate(
+            &PassVerifier,
+            &store,
+            &limiter,
+            "acct1",
+            "events",
+            &headers,
+            body,
+        )
+        .unwrap();
+        let (_, command) = channel_webhook_gate(
+            &PassVerifier,
+            &store,
+            &limiter,
+            "acct1",
+            "commands",
+            &headers,
+            body,
+        )
+        .unwrap();
+        let (_, other_account) = channel_webhook_gate(
+            &PassVerifier,
+            &store,
+            &limiter,
+            "acct2",
+            "events",
+            &headers,
+            body,
+        )
+        .unwrap();
+
+        assert_eq!(event, ChannelWebhookDedupeResult::New);
+        assert_eq!(command, ChannelWebhookDedupeResult::New);
+        assert_eq!(other_account, ChannelWebhookDedupeResult::New);
     }
 
     #[test]
@@ -264,13 +348,29 @@ mod tests {
         let body = br#"{"text":"no id"}"#;
         let headers = HeaderMap::new();
 
-        let (_, d1) =
-            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body).unwrap();
+        let (_, d1) = channel_webhook_gate(
+            &PassVerifier,
+            &store,
+            &limiter,
+            "acct1",
+            "events",
+            &headers,
+            body,
+        )
+        .unwrap();
         assert_eq!(d1, ChannelWebhookDedupeResult::New);
 
         // Same body without id — still New (no dedup key)
-        let (_, d2) =
-            channel_webhook_gate(&PassVerifier, &store, &limiter, "acct1", &headers, body).unwrap();
+        let (_, d2) = channel_webhook_gate(
+            &PassVerifier,
+            &store,
+            &limiter,
+            "acct1",
+            "events",
+            &headers,
+            body,
+        )
+        .unwrap();
         assert_eq!(d2, ChannelWebhookDedupeResult::New);
     }
 
@@ -318,6 +418,7 @@ mod tests {
                 &store,
                 &limiter,
                 "rate-test",
+                "events",
                 &headers,
                 b"{}",
             );
@@ -330,6 +431,7 @@ mod tests {
             &store,
             &limiter,
             "rate-test",
+            "events",
             &headers,
             b"{}",
         );

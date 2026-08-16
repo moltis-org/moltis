@@ -232,6 +232,7 @@ export interface GonData {
 	stt_enabled: boolean;
 	tts_enabled: boolean;
 	graphql_enabled: boolean;
+	connectors_enabled: boolean;
 	terminal_enabled: boolean;
 	git_branch?: string;
 	mem: MemSnapshot;

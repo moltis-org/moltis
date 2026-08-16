@@ -16,14 +16,20 @@ use {
 use {
     moltis_agents::{
         ChatMessage, UserContent,
-        model::{StreamEvent, push_capped_provider_raw_event, values_to_chat_messages},
+        model::{
+            StreamEvent, push_capped_provider_raw_event,
+            values_to_chat_messages_with_tool_result_limit,
+        },
         prompt::{PromptRuntimeContext, build_system_prompt_minimal_runtime_details},
     },
     moltis_sessions::store::SessionStore,
 };
 
 use crate::{
-    agent_loop::{ChannelStreamDispatcher, clear_unsupported_model, mark_unsupported_model},
+    agent_loop::{
+        ChannelStreamDispatcher, clear_unsupported_model,
+        commit_terminal_and_finish_channel_stream, mark_unsupported_model,
+    },
     channels::{
         deliver_channel_error, deliver_channel_replies, generate_tts_audio,
         send_retry_status_to_channels,
@@ -38,7 +44,7 @@ use crate::{
 };
 
 #[cfg(feature = "push-notifications")]
-use crate::channels::send_chat_push_notification;
+use crate::channel_push::send_chat_push_notification;
 
 const STREAM_RETRYABLE_SERVER_PATTERNS: &[&str] = &[
     "http 500",
@@ -132,12 +138,13 @@ pub(crate) async fn run_streaming(
     client_seq: Option<u64>,
     active_partial_assistant: Option<Arc<RwLock<HashMap<String, ActiveAssistantDraft>>>>,
     terminal_runs: &Arc<RwLock<HashSet<String>>>,
+    private_context: bool,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
 
     // ── Memory prefetch (same logic as run_with_tools) ───────────
     let mut memory_text_with_prefetch: Option<String> = None;
-    if persona.config.memory.enable_prefetch {
+    if private_context && persona.config.memory.enable_prefetch {
         let query_text = match user_content {
             UserContent::Text(t) => Some(t.as_str()),
             UserContent::Multimodal(parts) => parts.iter().find_map(|p| match p {
@@ -177,22 +184,37 @@ pub(crate) async fn run_streaming(
             }
         }
     }
-    let effective_memory_text = memory_text_with_prefetch
-        .as_deref()
-        .or(persona.memory_text.as_deref());
+    let effective_memory_text = private_context
+        .then(|| {
+            memory_text_with_prefetch
+                .as_deref()
+                .or(persona.memory_text.as_deref())
+        })
+        .flatten();
+    let prompt_runtime_context = private_context.then_some(runtime_context).flatten();
 
     let system_prompt = build_system_prompt_minimal_runtime_details(
-        project_context,
+        private_context.then_some(project_context).flatten(),
         Some(&persona.identity),
-        Some(&persona.user),
-        persona.soul_text.as_deref(),
-        persona.boot_text.as_deref(),
-        persona.agents_text.as_deref(),
-        persona.tools_text.as_deref(),
-        runtime_context,
+        private_context.then_some(&persona.user),
+        private_context
+            .then_some(persona.soul_text.as_deref())
+            .flatten(),
+        private_context
+            .then_some(persona.boot_text.as_deref())
+            .flatten(),
+        private_context
+            .then_some(persona.agents_text.as_deref())
+            .flatten(),
+        private_context
+            .then_some(persona.tools_text.as_deref())
+            .flatten(),
+        prompt_runtime_context,
         effective_memory_text,
         prompt_build_limits_from_config(&persona.config),
-        persona.guidelines_text.as_deref(),
+        private_context
+            .then_some(persona.guidelines_text.as_deref())
+            .flatten(),
     )
     .prompt;
 
@@ -203,14 +225,19 @@ pub(crate) async fn run_streaming(
     // it stays positionally stable, preserving KV cache prefix matching for
     // local LLMs (llama.cpp, Ollama, LM Studio) and prompt-cache hits for
     // cloud providers.
-    let effective_user_content =
-        moltis_agents::prompt::prepend_datetime_to_user_content(user_content, runtime_context)
-            .unwrap_or_else(|| user_content.clone());
+    let effective_user_content = moltis_agents::prompt::prepend_datetime_to_user_content(
+        user_content,
+        prompt_runtime_context,
+    )
+    .unwrap_or_else(|| user_content.clone());
 
     let mut messages: Vec<ChatMessage> = Vec::new();
     messages.push(ChatMessage::system(system_prompt));
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
-    messages.extend(values_to_chat_messages(history_raw));
+    messages.extend(values_to_chat_messages_with_tool_result_limit(
+        history_raw,
+        persona.config.tools.max_tool_result_bytes,
+    ));
     messages.push(ChatMessage::User {
         content: effective_user_content,
         name: sender_name,
@@ -220,7 +247,7 @@ pub(crate) async fn run_streaming(
     let mut rate_limit_retries_remaining: u8 = STREAM_RATE_LIMIT_MAX_RETRIES;
     let mut rate_limit_backoff_ms: Option<u64> = None;
     let mut channel_stream_dispatcher =
-        ChannelStreamDispatcher::for_session(state, session_key).await;
+        ChannelStreamDispatcher::for_session(state, session_key, run_id).await;
 
     'attempts: loop {
         #[cfg(feature = "metrics")]
@@ -329,19 +356,11 @@ pub(crate) async fn run_streaming(
                         let trimmed = accumulated_reasoning.trim();
                         (!trimmed.is_empty()).then(|| trimmed.to_string())
                     };
-                    let streamed_target_keys =
-                        if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
-                            dispatcher.finish().await;
-                            dispatcher.completed_target_keys().await
-                        } else {
-                            HashSet::new()
-                        };
-
                     info!(
                         run_id,
                         input_tokens = usage.input_tokens,
                         output_tokens = usage.output_tokens,
-                        response = %accumulated,
+                        response_bytes = accumulated.len(),
                         silent = is_silent,
                         "chat stream done"
                     );
@@ -357,17 +376,22 @@ pub(crate) async fn run_streaming(
                             "The provider returned an empty response (possible network error). Please try again.",
                             Some(provider_name),
                         );
-                        deliver_channel_error(state, session_key, &error_obj).await;
                         let error_payload = ChatErrorBroadcast {
                             run_id: run_id.to_string(),
                             session_key: session_key.to_string(),
                             state: "error",
-                            error: error_obj,
+                            error: error_obj.clone(),
                             seq: client_seq,
                         };
                         #[allow(clippy::unwrap_used)] // serializing known-valid struct
                         let payload_val = serde_json::to_value(&error_payload).unwrap();
-                        terminal_runs.write().await.insert(run_id.to_string());
+                        commit_terminal_and_finish_channel_stream(
+                            terminal_runs,
+                            run_id,
+                            channel_stream_dispatcher.as_mut(),
+                        )
+                        .await;
+                        deliver_channel_error(state, session_key, &error_obj).await;
                         broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
                         return None;
                     }
@@ -430,18 +454,37 @@ pub(crate) async fn run_streaming(
                     );
                     #[allow(clippy::unwrap_used)] // serializing known-valid struct
                     let payload_val = serde_json::to_value(&final_payload).unwrap();
-                    terminal_runs.write().await.insert(run_id.to_string());
-                    broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
+
+                    // Channel Done and fallback replies are irreversible. Claim
+                    // terminal ownership before either can be accepted.
+                    let streamed_target_keys = commit_terminal_and_finish_channel_stream(
+                        terminal_runs,
+                        run_id,
+                        channel_stream_dispatcher.as_mut(),
+                    )
+                    .await;
 
                     if !is_silent {
-                        // Send push notification when chat response completes
                         #[cfg(feature = "push-notifications")]
                         {
                             tracing::info!("push: checking push notification");
-                            send_chat_push_notification(state, session_key, &accumulated).await;
+                            let push_state = Arc::clone(state);
+                            let push_session_key = session_key.to_string();
+                            let push_text = accumulated.clone();
+                            let push_order = crate::channel_push::next_push_notification_order();
+                            tokio::spawn(async move {
+                                send_chat_push_notification(
+                                    &push_state,
+                                    &push_session_key,
+                                    &push_text,
+                                    push_order,
+                                )
+                                .await;
+                            });
                         }
                         deliver_channel_replies(
                             state,
+                            run_id,
                             session_key,
                             &accumulated,
                             desired_reply_medium,
@@ -451,14 +494,16 @@ pub(crate) async fn run_streaming(
                     }
                     let llm_api_response =
                         (!raw_llm_responses.is_empty()).then_some(Value::Array(raw_llm_responses));
-                    return Some(build_assistant_turn_output(
+                    let mut output = build_assistant_turn_output(
                         accumulated,
                         UsageSnapshot::new(usage.clone(), Some(usage)),
                         run_started.elapsed().as_millis() as u64,
                         audio_path,
                         reasoning,
                         llm_api_response,
-                    ));
+                    );
+                    output.final_broadcast = Some(payload_val);
+                    return Some(output);
                 },
                 StreamEvent::Error(msg) => {
                     let error_obj = parse_chat_error(&msg, Some(provider_name));
@@ -512,23 +557,25 @@ pub(crate) async fn run_streaming(
                     }
 
                     warn!(run_id, error = %msg, "chat stream error");
-                    if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
-                        dispatcher.finish().await;
-                    }
                     state.set_run_error(run_id, msg.clone()).await;
                     mark_unsupported_model(state, model_store, model_id, provider_name, &error_obj)
                         .await;
-                    deliver_channel_error(state, session_key, &error_obj).await;
                     let error_payload = ChatErrorBroadcast {
                         run_id: run_id.to_string(),
                         session_key: session_key.to_string(),
                         state: "error",
-                        error: error_obj,
+                        error: error_obj.clone(),
                         seq: client_seq,
                     };
                     #[allow(clippy::unwrap_used)] // serializing known-valid struct
                     let payload_val = serde_json::to_value(&error_payload).unwrap();
-                    terminal_runs.write().await.insert(run_id.to_string());
+                    commit_terminal_and_finish_channel_stream(
+                        terminal_runs,
+                        run_id,
+                        channel_stream_dispatcher.as_mut(),
+                    )
+                    .await;
+                    deliver_channel_error(state, session_key, &error_obj).await;
                     broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
                     return None;
                 },

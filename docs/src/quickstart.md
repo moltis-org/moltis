@@ -75,6 +75,8 @@ def is_prime(n):
     return True
 ```
 
+Use **Copy as Markdown** on an assistant response to preserve its formatting, or **Save as Markdown** in the session toolbar to download the full conversation.
+
 ## What's Next?
 
 ### Enable Tool Use

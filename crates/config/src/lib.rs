@@ -6,6 +6,7 @@
 //! Supports `${ENV_VAR}` substitution in all string values.
 
 pub mod agent_defs;
+pub mod apple_container;
 pub mod container_mounts;
 pub mod defaults;
 pub mod env_subst;
@@ -19,6 +20,12 @@ pub mod validate;
 pub mod version;
 
 pub use version::VERSION;
+
+#[cfg(target_os = "macos")]
+pub use apple_container::{
+    apple_container_marked_unhealthy, apple_container_operation_lock,
+    mark_apple_container_unhealthy,
+};
 
 pub use {
     error::{Error, Result},
@@ -49,15 +56,16 @@ pub use {
         AgentIdentity, AgentMemoryWriteMode, AgentPreset, AgentRuntimeLimitSource,
         AgentRuntimeLimits, AgentsConfig, AuthConfig, CacheRetention, CalDavAccountConfig,
         CalDavConfig, ChannelToolPolicyOverride, ChannelsConfig, ChatConfig, CodeIndexTomlConfig,
-        CompactionConfig, CompactionMode, GeoLocation, GroupToolPolicy, HeartbeatConfig,
-        HomeAssistantAccountConfig, HomeAssistantConfig, MemoryBackend, MemoryCitationsMode,
-        MemoryProvider, MemoryScope, MemorySearchMergeStrategy, MemoryStyle, MessageQueueMode,
-        ModePreset, ModesConfig, MoltisConfig, NgrokConfig, PresetMemoryConfig, PresetToolPolicy,
-        PromptMemoryMode, ResolvedIdentity, SessionAccessPolicyConfig, SessionExportMode, Timezone,
-        ToolMode, ToolPolicyConfig, ToolRegistryMode, UserProfile, UserProfileWriteMode,
-        VoiceConfig, VoiceElevenLabsConfig, VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider,
-        VoiceTtsConfig, VoiceTtsProvider, VoiceWhisperConfig, VoiceWhisperLocalConfig, WireApi,
-        parse_byte_size,
+        CompactionConfig, CompactionMode, ContentCaptureMode, DatadogSettings, FeedbackSettings,
+        GeoLocation, GroupToolPolicy, HeartbeatConfig, HomeAssistantAccountConfig,
+        HomeAssistantConfig, InstrumentationConfig, LangfuseSettings, MemoryBackend,
+        MemoryCitationsMode, MemoryProvider, MemoryScope, MemorySearchMergeStrategy, MemoryStyle,
+        MessageQueueMode, ModePreset, ModesConfig, MoltisConfig, NgrokConfig, OtlpSettings,
+        PresetMemoryConfig, PresetToolPolicy, PromptMemoryMode, ResolvedIdentity,
+        SessionAccessPolicyConfig, SessionExportMode, Timezone, ToolMode, ToolPolicyConfig,
+        ToolRegistryMode, UserProfile, UserProfileWriteMode, VoiceConfig, VoiceElevenLabsConfig,
+        VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig, VoiceTtsProvider,
+        VoiceWhisperConfig, VoiceWhisperLocalConfig, WireApi, parse_byte_size,
     },
     validate::{Diagnostic, Severity, ValidationResult},
 };

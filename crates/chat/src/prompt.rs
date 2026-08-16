@@ -407,6 +407,10 @@ pub(crate) fn build_tool_context(
     if let Some(cid) = conn_id {
         tool_context["_conn_id"] = serde_json::json!(cid);
     }
+    if let Some(working_dir) = runtime_context.and_then(|context| context.host.working_dir.as_ref())
+    {
+        tool_context["_working_dir"] = serde_json::json!(working_dir);
+    }
     tool_context
 }
 
@@ -753,5 +757,19 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].name, "web-search");
+    }
+
+    #[test]
+    fn working_directory_uses_reserved_tool_metadata() {
+        let mut runtime = PromptRuntimeContext::default();
+        runtime.host.working_dir = Some("/workspace/project".into());
+
+        let context = build_tool_context("acp:test", None, None, Some(&runtime));
+
+        assert_eq!(
+            context.get("_working_dir").and_then(Value::as_str),
+            Some("/workspace/project")
+        );
+        assert!(context.get("working_dir").is_none());
     }
 }

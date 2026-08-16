@@ -36,6 +36,7 @@ pub(crate) const CEREBRAS_MODELS: &[(&str, &str)] =
 /// Known MiniMax models.
 /// See: <https://platform.minimax.io/docs/api-reference/text-anthropic-api>
 pub(crate) const MINIMAX_MODELS: &[(&str, &str)] = &[
+    ("MiniMax-M3", "MiniMax M3"),
     ("MiniMax-M2.7", "MiniMax M2.7"),
     ("MiniMax-M2.7-highspeed", "MiniMax M2.7 Highspeed"),
     ("MiniMax-M2.5", "MiniMax M2.5"),
@@ -63,16 +64,18 @@ pub(crate) const ZAI_MODELS: &[(&str, &str)] = &[
     ("glm-4-32b-0414-128k", "GLM-4 32B 128K"),
 ];
 
-/// Fireworks Kimi router model-ID prefixes.
+/// Fireworks Kimi model-ID prefixes.
 ///
 /// These models proxy through Fireworks to Moonshot's Kimi API, which has
 /// different schema and message requirements (no strict tools, needs
 /// `reasoning_content`). Issue #810.
-const FIREWORKS_KIMI_ROUTER_PREFIXES: &[&str] = &["accounts/fireworks/routers/kimi"];
+const FIREWORKS_KIMI_ROUTER_PREFIXES: &[&str] = &[
+    "accounts/fireworks/routers/kimi",
+    "accounts/fireworks/models/kimi",
+];
 
 /// Known Fireworks models.
 pub(crate) const FIREWORKS_MODELS: &[(&str, &str)] = &[
-    ("accounts/fireworks/models/kimi-k2p5", "Kimi K2.5"),
     ("accounts/fireworks/models/kimi-k2p6", "Kimi K2.6"),
     ("accounts/fireworks/models/glm-5p1", "GLM 5.1"),
     ("accounts/fireworks/models/gpt-oss-120b", "GPT OSS 120B"),
@@ -124,8 +127,12 @@ pub(crate) const DEEPSEEK_MODELS: &[(&str, &str)] = &[
 ];
 
 /// Known Moonshot models.
-pub(crate) const MOONSHOT_MODELS: &[(&str, &str)] =
-    &[("kimi-k2.5", "Kimi K2.5"), ("kimi-k2.6", "Kimi K2.6")];
+pub(crate) const MOONSHOT_MODELS: &[(&str, &str)] = &[
+    ("kimi-k3", "Kimi K3"),
+    ("kimi-k2.7-code-highspeed", "Kimi K2.7 Code Highspeed"),
+    ("kimi-k2.6", "Kimi K2.6"),
+    ("kimi-k2.5", "Kimi K2.5"),
+];
 
 /// Known Google Gemini models.
 /// See: <https://ai.google.dev/gemini-api/docs/models>
@@ -233,6 +240,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         models: MOONSHOT_MODELS,
         capabilities: OpenAiProviderCapabilities {
             default_reasoning_content_on_tool_messages: true,
+            reasoning_effort_policy: ReasoningEffortPolicy::KimiMax,
             ..OpenAiProviderCapabilities::DEFAULT
         },
         ..OpenAiCompatDef::DEFAULT
@@ -412,6 +420,27 @@ mod tests {
     }
 
     #[test]
+    fn minimax_catalog_starts_with_target_models() {
+        assert_eq!(&MINIMAX_MODELS[..2], &[
+            ("MiniMax-M3", "MiniMax M3"),
+            ("MiniMax-M2.7", "MiniMax M2.7"),
+        ]);
+    }
+
+    #[test]
+    fn openai_catalog_includes_gpt_5_6_models() {
+        let models = crate::openai::default_model_catalog();
+        let ids: Vec<&str> = models.iter().map(|model| model.id.as_str()).collect();
+
+        for model_id in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            assert!(
+                ids.contains(&model_id),
+                "missing {model_id} in OpenAI defaults"
+            );
+        }
+    }
+
+    #[test]
     fn anthropic_catalog_uses_documented_claude_46_aliases() {
         let anthropic_ids: Vec<&str> = ANTHROPIC_MODELS.iter().map(|(id, _)| *id).collect();
 
@@ -566,7 +595,7 @@ mod tests {
     }
 
     #[test]
-    fn fireworks_kimi_router_prefixes_cover_router_models() {
+    fn fireworks_kimi_router_prefixes_cover_router_and_catalog_models() {
         let fireworks = OPENAI_COMPAT_PROVIDERS
             .iter()
             .find(|d| d.config_name == "fireworks")
@@ -576,8 +605,8 @@ mod tests {
         let matches = |id: &str| prefixes.iter().any(|p| id.starts_with(p));
 
         assert!(matches("accounts/fireworks/routers/kimi-k2p5-turbo"));
+        assert!(matches("accounts/fireworks/models/kimi-k2p6"));
         assert!(!matches("accounts/fireworks/models/glm-5p1"));
-        assert!(!matches("accounts/fireworks/models/kimi-k2p5"));
 
         // non_strict_tools_model_prefixes should use the same prefixes
         assert_eq!(

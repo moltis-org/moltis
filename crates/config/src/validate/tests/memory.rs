@@ -14,6 +14,23 @@ backend = "postgres"
 }
 
 #[test]
+fn zvec_memory_backend_is_valid() {
+    let toml = r#"
+[memory]
+backend = "zvec"
+db_path = "memory.zvec"
+vector_weight = 0.8
+keyword_weight = 0.2
+"#;
+    let result = validate_toml_str(toml);
+    assert!(
+        !result.has_errors(),
+        "zvec backend with config fields should be valid: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn unknown_memory_citations_mode_is_parse_error() {
     let toml = r#"
 [memory]

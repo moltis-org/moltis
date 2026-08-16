@@ -1,24 +1,25 @@
 //! `ChatService` trait implementation for `LiveChatService`.
 
+mod channel_security;
+mod public_context;
+mod queue_drain;
 mod send;
+mod send_params;
+mod tool_policy;
 
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use {
     async_trait::async_trait,
     serde_json::Value,
-    tokio::sync::RwLock,
+    tokio::sync::oneshot,
     tracing::{debug, info, warn},
 };
 
 use {
     moltis_agents::{
-        ChatMessage, UserContent,
-        model::values_to_chat_messages,
+        ChatMessage,
+        model::values_to_chat_messages_with_tool_result_limit,
         prompt::{
             build_system_prompt_minimal_runtime_details,
             build_system_prompt_with_session_runtime_details,
@@ -26,323 +27,59 @@ use {
     },
     moltis_config::ToolMode,
     moltis_service_traits::{ChatService, ServiceError, ServiceResult},
-    moltis_sessions::{ContentBlock, MessageContent, PersistedMessage},
-    moltis_tools::policy::{PolicyContext, ToolPolicy},
+    moltis_sessions::{MessageContent, PersistedMessage},
+    moltis_tools::policy::PolicyContext,
 };
 
 use crate::{
     agent_loop::effective_tool_mode,
-    channels::notify_channels_of_compaction,
+    channel_compaction::notify_channels_of_compaction,
     compaction_run,
     memory_tools::AgentScopedMemoryWriter,
-    message::{
-        infer_reply_medium, user_audio_path_from_params, user_documents_for_persistence,
-        user_documents_from_params,
-    },
     prompt::{
         apply_request_runtime_context, apply_runtime_tool_filters, build_policy_context,
         build_prompt_runtime_context, clear_prompt_memory_snapshot, discover_skills_if_enabled,
         filter_skills_for_agent, load_prompt_persona_for_agent, load_prompt_persona_for_session,
         prompt_build_limits_from_config, resolve_prompt_agent_id, resolve_prompt_mode_context,
     },
-    run_with_tools::run_with_tools,
-    service::build_persisted_assistant_message,
-    streaming::run_streaming,
     types::*,
 };
 
-use super::*;
+use super::{
+    types::{RunHandleDisposition, cancel_queued_messages},
+    *,
+};
 
 #[async_trait]
 impl ChatService for LiveChatService {
     async fn send(&self, params: Value) -> ServiceResult {
-        self.send_impl(params).await
+        self.send_impl(params, None, true).await
     }
 
     async fn send_sync(&self, params: Value) -> ServiceResult {
-        let text = params
-            .get("text")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'text' parameter".to_string())?
-            .to_string();
-        let desired_reply_medium = infer_reply_medium(&params, &text);
-        let requested_agent_id = params
+        if let Some(agent_id) = params
             .get("agent_id")
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let request_tool_policy = params
-            .get("_tool_policy")
-            .cloned()
-            .map(serde_json::from_value::<ToolPolicy>)
-            .transpose()
-            .map_err(|e| format!("invalid '_tool_policy' parameter: {e}"))?;
-        let ephemeral = params
-            .get("_ephemeral")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        let explicit_model = params.get("model").and_then(|v| v.as_str());
-        let tool_controls =
-            moltis_config::schema::AgentToolControls::from_tool_context(Some(&params));
-        let stream_only = !self.has_tools_sync();
-
-        // Resolve session key from explicit override.
-        let session_key = match params.get("_session_key").and_then(|v| v.as_str()) {
-            Some(sk) => sk.to_string(),
-            None => "main".to_string(),
-        };
-
-        // Resolve provider.
-        let provider: Arc<dyn moltis_agents::model::LlmProvider> = {
-            let reg = self.providers.read().await;
-            if let Some(id) = explicit_model {
-                reg.get(id)
-                    .ok_or_else(|| format!("model '{id}' not found"))?
-            } else if !stream_only {
-                reg.first_with_tools()
-                    .ok_or_else(|| "no LLM providers configured".to_string())?
-            } else {
-                reg.first()
-                    .ok_or_else(|| "no LLM providers configured".to_string())?
-            }
-        };
-
-        let user_audio = user_audio_path_from_params(&params, &session_key);
-        let user_documents =
-            user_documents_from_params(&params, &session_key, self.session_store.as_ref());
-        // Persist the user message.
-        let user_msg = PersistedMessage::User {
-            content: MessageContent::Text(text.clone()),
-            created_at: Some(now_ms()),
-            audio: user_audio,
-            documents: user_documents
-                .as_deref()
-                .and_then(user_documents_for_persistence),
-            channel: None,
-            seq: None,
-            run_id: None,
-        };
-        if !ephemeral {
-            if let Err(e) = self
-                .session_store
-                .append(&session_key, &user_msg.to_value())
-                .await
-            {
-                warn!("send_sync: failed to persist user message: {e}");
-            }
-
-            // Ensure this session appears in the sessions list.
-            let _ = self.session_metadata.upsert(&session_key, None).await;
-        }
-        if let Some(agent_id) = requested_agent_id.as_deref()
-            && let Err(error) = self
-                .session_metadata
+        {
+            let session_key = self.resolve_session_key_from_params(&params).await;
+            self.session_metadata
                 .set_agent_id(&session_key, Some(agent_id))
                 .await
-        {
-            warn!(
-                session = %session_key,
-                agent_id,
-                error = %error,
-                "send_sync: failed to assign requested agent to session"
-            );
+                .map_err(ServiceError::message)?;
         }
-        if !ephemeral {
-            self.session_metadata.touch(&session_key, 1).await;
+        let (completion_tx, completion_rx) = oneshot::channel();
+        let started = self.send_impl(params, Some(completion_tx), false).await?;
+        if started.get("queued").and_then(Value::as_bool) == Some(true) {
+            return Err("session already has an active turn".into());
         }
-
-        let session_entry = self.session_metadata.get(&session_key).await;
-        let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
-        let persona = load_prompt_persona_for_session(
-            &session_key,
-            session_entry.as_ref(),
-            self.session_state_store.as_deref(),
-        )
-        .await;
-        let mut runtime_context = build_prompt_runtime_context(
-            &self.state,
-            &persona.config,
-            &provider,
-            &session_key,
-            session_entry.as_ref(),
-        )
-        .await;
-        runtime_context.mode = resolve_prompt_mode_context(&persona.config, session_entry.as_ref());
-        apply_request_runtime_context(&mut runtime_context.host, &params);
-
-        // Load conversation history (excluding the message we just appended).
-        let mut history = self
-            .session_store
-            .read(&session_key)
+        if started.get("rejected").and_then(Value::as_bool) == Some(true) {
+            return Ok(started);
+        }
+        completion_rx
             .await
-            .unwrap_or_default();
-        if !ephemeral && !history.is_empty() {
-            history.pop();
-        }
-
-        let run_id = uuid::Uuid::new_v4().to_string();
-        let state = Arc::clone(&self.state);
-        let tool_registry = if let Some(policy) = request_tool_policy.as_ref() {
-            let registry_guard = self.tool_registry.read().await;
-            Arc::new(RwLock::new(
-                registry_guard.clone_allowed_by(|name| policy.is_allowed(name)),
-            ))
-        } else {
-            Arc::clone(&self.tool_registry)
-        };
-        let hook_registry = self.hook_registry.clone();
-        let provider_name = provider.name().to_string();
-        let model_id = provider.id().to_string();
-        let model_store = Arc::clone(&self.model_store);
-        let user_message_index = history.len();
-
-        info!(
-            run_id = %run_id,
-            user_message = %text,
-            model = %model_id,
-            stream_only,
-            session = %session_key,
-            reply_medium = ?desired_reply_medium,
-            "chat.send_sync"
-        );
-
-        if desired_reply_medium == ReplyMedium::Voice {
-            broadcast(
-                &state,
-                "chat",
-                serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": session_key,
-                    "state": "voice_pending",
-                }),
-                BroadcastOpts::default(),
-            )
-            .await;
-        }
-
-        // send_sync is text-only (used by API calls and channels).
-        let user_content = UserContent::text(&text);
-        let active_event_forwarders = Arc::new(RwLock::new(HashMap::new()));
-        let terminal_runs = Arc::new(RwLock::new(HashSet::new()));
-        let result = if stream_only {
-            run_streaming(
-                persona,
-                &state,
-                &model_store,
-                &run_id,
-                provider,
-                &model_id,
-                &user_content,
-                &provider_name,
-                &history,
-                &session_key,
-                &session_agent_id,
-                desired_reply_medium,
-                None,
-                user_message_index,
-                &[],
-                Some(&runtime_context),
-                None, // send_sync: no sender name
-                Some(&self.session_store),
-                None, // send_sync: no client seq
-                None, // send_sync: no partial assistant tracking
-                &terminal_runs,
-            )
-            .await
-        } else {
-            run_with_tools(
-                persona,
-                &state,
-                &model_store,
-                &run_id,
-                provider,
-                &model_id,
-                &tool_registry,
-                &user_content,
-                &provider_name,
-                &history,
-                &session_key,
-                &session_agent_id,
-                desired_reply_medium,
-                None,
-                Some(&runtime_context),
-                user_message_index,
-                &[],
-                hook_registry,
-                None,
-                None, // send_sync: no conn_id
-                Some(&self.session_store),
-                false, // send_sync: MCP tools always enabled for API calls
-                None,  // send_sync: no client seq
-                None,  // send_sync: no thinking text tracking
-                None,  // send_sync: no tool call tracking
-                None,  // send_sync: no partial assistant tracking
-                &active_event_forwarders,
-                &terminal_runs,
-                None, // send_sync: no sender name
-                Some(tool_controls),
-            )
-            .await
-        };
-
-        // Persist assistant response (even empty ones — needed for LLM history coherence).
-        if !ephemeral && let Some(ref assistant_output) = result {
-            let assistant_msg = build_persisted_assistant_message(
-                assistant_output.clone(),
-                Some(model_id.clone()),
-                Some(provider_name.clone()),
-                None,
-                Some(run_id.clone()),
-            );
-            if let Err(e) = self
-                .session_store
-                .append(&session_key, &assistant_msg.to_value())
-                .await
-            {
-                warn!("send_sync: failed to persist assistant message: {e}");
-            }
-            // Update metadata message count.
-            if let Ok(count) = self.session_store.count(&session_key).await {
-                self.session_metadata.touch(&session_key, count).await;
-            }
-        }
-
-        match result {
-            Some(assistant_output) => Ok(serde_json::json!({
-                "text": assistant_output.text,
-                "inputTokens": assistant_output.input_tokens,
-                "outputTokens": assistant_output.output_tokens,
-                "cacheReadTokens": assistant_output.cache_read_tokens,
-                "cacheWriteTokens": assistant_output.cache_write_tokens,
-                "durationMs": assistant_output.duration_ms,
-                "requestInputTokens": assistant_output.request_input_tokens,
-                "requestOutputTokens": assistant_output.request_output_tokens,
-                "requestCacheReadTokens": assistant_output.request_cache_read_tokens,
-                "requestCacheWriteTokens": assistant_output.request_cache_write_tokens,
-            })),
-            None => {
-                // Check the last broadcast for this run to get the actual error message.
-                let error_msg = state
-                    .last_run_error(&run_id)
-                    .await
-                    .unwrap_or_else(|| "agent run failed (check server logs)".to_string());
-
-                // Persist the error in the session so it's visible in session history.
-                let error_entry = PersistedMessage::system(format!("[error] {error_msg}"));
-                let _ = self
-                    .session_store
-                    .append(&session_key, &error_entry.to_value())
-                    .await;
-                // Update metadata so the session shows in the UI.
-                if let Ok(count) = self.session_store.count(&session_key).await {
-                    self.session_metadata.touch(&session_key, count).await;
-                }
-
-                Err(error_msg.into())
-            },
-        }
+            .map_err(|_| ServiceError::from("chat run was cancelled"))?
     }
 
     async fn abort(&self, params: Value) -> ServiceResult {
@@ -355,45 +92,122 @@ impl ChatService for LiveChatService {
         let resolved_session_key =
             Self::resolve_session_key_for_run(&self.active_runs_by_session, run_id, session_key)
                 .await;
+        let Some(resolved_session_key) = resolved_session_key else {
+            return Ok(serde_json::json!({
+                "aborted": false,
+                "runId": run_id,
+                "sessionKey": session_key,
+            }));
+        };
+        let resolved_run_id = match run_id {
+            Some(id) => id.to_string(),
+            None => {
+                let Some(id) = self
+                    .active_runs_by_session
+                    .read()
+                    .await
+                    .get(&resolved_session_key)
+                    .cloned()
+                else {
+                    return Ok(serde_json::json!({
+                        "aborted": false,
+                        "runId": null,
+                        "sessionKey": resolved_session_key,
+                    }));
+                };
+                id
+            },
+        };
 
-        let (resolved_run_id, aborted) = Self::abort_run_handle(
+        let session_sem = self.session_semaphore(&resolved_session_key).await;
+        let (_, claim) = Self::claim_run_for_abort(
             &self.active_runs,
             &self.active_runs_by_session,
             &self.terminal_runs,
-            run_id,
-            session_key,
+            session_sem,
+            Some(&resolved_run_id),
+            Some(&resolved_session_key),
         )
         .await;
+        let disposition = claim.disposition;
+        let aborted = disposition == RunHandleDisposition::Aborted;
+        let stale = disposition == RunHandleDisposition::Stale;
         info!(
             requested_run_id = ?run_id,
             session_key = ?session_key,
-            resolved_run_id = ?resolved_run_id,
+            resolved_run_id = %resolved_run_id,
             aborted,
+            stale,
             "chat.abort"
         );
 
-        if aborted && let Some(key) = resolved_session_key.as_deref() {
-            let _ = Self::wait_for_event_forwarder(&self.active_event_forwarders, key).await;
-            let partial = self.persist_partial_assistant_on_abort(key).await;
-            self.active_thinking_text.write().await.remove(key);
-            self.active_tool_calls.write().await.remove(key);
-            self.active_reply_medium.write().await.remove(key);
-            let mut payload = serde_json::json!({
-                "state": "aborted",
+        if disposition == RunHandleDisposition::Unavailable {
+            return Ok(serde_json::json!({
+                "aborted": false,
                 "runId": resolved_run_id,
-                "sessionKey": key,
-            });
-            if let Some((partial_message, message_index)) = partial {
-                payload["partialMessage"] = partial_message;
-                if let Some(index) = message_index {
-                    payload["messageIndex"] = serde_json::json!(index);
-                }
-            }
-            broadcast(&self.state, "chat", payload, BroadcastOpts::default()).await;
+                "sessionKey": resolved_session_key,
+            }));
         }
+
+        // The forwarder owns run-scoped channel delivery tasks. Cancel it before
+        // waiting for the run permit so abort cleanup cannot be held hostage by
+        // channel I/O.
+        Self::cancel_event_forwarder(&self.active_event_forwarders, &resolved_run_id).await;
+
+        let cleanup_permit = claim
+            .cleanup
+            .ok_or_else(|| ServiceError::message("abort cleanup reservation missing"))?
+            .acquire()
+            .await
+            .map_err(|_| ServiceError::message("session semaphore closed during abort"))?;
+
+        self.state
+            .finalize_active_channel_acks(
+                &resolved_run_id,
+                moltis_channels::ChannelAckOutcome::Cancelled,
+            )
+            .await;
+        let partial = self
+            .persist_partial_assistant_on_abort(&resolved_session_key, &resolved_run_id)
+            .await;
+        self.active_thinking_text
+            .write()
+            .await
+            .remove(&resolved_session_key);
+        self.active_tool_calls
+            .write()
+            .await
+            .remove(&resolved_session_key);
+        self.active_reply_medium
+            .write()
+            .await
+            .remove(&resolved_session_key);
+        self.terminal_runs.write().await.remove(&resolved_run_id);
+        let mut payload = serde_json::json!({
+            "state": "aborted",
+            "runId": resolved_run_id,
+            "sessionKey": resolved_session_key,
+        });
+        if let Some((partial_message, message_index)) = partial {
+            payload["partialMessage"] = partial_message;
+            if let Some(index) = message_index {
+                payload["messageIndex"] = serde_json::json!(index);
+            }
+        }
+        broadcast(&self.state, "chat", payload, BroadcastOpts::default()).await;
+
+        drop(cleanup_permit);
+        queue_drain::drain_and_replay(
+            &self.message_queue,
+            &resolved_session_key,
+            self.config.chat.message_queue_mode,
+            &self.state,
+        )
+        .await;
 
         Ok(serde_json::json!({
             "aborted": aborted,
+            "cleanedStale": stale,
             "runId": resolved_run_id,
             "sessionKey": resolved_session_key,
         }))
@@ -405,14 +219,25 @@ impl ChatService for LiveChatService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'sessionKey'".to_string())?;
 
-        let removed = self
-            .message_queue
-            .write()
-            .await
-            .remove(session_key)
-            .unwrap_or_default();
+        let removed: Vec<QueuedMessage> = {
+            let mut queues = self.message_queue.write().await;
+            cancel_queued_messages(&mut queues, session_key)
+        };
         let count = removed.len();
         info!(session = %session_key, count, "cancel_queued: cleared message queue");
+
+        // These messages will never be answered, so clear their channel
+        // acknowledgment markers rather than leaving them to expire.
+        let cancelled_acks =
+            crate::channel_acks::merged_ack_keys(removed.iter().map(|m| &m.params));
+        if !cancelled_acks.is_empty() {
+            self.state
+                .finalize_channel_acks(
+                    cancelled_acks,
+                    moltis_channels::ChannelAckOutcome::Cancelled,
+                )
+                .await;
+        }
 
         broadcast(
             &self.state,
@@ -517,13 +342,17 @@ impl ChatService for LiveChatService {
         if let Some(mm) = self.state.memory_manager()
             && let Ok(provider) = self.resolve_provider(&session_key, &history).await
         {
-            let write_mode = moltis_config::discover_and_load().memory.agent_write_mode;
+            let config = moltis_config::discover_and_load();
+            let write_mode = config.memory.agent_write_mode;
             if !memory_write_mode_allows_save(write_mode) {
                 debug!(
                     "compact: agent-authored memory writes disabled, skipping silent memory turn"
                 );
             } else {
-                let chat_history_for_memory = values_to_chat_messages(&history);
+                let chat_history_for_memory = values_to_chat_messages_with_tool_result_limit(
+                    &history,
+                    config.tools.max_tool_result_bytes,
+                );
                 let writer: Arc<dyn moltis_agents::memory_writer::MemoryWriter> =
                     Arc::new(AgentScopedMemoryWriter::new(
                         Arc::clone(mm),
@@ -563,10 +392,14 @@ impl ChatService for LiveChatService {
         // error in that case.
         let provider_arc = self.resolve_provider(&session_key, &history).await.ok();
 
-        let outcome =
-            compaction_run::run_compaction(&history, compaction_config, provider_arc.as_deref())
-                .await
-                .map_err(|e| ServiceError::message(e.to_string()))?;
+        let outcome = compaction_run::run_compaction(
+            &history,
+            compaction_config,
+            provider_arc.as_deref(),
+            persona.config.tools.max_tool_result_bytes,
+        )
+        .await
+        .map_err(|e| ServiceError::message(e.to_string()))?;
 
         let compacted = outcome.history.clone();
 
@@ -1003,10 +836,13 @@ impl ChatService for LiveChatService {
         runtime_context.mode = resolve_prompt_mode_context(&persona.config, session_entry.as_ref());
         apply_request_runtime_context(&mut runtime_context.host, &params);
 
-        // Resolve project context.
-        let project_context = self
-            .resolve_project_context(&session_key, conn_id.as_deref())
+        // Resolve project context plus optional command-generated context.
+        let (project_context, working_dir) = self
+            .resolve_turn_context(&session_key, conn_id.as_deref())
             .await;
+        runtime_context.host.working_dir = working_dir
+            .as_ref()
+            .map(|directory| directory.display().to_string());
 
         // Discover skills (gated on `[skills] enabled` — see #655).
         let discovered_skills = discover_skills_if_enabled(&persona.config).await;
@@ -1143,10 +979,13 @@ impl ChatService for LiveChatService {
         runtime_context.mode = resolve_prompt_mode_context(&persona.config, session_entry.as_ref());
         apply_request_runtime_context(&mut runtime_context.host, &params);
 
-        // Resolve project context.
-        let project_context = self
-            .resolve_project_context(&session_key, conn_id.as_deref())
+        // Resolve project context plus optional command-generated context.
+        let (project_context, working_dir) = self
+            .resolve_turn_context(&session_key, conn_id.as_deref())
             .await;
+        runtime_context.host.working_dir = working_dir
+            .as_ref()
+            .map(|directory| directory.display().to_string());
 
         // Discover skills (gated on `[skills] enabled` — see #655).
         let discovered_skills = discover_skills_if_enabled(&persona.config).await;
@@ -1233,10 +1072,14 @@ impl ChatService for LiveChatService {
             .collect();
 
         // Build the full messages array: system prompt + conversation history.
-        // `values_to_chat_messages` handles `tool_result` → `tool` conversion.
+        // `values_to_chat_messages_with_tool_result_limit` handles `tool_result` →
+        // `tool` conversion and keeps persisted tool output within provider limits.
         let mut messages = Vec::with_capacity(1 + history.len());
         messages.push(ChatMessage::system(system_prompt));
-        messages.extend(values_to_chat_messages(&history));
+        messages.extend(values_to_chat_messages_with_tool_result_limit(
+            &history,
+            persona.config.tools.max_tool_result_bytes,
+        ));
 
         let openai_messages: Vec<Value> = messages.iter().map(|m| m.to_openai_value()).collect();
         let message_count = openai_messages.len();

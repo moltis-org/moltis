@@ -156,9 +156,7 @@ function handleChatChannelUser(p: ChatPayload, isActive: boolean, isChatPage: bo
 	// Always bump the badge so the total message count stays accurate,
 	// even when the user is not on the chat page (e.g. Telegram messages).
 	bumpSessionCount(eventSession, 1);
-	const cachedAudio = p.channel?.audio_filename
-		? `media/${eventSession.replaceAll(":", "_")}/${p.channel.audio_filename}`
-		: undefined;
+	const cachedAudio = p.channel?.audio_filename;
 	cacheSessionHistoryMessage(
 		eventSession,
 		{

@@ -27,6 +27,14 @@ pub enum Error {
 
     #[error("{0}")]
     Reranking(String),
+
+    /// Internal failure from a pluggable backend (zvec, redb, etc.).
+    #[error("memory backend error: {0}")]
+    Backend(String),
+
+    /// A shared lock was poisoned by a panicking thread.
+    #[error("memory store lock poisoned")]
+    LockPoisoned,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

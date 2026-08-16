@@ -15,6 +15,7 @@ use super::*;
 #[derive(Default, Clone)]
 struct CapturedRequest {
     body: Option<serde_json::Value>,
+    path: String,
 }
 
 async fn start_probe_mock() -> (String, Arc<Mutex<Vec<CapturedRequest>>>) {
@@ -22,17 +23,26 @@ async fn start_probe_mock() -> (String, Arc<Mutex<Vec<CapturedRequest>>>) {
     let captured_clone = captured.clone();
 
     let app = Router::new().route(
-        "/v1/messages",
+        "/{*path}",
         post(move |req: Request| {
             let cap = captured_clone.clone();
             async move {
+                let path = req.uri().path().to_string();
+                let is_message_request = path.ends_with("/v1/messages");
                 let body_bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024)
                     .await
                     .unwrap_or_default();
                 let body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
-                cap.lock().unwrap().push(CapturedRequest { body });
+                if is_message_request {
+                    cap.lock().unwrap().push(CapturedRequest { body, path });
+                }
 
                 axum::response::Response::builder()
+                    .status(if is_message_request {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::NOT_FOUND
+                    })
                     .header("content-type", "application/json")
                     .body(axum::body::Body::from("{}"))
                     .unwrap()
@@ -205,6 +215,21 @@ async fn probe_request_caps_anthropic_output_to_one_token() {
     assert_eq!(reqs.len(), 1);
     let body = reqs[0].body.as_ref().expect("request should have a body");
     assert_eq!(body["max_tokens"], 1);
+}
+
+#[tokio::test]
+async fn probe_request_appends_messages_path_to_anthropic_base_url() {
+    let (base_url, captured) = start_probe_mock().await;
+    let provider = AnthropicProvider::new(
+        secrecy::Secret::new("test-key".into()),
+        "MiniMax-M3".into(),
+        format!("{base_url}/anthropic"),
+    );
+
+    provider.probe().await.expect("probe should succeed");
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs[0].path, "/anthropic/v1/messages");
 }
 
 #[tokio::test]

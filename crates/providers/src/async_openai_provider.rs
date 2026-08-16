@@ -172,10 +172,14 @@ impl LlmProvider for AsyncOpenAiProvider {
         let usage = response
             .usage
             .as_ref()
-            .map(|u| Usage {
-                input_tokens: u.prompt_tokens,
-                output_tokens: u.completion_tokens,
-                ..Default::default()
+            .map(|u| {
+                Usage::from_input_tokens(
+                    moltis_agents::model::InputTokenAccounting::Inclusive,
+                    u.prompt_tokens,
+                    u.completion_tokens,
+                    0,
+                    0,
+                )
             })
             .unwrap_or_default();
 
@@ -231,11 +235,13 @@ impl LlmProvider for AsyncOpenAiProvider {
                             }
                         }
                         if let Some(ref u) = response.usage {
-                            yield StreamEvent::Done(Usage {
-                                input_tokens: u.prompt_tokens,
-                                output_tokens: u.completion_tokens,
-                                ..Default::default()
-                            });
+                            yield StreamEvent::Done(Usage::from_input_tokens(
+                                moltis_agents::model::InputTokenAccounting::Inclusive,
+                                u.prompt_tokens,
+                                u.completion_tokens,
+                                0,
+                                0,
+                            ));
                             return;
                         }
                     }

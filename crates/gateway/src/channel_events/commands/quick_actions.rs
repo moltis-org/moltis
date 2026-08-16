@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use {
-    moltis_channels::{Error as ChannelError, Result as ChannelResult},
+    moltis_channels::{ChannelReplyTarget, Error as ChannelError, Result as ChannelResult},
     moltis_sessions::metadata::SqliteSessionMetadata,
 };
 
@@ -12,6 +12,9 @@ use crate::{
 
 // ── /btw — ephemeral side question ──────────────────────────────────────────
 
+/// `/btw` reads recent session history, so it is `OperatorDirect` in the command
+/// registry — `dispatch_command` has already rejected guests and shared chats
+/// before this runs. No local scope check is needed here.
 pub(in crate::channel_events) async fn handle_btw(
     state: &Arc<GatewayState>,
     session_key: &str,
@@ -55,7 +58,10 @@ pub(in crate::channel_events) async fn handle_btw(
     // Read recent session history for context (last ~20 messages).
     let context_msgs = if let Some(ref store) = state.services.session_store {
         let history = store.read(session_key).await.unwrap_or_default();
-        let chat_msgs = moltis_agents::model::values_to_chat_messages(&history);
+        let chat_msgs = moltis_agents::model::values_to_chat_messages_with_tool_result_limit(
+            &history,
+            state.config.tools.max_tool_result_bytes,
+        );
         let tail_start = chat_msgs.len().saturating_sub(20);
         chat_msgs[tail_start..].to_vec()
     } else {
@@ -431,7 +437,7 @@ pub(in crate::channel_events) async fn handle_insights(
             lines.push(String::new());
             lines.push("By provider:".to_string());
             let mut providers: Vec<_> = provider_totals.into_iter().collect();
-            providers.sort_by(|a, b| (b.1.0 + b.1.1).cmp(&(a.1.0 + a.1.1)));
+            providers.sort_by_key(|entry| std::cmp::Reverse(entry.1.0 + entry.1.1));
             for (provider, (input, output, completions)) in &providers {
                 lines.push(format!(
                     "  {provider}: {completions} completions, {} tokens ({input} in / {output} out)",
@@ -462,7 +468,7 @@ pub(in crate::channel_events) async fn handle_insights(
 
                 // Top 5 most-used skills by read_count
                 let mut by_reads: Vec<_> = usage.iter().collect();
-                by_reads.sort_by(|a, b| b.1.read_count.cmp(&a.1.read_count));
+                by_reads.sort_by_key(|entry| std::cmp::Reverse(entry.1.read_count));
                 if by_reads.iter().any(|(_, e)| e.read_count > 0) {
                     lines.push("  Most activated:".to_string());
                     for (name, entry) in by_reads.iter().take(5) {
@@ -541,9 +547,20 @@ pub(in crate::channel_events) async fn handle_steer(
 
 // ── /queue — queue a message for the next agent turn ────────────────────────
 
+fn validate_queued_message(args: &str) -> ChannelResult<()> {
+    if moltis_agents::runner::explicit_shell_command(args).is_some() {
+        return Err(ChannelError::invalid_input(
+            "Shell commands cannot be submitted through /queue. Wait for the active run, then use /sh directly.",
+        ));
+    }
+    Ok(())
+}
+
 pub(in crate::channel_events) async fn handle_queue(
     state: &Arc<GatewayState>,
     session_key: &str,
+    reply_to: &ChannelReplyTarget,
+    sender_id: Option<&str>,
     args: &str,
 ) -> ChannelResult<String> {
     if args.is_empty() {
@@ -551,14 +568,24 @@ pub(in crate::channel_events) async fn handle_queue(
             "usage: /queue <message>\nQueue a message for the next agent turn without interrupting the current one.",
         ));
     }
+    validate_queued_message(args)?;
 
     // Use the chat service's send method — when a run is active, it will
     // automatically queue the message according to MessageQueueMode.
     let chat = state.chat();
-    let params = serde_json::json!({
+    let mut params = serde_json::json!({
         "text": args,
         "_session_key": session_key,
+        "_channel_reply_target": reply_to,
+        "_native_channel_request": true,
+        "channel": {
+            "channel_type": reply_to.channel_type,
+            "sender_id": sender_id,
+        },
     });
+    // Queued channel messages can execute after authorization changes. Keep
+    // them on the untrusted context regardless of the operator's current role.
+    super::super::apply_untrusted_channel_context(&mut params);
 
     match chat.send(params).await {
         Ok(res) => {
@@ -570,5 +597,18 @@ pub(in crate::channel_events) async fn handle_queue(
             }
         },
         Err(e) => Err(ChannelError::external("queue", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_queued_message;
+
+    #[test]
+    fn queue_rejects_every_explicit_shell_form() {
+        for input in ["/sh id", " /SH whoami", "/sh@mybot uname -a"] {
+            assert!(validate_queued_message(input).is_err(), "accepted {input}");
+        }
+        assert!(validate_queued_message("explain what /sh does").is_ok());
     }
 }

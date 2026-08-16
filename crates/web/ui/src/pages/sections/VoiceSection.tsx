@@ -576,11 +576,11 @@ export function VoiceSection(): VNode {
 							+ Add Persona
 						</button>
 
-						{personaEditing !== null ? (
+						{personaEditing === null ? null : (
 							<PersonaEditModal
 								editingId={personaEditing}
 								existingPersona={
-									personaEditing !== "__new__" ? (personas.find((p) => p.persona.id === personaEditing) ?? null) : null
+									personaEditing === "__new__" ? null : (personas.find((p) => p.persona.id === personaEditing) ?? null)
 								}
 								onClose={() => setPersonaEditing(null)}
 								onSaved={() => {
@@ -588,7 +588,7 @@ export function VoiceSection(): VNode {
 									fetchPersonas();
 								}}
 							/>
-						) : null}
+						)}
 					</div>
 				)}
 

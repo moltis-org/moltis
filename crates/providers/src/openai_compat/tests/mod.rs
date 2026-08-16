@@ -1,10 +1,49 @@
 mod schema_normalization;
 
 use super::{
-    normalize_tool_call_arguments_from_schemas, parse_responses_completion, parse_tool_calls,
-    sanitize_schema_for_openai_compat, strict_mode::patch_schema_for_strict_mode, to_openai_tools,
-    to_responses_api_tools,
+    normalize_tool_call_arguments_from_schemas, parse_openai_compat_usage,
+    parse_responses_completion, parse_tool_calls, sanitize_schema_for_openai_compat,
+    strict_mode::patch_schema_for_strict_mode, to_openai_tools, to_responses_api_tools,
 };
+
+#[test]
+fn openai_usage_removes_cached_tokens_from_flat_input_bucket() {
+    let usage = parse_openai_compat_usage(&serde_json::json!({
+        "prompt_tokens": 1_000,
+        "completion_tokens": 50,
+        "prompt_tokens_details": {"cached_tokens": 800}
+    }));
+
+    assert_eq!(usage.input_tokens, 200);
+    assert_eq!(usage.cache_read_tokens, 800);
+    assert_eq!(usage.output_tokens, 50);
+}
+
+#[test]
+fn responses_usage_removes_cached_tokens_from_flat_input_bucket() {
+    let usage = parse_openai_compat_usage(&serde_json::json!({
+        "input_tokens": 1_000,
+        "output_tokens": 50,
+        "input_tokens_details": {"cached_tokens": 800}
+    }));
+
+    assert_eq!(usage.input_tokens, 200);
+    assert_eq!(usage.cache_read_tokens, 800);
+}
+
+#[test]
+fn anthropic_compatible_usage_keeps_exclusive_input_bucket() {
+    let usage = parse_openai_compat_usage(&serde_json::json!({
+        "input_tokens": 200,
+        "output_tokens": 50,
+        "cache_read_input_tokens": 800,
+        "cache_creation_input_tokens": 20
+    }));
+
+    assert_eq!(usage.input_tokens, 200);
+    assert_eq!(usage.cache_read_tokens, 800);
+    assert_eq!(usage.cache_write_tokens, 20);
+}
 
 /// Recursively assert that every `required` entry has a corresponding key in
 /// `properties`. Panics with `path` context on the first orphaned entry.

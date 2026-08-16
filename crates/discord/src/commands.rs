@@ -107,6 +107,7 @@ async fn handle_slash_command(
     };
 
     let reply_to = moltis_channels::plugin::ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: moltis_channels::ChannelType::Discord,
         account_id: account_id.to_string(),
         chat_id: command.channel_id.to_string(),
@@ -166,6 +167,7 @@ async fn handle_component_interaction(
     };
 
     let reply_to = moltis_channels::plugin::ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: moltis_channels::ChannelType::Discord,
         account_id: account_id.to_string(),
         chat_id: component.channel_id.to_string(),
@@ -173,7 +175,11 @@ async fn handle_component_interaction(
         thread_id: None,
     };
 
-    match sink.dispatch_interaction(callback_data, reply_to).await {
+    let sender_id = component.user.id.to_string();
+    match sink
+        .dispatch_interaction(callback_data, reply_to, Some(&sender_id))
+        .await
+    {
         Ok(_response) => {
             // Response already sent by the gateway.
         },

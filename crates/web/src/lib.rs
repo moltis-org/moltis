@@ -53,6 +53,7 @@ pub fn web_routes() -> Router<AppState> {
         .route("/assets/{*path}", get(assets::asset_handler))
         .route("/manifest.json", get(assets::manifest_handler))
         .route("/sw.js", get(assets::service_worker_handler))
+        .route("/offline.html", get(assets::offline_handler))
         .merge(api)
         .fallback(spa::spa_fallback)
 }

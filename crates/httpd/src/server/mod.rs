@@ -59,6 +59,8 @@ mod middleware;
 mod netbird;
 mod ngrok;
 mod runtime;
+#[cfg(feature = "slack")]
+mod slack_callbacks;
 mod types;
 
 // ── Re-exports ───────────────────────────────────────────────────────────────

@@ -12,6 +12,33 @@ export type {
 export { ChannelType } from "./channel";
 
 export type {
+	AvailableConnectorsResponse,
+	CalendarSelection,
+	ConnectorAccount,
+	ConnectorAccountsResponse,
+	ConnectorCalendar,
+	ConnectorCalendarsResponse,
+	ConnectorDataset,
+	ConnectorDatasetCompileResponse,
+	ConnectorDatasetConfig,
+	ConnectorDatasetDraft,
+	ConnectorDatasetFilters,
+	ConnectorDatasetsResponse,
+	ConnectorDescriptor,
+	ConnectorItem,
+	ConnectorItemsResponse,
+	ConnectorKind,
+	ConnectorProjections,
+	ConnectorRemovedResponse,
+	ConnectorRun,
+	ConnectorRunStatus,
+	ConnectorRunsResponse,
+	JsonValue,
+} from "./connector";
+
+export type { ExternalAgentInfo } from "./external-agent";
+
+export type {
 	ActiveHoursConfig,
 	CronJob,
 	CronJobState,
@@ -142,7 +169,7 @@ export interface McpServerInfo {
 /** A history message stored in the session history cache. */
 export interface HistoryMessage {
 	role?: string;
-	content?: string;
+	content?: string | unknown[];
 	historyIndex?: number;
 	messageIndex?: number;
 	tool_call_id?: string;

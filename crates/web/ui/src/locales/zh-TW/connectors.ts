@@ -1,0 +1,40 @@
+import connectors from "../en/connectors";
+
+export default {
+	...connectors,
+	connections: {
+		...connectors.connections,
+		addGmail: "新增 Gmail 連線",
+		addHimalaya: "新增 Himalaya 連線",
+		addGmailTitle: "Gmail 連線",
+		addHimalayaTitle: "Himalaya 電子郵件連線",
+		emailNamePlaceholder: "工作電子郵件",
+		himalayaAccount: "Himalaya 帳號名稱",
+		himalayaBackend: "儲存後端",
+		gmailCredentialHelp:
+			"使用 Moltis 中現有的 Google Workspace 授權。系統只會參照 Gmail 憑證，不會將其複製到連接器資料庫。",
+		emailRequired: "請輸入連線名稱，並在適用時輸入已設定的 Himalaya 帳號名稱。",
+		googleWorkspaceCredentials: "Google Workspace 憑證",
+		testEmailTitle: "電子郵件連線準備狀態",
+		emailReady: "電子郵件帳號已準備好進行同步。",
+		emailReadyAddress: "Gmail 已為 {{email}} 準備就緒。",
+	},
+	datasets: {
+		...connectors.datasets,
+		addEmailTitle: "新增電子郵件資料集",
+		editEmailTitle: "編輯電子郵件資料集",
+		emailHelp: "電子郵件同步僅供讀取且有範圍限制。郵件內容會以不受信任的外部資料形式儲存在本機；附件僅以中繼資料表示。",
+		mailboxes: "信箱",
+		mailboxesHelp: "每行一個 Himalaya 信箱 ID，最多 32 個。",
+		emailQuery: "搜尋查詢",
+		emailQueryHelp: "選填的供應商搜尋條件。留空則取得所選範圍內最新的郵件。",
+		emailLimit: "郵件數量上限",
+		includeBodies: "儲存有長度限制的郵件內文",
+		emailRequired: "請選擇電子郵件連線並輸入資料集名稱。",
+		emailLimitInvalid: "郵件數量上限必須是 1 到 1000 之間的整數。",
+		mailboxesInvalid: "請輸入 1 到 32 個以逗號分隔的信箱 ID。",
+		gmailScope: "Gmail 查詢 {{query}} · 最多 {{limit}} 封郵件",
+		himalayaScope: "信箱 {{mailboxes}} · 最多 {{limit}} 封郵件",
+		allMail: "所有郵件",
+	},
+};

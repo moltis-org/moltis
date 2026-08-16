@@ -29,9 +29,15 @@ import { mount, navigate, registerPage, sessionPath } from "./router";
 import { routes } from "./routes";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox";
 import * as _sessions from "./sessions";
-import { fetchSessions, refreshWelcomeCardIfNeeded, removeSessionFromClientState, renderSessionList } from "./sessions";
+import {
+	fetchSessions,
+	refreshWelcomeCardIfNeeded,
+	removeSessionFromClientState,
+	renderSessionList,
+	startNewSession,
+} from "./sessions";
 import * as S from "./state";
-import { togglePalette } from "./stores/command-store";
+import { setAgentPromptHandler, togglePalette } from "./stores/command-store";
 import * as modelStore from "./stores/model-store";
 import * as _modelStore from "./stores/model-store";
 import * as _nodeStore from "./stores/node-store";
@@ -202,13 +208,13 @@ gon.onChange("vault_status", showVaultBanner as (v: unknown) => void);
 
 function upsertSessionFromEvent(entry: SessionEntry | null): boolean {
 	if (!entry?.key) return false;
-	sessionStore.upsert(entry as never);
 	const legacy = S.sessions.slice() as SessionEntry[];
 	const idx = legacy.findIndex((session) => session.key === entry.key);
 	let nextEntry = { ...entry };
 	if (idx >= 0) {
 		nextEntry = { ...legacy[idx], ...entry };
 	}
+	sessionStore.upsert(nextEntry as never);
 	S.setSessions(insertSessionInOrder(legacy as never[], nextEntry as never));
 	renderSessionList();
 	return true;
@@ -243,6 +249,7 @@ function seedSessionsFromGon(): void {
 }
 
 seedSessionsFromGon();
+setAgentPromptHandler(startNewSession);
 
 function applyMemory(mem: MemInfo | null): void {
 	if (!mem) return;
@@ -666,7 +673,7 @@ function initSessionTabBar(): void {
 			btn.classList.toggle("active", btn.dataset.tab === current);
 		}
 		if (archivedRow) {
-			archivedRow.classList.toggle("hidden", current !== "sessions");
+			archivedRow.classList.toggle("hidden", current !== "sessions" && current !== "cron");
 		}
 	}
 

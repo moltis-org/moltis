@@ -19,6 +19,9 @@ const CODEX_MODELS_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/model
 pub(super) const CODEX_MODELS_CLIENT_VERSION: &str = "1.0.0";
 
 pub(super) const DEFAULT_CODEX_MODELS: &[(&str, &str)] = &[
+    ("gpt-5.6-sol", "GPT-5.6 Sol"),
+    ("gpt-5.6-terra", "GPT-5.6 Terra"),
+    ("gpt-5.6-luna", "GPT-5.6 Luna"),
     ("gpt-5.4", "GPT-5.4"),
     ("gpt-5.3-codex-spark", "GPT-5.3 Codex Spark"),
     ("gpt-5.3-codex", "GPT-5.3 Codex"),
@@ -70,6 +73,20 @@ pub fn has_stored_tokens() -> bool {
 
 pub fn default_model_catalog() -> Vec<crate::DiscoveredModel> {
     crate::catalog_to_discovered(DEFAULT_CODEX_MODELS, 3)
+        .into_iter()
+        .map(|model| {
+            let mut capabilities = crate::ModelCapabilities::infer(&model.id);
+            if let Some(context_window) =
+                crate::model_capabilities::context_window_fallback_for_model(
+                    crate::model_capabilities::ContextWindowFallbackScope::OpenAiCodex,
+                    &model.id,
+                )
+            {
+                capabilities.context_window = context_window;
+            }
+            model.with_capabilities(capabilities)
+        })
+        .collect()
 }
 
 fn formatted_model_name(model_id: &str) -> String {

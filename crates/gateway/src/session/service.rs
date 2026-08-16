@@ -1,16 +1,7 @@
 use super::*;
 
 fn default_channel_session_key(target: &moltis_channels::ChannelReplyTarget) -> String {
-    match &target.thread_id {
-        Some(thread_id) => format!(
-            "{}:{}:{}:{}",
-            target.channel_type, target.account_id, target.chat_id, thread_id
-        ),
-        None => format!(
-            "{}:{}:{}",
-            target.channel_type, target.account_id, target.chat_id
-        ),
-    }
+    target.default_session_key()
 }
 
 async fn is_current_channel_session(
@@ -41,7 +32,32 @@ async fn is_archivable_entry(
     metadata: &SqliteSessionMetadata,
     entry: &moltis_sessions::metadata::SessionEntry,
 ) -> bool {
-    entry.key != "main" && !is_current_channel_session(metadata, entry).await
+    !is_current_channel_session(metadata, entry).await
+}
+
+/// Why a session's channel binding cannot be cleared, if it cannot.
+///
+/// A session created *by* a channel is that chat's own conversation: its history
+/// is the room's history. Clearing the binding there would let a web turn run
+/// with full tool access and owner-private context over messages other people
+/// wrote — exactly what the channel-bound ceiling exists to prevent — and the
+/// next inbound message would re-create the binding anyway.
+///
+/// A session that was merely *attached* to a channel (via `/attach`) has its own
+/// key, so unbinding returns the chat to its default session and restores the
+/// session to normal use. That is the case this exists to allow.
+fn channel_binding_clear_refusal(
+    entry: &moltis_sessions::metadata::SessionEntry,
+) -> Option<String> {
+    let binding_json = entry.channel_binding.as_deref()?;
+    let target = serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding_json).ok()?;
+    (default_channel_session_key(&target) == entry.key).then(|| {
+        format!(
+            "session '{}' is a channel's own conversation and cannot be unbound. \
+             Attach a different session to that chat instead.",
+            entry.key
+        )
+    })
 }
 
 /// Live session service backed by JSONL store + SQLite metadata.
@@ -49,7 +65,9 @@ pub struct LiveSessionService {
     pub(super) store: Arc<SessionStore>,
     pub(super) metadata: Arc<SqliteSessionMetadata>,
     pub(super) agent_persona_store: Option<Arc<AgentPersonaStore>>,
+    #[cfg(feature = "voice")]
     pub(super) voice_persona_store: Option<Arc<crate::voice_persona::VoicePersonaStore>>,
+    #[cfg(feature = "voice")]
     pub(super) tts_service: Option<Arc<dyn TtsService>>,
     pub(super) share_store: Option<Arc<ShareStore>>,
     pub(super) sandbox_router: Option<Arc<SandboxRouter>>,
@@ -67,7 +85,9 @@ impl LiveSessionService {
             store,
             metadata,
             agent_persona_store: None,
+            #[cfg(feature = "voice")]
             voice_persona_store: None,
+            #[cfg(feature = "voice")]
             tts_service: None,
             share_store: None,
             sandbox_router: None,
@@ -122,6 +142,7 @@ impl LiveSessionService {
         self
     }
 
+    #[cfg(feature = "voice")]
     pub fn with_voice_persona_store(
         mut self,
         store: Arc<crate::voice_persona::VoicePersonaStore>,
@@ -130,6 +151,7 @@ impl LiveSessionService {
         self
     }
 
+    #[cfg(feature = "voice")]
     pub fn with_tts_service(mut self, tts: Arc<dyn TtsService>) -> Self {
         self.tts_service = Some(tts);
         self
@@ -267,8 +289,14 @@ impl LiveSessionService {
 
 #[async_trait]
 impl SessionService for LiveSessionService {
+    #[cfg(feature = "voice")]
     async fn voice_generate(&self, params: Value) -> ServiceResult {
         self.voice_generate_impl(params).await
+    }
+
+    #[cfg(not(feature = "voice"))]
+    async fn voice_generate(&self, _params: Value) -> ServiceResult {
+        Err("session voice generation is not configured".into())
     }
 
     async fn share_create(&self, params: Value) -> ServiceResult {
@@ -564,6 +592,27 @@ impl SessionService for LiveSessionService {
         if let Some(mcp_disabled) = p.mcp_disabled {
             self.metadata.set_mcp_disabled(key, mcp_disabled).await;
         }
+        if let Some(channel_binding) = p.channel_binding {
+            // Only clearing is supported. Creating a binding routes a chat's
+            // traffic into a session and is a privileged channel-side action
+            // (`/attach`), not something an API caller may assert.
+            if !channel_binding.as_ref().is_none_or(Value::is_null) {
+                return Err(ServiceError::message(
+                    "'channelBinding' can only be set to null (to unbind); \
+                     bind a session to a chat with /attach from that chat",
+                ));
+            }
+            if let Some(refusal) = channel_binding_clear_refusal(&entry) {
+                return Err(ServiceError::message(refusal));
+            }
+            // Drop the chat→session override first so the channel falls back to
+            // its own session. Leaving it would keep delivering channel traffic
+            // into a session that no longer declares a binding, which is exactly
+            // the combination the channel-bound ceiling cannot detect.
+            self.metadata.clear_active_session_mappings(key).await;
+            self.metadata.set_channel_binding(key, None).await;
+            info!(session = key, "cleared channel binding");
+        }
         if let Some(sandbox_enabled_opt) = p.sandbox_enabled {
             let old_sandbox = entry.sandbox_enabled;
             self.metadata
@@ -629,6 +678,7 @@ impl SessionService for LiveSessionService {
             "sandbox_backend": entry.sandbox_backend,
             "worktree_branch": entry.worktree_branch,
             "mcpDisabled": entry.mcp_disabled,
+            "channelBinding": entry.channel_binding,
             "agent_id": entry.agent_id,
             "agentId": entry.agent_id,
             "mode_id": entry.mode_id,

@@ -24,6 +24,12 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[unsafe(export_name = "malloc_conf")]
 static malloc_conf: &[u8] = b"dirty_decay_ms:1000,muzzy_decay_ms:1000,background_thread:true\0";
 
+#[cfg(feature = "acp")]
+mod acp_backend;
+#[cfg(feature = "acp")]
+mod acp_command;
+#[cfg(feature = "acp")]
+mod acp_mcp;
 mod auth_commands;
 mod browser_commands;
 mod channel_commands;
@@ -40,6 +46,7 @@ mod memory_commands;
 #[cfg(feature = "netbird")]
 mod netbird_commands;
 mod node_commands;
+mod providers_commands;
 mod sandbox_commands;
 mod service_commands;
 #[cfg(feature = "tailscale")]
@@ -51,7 +58,13 @@ use {
     clap::{Parser, Subcommand},
     moltis_gateway::logs::{EnabledLogLevels, LogBroadcastLayer, LogBuffer},
     tracing::info,
-    tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt},
+    tracing_subscriber::{
+        EnvFilter, Layer as _,
+        filter::filter_fn,
+        fmt::{self, writer::BoxMakeWriter},
+        layer::SubscriberExt,
+        util::SubscriberInitExt,
+    },
 };
 
 #[derive(Parser)]
@@ -106,6 +119,9 @@ struct Cli {
 enum Commands {
     /// Start the gateway server (default when no subcommand is provided).
     Gateway,
+    /// Serve Moltis to an ACP client over stdio.
+    #[cfg(feature = "acp")]
+    Acp(acp_command::AcpArgs),
     /// Invoke an agent directly.
     Agent {
         #[arg(short, long)]
@@ -137,6 +153,11 @@ enum Commands {
     },
     /// List available models.
     Models,
+    /// Provider diagnostics and inspection.
+    Providers {
+        #[command(subcommand)]
+        action: providers_commands::ProviderAction,
+    },
     /// Interactive onboarding wizard.
     Onboard,
     /// Config validation and migration.
@@ -281,11 +302,48 @@ fn default_telemetry_filter(log_level: &str) -> EnvFilter {
     filter
 }
 
+/// Whether the chosen command uses stdout as a machine-readable wire, in which
+/// case logs must go to stderr instead.
+///
+/// `moltis acp` frames JSON-RPC on stdout: a single log line written there
+/// corrupts the stream and the client disconnects with a parse error.
+fn command_reserves_stdout(command: Option<&Commands>) -> bool {
+    #[cfg(feature = "acp")]
+    if matches!(command, Some(Commands::Acp(_))) {
+        return true;
+    }
+    let _ = command;
+    false
+}
+
+fn telemetry_target_allowed(target: &str, protocol_payloads_possible: bool) -> bool {
+    if target.starts_with("agent_client_protocol") {
+        return false;
+    }
+    if !protocol_payloads_possible {
+        return true;
+    }
+    ![
+        "moltis_agents",
+        "moltis_chat",
+        "moltis_mcp",
+        "moltis_providers",
+        "moltis_tools",
+    ]
+    .iter()
+    .any(|prefix| target.starts_with(prefix))
+}
+
 /// Initialise tracing and optionally attach a [`LogBroadcastLayer`] that
 /// captures events into an in-memory ring buffer for the web UI.
 fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
-    let filter = EnvFilter::try_from_default_env()
+    let mut filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| default_telemetry_filter(&cli.log_level));
+    // The ACP SDK logs complete JSON-RPC payloads, including prompts and MCP
+    // environment values. Never enable that target, even under RUST_LOG=trace.
+    if let Ok(directive) = "agent_client_protocol=off".parse() {
+        filter = filter.add_directive(directive);
+    }
 
     if let Some(ref buffer) = log_buffer {
         let levels = EnabledLogLevels::from_max_level_hint(filter.max_level_hint());
@@ -294,13 +352,33 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
 
     let registry = tracing_subscriber::registry().with(filter);
 
-    // Optionally attach the in-memory capture layer.
-    let log_layer = log_buffer.map(LogBroadcastLayer::new);
+    // Boxed so both destinations share one layer type.
+    let stdout_reserved = command_reserves_stdout(cli.command.as_ref());
+    // Apply the payload filter independently to the in-memory layer. EnvFilter
+    // specificity must never be able to re-enable protocol payload targets.
+    let writer = if stdout_reserved {
+        BoxMakeWriter::new(std::io::stderr)
+    } else {
+        BoxMakeWriter::new(std::io::stdout)
+    };
 
     if cli.json_logs {
         registry
-            .with(fmt::layer().json().with_target(true).with_thread_ids(false))
-            .with(log_layer)
+            .with(
+                fmt::layer()
+                    .json()
+                    .with_target(true)
+                    .with_thread_ids(false)
+                    .with_writer(writer)
+                    .with_filter(filter_fn(move |metadata| {
+                        telemetry_target_allowed(metadata.target(), stdout_reserved)
+                    })),
+            )
+            .with(log_buffer.map(|buffer| {
+                LogBroadcastLayer::new(buffer).with_filter(filter_fn(move |metadata| {
+                    telemetry_target_allowed(metadata.target(), stdout_reserved)
+                }))
+            }))
             .init();
     } else {
         registry
@@ -308,9 +386,18 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
                 fmt::layer()
                     .with_target(true)
                     .with_thread_ids(false)
-                    .with_ansi(true),
+                    // ANSI escapes are terminal decoration, never wire content.
+                    .with_ansi(!stdout_reserved)
+                    .with_writer(writer)
+                    .with_filter(filter_fn(move |metadata| {
+                        telemetry_target_allowed(metadata.target(), stdout_reserved)
+                    })),
             )
-            .with(log_layer)
+            .with(log_buffer.map(|buffer| {
+                LogBroadcastLayer::new(buffer).with_filter(filter_fn(move |metadata| {
+                    telemetry_target_allowed(metadata.target(), stdout_reserved)
+                }))
+            }))
             .init();
     }
 }
@@ -484,6 +571,8 @@ async fn main() -> anyhow::Result<()> {
             .await
             .map_err(Into::into)
         },
+        #[cfg(feature = "acp")]
+        Some(Commands::Acp(args)) => acp_command::handle_acp(args).await,
         Some(Commands::Agent { message, .. }) => {
             let result = moltis_agents::runner::run_agent("default", "main", &message).await?;
             println!("{result}");
@@ -495,6 +584,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Some(Commands::Channels { action }) => channel_commands::handle_channels(action).await,
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
+        Some(Commands::Providers { action }) => providers_commands::handle_providers(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
         Some(Commands::Browser { action }) => browser_commands::handle_browser(action),
         Some(Commands::Data { action }) => data_commands::handle_data(action).await,
@@ -616,7 +706,17 @@ async fn handle_skills(action: SkillAction) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::default_telemetry_filter;
+    use crate::{default_telemetry_filter, telemetry_target_allowed};
+
+    fn manifest_includes_feature(manifest: &str, feature: &str, dependency: &str) -> bool {
+        let Some(start) = manifest.find(&format!("{feature} = [")) else {
+            return false;
+        };
+        let Some(end) = manifest[start..].find("]\n") else {
+            return false;
+        };
+        manifest[start..start + end].contains(&format!("\"{dependency}\""))
+    }
 
     #[test]
     fn default_telemetry_filter_quiets_noisy_targets() {
@@ -626,5 +726,57 @@ mod tests {
         assert!(filter.contains("matrix_sdk=warn"));
         assert!(filter.contains("matrix_sdk_base=warn"));
         assert!(filter.contains("matrix_sdk_crypto=error"));
+    }
+
+    #[test]
+    fn protocol_telemetry_filter_cannot_capture_payload_targets() {
+        assert!(!telemetry_target_allowed(
+            "agent_client_protocol::rpc",
+            false
+        ));
+        assert!(!telemetry_target_allowed("moltis_providers::openai", true));
+        assert!(!telemetry_target_allowed("moltis_mcp::transport", true));
+        assert!(!telemetry_target_allowed("moltis_tools::exec", true));
+        assert!(telemetry_target_allowed("moltis_cli::acp_backend", true));
+        assert!(telemetry_target_allowed("moltis_providers::openai", false));
+    }
+
+    #[test]
+    fn default_builds_include_all_provider_features() {
+        let cli_manifest =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+                .unwrap_or_default();
+        let gateway_manifest = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../gateway/Cargo.toml"
+        ))
+        .unwrap_or_default();
+        let providers_manifest = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../providers/Cargo.toml"
+        ))
+        .unwrap_or_default();
+
+        for provider_feature in [
+            "provider-github-copilot",
+            "provider-kimi-code",
+            "provider-openai-codex",
+        ] {
+            assert!(manifest_includes_feature(
+                &cli_manifest,
+                "full",
+                provider_feature
+            ));
+            assert!(manifest_includes_feature(
+                &gateway_manifest,
+                "default",
+                provider_feature
+            ));
+            assert!(manifest_includes_feature(
+                &providers_manifest,
+                "default",
+                provider_feature
+            ));
+        }
     }
 }

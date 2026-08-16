@@ -264,6 +264,113 @@ fn value_type_name(value: &Value) -> &'static str {
     }
 }
 
+/// Coerce stringified scalar arguments into the scalar type the schema declares.
+///
+/// Smaller models frequently emit scalars as JSON strings — e.g.
+/// `{"full_page": "true"}` or `{"timeout_ms": "5000"}`. Both this validator and
+/// the target tool's serde deserialization would otherwise reject them
+/// (`expected boolean, got string` / `invalid type: string`), failing the whole
+/// call over a purely cosmetic type slip.
+///
+/// For each top-level field whose schema declares a `boolean`, `integer`, or
+/// `number` type (and does **not** also permit `string`), a string value that
+/// parses unambiguously to that scalar is rewritten in place. Anything that does
+/// not parse cleanly is left untouched for [`validate_tool_args`] to flag.
+///
+/// This mirrors the existing leniency in `type_matches_single` that accepts
+/// integer-valued floats for `integer`: the goal is to avoid spurious
+/// rejections that drive reflex-retry churn, not to mask genuine mistakes.
+/// Coercion is deliberately limited to top-level scalars, matching the
+/// validator's own scope. Call it immediately before [`validate_tool_args`] so
+/// the coerced object is both validated and dispatched.
+pub fn coerce_scalar_args(schema: &Value, args: &mut Value) {
+    let Some(props) = schema
+        .as_object()
+        .and_then(|obj| obj.get("properties"))
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    let Some(args_obj) = args.as_object_mut() else {
+        return;
+    };
+
+    // Snapshot which fields to rewrite first: `props` borrows `schema`, but the
+    // rewrite needs a mutable borrow of `args_obj`, so the two cannot overlap.
+    let mut rewrites: Vec<(String, Value)> = Vec::new();
+    for (field, prop_schema) in props {
+        let Some(Value::String(raw)) = args_obj.get(field) else {
+            continue; // only string inputs are candidates for coercion
+        };
+        let Some(expected) = prop_schema.as_object().and_then(|obj| obj.get("type")) else {
+            continue; // no declared type → nothing to coerce toward
+        };
+        let allowed = type_labels(expected);
+        // If a string is itself valid for this field, the model may genuinely
+        // have meant a string — leave it untouched.
+        if allowed.contains(&"string") {
+            continue;
+        }
+        if let Some(coerced) = coerce_string_scalar(raw, &allowed) {
+            rewrites.push((field.clone(), coerced));
+        }
+    }
+
+    for (field, coerced) in rewrites {
+        args_obj.insert(field, coerced);
+    }
+}
+
+/// Collect the declared JSON Schema `type` labels, handling both the scalar
+/// (`"boolean"`) and union (`["integer", "null"]`) forms.
+fn type_labels(expected: &Value) -> Vec<&str> {
+    match expected {
+        Value::String(single) => vec![single.as_str()],
+        Value::Array(types) => types.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Parse `raw` into the first scalar type in `allowed` it unambiguously matches.
+///
+/// Returns `None` when nothing parses cleanly, leaving the original string for
+/// the validator to reject.
+fn coerce_string_scalar(raw: &str, allowed: &[&str]) -> Option<Value> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    for label in allowed {
+        match *label {
+            "boolean" => {
+                if trimmed.eq_ignore_ascii_case("true") {
+                    return Some(Value::Bool(true));
+                }
+                if trimmed.eq_ignore_ascii_case("false") {
+                    return Some(Value::Bool(false));
+                }
+            },
+            "integer" => {
+                if let Ok(signed) = trimmed.parse::<i64>() {
+                    return Some(Value::Number(signed.into()));
+                }
+                if let Ok(unsigned) = trimmed.parse::<u64>() {
+                    return Some(Value::Number(unsigned.into()));
+                }
+            },
+            "number" => {
+                if let Ok(float) = trimmed.parse::<f64>()
+                    && let Some(number) = serde_json::Number::from_f64(float)
+                {
+                    return Some(Value::Number(number));
+                }
+            },
+            _ => {},
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -528,5 +635,119 @@ mod tests {
         let s = err.short_summary();
         assert!(s.contains("missing=a"));
         assert!(s.contains("type_mismatch=b:integer!=string"));
+    }
+
+    /// The browser-tool failure class that motivated this change: a small model
+    /// sends `full_page` as the string `"true"` and an integer field as a
+    /// numeric string. After coercion the call validates cleanly.
+    #[test]
+    fn coerces_browser_style_stringified_scalars() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "full_page": { "type": "boolean" },
+                "timeout_ms": { "type": "integer" },
+                "url": { "type": "string" }
+            }
+        });
+        let mut args = json!({
+            "full_page": "true",
+            "timeout_ms": "5000",
+            "url": "https://example.com"
+        });
+        // Pre-coercion these would be rejected by the validator.
+        assert!(validate_tool_args(&schema, &args).is_err());
+
+        coerce_scalar_args(&schema, &mut args);
+
+        assert_eq!(args["full_page"], json!(true));
+        assert_eq!(args["timeout_ms"], json!(5000));
+        // Genuine strings are untouched.
+        assert_eq!(args["url"], json!("https://example.com"));
+        assert!(validate_tool_args(&schema, &args).is_ok());
+    }
+
+    #[test]
+    fn coerces_false_and_negative_and_float() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "flag": { "type": "boolean" },
+                "offset": { "type": "integer" },
+                "ratio": { "type": "number" }
+            }
+        });
+        let mut args = json!({"flag": "False", "offset": "-12", "ratio": "0.5"});
+        coerce_scalar_args(&schema, &mut args);
+        assert_eq!(args["flag"], json!(false));
+        assert_eq!(args["offset"], json!(-12));
+        assert_eq!(args["ratio"], json!(0.5));
+    }
+
+    /// When a field's schema also permits `string`, the model may have meant a
+    /// string — never coerce it.
+    #[test]
+    fn leaves_string_union_fields_alone() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "schedule": { "type": ["integer", "string"] }
+            }
+        });
+        let mut args = json!({"schedule": "5"});
+        coerce_scalar_args(&schema, &mut args);
+        assert_eq!(
+            args["schedule"],
+            json!("5"),
+            "string-typed union must stay a string"
+        );
+    }
+
+    /// Unparseable strings are left for the validator to reject, not mangled.
+    #[test]
+    fn leaves_unparseable_strings_for_the_validator() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "count": { "type": "integer" },
+                "flag": { "type": "boolean" }
+            }
+        });
+        let mut args = json!({"count": "not-a-number", "flag": "maybe"});
+        coerce_scalar_args(&schema, &mut args);
+        assert_eq!(args["count"], json!("not-a-number"));
+        assert_eq!(args["flag"], json!("maybe"));
+        assert!(validate_tool_args(&schema, &args).is_err());
+    }
+
+    /// A nullable union (`["integer", "null"]`) with no `string` still coerces.
+    #[test]
+    fn coerces_into_nullable_numeric_union() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "ref_": { "type": ["integer", "null"] } }
+        });
+        let mut args = json!({"ref_": "14"});
+        coerce_scalar_args(&schema, &mut args);
+        assert_eq!(args["ref_"], json!(14));
+    }
+
+    /// Non-object args and schemas without `properties` are no-ops.
+    #[test]
+    fn coercion_is_a_noop_for_unstructured_inputs() {
+        let mut scalar = json!("plain");
+        coerce_scalar_args(
+            &json!({"properties": {"x": {"type": "integer"}}}),
+            &mut scalar,
+        );
+        assert_eq!(scalar, json!("plain"));
+
+        let mut args = json!({"x": "5"});
+        coerce_scalar_args(&json!({}), &mut args);
+        assert_eq!(
+            args["x"],
+            json!("5"),
+            "no properties → nothing to coerce toward"
+        );
     }
 }

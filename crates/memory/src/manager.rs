@@ -1,5 +1,5 @@
 /// Memory manager: orchestrates file sync, chunking, embedding, and search.
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use {
     async_trait::async_trait,
@@ -16,7 +16,7 @@ use crate::{
     embeddings::EmbeddingProvider,
     error::Result,
     schema::{ChunkRow, FileRow},
-    search::{self, SearchResult},
+    search::SearchResult,
     store::{CacheEntry, MemoryStore},
     writer::validate_memory_path,
 };
@@ -25,6 +25,9 @@ pub struct MemoryManager {
     config: MemoryConfig,
     store: Box<dyn MemoryStore>,
     embedder: Option<Box<dyn EmbeddingProvider>>,
+    /// Serializes sync operations so concurrent syncs of the same path can't
+    /// interleave their delete+upsert and corrupt the chunk-PK index.
+    sync_lock: Arc<tokio::sync::Semaphore>,
 }
 
 /// Status info about the memory system.
@@ -35,6 +38,10 @@ pub struct MemoryStatus {
     pub embedding_model: String,
     /// SQLite database file size in bytes (0 for in-memory DBs).
     pub db_size_bytes: u64,
+    /// Backend type identifier: "sqlite" or "zvec".
+    pub backend_type: String,
+    /// HNSW index build percentage (zvec only).
+    pub hnsw_percent: Option<f64>,
 }
 
 impl MemoryStatus {
@@ -67,6 +74,7 @@ impl MemoryManager {
             config,
             store,
             embedder: Some(embedder),
+            sync_lock: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
 
@@ -76,12 +84,18 @@ impl MemoryManager {
             config,
             store,
             embedder: None,
+            sync_lock: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
 
     /// Whether this manager has an embedding provider for vector search.
     pub fn has_embeddings(&self) -> bool {
         self.embedder.is_some()
+    }
+
+    /// Backend type identifier from the underlying store.
+    pub fn backend_type(&self) -> &'static str {
+        self.store.store_type()
     }
 
     /// Get the citation mode for this manager.
@@ -109,8 +123,18 @@ impl MemoryManager {
             .map(|file| file.path))
     }
 
+    /// Acquire the single sync permit, held until the returned guard drops.
+    async fn acquire_sync_lock(&self) -> Result<tokio::sync::SemaphorePermit<'_>> {
+        self.sync_lock
+            .acquire()
+            .await
+            .map_err(|e| crate::error::Error::Backend(format!("memory sync semaphore closed: {e}")))
+    }
+
     /// Synchronize: walk configured directories, detect changed files, re-chunk and re-embed.
     pub async fn sync(&self) -> Result<SyncReport> {
+        // Serialize against concurrent sync_path/remove_path.
+        let _sync_permit = self.acquire_sync_lock().await?;
         let mut report = SyncReport::default();
 
         let mut discovered_paths = Vec::new();
@@ -193,6 +217,7 @@ impl MemoryManager {
 
     /// Sync a single file by path. Returns true if it was updated.
     pub async fn sync_path(&self, path: &Path) -> Result<bool> {
+        let _sync_permit = self.acquire_sync_lock().await?;
         let path_str = path.to_string_lossy().to_string();
         let mut report = SyncReport::default();
         self.sync_file(path, &path_str, &mut report).await
@@ -200,6 +225,7 @@ impl MemoryManager {
 
     /// Remove a file path from the memory index after the backing file is gone.
     pub async fn remove_path(&self, path: &Path) -> Result<bool> {
+        let _sync_permit = self.acquire_sync_lock().await?;
         let path_str = path.to_string_lossy().to_string();
         let had_file = self.store.get_file(&path_str).await?.is_some();
         let had_chunks = !self.store.get_chunks_for_file(&path_str).await?.is_empty();
@@ -377,20 +403,54 @@ impl MemoryManager {
     /// falls back to keyword-only search otherwise.
     #[tracing::instrument(skip(self), fields(query_len = query.len(), limit))]
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        if let Some(ref embedder) = self.embedder {
-            search::hybrid_search(
-                self.store.as_ref(),
-                embedder.as_ref(),
+        #[cfg(feature = "metrics")]
+        use moltis_metrics::memory as mem_metrics;
+
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
+
+        #[cfg(feature = "metrics")]
+        let search_type = if self.embedder.is_some() {
+            "hybrid"
+        } else {
+            "keyword"
+        };
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            mem_metrics::SEARCHES_TOTAL,
+            moltis_metrics::labels::SEARCH_TYPE => search_type
+        )
+        .increment(1);
+
+        let embedding = if let Some(ref embedder) = self.embedder {
+            embedder.embed(query).await?
+        } else {
+            vec![]
+        };
+
+        let strategy = self.config.search_strategy();
+
+        let results = self
+            .store
+            .hybrid_search(
+                &embedding,
                 query,
-                limit,
                 self.config.vector_weight,
                 self.config.keyword_weight,
-                self.config.merge_strategy,
+                strategy,
+                limit,
             )
-            .await
-        } else {
-            search::keyword_only_search(self.store.as_ref(), query, limit).await
-        }
+            .await?;
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::histogram!(
+            mem_metrics::SEARCH_DURATION_SECONDS,
+            moltis_metrics::labels::SEARCH_TYPE => search_type
+        )
+        .record(start.elapsed().as_secs_f64());
+
+        Ok(results)
     }
 
     /// Get a specific chunk by ID.
@@ -406,9 +466,16 @@ impl MemoryManager {
             let chunks = self.store.get_chunks_for_file(&file.path).await?;
             total_chunks += chunks.len();
         }
-        let db_size_bytes = std::fs::metadata(&self.config.db_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let db_size_bytes = {
+            let store_size = self.store.disk_size_bytes();
+            if store_size > 0 {
+                store_size
+            } else {
+                std::fs::metadata(&self.config.db_path)
+                    .map(|m| m.len())
+                    .unwrap_or(0)
+            }
+        };
         Ok(MemoryStatus {
             total_files: files.len(),
             total_chunks,
@@ -418,6 +485,8 @@ impl MemoryManager {
                 .map(|e| e.model_name().to_string())
                 .unwrap_or_else(|| "none (keyword-only)".into()),
             db_size_bytes,
+            backend_type: self.store.store_type().to_string(),
+            hnsw_percent: self.store.hnsw_percent(),
         })
     }
 }
@@ -899,11 +968,11 @@ mod tests {
             ..Default::default()
         };
 
-        let embedder = std::sync::Arc::new(CountingEmbedder::new());
-        let embedder_ref = std::sync::Arc::clone(&embedder);
+        let embedder = Arc::new(CountingEmbedder::new());
+        let embedder_ref = Arc::clone(&embedder);
 
         // Wrap in a forwarding provider that delegates to the Arc'd one.
-        struct ArcEmbedder(std::sync::Arc<CountingEmbedder>);
+        struct ArcEmbedder(Arc<CountingEmbedder>);
 
         #[async_trait]
         impl EmbeddingProvider for ArcEmbedder {

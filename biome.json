@@ -1,5 +1,5 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.4.6/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
 	"vcs": {
 		"enabled": true,
 		"clientKind": "git",
@@ -11,9 +11,9 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true,
+			"preset": "recommended",
 			"a11y": {
-				"recommended": true,
+				"preset": "recommended",
 				"noAutofocus": "warn",
 				"noLabelWithoutControl": "warn",
 				"noStaticElementInteractions": "warn",
@@ -21,14 +21,14 @@
 				"useKeyWithClickEvents": "warn"
 			},
 			"complexity": {
-				"recommended": true,
+				"preset": "recommended",
 				"noExcessiveCognitiveComplexity": "warn",
 				"noUselessTypeConstraint": "error",
 				"useDateNow": "error",
 				"useSimplifiedLogicExpression": "warn"
 			},
 			"correctness": {
-				"recommended": true,
+				"preset": "recommended",
 				"noInnerDeclarations": "off",
 				"noNodejsModules": "off",
 				"noUndeclaredDependencies": "off",
@@ -39,15 +39,15 @@
 				"useHookAtTopLevel": "error"
 			},
 			"performance": {
-				"recommended": true,
+				"preset": "recommended",
 				"noBarrelFile": "warn",
 				"noReExportAll": "warn"
 			},
 			"security": {
-				"recommended": true
+				"preset": "recommended"
 			},
 			"style": {
-				"recommended": true,
+				"preset": "recommended",
 				"noDefaultExport": "off",
 				"useFilenamingConvention": "off",
 				"useNamingConvention": "off",
@@ -66,16 +66,14 @@
 				"useThrowNewError": "error"
 			},
 			"suspicious": {
-				"recommended": true,
+				"preset": "recommended",
 				"noAssignInExpressions": "off",
 				"noConsole": "off",
 				"noDoubleEquals": "error",
 				"noEmptyBlockStatements": "warn",
 				"noEvolvingTypes": "warn",
 				"useAwait": "warn",
-				"noUnusedExpressions": "warn"
-			},
-			"nursery": {
+				"noUnusedExpressions": "warn",
 				"noShadow": "warn"
 			}
 		}

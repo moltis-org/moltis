@@ -13,6 +13,7 @@ export const REASONING_SEP = "@reasoning-";
 export const models = signal<ModelInfo[]>([]);
 export const selectedModelId = signal<string>(localStorage.getItem("moltis-model") || "");
 export const reasoningEffort = signal<string>(localStorage.getItem("moltis-reasoning-effort") || "");
+let modelListGeneration = 0;
 
 export const selectedModel = computed<ModelInfo | null>(() => {
 	const id = selectedModelId.value;
@@ -54,16 +55,19 @@ export function isReasoningVariant(modelId: string): boolean {
 
 /** Replace the full model list (e.g. after fetch or bootstrap). */
 export function setAll(arr: ModelInfo[]): void {
+	modelListGeneration++;
 	models.value = arr || [];
 }
 
-/** Fetch models from the server via RPC. */
-export function fetch(): Promise<void> {
+/** Fetch models from the server via RPC. Returns whether the response succeeded. */
+export function fetch(): Promise<boolean> {
+	const generation = ++modelListGeneration;
 	return sendRpc("models.list", {}).then((r) => {
 		const res = r as RpcResponse<ModelInfo[]>;
-		if (!res?.ok) return;
-		setAll(res.payload || []);
-		if (models.value.length === 0) return;
+		if (!res?.ok) return false;
+		if (generation !== modelListGeneration) return true;
+		models.value = res.payload || [];
+		if (models.value.length === 0) return true;
 		let saved = localStorage.getItem("moltis-model") || "";
 		// If the saved model has a reasoning suffix, strip it and restore the effort
 		const parsed = parseReasoningSuffix(saved);
@@ -76,6 +80,7 @@ export function fetch(): Promise<void> {
 		const model = found || models.value[0];
 		select(model.id);
 		if (!found) localStorage.setItem("moltis-model", model.id);
+		return true;
 	});
 }
 

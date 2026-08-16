@@ -278,7 +278,25 @@ Webhooks can override specific agent settings without changing the base preset:
 - **Model** — use a different LLM for webhook processing.
 - **System prompt suffix** — append extra instructions (e.g., "Focus on security
   issues" for a code review webhook).
-- **Tool policy** — restrict which tools the agent can use.
+- **Tool policy** — webhook turns have no tools by default. An explicit policy
+  may opt into tools registered for the public audience, currently `calc`,
+  `web_search`, and `web_fetch`. Even `allow = ["*"]` cannot widen beyond this
+  ceiling. Webhook payloads are untrusted input and never inherit trusted-only
+  tools.
+
+For example, the webhook create/update payload can opt into search only:
+
+```json
+{
+  "toolPolicy": {
+    "allow": ["web_search"]
+  }
+}
+```
+
+Omitting `toolPolicy` denies every tool. Supplying an empty policy or only a
+`deny` list permits every public tool not denied, so prefer a narrow, non-empty
+`allow` list.
 
 ### Delivery Message Format
 

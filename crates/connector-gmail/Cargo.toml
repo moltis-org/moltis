@@ -1,0 +1,40 @@
+[package]
+description          = "Gmail provider adapter for Moltis connectors"
+edition.workspace    = true
+license.workspace    = true
+name                 = "moltis-connector-gmail"
+repository.workspace = true
+version.workspace    = true
+
+[features]
+default = ["tracing"]
+metrics = ["dep:metrics"]
+tracing = ["dep:tracing"]
+
+[dependencies]
+anyhow            = { workspace = true }
+async-trait       = { workspace = true }
+base64            = { workspace = true }
+futures           = { workspace = true }
+html2text         = { workspace = true }
+metrics           = { optional = true, workspace = true }
+moltis-agents     = { workspace = true }
+moltis-common     = { workspace = true }
+moltis-connectors = { workspace = true }
+moltis-oauth      = { workspace = true }
+reqwest           = { workspace = true }
+secrecy           = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+sha2              = { workspace = true }
+thiserror         = { workspace = true }
+time              = { features = ["formatting"], workspace = true }
+tokio             = { features = ["fs", "io-util", "sync"], workspace = true }
+tracing           = { optional = true, workspace = true }
+url               = { workspace = true }
+
+[dev-dependencies]
+tokio = { features = ["fs", "io-util", "macros", "rt", "sync"], workspace = true }
+
+[lints]
+workspace = true

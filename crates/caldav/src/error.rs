@@ -18,6 +18,10 @@ pub enum Error {
     #[error("{0}")]
     Protocol(String),
 
+    /// A CalDAV protocol operation exceeded the configured request timeout.
+    #[error("CalDAV operation timed out: {0}")]
+    Timeout(String),
+
     /// Failed to parse iCalendar (RFC 5545) data.
     #[error("{0}")]
     IcalParse(String),

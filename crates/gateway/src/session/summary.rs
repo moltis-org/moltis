@@ -74,7 +74,10 @@ pub(crate) async fn run_session_summary_if_enabled(state: &Arc<GatewayState>, se
         .and_then(|e| e.agent_id)
         .unwrap_or_else(|| "main".to_string());
 
-    let chat_msgs = moltis_agents::model::values_to_chat_messages(&history);
+    let chat_msgs = moltis_agents::model::values_to_chat_messages_with_tool_result_limit(
+        &history,
+        config.tools.max_tool_result_bytes,
+    );
     let writer: Arc<dyn moltis_agents::memory_writer::MemoryWriter> = Arc::new(
         moltis_chat::AgentScopedMemoryWriter::new(Arc::clone(mm), agent_id, write_mode),
     );

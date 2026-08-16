@@ -102,8 +102,19 @@ pub struct MsTeamsAccountConfig {
     /// User allowlist (AAD object IDs or channel user IDs).
     pub allowlist: Vec<String>,
 
+    /// Exact sender IDs allowed to run privileged channel commands.
+    /// Empty grants nobody privileged access.
+    #[serde(default)]
+    pub operators: Vec<String>,
+
     /// Group/team allowlist.
     pub group_allowlist: Vec<String>,
+
+    /// Enable OTP self-approval for non-allowlisted DM users.
+    pub otp_self_approval: bool,
+
+    /// Cooldown in seconds after failed OTP attempts.
+    pub otp_cooldown_secs: u64,
 
     /// Optional shared secret validated against `?secret=...` on webhook calls.
     #[serde(
@@ -191,7 +202,10 @@ impl std::fmt::Debug for MsTeamsAccountConfig {
             .field("group_policy", &self.group_policy)
             .field("mention_mode", &self.mention_mode)
             .field("allowlist", &self.allowlist)
+            .field("operators", &self.operators)
             .field("group_allowlist", &self.group_allowlist)
+            .field("otp_self_approval", &self.otp_self_approval)
+            .field("otp_cooldown_secs", &self.otp_cooldown_secs)
             .field(
                 "webhook_secret",
                 &self.webhook_secret.as_ref().map(|_| "[REDACTED]"),
@@ -212,8 +226,8 @@ pub struct RedactedConfig<'a>(pub &'a MsTeamsAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        // Count: 14 always-present + conditional optional fields.
-        let mut count = 14;
+        // Count: 16 always-present + conditional optional fields.
+        let mut count = 17;
         count += c.webhook_secret.is_some() as usize;
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
@@ -232,7 +246,10 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("group_policy", &c.group_policy)?;
         s.serialize_field("mention_mode", &c.mention_mode)?;
         s.serialize_field("allowlist", &c.allowlist)?;
+        s.serialize_field("operators", &c.operators)?;
         s.serialize_field("group_allowlist", &c.group_allowlist)?;
+        s.serialize_field("otp_self_approval", &c.otp_self_approval)?;
+        s.serialize_field("otp_cooldown_secs", &c.otp_cooldown_secs)?;
         if c.webhook_secret.is_some() {
             s.serialize_field("webhook_secret", secret_serde::REDACTED)?;
         }
@@ -268,6 +285,10 @@ impl Serialize for RedactedConfig<'_> {
 impl ChannelConfigView for MsTeamsAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.allowlist
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {
@@ -330,7 +351,10 @@ impl Default for MsTeamsAccountConfig {
             group_policy: GroupPolicy::Open,
             mention_mode: MentionMode::Mention,
             allowlist: Vec::new(),
+            operators: Vec::new(),
             group_allowlist: Vec::new(),
+            otp_self_approval: true,
+            otp_cooldown_secs: 300,
             webhook_secret: None,
             model: None,
             model_provider: None,
@@ -470,6 +494,26 @@ mod tests {
         assert_eq!(cfg.reply_style, ReplyStyle::TopLevel);
         assert_eq!(cfg.history_limit, 50);
         assert_eq!(cfg.tenant_id, "botframework.com");
+        assert!(cfg.otp_self_approval);
+        assert_eq!(cfg.otp_cooldown_secs, 300);
+    }
+
+    #[test]
+    fn otp_fields_round_trip() {
+        let json = serde_json::json!({
+            "app_id": "test-id",
+            "app_password": "test-pw",
+            "otp_self_approval": false,
+            "otp_cooldown_secs": 60,
+        });
+        let cfg: MsTeamsAccountConfig = serde_json::from_value(json).unwrap();
+        assert!(!cfg.otp_self_approval);
+        assert_eq!(cfg.otp_cooldown_secs, 60);
+
+        let value = serde_json::to_value(&cfg).unwrap();
+        let cfg2: MsTeamsAccountConfig = serde_json::from_value(value).unwrap();
+        assert!(!cfg2.otp_self_approval);
+        assert_eq!(cfg2.otp_cooldown_secs, 60);
     }
 
     #[test]

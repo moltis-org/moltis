@@ -241,7 +241,7 @@ export function renderContextMcpSection(card: HTMLElement, data: ContextData): v
 				dot.style.background = "var(--ok)";
 				tag.appendChild(dot);
 				tag.appendChild(document.createTextNode(s.name));
-				tag.title = `${s.tool_count} tool${s.tool_count !== 1 ? "s" : ""} \u2014 ${s.state}`;
+				tag.title = `${s.tool_count} tool${s.tool_count === 1 ? "" : "s"} \u2014 ${s.state}`;
 				wrap.appendChild(tag);
 			});
 			sec.appendChild(wrap);

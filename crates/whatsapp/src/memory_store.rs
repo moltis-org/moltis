@@ -11,12 +11,12 @@ use std::{fmt::Write, sync::Arc};
 
 use {
     async_trait::async_trait,
+    bytes::Bytes,
     dashmap::DashMap,
     wacore::{
         appstate::{hash::HashState, processor::AppStateMutationMAC},
         store::{error::Result, traits::*},
     },
-    wacore_binary::jid::Jid,
 };
 
 /// Hex-encode bytes without pulling in the `hex` crate.
@@ -46,19 +46,20 @@ pub struct MemoryStore {
     mutation_mac_indexes: Arc<DashMap<String, Vec<Vec<u8>>>>,
     device_data: Arc<tokio::sync::RwLock<Option<wacore::store::Device>>>,
     device_id: Arc<std::sync::atomic::AtomicI32>,
-    skdm_recipients: Arc<DashMap<String, Vec<String>>>,
     lid_mappings: Arc<DashMap<String, LidPnMappingEntry>>,
     /// Phone number → LID reverse index.
     pn_mappings: Arc<DashMap<String, String>>,
     device_list_records: Arc<DashMap<String, DeviceListRecord>>,
-    /// Keyed by `"{group_jid}:{participant}"`.
-    sender_key_forget_marks: Arc<DashMap<String, bool>>,
+    /// Sender-key distribution status keyed by `(group_jid, device_jid)`.
+    sender_key_devices: Arc<DashMap<(String, String), bool>>,
     /// Base keys keyed by `"{address}:{message_id}"`.
     base_keys: Arc<DashMap<String, Vec<u8>>>,
     /// TC tokens keyed by JID string.
     tc_tokens: Arc<DashMap<String, TcTokenEntry>>,
     /// Sent messages keyed by `"{chat_jid}:{message_id}"` → (payload, timestamp).
     sent_messages: Arc<DashMap<String, (Vec<u8>, i64)>>,
+    /// Message secrets keyed by (chat, sender, msg_id) → (secret, expires_at, message_ts).
+    msg_secrets: Arc<DashMap<(String, String, String), (Vec<u8>, i64, i64)>>,
 }
 
 impl MemoryStore {
@@ -78,8 +79,11 @@ impl SignalStore for MemoryStore {
         Ok(())
     }
 
-    async fn load_identity(&self, address: &str) -> Result<Option<Vec<u8>>> {
-        Ok(self.identities.get(address).map(|v| v.value().clone()))
+    async fn load_identity(&self, address: &str) -> Result<Option<[u8; 32]>> {
+        Ok(self
+            .identities
+            .get(address)
+            .and_then(|v| v.value().as_slice().try_into().ok()))
     }
 
     async fn delete_identity(&self, address: &str) -> Result<()> {
@@ -87,8 +91,11 @@ impl SignalStore for MemoryStore {
         Ok(())
     }
 
-    async fn get_session(&self, address: &str) -> Result<Option<Vec<u8>>> {
-        Ok(self.sessions.get(address).map(|v| v.value().clone()))
+    async fn get_session(&self, address: &str) -> Result<Option<Bytes>> {
+        Ok(self
+            .sessions
+            .get(address)
+            .map(|v| Bytes::from(v.value().clone())))
     }
 
     async fn put_session(&self, address: &str, session: &[u8]) -> Result<()> {
@@ -106,8 +113,20 @@ impl SignalStore for MemoryStore {
         Ok(())
     }
 
-    async fn load_prekey(&self, id: u32) -> Result<Option<Vec<u8>>> {
-        Ok(self.prekeys.get(&id).map(|v| v.value().0.clone()))
+    async fn load_prekey(&self, id: u32) -> Result<Option<Bytes>> {
+        Ok(self
+            .prekeys
+            .get(&id)
+            .map(|v| Bytes::from(v.value().0.clone())))
+    }
+
+    async fn mark_prekeys_uploaded(&self, ids: &[u32]) -> Result<()> {
+        for id in ids {
+            if let Some(mut entry) = self.prekeys.get_mut(id) {
+                entry.value_mut().1 = true;
+            }
+        }
+        Ok(())
     }
 
     async fn remove_prekey(&self, id: u32) -> Result<()> {
@@ -237,6 +256,14 @@ impl AppSyncStore for MemoryStore {
         Ok(())
     }
 
+    async fn clear_mutation_macs(&self, name: &str) -> Result<()> {
+        let prefix = format!("{name}:");
+        self.mutation_macs.retain(|k, _| !k.starts_with(&prefix));
+        self.mutation_mac_indexes
+            .retain(|k, _| !k.starts_with(&prefix));
+        Ok(())
+    }
+
     async fn get_latest_sync_key_id(&self) -> Result<Option<Vec<u8>>> {
         Ok(self
             .latest_sync_key_id
@@ -247,29 +274,98 @@ impl AppSyncStore for MemoryStore {
 }
 
 // ============================================================================
+// MsgSecretStore
+// ============================================================================
+
+#[async_trait]
+impl MsgSecretStore for MemoryStore {
+    async fn put_msg_secrets(&self, entries: Vec<MsgSecretEntry>) -> Result<usize> {
+        let count = entries.len();
+        for entry in entries {
+            let key = (entry.chat, entry.sender, entry.msg_id);
+            match self.msg_secrets.get_mut(&key) {
+                Some(mut existing) => {
+                    let (_, exp, ts) = existing.value_mut();
+                    *exp = merge_msg_secret_expiry(*exp, entry.expires_at);
+                    *ts = merge_msg_secret_message_ts(*ts, entry.message_ts);
+                },
+                None => {
+                    self.msg_secrets
+                        .insert(key, (entry.secret, entry.expires_at, entry.message_ts));
+                },
+            }
+        }
+        Ok(count)
+    }
+
+    async fn get_msg_secret(
+        &self,
+        chat: &str,
+        sender: &str,
+        msg_id: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .msg_secrets
+            .get(&(chat.to_string(), sender.to_string(), msg_id.to_string()))
+            .map(|v| v.value().0.clone()))
+    }
+
+    async fn get_msg_secret_with_ts(
+        &self,
+        chat: &str,
+        sender: &str,
+        msg_id: &str,
+    ) -> Result<Option<(Vec<u8>, i64)>> {
+        Ok(self
+            .msg_secrets
+            .get(&(chat.to_string(), sender.to_string(), msg_id.to_string()))
+            .map(|v| (v.value().0.clone(), v.value().2)))
+    }
+
+    async fn delete_expired_msg_secrets(&self, cutoff_timestamp: i64) -> Result<u32> {
+        let before = self.msg_secrets.len();
+        self.msg_secrets
+            .retain(|_, (_, expires_at, _)| *expires_at == 0 || *expires_at > cutoff_timestamp);
+        Ok((before - self.msg_secrets.len()) as u32)
+    }
+}
+
+// ============================================================================
 // ProtocolStore
 // ============================================================================
 
 #[async_trait]
 impl ProtocolStore for MemoryStore {
-    async fn get_skdm_recipients(&self, group_jid: &str) -> Result<Vec<Jid>> {
+    async fn get_sender_key_devices(&self, group_jid: &str) -> Result<Vec<(String, bool)>> {
         Ok(self
-            .skdm_recipients
-            .get(group_jid)
-            .map(|v| v.value().iter().filter_map(|s| s.parse().ok()).collect())
-            .unwrap_or_default())
+            .sender_key_devices
+            .iter()
+            .filter(|e| e.key().0 == group_jid)
+            .map(|e| (e.key().1.clone(), *e.value()))
+            .collect())
     }
 
-    async fn add_skdm_recipients(&self, group_jid: &str, device_jids: &[Jid]) -> Result<()> {
-        self.skdm_recipients
-            .entry(group_jid.to_string())
-            .or_default()
-            .extend(device_jids.iter().map(|j| j.to_string()));
+    async fn set_sender_key_status(&self, group_jid: &str, entries: &[(&str, bool)]) -> Result<()> {
+        for (device_jid, has_key) in entries {
+            self.sender_key_devices
+                .insert((group_jid.to_string(), (*device_jid).to_string()), *has_key);
+        }
         Ok(())
     }
 
-    async fn clear_skdm_recipients(&self, group_jid: &str) -> Result<()> {
-        self.skdm_recipients.remove(group_jid);
+    async fn clear_sender_key_devices(&self, group_jid: &str) -> Result<()> {
+        self.sender_key_devices.retain(|k, _| k.0 != group_jid);
+        Ok(())
+    }
+
+    async fn delete_sender_key_device_rows(&self, device_jids: &[&str]) -> Result<()> {
+        self.sender_key_devices
+            .retain(|k, _| !device_jids.contains(&k.1.as_str()));
+        Ok(())
+    }
+
+    async fn clear_all_sender_key_devices(&self) -> Result<()> {
+        self.sender_key_devices.clear();
         Ok(())
     }
 
@@ -339,29 +435,9 @@ impl ProtocolStore for MemoryStore {
             .map(|v| v.value().clone()))
     }
 
-    async fn mark_forget_sender_key(&self, group_jid: &str, participant: &str) -> Result<()> {
-        let key = format!("{group_jid}:{participant}");
-        self.sender_key_forget_marks.insert(key, true);
+    async fn delete_devices(&self, user: &str) -> Result<()> {
+        self.device_list_records.remove(user);
         Ok(())
-    }
-
-    async fn consume_forget_marks(&self, group_jid: &str) -> Result<Vec<String>> {
-        let prefix = format!("{group_jid}:");
-        let keys: Vec<String> = self
-            .sender_key_forget_marks
-            .iter()
-            .filter(|e| e.key().starts_with(&prefix))
-            .map(|e| e.key().clone())
-            .collect();
-
-        let mut participants = Vec::new();
-        for key in keys {
-            self.sender_key_forget_marks.remove(&key);
-            if let Some(participant) = key.strip_prefix(&prefix) {
-                participants.push(participant.to_string());
-            }
-        }
-        Ok(participants)
     }
 
     // --- TcToken Storage ---
@@ -479,7 +555,7 @@ mod tests {
             .await
             .unwrap();
         let loaded = store.load_identity("test@s.whatsapp.net").await.unwrap();
-        assert_eq!(loaded, Some(key.to_vec()));
+        assert_eq!(loaded, Some(key));
     }
 
     #[tokio::test]
@@ -488,7 +564,7 @@ mod tests {
         let data = b"session-data";
         store.put_session("addr", data).await.unwrap();
         let loaded = store.get_session("addr").await.unwrap();
-        assert_eq!(loaded, Some(data.to_vec()));
+        assert_eq!(loaded, Some(Bytes::from_static(data)));
         assert!(store.has_session("addr").await.unwrap());
         assert!(!store.has_session("missing").await.unwrap());
     }
@@ -506,7 +582,10 @@ mod tests {
         let store = MemoryStore::new();
         store.store_prekey(1, b"pk1", false).await.unwrap();
         store.store_prekey(2, b"pk2", true).await.unwrap();
-        assert_eq!(store.load_prekey(1).await.unwrap(), Some(b"pk1".to_vec()));
+        assert_eq!(
+            store.load_prekey(1).await.unwrap(),
+            Some(Bytes::from_static(b"pk1"))
+        );
         store.remove_prekey(1).await.unwrap();
         assert!(store.load_prekey(1).await.unwrap().is_none());
     }
@@ -565,25 +644,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skdm_recipients() {
+    async fn sender_key_devices() {
         let store = MemoryStore::new();
-        let recips = store.get_skdm_recipients("group1").await.unwrap();
-        assert!(recips.is_empty());
+        assert!(
+            store
+                .get_sender_key_devices("group1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
 
         store
-            .add_skdm_recipients("group1", &[
-                "dev1@s.whatsapp.net".parse().unwrap(),
-                "dev2@s.whatsapp.net".parse().unwrap(),
+            .set_sender_key_status("group1", &[
+                ("dev1@s.whatsapp.net", true),
+                ("dev2@s.whatsapp.net", false),
             ])
             .await
             .unwrap();
-        let recips = store.get_skdm_recipients("group1").await.unwrap();
-        assert_eq!(recips.len(), 2);
+        let mut devices = store.get_sender_key_devices("group1").await.unwrap();
+        devices.sort();
+        assert_eq!(devices, vec![
+            ("dev1@s.whatsapp.net".to_string(), true),
+            ("dev2@s.whatsapp.net".to_string(), false),
+        ]);
 
-        store.clear_skdm_recipients("group1").await.unwrap();
+        store
+            .delete_sender_key_device_rows(&["dev2@s.whatsapp.net"])
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_sender_key_devices("group1").await.unwrap().len(),
+            1
+        );
+
+        store.clear_sender_key_devices("group1").await.unwrap();
         assert!(
             store
-                .get_skdm_recipients("group1")
+                .get_sender_key_devices("group1")
                 .await
                 .unwrap()
                 .is_empty()
@@ -640,29 +737,15 @@ mod tests {
             }],
             timestamp: 1000,
             phash: None,
+            raw_id: None,
         };
         store.update_device_list(record).await.unwrap();
         let loaded = store.get_devices("user1").await.unwrap();
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap().devices.len(), 1);
-    }
 
-    #[tokio::test]
-    async fn forget_marks() {
-        let store = MemoryStore::new();
-        store
-            .mark_forget_sender_key("group1", "user_a")
-            .await
-            .unwrap();
-        store
-            .mark_forget_sender_key("group1", "user_b")
-            .await
-            .unwrap();
-        let marks = store.consume_forget_marks("group1").await.unwrap();
-        assert_eq!(marks.len(), 2);
-        // Consumed — should be empty now.
-        let marks = store.consume_forget_marks("group1").await.unwrap();
-        assert!(marks.is_empty());
+        store.delete_devices("user1").await.unwrap();
+        assert!(store.get_devices("user1").await.unwrap().is_none());
     }
 
     #[tokio::test]

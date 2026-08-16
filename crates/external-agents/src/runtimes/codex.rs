@@ -16,6 +16,7 @@ use {
 };
 
 use crate::{
+    runtimes::process::build_process_input,
     transport::{ExternalAgentSession, ExternalAgentTransport},
     types::{
         AgentTransportKind, ContextSnapshot, ExternalAgentEvent, ExternalAgentSpec,
@@ -220,15 +221,17 @@ impl ExternalAgentSession for CodexAppServerSession {
     async fn send_prompt(
         &mut self,
         prompt: &str,
-        _context: Option<&ContextSnapshot>,
+        context: Option<&ContextSnapshot>,
     ) -> anyhow::Result<Pin<Box<dyn Stream<Item = ExternalAgentEvent> + Send>>> {
         self.status = ExternalAgentStatus::Running;
         let request_id = self.next_request_id;
         self.next_request_id = self.next_request_id.saturating_add(1);
-        let result = async {
+        let input = build_process_input(prompt, context);
+        let timeout = self.timeout;
+        let turn = async {
             let mut params = json!({
                 "threadId": self.thread_id,
-                "input": [{"type": "text", "text": prompt}],
+                "input": [{"type": "text", "text": input}],
                 "title": "Moltis chat turn",
             });
             if let Some(working_dir) = &self.working_dir {
@@ -252,8 +255,11 @@ impl ExternalAgentSession for CodexAppServerSession {
             )
             .await?;
             self.consume_turn().await
-        }
-        .await;
+        };
+        let result = match tokio::time::timeout(timeout, turn).await {
+            Ok(result) => result,
+            Err(_) => Err(anyhow::anyhow!("codex app-server turn timed out")),
+        };
         match result {
             Ok(events) => {
                 self.status = ExternalAgentStatus::Idle;
@@ -352,6 +358,12 @@ fn extract_message(value: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
         .or_else(|| {
             value
+                .pointer("/params/delta")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            value
                 .pointer("/params/text")
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned)
@@ -409,6 +421,10 @@ mod tests {
         assert_eq!(
             extract_message(&json!({"params": {"text": "delta"}})).as_deref(),
             Some("delta")
+        );
+        assert_eq!(
+            extract_message(&json!({"params": {"delta": "streamed"}})).as_deref(),
+            Some("streamed")
         );
         assert_eq!(
             extract_message(&json!({"result": {"message": "ok"}})).as_deref(),

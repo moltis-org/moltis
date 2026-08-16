@@ -163,6 +163,16 @@ fn test_should_restart_after_readiness_error() {
     ));
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn test_apple_container_start_progress_logger_stops_on_done_signal() {
+    let done = spawn_apple_container_start_progress_logger_with_interval(
+        std::time::Duration::from_millis(1),
+    );
+
+    done.send(()).unwrap();
+}
+
 #[test]
 fn test_apple_container_bootstrap_command_uses_portable_sleep() {
     let command = apple_container_bootstrap_command();

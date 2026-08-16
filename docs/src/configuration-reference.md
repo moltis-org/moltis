@@ -285,6 +285,7 @@ User profile collected during onboarding.
 | `message_queue_mode` | enum: `followup`, `collect` | `"followup"` | How to handle messages that arrive while an agent run is active. `followup` queues each message and replays them one-by-one; `collect` concatenates and processes as a single message. |
 | `prompt_memory_mode` | enum: `live-reload`, `frozen-at-session-start` | `"live-reload"` | How `MEMORY.md` is loaded into the prompt for an ongoing session. `live-reload` reloads from disk before each turn; `frozen-at-session-start` freezes the initial content for the session lifetime. |
 | `workspace_file_max_chars` | integer | `32000` | Maximum characters from each workspace prompt file (`AGENTS.md`, `TOOLS.md`). |
+| `context_command` | optional string | `null` | Command run before each turn to generate additional prompt context. Stdout is appended to normal chat project context and external-agent context snapshots. Runs in the session worktree or bound project directory when a project is active, otherwise the server's working directory. Times out after 30s; stdout is capped at 32,000 bytes (truncated beyond that). |
 | `priority_models` | array | `[]` | Preferred model IDs to show first in selectors (full or raw model IDs). |
 | `allowed_models` | array | `[]` | ⚠️ **Deprecated.** Legacy model allowlist kept for backward compatibility; currently ignored (model visibility is provider-driven). Will be removed in a future release. |
 
@@ -715,7 +716,7 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | `style` | enum (`hybrid`, `prompt-only`, `search-only`, `off`) | `"hybrid"` | High-level memory orchestration style. |
 | `agent_write_mode` | enum (`hybrid`, `prompt-only`, `search-only`, `off`) | `"hybrid"` | Where agent-authored memory writes are allowed to land. |
 | `user_profile_write_mode` | enum (`explicit-and-auto`, `explicit-only`, `off`) | `"explicit-and-auto"` | How Moltis writes the managed `USER.md` profile surface. |
-| `backend` | enum (`builtin`, `qmd`) | `"builtin"` | Memory backend used for search, retrieval, and indexing. |
+| `backend` | enum (`builtin`, `qmd`, `zvec`) | `"builtin"` | Memory backend used for search, retrieval, and indexing. |
 | `provider` | optional enum (`local`, `ollama`, `openai`, `custom`) | *auto-detect* | Embedding provider. Alias: `embedding_provider`. |
 | `disable_rag` | bool | `false` | Disable RAG embeddings and force keyword-only memory search. |
 | `base_url` | optional string | — | Base URL for the embedding API. Alias: `embedding_base_url`. |
@@ -726,6 +727,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | `search_merge_strategy` | enum (`rrf`, `linear`) | `"rrf"` | Merge strategy for hybrid search results. |
 | `session_export` | enum (`off`, `on-new-or-reset`) | `"on-new-or-reset"` | How session transcripts are exported into searchable memory. |
 | `qmd` | map (see `memory.qmd`) | `{}` | QMD-specific configuration (only used when backend = `"qmd"`). |
+| `db_path` | optional string | — | Zvec collection directory path (only used when `backend = "zvec"`). Resolved relative to the Moltis data directory. |
+| `vector_weight` | float | `0.7` | Weight for vector similarity in hybrid search (0.0–1.0). |
+| `keyword_weight` | float | `0.3` | Weight for keyword/FTS similarity in hybrid search (0.0–1.0). |
 
 
 ### `memory.qmd`

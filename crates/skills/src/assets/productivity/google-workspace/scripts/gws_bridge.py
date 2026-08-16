@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bridge between Hermes OAuth token and gws CLI.
+"""Bridge between the Moltis OAuth token and gws CLI.
 
 Refreshes the token if expired, then executes gws with the valid access token.
 """
@@ -7,16 +7,17 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 
-def get_hermes_home() -> Path:
-    return Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+def get_moltis_home() -> Path:
+    return Path(os.environ.get("MOLTIS_DATA_DIR") or os.environ.get("HERMES_HOME") or Path.home() / ".moltis")
 
 
 def get_token_path() -> Path:
-    return get_hermes_home() / "google_token.json"
+    return get_moltis_home() / "google_token.json"
 
 
 def _normalize_authorized_user_payload(payload: dict) -> dict:
@@ -24,6 +25,24 @@ def _normalize_authorized_user_payload(payload: dict) -> dict:
     if not normalized.get("type"):
         normalized["type"] = "authorized_user"
     return normalized
+
+
+def _write_private_json(path: Path, payload: dict):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as file:
+            json.dump(payload, file, indent=2)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def refresh_token(token_data: dict) -> dict:
@@ -46,9 +65,9 @@ def refresh_token(token_data: dict) -> dict:
         "grant_type": "refresh_token",
     }).encode()
 
-    req = urllib.request.Request(token_data["token_uri"], data=params)
+    req = urllib.request.Request("https://oauth2.googleapis.com/token", data=params)
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
@@ -62,9 +81,7 @@ def refresh_token(token_data: dict) -> dict:
         tz=timezone.utc,
     ).isoformat()
 
-    get_token_path().write_text(
-        json.dumps(_normalize_authorized_user_payload(token_data), indent=2)
-    )
+    _write_private_json(get_token_path(), _normalize_authorized_user_payload(token_data))
     return token_data
 
 

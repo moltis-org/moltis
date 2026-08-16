@@ -65,8 +65,8 @@ function DisableVaultForm({ vaultStatus, onDisabled, onError }: DisableVaultForm
 		<form onSubmit={onDisableVault} className="mt-6 rounded border border-red-900/50 bg-red-950/20 p-3">
 			<div className="text-sm font-semibold text-red-200">Disable encryption at rest</div>
 			<p className="my-2 text-xs leading-relaxed text-[var(--muted)]">
-				This decrypts stored provider, channel, webhook, environment, and SSH secrets so password login no longer
-				requires unlocking the vault after restart.
+				This decrypts stored provider, connector, channel, webhook, environment, and SSH secrets so password login no
+				longer requires unlocking the vault after restart.
 			</p>
 			{needsPassword ? (
 				<input

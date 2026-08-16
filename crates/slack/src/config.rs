@@ -10,6 +10,8 @@ use {
     serde::{Deserialize, Serialize, ser::SerializeStruct},
 };
 
+use crate::client::DEFAULT_SLACK_API_BASE_URL;
+
 /// Per-channel model/provider override.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChannelOverride {
@@ -65,6 +67,9 @@ pub struct SlackAccountConfig {
     #[serde(serialize_with = "secret_serde::serialize_secret")]
     pub app_token: Secret<String>,
 
+    /// Slack Web API base URL.
+    pub api_base_url: String,
+
     /// How this account connects to Slack.
     pub connection_mode: ConnectionMode,
 
@@ -89,6 +94,11 @@ pub struct SlackAccountConfig {
     /// DM user allowlist (Slack user IDs).
     #[serde(default)]
     pub allowlist: Vec<String>,
+
+    /// Exact sender IDs allowed to run privileged channel commands.
+    /// Empty grants nobody privileged access.
+    #[serde(default)]
+    pub operators: Vec<String>,
 
     /// Channel allowlist (Slack channel IDs).
     #[serde(default)]
@@ -115,6 +125,27 @@ pub struct SlackAccountConfig {
     /// Reply in threads (default: true).
     pub thread_replies: bool,
 
+    /// Render replies as Block Kit blocks (headings, dividers, code, sections)
+    /// instead of a single flat mrkdwn message. Falls back to plain text when
+    /// content cannot be represented within Slack's limits. Default: false.
+    pub rich_blocks: bool,
+
+    /// Acknowledge inbound messages with emoji reactions (👀 on receipt, ✅ on
+    /// success, ❌ on error). Only applied when the bot is directly addressed
+    /// (DM or @mention). Default: true.
+    pub ack_reactions: bool,
+
+    /// Route inbound emoji reactions from users into the agent as messages
+    /// (e.g. "react ✅ to approve"). The bot's own acknowledgment reactions are
+    /// always ignored. Default: false.
+    pub reaction_triggers: bool,
+
+    /// When `reaction_triggers` is enabled, only these emoji (shortcodes, no
+    /// colons — e.g. `white_check_mark`) trigger the agent. Empty means any
+    /// emoji triggers. Default: empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reaction_trigger_emojis: Vec<String>,
+
     /// Per-channel model/provider overrides (channel_id -> override).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub channel_overrides: HashMap<String, ChannelOverride>,
@@ -122,6 +153,12 @@ pub struct SlackAccountConfig {
     /// Per-user model/provider overrides (user_id -> override).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub user_overrides: HashMap<String, UserOverride>,
+
+    /// Enable OTP self-approval for non-allowlisted DM users.
+    pub otp_self_approval: bool,
+
+    /// Cooldown in seconds after failed OTP attempts.
+    pub otp_cooldown_secs: u64,
 }
 
 impl std::fmt::Debug for SlackAccountConfig {
@@ -129,6 +166,7 @@ impl std::fmt::Debug for SlackAccountConfig {
         f.debug_struct("SlackAccountConfig")
             .field("bot_token", &"[REDACTED]")
             .field("app_token", &"[REDACTED]")
+            .field("api_base_url", &self.api_base_url)
             .field("connection_mode", &self.connection_mode)
             .field(
                 "signing_secret",
@@ -138,6 +176,7 @@ impl std::fmt::Debug for SlackAccountConfig {
             .field("group_policy", &self.group_policy)
             .field("mention_mode", &self.mention_mode)
             .field("allowlist", &self.allowlist)
+            .field("operators", &self.operators)
             .field("channel_allowlist", &self.channel_allowlist)
             .field("model", &self.model)
             .field("model_provider", &self.model_provider)
@@ -145,8 +184,14 @@ impl std::fmt::Debug for SlackAccountConfig {
             .field("stream_mode", &self.stream_mode)
             .field("edit_throttle_ms", &self.edit_throttle_ms)
             .field("thread_replies", &self.thread_replies)
+            .field("rich_blocks", &self.rich_blocks)
+            .field("ack_reactions", &self.ack_reactions)
+            .field("reaction_triggers", &self.reaction_triggers)
+            .field("reaction_trigger_emojis", &self.reaction_trigger_emojis)
             .field("channel_overrides", &self.channel_overrides)
             .field("user_overrides", &self.user_overrides)
+            .field("otp_self_approval", &self.otp_self_approval)
+            .field("otp_cooldown_secs", &self.otp_cooldown_secs)
             .finish()
     }
 }
@@ -156,12 +201,14 @@ impl Default for SlackAccountConfig {
         Self {
             bot_token: Secret::new(String::new()),
             app_token: Secret::new(String::new()),
+            api_base_url: DEFAULT_SLACK_API_BASE_URL.to_string(),
             connection_mode: ConnectionMode::SocketMode,
             signing_secret: None,
             dm_policy: DmPolicy::Allowlist,
             group_policy: GroupPolicy::Open,
             mention_mode: MentionMode::Mention,
             allowlist: Vec::new(),
+            operators: Vec::new(),
             channel_allowlist: Vec::new(),
             model: None,
             model_provider: None,
@@ -169,8 +216,14 @@ impl Default for SlackAccountConfig {
             stream_mode: StreamMode::EditInPlace,
             edit_throttle_ms: 500,
             thread_replies: true,
+            rich_blocks: false,
+            ack_reactions: true,
+            reaction_triggers: false,
+            reaction_trigger_emojis: Vec::new(),
             channel_overrides: HashMap::new(),
             user_overrides: HashMap::new(),
+            otp_self_approval: true,
+            otp_cooldown_secs: 300,
         }
     }
 }
@@ -178,6 +231,10 @@ impl Default for SlackAccountConfig {
 impl ChannelConfigView for SlackAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.allowlist
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {
@@ -235,8 +292,9 @@ pub struct RedactedConfig<'a>(pub &'a SlackAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 11; // always-present fields
+        let mut count = 17; // always-present fields
         count += c.signing_secret.is_some() as usize;
+        count += !c.reaction_trigger_emojis.is_empty() as usize;
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
         count += c.agent_id.is_some() as usize;
@@ -245,6 +303,7 @@ impl Serialize for RedactedConfig<'_> {
         let mut s = serializer.serialize_struct("SlackAccountConfig", count)?;
         s.serialize_field("bot_token", secret_serde::REDACTED)?;
         s.serialize_field("app_token", secret_serde::REDACTED)?;
+        s.serialize_field("api_base_url", &c.api_base_url)?;
         s.serialize_field("connection_mode", &c.connection_mode)?;
         if c.signing_secret.is_some() {
             s.serialize_field("signing_secret", secret_serde::REDACTED)?;
@@ -253,6 +312,7 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("group_policy", &c.group_policy)?;
         s.serialize_field("mention_mode", &c.mention_mode)?;
         s.serialize_field("allowlist", &c.allowlist)?;
+        s.serialize_field("operators", &c.operators)?;
         s.serialize_field("channel_allowlist", &c.channel_allowlist)?;
         if c.model.is_some() {
             s.serialize_field("model", &c.model)?;
@@ -266,12 +326,20 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("stream_mode", &c.stream_mode)?;
         s.serialize_field("edit_throttle_ms", &c.edit_throttle_ms)?;
         s.serialize_field("thread_replies", &c.thread_replies)?;
+        s.serialize_field("rich_blocks", &c.rich_blocks)?;
+        s.serialize_field("ack_reactions", &c.ack_reactions)?;
+        s.serialize_field("reaction_triggers", &c.reaction_triggers)?;
+        if !c.reaction_trigger_emojis.is_empty() {
+            s.serialize_field("reaction_trigger_emojis", &c.reaction_trigger_emojis)?;
+        }
         if !c.channel_overrides.is_empty() {
             s.serialize_field("channel_overrides", &c.channel_overrides)?;
         }
         if !c.user_overrides.is_empty() {
             s.serialize_field("user_overrides", &c.user_overrides)?;
         }
+        s.serialize_field("otp_self_approval", &c.otp_self_approval)?;
+        s.serialize_field("otp_cooldown_secs", &c.otp_cooldown_secs)?;
         s.end()
     }
 }
@@ -320,6 +388,7 @@ mod tests {
         let cfg: SlackAccountConfig = serde_json::from_value(json).unwrap();
         assert_eq!(cfg.bot_token.expose_secret(), "xoxb-test-token");
         assert_eq!(cfg.app_token.expose_secret(), "xapp-test-token");
+        assert_eq!(cfg.api_base_url, DEFAULT_SLACK_API_BASE_URL);
         assert_eq!(cfg.dm_policy, DmPolicy::Open);
         assert_eq!(cfg.group_policy, GroupPolicy::Allowlist);
         assert_eq!(cfg.mention_mode, MentionMode::Always);
@@ -378,9 +447,36 @@ mod tests {
         assert_eq!(cfg.stream_mode, StreamMode::EditInPlace);
         assert_eq!(cfg.edit_throttle_ms, 500);
         assert!(cfg.thread_replies);
+        assert!(cfg.ack_reactions);
+        assert!(!cfg.rich_blocks);
+        assert!(cfg.otp_self_approval);
+        assert_eq!(cfg.otp_cooldown_secs, 300);
         assert_eq!(cfg.mention_mode, MentionMode::Mention);
+        assert_eq!(cfg.api_base_url, DEFAULT_SLACK_API_BASE_URL);
         assert!(cfg.channel_overrides.is_empty());
         assert!(cfg.user_overrides.is_empty());
+    }
+
+    #[test]
+    fn ack_reactions_round_trip_and_redaction() {
+        // Defaults to true when absent.
+        let cfg: SlackAccountConfig = serde_json::from_value(serde_json::json!({
+            "bot_token": "xoxb-test",
+            "app_token": "xapp-test",
+        }))
+        .unwrap();
+        assert!(cfg.ack_reactions);
+
+        // Explicit false round-trips through the redacted view.
+        let cfg: SlackAccountConfig = serde_json::from_value(serde_json::json!({
+            "bot_token": "xoxb-test",
+            "app_token": "xapp-test",
+            "ack_reactions": false,
+        }))
+        .unwrap();
+        assert!(!cfg.ack_reactions);
+        let redacted = serde_json::to_value(RedactedConfig(&cfg)).unwrap();
+        assert_eq!(redacted["ack_reactions"], serde_json::json!(false));
     }
 
     #[test]
@@ -421,6 +517,7 @@ mod tests {
         assert_eq!(redacted["bot_token"], "[REDACTED]");
         assert_eq!(redacted["app_token"], "[REDACTED]");
         assert_eq!(redacted["signing_secret"], "[REDACTED]");
+        assert_eq!(redacted["api_base_url"], DEFAULT_SLACK_API_BASE_URL);
         // Non-secret fields preserved
         assert_eq!(redacted["model"], "gpt-4o");
         assert!(redacted["thread_replies"].is_boolean());
@@ -433,10 +530,46 @@ mod tests {
     }
 
     #[test]
+    fn otp_fields_round_trip() {
+        let json = serde_json::json!({
+            "bot_token": "xoxb-test",
+            "app_token": "xapp-test",
+            "otp_self_approval": false,
+            "otp_cooldown_secs": 60,
+        });
+        let cfg: SlackAccountConfig = serde_json::from_value(json).unwrap();
+        assert!(!cfg.otp_self_approval);
+        assert_eq!(cfg.otp_cooldown_secs, 60);
+
+        let value = serde_json::to_value(&cfg).unwrap();
+        let cfg2: SlackAccountConfig = serde_json::from_value(value).unwrap();
+        assert!(!cfg2.otp_self_approval);
+        assert_eq!(cfg2.otp_cooldown_secs, 60);
+    }
+
+    #[test]
     fn redacted_omits_none_signing_secret() {
         let cfg = SlackAccountConfig::default();
         let redacted = serde_json::to_value(RedactedConfig(&cfg)).unwrap();
         assert!(redacted.get("signing_secret").is_none());
+    }
+
+    #[test]
+    fn custom_api_base_url_round_trips_and_redacts() {
+        let json = serde_json::json!({
+            "bot_token": "xoxb-test",
+            "app_token": "xapp-test",
+            "api_base_url": "https://proxy.example/api",
+        });
+        let cfg: SlackAccountConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.api_base_url, "https://proxy.example/api");
+
+        let value = serde_json::to_value(&cfg).unwrap();
+        let cfg2: SlackAccountConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(cfg2.api_base_url, "https://proxy.example/api");
+
+        let redacted = serde_json::to_value(RedactedConfig(&cfg2)).unwrap();
+        assert_eq!(redacted["api_base_url"], "https://proxy.example/api");
     }
 
     #[test]

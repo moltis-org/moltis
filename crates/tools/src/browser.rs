@@ -246,6 +246,10 @@ impl AgentTool for BrowserTool {
     async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let mut params = params;
 
+        // Drop params the model set to explicit `null` so serde defaults apply
+        // (see `strip_null_params` for why this matters).
+        strip_null_params(&mut params);
+
         // Browser sandbox mode follows the session sandbox mode from the shared router.
         let session_key = Self::cache_key(params.get("_session_key").and_then(|v| v.as_str()));
         let sandbox_mode = if let Some(ref router) = self.sandbox_router {
@@ -260,10 +264,11 @@ impl AgentTool for BrowserTool {
 
         // Inject saved session_id if LLM didn't provide one (or provided empty string)
         if let Some(obj) = params.as_object_mut() {
+            // `strip_null_params` already removed an explicit `session_id: null`,
+            // so only an absent key or an empty string needs the saved session.
             let needs_session = match obj.get("session_id") {
                 None => true,
                 Some(serde_json::Value::String(s)) if s.is_empty() => true,
-                Some(serde_json::Value::Null) => true,
                 _ => false,
             };
 
@@ -336,6 +341,21 @@ impl AgentTool for BrowserTool {
     }
 }
 
+/// Remove top-level keys whose value is an explicit JSON `null` from tool params.
+///
+/// Some models (especially smaller local ones) emit `null` for optional
+/// parameters they aren't using — e.g.
+/// `{"action":"navigate","url":"…","ref_":null,"timeout_ms":null}`. serde's
+/// `#[serde(default)]` only fills in *missing* fields, not present-but-`null`
+/// ones, so a `null` numeric fails to deserialize into [`BrowserRequest`] with
+/// `invalid type: null, expected u64`. Stripping nulls lets those fields fall
+/// back to their defaults instead of erroring the whole call.
+fn strip_null_params(params: &mut serde_json::Value) {
+    if let Some(obj) = params.as_object_mut() {
+        obj.retain(|_, v| !v.is_null());
+    }
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
@@ -349,6 +369,39 @@ mod tests {
         };
         let tool = BrowserTool::from_config(&config).unwrap();
         assert_eq!(tool.name(), "browser");
+    }
+
+    #[test]
+    fn strip_null_params_lets_navigate_deserialize_with_null_optionals() {
+        // Smaller models often emit explicit `null` for optional fields they
+        // don't use. These present-but-null values break deserialization...
+        let mut params = serde_json::json!({
+            "action": "navigate",
+            "url": "https://example.com",
+            "ref_": null,
+            "x": null,
+            "y": null,
+            "selector": null,
+            "timeout_ms": null,
+        });
+        assert!(
+            serde_json::from_value::<BrowserRequest>(params.clone()).is_err(),
+            "null optionals should fail before stripping (regression guard)"
+        );
+
+        // ...but after stripping nulls, serde defaults apply and it parses.
+        strip_null_params(&mut params);
+        serde_json::from_value::<BrowserRequest>(params)
+            .expect("navigate should parse once null optionals are stripped");
+    }
+
+    #[test]
+    fn strip_null_params_keeps_real_values() {
+        let mut params = serde_json::json!({"action":"click","ref_":14,"url":null});
+        strip_null_params(&mut params);
+        assert_eq!(params["action"], "click");
+        assert_eq!(params["ref_"], 14);
+        assert!(params.get("url").is_none(), "null key should be removed");
     }
 
     #[test]
