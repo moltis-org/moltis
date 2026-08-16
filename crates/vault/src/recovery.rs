@@ -112,11 +112,13 @@ pub fn unwrap_with_recovery<C: Cipher>(
     key_wrap::unwrap_dek(cipher, &recovery_kek, wrapped_b64)
 }
 
-/// Verify that a recovery phrase matches the stored hash. The comparison uses
-/// the normalized phrase (dashes stripped, uppercased), consistent with
-/// [`derive_recovery_kek`] and [`unwrap_with_recovery`].
+/// Verify that a recovery phrase matches the stored hash.
+///
+/// New hashes use the normalized phrase, consistent with [`derive_recovery_kek`]
+/// and [`unwrap_with_recovery`]. The raw fallback preserves hashes stored by
+/// older Moltis versions from generated uppercase, dashed phrases.
 pub fn verify_recovery_hash(phrase: &str, stored_hash: &str) -> bool {
-    sha256_hex(&normalized_phrase(phrase)) == stored_hash
+    sha256_hex(&normalized_phrase(phrase)) == stored_hash || sha256_hex(phrase) == stored_hash
 }
 
 fn sha256_hex(input: &str) -> String {
@@ -205,5 +207,13 @@ mod tests {
         let (_, hash) = wrap_with_recovery(&cipher, &dek, rk.phrase()).unwrap();
         assert!(verify_recovery_hash(rk.phrase(), &hash));
         assert!(!verify_recovery_hash("wrong-phrase-AAAA-BBBB", &hash));
+    }
+
+    #[test]
+    fn legacy_hash_verification() {
+        let rk = generate_recovery_key();
+        let legacy_hash = sha256_hex(rk.phrase());
+
+        assert!(verify_recovery_hash(rk.phrase(), &legacy_hash));
     }
 }
