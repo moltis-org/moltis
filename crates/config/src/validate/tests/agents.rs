@@ -396,6 +396,10 @@ args = ["acp"]
 binary = "kimi"
 args = ["acp"]
 
+[external_agents.agents.acp-minimax-code]
+binary = "mcode"
+args = ["acp"]
+
 [external_agents.agents.acp-stakpak]
 binary = "stakpak"
 args = ["acp"]

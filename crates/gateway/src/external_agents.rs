@@ -104,6 +104,9 @@ impl GatewayExternalAgentService {
                 "acp".to_string(),
             ]),
             (AgentTransportKind::AcpKimi, "kimi", vec!["acp".to_string()]),
+            (AgentTransportKind::AcpMinimaxCode, "mcode", vec![
+                "acp".to_string(),
+            ]),
             (AgentTransportKind::AcpStakpak, "stakpak", vec![
                 "acp".to_string(),
             ]),
@@ -1106,6 +1109,29 @@ mod tests {
             session_store,
             metadata,
         )
+    }
+
+    #[tokio::test]
+    async fn default_registry_includes_minimax_code_acp() {
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let service = GatewayExternalAgentService::new(
+            ExternalAgentsConfig::default(),
+            metadata,
+            Arc::new(ApprovalManager::default()),
+        );
+
+        assert!(
+            service
+                .registry
+                .has_kind(AgentTransportKind::AcpMinimaxCode)
+        );
+        let agents = service.registry.list_agents().await;
+        let minimax_code = agents
+            .iter()
+            .find(|agent| agent.kind == AgentTransportKind::AcpMinimaxCode)
+            .expect("MiniMax Code ACP transport should be registered");
+        assert_eq!(minimax_code.name, "ACP: MiniMax Code");
+        assert!(minimax_code.is_acp);
     }
 
     #[tokio::test]

@@ -101,6 +101,11 @@ fn external_agent_kind_parses_named_acp_variants() {
             "ACP: OpenHands",
         ),
         ("acp-kimi", ExternalAgentKind::AcpKimi, "ACP: Kimi"),
+        (
+            "acp-minimax-code",
+            ExternalAgentKind::AcpMinimaxCode,
+            "ACP: MiniMax Code",
+        ),
         ("acp-stakpak", ExternalAgentKind::AcpStakpak, "ACP: Stakpak"),
         (
             "acp-fast-agent",

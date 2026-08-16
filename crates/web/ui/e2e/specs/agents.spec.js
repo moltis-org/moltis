@@ -499,6 +499,7 @@ test.describe("Agents settings page", () => {
 				{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: true, isAcp: true, version: null },
 				{ kind: "acp-openhands", name: "ACP: OpenHands", installed: true, isAcp: true, version: null },
 				{ kind: "acp-kimi", name: "ACP: Kimi", installed: true, isAcp: true, version: null },
+				{ kind: "acp-minimax-code", name: "ACP: MiniMax Code", installed: true, isAcp: true, version: null },
 				{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: true, isAcp: true, version: null },
 				{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: true, isAcp: true, version: null },
 			],
@@ -538,6 +539,7 @@ test.describe("Agents settings page", () => {
 		await expect(page.getByText("ACP: OpenClaw", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: OpenHands", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Kimi", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: MiniMax Code", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: Stakpak", { exact: true })).toBeVisible();
 		await expect(page.getByText("ACP: fast-agent", { exact: true })).toBeVisible();
 
@@ -610,6 +612,7 @@ test.describe("Agents settings page", () => {
 			{ kind: "acp-openclaw", name: "ACP: OpenClaw", installed: false, isAcp: true, version: null },
 			{ kind: "acp-openhands", name: "ACP: OpenHands", installed: false, isAcp: true, version: null },
 			{ kind: "acp-kimi", name: "ACP: Kimi", installed: false, isAcp: true, version: null },
+			{ kind: "acp-minimax-code", name: "ACP: MiniMax Code", installed: false, isAcp: true, version: null },
 			{ kind: "acp-stakpak", name: "ACP: Stakpak", installed: false, isAcp: true, version: null },
 			{ kind: "acp-fast-agent", name: "ACP: fast-agent", installed: false, isAcp: true, version: null },
 		]);
@@ -640,6 +643,7 @@ test.describe("Agents settings page", () => {
 			"ACP: OpenClaw",
 			"ACP: OpenHands",
 			"ACP: Kimi",
+			"ACP: MiniMax Code",
 			"ACP: Stakpak",
 			"ACP: fast-agent",
 		]) {

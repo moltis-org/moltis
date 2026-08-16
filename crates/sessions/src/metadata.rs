@@ -34,6 +34,7 @@ pub enum ExternalAgentKind {
     AcpOpenclaw,
     AcpOpenhands,
     AcpKimi,
+    AcpMinimaxCode,
     AcpStakpak,
     AcpFastAgent,
 }
@@ -56,6 +57,7 @@ impl ExternalAgentKind {
         Self::AcpOpenclaw,
         Self::AcpOpenhands,
         Self::AcpKimi,
+        Self::AcpMinimaxCode,
         Self::AcpStakpak,
         Self::AcpFastAgent,
     ];
@@ -79,6 +81,7 @@ impl ExternalAgentKind {
             Self::AcpOpenclaw => "acp-openclaw",
             Self::AcpOpenhands => "acp-openhands",
             Self::AcpKimi => "acp-kimi",
+            Self::AcpMinimaxCode => "acp-minimax-code",
             Self::AcpStakpak => "acp-stakpak",
             Self::AcpFastAgent => "acp-fast-agent",
         }
@@ -103,6 +106,7 @@ impl ExternalAgentKind {
             Self::AcpOpenclaw => "ACP: OpenClaw",
             Self::AcpOpenhands => "ACP: OpenHands",
             Self::AcpKimi => "ACP: Kimi",
+            Self::AcpMinimaxCode => "ACP: MiniMax Code",
             Self::AcpStakpak => "ACP: Stakpak",
             Self::AcpFastAgent => "ACP: fast-agent",
         }
@@ -124,6 +128,7 @@ impl ExternalAgentKind {
                 | Self::AcpOpenclaw
                 | Self::AcpOpenhands
                 | Self::AcpKimi
+                | Self::AcpMinimaxCode
                 | Self::AcpStakpak
                 | Self::AcpFastAgent
         )
@@ -157,6 +162,7 @@ impl std::str::FromStr for ExternalAgentKind {
             "acp-openclaw" => Ok(Self::AcpOpenclaw),
             "acp-openhands" => Ok(Self::AcpOpenhands),
             "acp-kimi" => Ok(Self::AcpKimi),
+            "acp-minimax-code" => Ok(Self::AcpMinimaxCode),
             "acp-stakpak" => Ok(Self::AcpStakpak),
             "acp-fast-agent" => Ok(Self::AcpFastAgent),
             other => Err(format!("unknown external agent kind: {other}")),
