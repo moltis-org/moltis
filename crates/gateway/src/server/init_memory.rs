@@ -206,8 +206,14 @@ pub(crate) async fn init_memory_system(
         match embedding_dimension {
             Some(dim) => match try_init_zvec(mem_cfg, data_dir, dim).await {
                 Ok(store) => {
-                    return build_memory_runtime_from_store(mem_cfg, data_dir, embedder, store)
-                        .await;
+                    return build_memory_runtime_from_store(
+                        mem_cfg,
+                        data_dir,
+                        embedder,
+                        store,
+                        start_background_tasks,
+                    )
+                    .await;
                 },
                 Err(e) => {
                     warn!(
@@ -284,7 +290,8 @@ async fn build_memory_runtime(
     let store: Box<dyn moltis_memory::store::MemoryStore> = Box::new(
         moltis_memory::store_sqlite::SqliteMemoryStore::new(memory_pool),
     );
-    build_memory_runtime_from_store(mem_cfg, data_dir, embedder, store).await
+    build_memory_runtime_from_store(mem_cfg, data_dir, embedder, store, start_background_tasks)
+        .await
 }
 
 /// Validate that the configured memory backend is available with the current
@@ -401,6 +408,7 @@ async fn build_memory_runtime_from_store(
     data_dir: &FsPath,
     embedder: Option<Box<dyn moltis_memory::embeddings::EmbeddingProvider>>,
     store: Box<dyn moltis_memory::store::MemoryStore>,
+    start_background_tasks: bool,
 ) -> Option<moltis_memory::runtime::DynMemoryRuntime> {
     let data_memory_file = data_dir.join("MEMORY.md");
     let data_memory_file_lower = data_dir.join("memory.md");
