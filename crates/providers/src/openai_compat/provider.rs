@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 
 use {
     moltis_agents::model::{
-        ChatMessage, CompletionResponse, StreamEvent, ToolCall, Usage, UserContent,
-        decode_tool_call_arguments_with_diagnostic, extract_tool_call_metadata,
+        ChatMessage, CompletionResponse, InputTokenAccounting, StreamEvent, ToolCall, Usage,
+        UserContent, decode_tool_call_arguments_with_diagnostic, extract_tool_call_metadata,
     },
     serde::Serialize,
     tracing::trace,
@@ -510,36 +510,59 @@ fn usage_object_from_payload(payload: &serde_json::Value) -> Option<&serde_json:
 /// - Cache fields may be top-level or nested in `*_tokens_details`.
 #[must_use]
 pub fn parse_openai_compat_usage(usage: &serde_json::Value) -> Usage {
-    Usage {
-        input_tokens: usage_field_u32(usage, &[
-            &["prompt_tokens"],
-            &["promptTokens"],
-            &["input_tokens"],
-            &["inputTokens"],
-        ]),
-        output_tokens: usage_field_u32(usage, &[
+    let prompt_tokens = usage_field_u32(usage, &[&["prompt_tokens"], &["promptTokens"]]);
+    let input_tokens = usage_field_u32(usage, &[&["input_tokens"], &["inputTokens"]]);
+    let cache_read_tokens = usage_field_u32(usage, &[
+        &["prompt_tokens_details", "cached_tokens"],
+        &["promptTokensDetails", "cachedTokens"],
+        &["input_tokens_details", "cached_tokens"],
+        &["inputTokensDetails", "cachedTokens"],
+        &["cache_read_input_tokens"],
+        &["cacheReadInputTokens"],
+        &["input_tokens_details", "cache_read_input_tokens"],
+        &["inputTokensDetails", "cacheReadInputTokens"],
+    ]);
+    let cache_write_tokens = usage_field_u32(usage, &[
+        &["cache_creation_input_tokens"],
+        &["cacheCreationInputTokens"],
+        &["input_tokens_details", "cache_creation_input_tokens"],
+        &["inputTokensDetails", "cacheCreationInputTokens"],
+    ]);
+
+    // `prompt_tokens` and OpenAI's nested `cached_tokens` use inclusive
+    // accounting. Anthropic-compatible cache counters are siblings of an
+    // already-exclusive `input_tokens` value.
+    let has_openai_cache_details = usage
+        .pointer("/prompt_tokens_details/cached_tokens")
+        .or_else(|| usage.pointer("/promptTokensDetails/cachedTokens"))
+        .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+        .or_else(|| usage.pointer("/inputTokensDetails/cachedTokens"))
+        .is_some();
+    let (accounting, reported_input_tokens) = if prompt_tokens > 0 || has_openai_cache_details {
+        (
+            InputTokenAccounting::Inclusive,
+            if prompt_tokens > 0 {
+                prompt_tokens
+            } else {
+                input_tokens
+            },
+        )
+    } else {
+        (InputTokenAccounting::Exclusive, input_tokens)
+    };
+
+    Usage::from_input_tokens(
+        accounting,
+        reported_input_tokens,
+        usage_field_u32(usage, &[
             &["completion_tokens"],
             &["completionTokens"],
             &["output_tokens"],
             &["outputTokens"],
         ]),
-        cache_read_tokens: usage_field_u32(usage, &[
-            &["prompt_tokens_details", "cached_tokens"],
-            &["promptTokensDetails", "cachedTokens"],
-            &["input_tokens_details", "cached_tokens"],
-            &["inputTokensDetails", "cachedTokens"],
-            &["cache_read_input_tokens"],
-            &["cacheReadInputTokens"],
-            &["input_tokens_details", "cache_read_input_tokens"],
-            &["inputTokensDetails", "cacheReadInputTokens"],
-        ]),
-        cache_write_tokens: usage_field_u32(usage, &[
-            &["cache_creation_input_tokens"],
-            &["cacheCreationInputTokens"],
-            &["input_tokens_details", "cache_creation_input_tokens"],
-            &["inputTokensDetails", "cacheCreationInputTokens"],
-        ]),
-    }
+        cache_read_tokens,
+        cache_write_tokens,
+    )
 }
 
 /// Parse usage from an OpenAI-compatible payload, checking common nesting variants.

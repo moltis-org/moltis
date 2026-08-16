@@ -32,8 +32,9 @@ use {
         exec::{ExecOpts, ExecResult},
         sandbox::file_system::{
             SandboxListFilesResult, SandboxReadResult, native_host_list_files,
-            native_host_read_file, native_host_write_file, oci_container_list_files,
-            oci_container_read_file, oci_container_write_file, remap_host_list_result_to_guest,
+            native_host_list_files_strict, native_host_read_file, native_host_write_file,
+            oci_container_list_files, oci_container_read_file, oci_container_write_file,
+            remap_host_list_result_to_guest,
         },
     },
 };
@@ -83,6 +84,18 @@ impl DockerSandbox {
             kind: BackendKind::Podman,
             cli: "podman",
             backend_label: "podman",
+            provisioned: Mutex::new(HashSet::new()),
+            startup_gates: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_cli(config: SandboxConfig, cli: &'static str) -> Self {
+        Self {
+            config,
+            kind: BackendKind::Docker,
+            cli,
+            backend_label: "docker",
             provisioned: Mutex::new(HashSet::new()),
             startup_gates: Mutex::new(HashMap::new()),
         }
@@ -751,23 +764,31 @@ impl Sandbox for DockerSandbox {
             return oci_container_read_file(self.cli, &container_name, file_path, max_bytes).await;
         };
 
-        let host_result = native_host_read_file(
-            host_path
-                .to_str()
-                .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
-            max_bytes,
-        )
-        .await?;
-        if !matches!(host_result, SandboxReadResult::NotFound) {
-            return Ok(host_result);
+        let host_result = match host_path.to_str() {
+            Some(host_path) => native_host_read_file(host_path, max_bytes).await,
+            None => Err(Error::message("mounted host path contains invalid UTF-8")),
+        };
+        match host_result {
+            Ok(result @ (SandboxReadResult::Ok(_) | SandboxReadResult::TooLarge(_))) => {
+                return Ok(result);
+            },
+            Ok(result) => {
+                debug!(
+                    guest_path = file_path,
+                    host_path = %host_path.display(),
+                    ?result,
+                    "mounted host read failed; falling back to container read"
+                );
+            },
+            Err(error) => {
+                debug!(
+                    guest_path = file_path,
+                    host_path = %host_path.display(),
+                    %error,
+                    "mounted host read failed; falling back to container read"
+                );
+            },
         }
-
-        debug!(
-            guest_path = file_path,
-            host_path = %host_path.display(),
-            result = ?host_result,
-            "mounted host read failed; falling back to container read"
-        );
 
         let container_name = self.container_name(id);
         oci_container_read_file(self.cli, &container_name, file_path, max_bytes).await
@@ -780,13 +801,21 @@ impl Sandbox for DockerSandbox {
         content: &[u8],
     ) -> Result<Option<serde_json::Value>> {
         if let Some(host_path) = self.mounted_host_path(id, file_path) {
-            return native_host_write_file(
-                host_path
-                    .to_str()
-                    .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
-                content,
-            )
-            .await;
+            let host_result = match host_path.to_str() {
+                Some(host_path) => native_host_write_file(host_path, content).await,
+                None => Err(Error::message("mounted host path contains invalid UTF-8")),
+            };
+            match host_result {
+                Ok(payload) => return Ok(payload),
+                Err(error) => {
+                    debug!(
+                        guest_path = file_path,
+                        host_path = %host_path.display(),
+                        %error,
+                        "mounted host write failed; falling back to container write"
+                    );
+                },
+            }
         }
 
         let container_name = self.container_name(id);
@@ -795,13 +824,23 @@ impl Sandbox for DockerSandbox {
 
     async fn list_files(&self, id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
         if let Some(host_path) = self.mounted_host_path(id, root) {
-            let host_files = native_host_list_files(
-                host_path
-                    .to_str()
-                    .ok_or_else(|| Error::message("mounted host path contains invalid UTF-8"))?,
-            )
-            .await?;
-            return remap_host_list_result_to_guest(root, &host_path, host_files);
+            let host_result = match host_path.to_str() {
+                Some(host_path) => native_host_list_files_strict(host_path).await,
+                None => Err(Error::message("mounted host path contains invalid UTF-8")),
+            };
+            match host_result {
+                Ok(host_files) => {
+                    return remap_host_list_result_to_guest(root, &host_path, host_files);
+                },
+                Err(error) => {
+                    debug!(
+                        guest_path = root,
+                        host_path = %host_path.display(),
+                        %error,
+                        "mounted host list failed; falling back to container list"
+                    );
+                },
+            }
         }
 
         let container_name = self.container_name(id);

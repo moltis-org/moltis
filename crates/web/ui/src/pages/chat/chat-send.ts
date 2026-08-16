@@ -4,17 +4,19 @@ import { chatAddMsg, chatAddMsgWithAttachments, setComposerStopButton } from "..
 import { highlightCodeBlocks } from "../../code-highlight";
 import { renderMarkdown, sendRpc, warmAudioPlayback } from "../../helpers";
 import {
-	clearPendingAttachments,
 	getPendingAttachments,
 	hasPendingAttachments,
 	type PendingAttachment,
+	removePendingAttachments,
 	type UploadedDocumentFile,
 	uploadDocumentAttachment,
 } from "../../media-drop";
 import { setSessionModel } from "../../models";
 import {
+	addSessionSendError,
 	bumpSessionCount,
 	cacheOutgoingUserMessage,
+	clearSessionSendErrors,
 	seedSessionPreviewFromUserText,
 	setSessionActiveRunId,
 	setSessionReplying,
@@ -30,6 +32,7 @@ export interface ChatSendParams {
 	text?: string;
 	content?: ChatContentPart[];
 	_document_files?: UploadedDocumentFile[];
+	_session_key?: string;
 	_seq: number;
 	model?: string;
 }
@@ -43,6 +46,20 @@ interface PendingImageAttachment extends PendingAttachment {
 export interface ChatSendPayload {
 	runId?: string;
 	queued?: boolean;
+}
+
+function forActiveSession<T>(sessionKey: string, action: () => T): T | undefined {
+	if (S.activeSessionKey === sessionKey) return action();
+}
+
+function handleChatSendFailure(sessionKey: string, message: string): void {
+	setSessionReplying(sessionKey, false);
+	addSessionSendError(sessionKey, message);
+	forActiveSession(sessionKey, () => {
+		setComposerStopButton(false, sessionKey);
+		const error = chatAddMsg("error", message);
+		error?.setAttribute("data-chat-send-error", "true");
+	});
 }
 
 // ── Auto-resize ─────────────────────────────────────────────
@@ -114,22 +131,33 @@ export function normalizeOutgoingText(text: string, hasAttachments: boolean): st
 	return `/sh ${text}`;
 }
 
-export function applySelectedModelToChatParams(chatParams: ChatSendParams): void {
+export function applySelectedModelToChatParams(chatParams: ChatSendParams, sessionKey: string): void {
 	const effectiveId = modelStore.effectiveModelId.value;
 	if (!effectiveId) return;
 	chatParams.model = effectiveId;
-	setSessionModel(S.activeSessionKey, effectiveId);
+	setSessionModel(sessionKey, effectiveId);
 }
 
-export function handleChatSendRpcResponse(res: RpcResponse<ChatSendPayload>, userEl: HTMLElement | null): void {
-	if (res.ok && res.payload?.runId) setSessionActiveRunId(S.activeSessionKey, res.payload.runId);
+export function handleChatSendRpcResponse(
+	res: RpcResponse<ChatSendPayload>,
+	userEl: HTMLElement | null,
+	sessionKey: string,
+): void {
+	if (res.ok && res.payload?.runId) setSessionActiveRunId(sessionKey, res.payload.runId);
+	if (res.ok) {
+		clearSessionSendErrors(sessionKey);
+		forActiveSession(sessionKey, () => {
+			S.chatMsgBox?.querySelectorAll("[data-chat-send-error='true']").forEach((error) => {
+				error.remove();
+			});
+		});
+	}
 	if (res.payload?.queued) {
-		markMessageQueued(userEl, S.activeSessionKey);
+		forActiveSession(sessionKey, () => markMessageQueued(userEl, sessionKey));
 		return;
 	}
 	if (!res.ok && res.error) {
-		setComposerStopButton(false);
-		chatAddMsg("error", res.error.message || "Request failed");
+		handleChatSendFailure(sessionKey, res.error.message || "Request failed");
 	}
 }
 
@@ -137,22 +165,26 @@ export async function buildChatMessage(
 	text: string,
 	seq: number,
 	displayText?: string,
+	sessionKey: string = S.activeSessionKey,
 ): Promise<{ params: ChatSendParams; el: HTMLElement | null }> {
 	const userText = displayText === undefined ? text : displayText;
-	const attachments = hasPendingAttachments() ? getPendingAttachments() : [];
+	const attachments = hasPendingAttachments() ? [...getPendingAttachments()] : [];
 	const images = attachments.filter((attachment): attachment is PendingImageAttachment => Boolean(attachment.dataUrl));
 	const documents = attachments.filter((attachment) => !attachment.dataUrl);
 	if (attachments.length > 0) {
 		const uploadedDocuments = await Promise.all(
-			documents.map((attachment) => uploadDocumentAttachment(attachment, S.activeSessionKey)),
+			documents.map((attachment) => uploadDocumentAttachment(attachment, sessionKey)),
 		);
 		const content: ChatContentPart[] = [];
 		if (text) content.push({ type: "text", text });
 		for (const img of images) if (img.dataUrl) content.push({ type: "image_url", image_url: { url: img.dataUrl } });
 		const params: ChatSendParams = content.length > 0 ? { content, _seq: seq } : { text, _seq: seq };
 		if (uploadedDocuments.length > 0) params._document_files = uploadedDocuments;
-		const el = chatAddMsgWithAttachments("user", userText ? renderMarkdown(userText) : "", images, uploadedDocuments);
-		clearPendingAttachments();
+		const el =
+			forActiveSession(sessionKey, () =>
+				chatAddMsgWithAttachments("user", userText ? renderMarkdown(userText) : "", images, uploadedDocuments),
+			) ?? null;
+		removePendingAttachments(attachments);
 		return { params, el };
 	}
 	return { params: { text, _seq: seq }, el: chatAddMsg("user", renderMarkdown(userText), true) };
@@ -205,35 +237,37 @@ async function sendChatAsync(): Promise<void> {
 	const text = (S.chatInput as HTMLTextAreaElement).value.trim();
 	const hasAttachments = hasPendingAttachments();
 	if (!((text || hasAttachments) && S.connected)) return;
+	const sessionKey = S.activeSessionKey;
 	sendInProgress = true;
 	warmAudioPlayback();
 	try {
 		if (tryHandleLocalSlashCommand(text, hasAttachments)) return;
 		const outgoingText = normalizeOutgoingText(text, hasAttachments);
 		S.setChatSeq(S.chatSeq + 1);
-		const msg = await buildChatMessage(outgoingText, S.chatSeq, text);
+		const msg = await buildChatMessage(outgoingText, S.chatSeq, text, sessionKey);
 		rememberChatHistory(text);
-		resetComposerAfterSend();
+		forActiveSession(sessionKey, resetComposerAfterSend);
 		const chatParams = msg.params;
+		chatParams._session_key = sessionKey;
 		const userEl = msg.el;
 		if (userEl) highlightCodeBlocks(userEl);
-		applySelectedModelToChatParams(chatParams);
-		bumpSessionCount(S.activeSessionKey, 1);
-		cacheOutgoingUserMessage(S.activeSessionKey, chatParams);
-		seedSessionPreviewFromUserText(S.activeSessionKey, text || outgoingText);
-		setSessionReplying(S.activeSessionKey, true);
-		setComposerStopButton(true, S.activeSessionKey);
+		applySelectedModelToChatParams(chatParams, sessionKey);
+		bumpSessionCount(sessionKey, 1);
+		cacheOutgoingUserMessage(sessionKey, chatParams);
+		seedSessionPreviewFromUserText(sessionKey, text || outgoingText);
+		setSessionReplying(sessionKey, true);
+		forActiveSession(sessionKey, () => setComposerStopButton(true, sessionKey));
 		try {
 			const res = await sendRpc<ChatSendPayload>("chat.send", chatParams);
-			handleChatSendRpcResponse(res, userEl);
+			handleChatSendRpcResponse(res, userEl, sessionKey);
 		} catch {
-			setComposerStopButton(false);
-			setSessionReplying(S.activeSessionKey, false);
-			chatAddMsg("error", "Request failed");
+			handleChatSendFailure(sessionKey, "Request failed");
 		}
-		maybeRefreshFullContextFn?.();
+		forActiveSession(sessionKey, () => maybeRefreshFullContextFn?.());
 	} catch (err) {
-		chatAddMsg("error", err instanceof Error ? err.message : "File upload failed");
+		forActiveSession(sessionKey, () => {
+			chatAddMsg("error", err instanceof Error ? err.message : "File upload failed");
+		});
 	} finally {
 		sendInProgress = false;
 	}

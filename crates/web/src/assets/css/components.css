@@ -1207,6 +1207,10 @@
   -webkit-mask-image: url("../icons/masks/mask-fa03630d2271dc99.svg");
   mask-image: url("../icons/masks/mask-fa03630d2271dc99.svg");
 }
+.settings-nav-item[data-section="connectors"]::before {
+  -webkit-mask-image: url("../icons/masks/connectors.svg");
+  mask-image: url("../icons/masks/connectors.svg");
+}
 .settings-nav-item[data-section="hooks"]::before {
   -webkit-mask-image: url("../icons/masks/mask-99420ef32a8bfaac.svg");
   mask-image: url("../icons/masks/mask-99420ef32a8bfaac.svg");
@@ -1242,6 +1246,10 @@
 .settings-nav-item[data-section="monitoring"]::before {
   -webkit-mask-image: url("../icons/masks/mask-b9bf0315417c03e4.svg");
   mask-image: url("../icons/masks/mask-b9bf0315417c03e4.svg");
+}
+.settings-nav-item[data-section="instrumentation"]::before {
+  -webkit-mask-image: url("../icons/masks/instrumentation.svg");
+  mask-image: url("../icons/masks/instrumentation.svg");
 }
 .settings-nav-item[data-section="logs"]::before {
   -webkit-mask-image: url("../icons/masks/mask-5883df2e24ebc841.svg");

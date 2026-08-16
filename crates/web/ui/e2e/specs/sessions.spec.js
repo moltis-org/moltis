@@ -97,6 +97,7 @@ test.describe("Session management", () => {
 		await page.clock.install({ time: new Date(2026, 6, 23, 23, 58) });
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
+		await expect(page.locator('#sessionList .session-item[data-session-key="main"]')).toBeVisible();
 		await page.clock.pauseAt(new Date(2026, 6, 23, 23, 59, 59, 500));
 
 		const expected = await page.evaluate(() => {
@@ -446,14 +447,15 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("main session shows clear but hides delete, non-main shows delete but hides clear", async ({ page }) => {
+	test("main session shows clear, delete, and archive; non-main shows delete but hides clear", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/");
 		await waitForWsConnected(page);
 		await expectPageContentMounted(page);
 
 		await expect(page.locator('button[title="Clear session"]')).toBeVisible();
-		await expect(page.locator('button[title="Delete session"]')).toHaveCount(0);
+		await expect(page.locator('button[title="Delete session"]')).toBeVisible();
+		await expect(page.locator('button[title="Archive session"]')).toBeVisible();
 
 		await createSession(page);
 
@@ -495,6 +497,60 @@ test.describe("Session management", () => {
 
 		await archivedToggle.uncheck();
 		await expect(sessionItem).toBeVisible({ timeout: 10_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("main session can be archived and restored from the sidebar toggle", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		const mainItem = page.locator('#sessionList .session-item[data-session-key="main"]');
+		await expect(mainItem).toBeVisible({ timeout: 10_000 });
+
+		await page.locator('button[title="Archive session"]').click();
+		await expect(mainItem).toHaveCount(0);
+
+		const archivedToggle = page.locator("#showArchivedSessions");
+		await expect(archivedToggle).toBeVisible();
+		await archivedToggle.check();
+		await expect(mainItem).toBeVisible({ timeout: 10_000 });
+
+		await page.locator('button[title="Unarchive session"]').click();
+		await expect(page.locator('button[title="Archive session"]')).toBeVisible({ timeout: 10_000 });
+
+		await archivedToggle.uncheck();
+		await expect(mainItem).toBeVisible({ timeout: 10_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("main session can be deleted and comes back empty", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		// Keep another session around so the delete has somewhere to land.
+		await createSession(page);
+		const createdUrl = page.url();
+
+		const mainItem = page.locator('#sessionList .session-item[data-session-key="main"]');
+		await mainItem.click();
+		await expect.poll(() => page.url(), { timeout: 10_000 }).not.toBe(createdUrl);
+
+		const deleteBtn = page.locator('button[title="Delete session"]');
+		await expect(deleteBtn).toBeVisible({ timeout: 10_000 });
+		await deleteBtn.click();
+
+		// An empty main deletes without the confirmation dialog and hands the
+		// view to another session.
+		await expect.poll(() => page.url(), { timeout: 10_000 }).not.toMatch(/\/chats\/main$/);
+		await expect(mainItem).toHaveCount(0);
+
+		// Opening main again recreates it lazily rather than erroring.
+		await navigateAndWait(page, "/chats/main");
+		await waitForWsConnected(page);
+		await expect(mainItem).toBeVisible({ timeout: 10_000 });
 
 		expect(pageErrors).toEqual([]);
 	});

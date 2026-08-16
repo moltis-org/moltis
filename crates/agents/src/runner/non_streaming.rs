@@ -10,7 +10,10 @@ use {
 use moltis_common::hooks::{HookAction, HookPayload, HookRegistry};
 
 use crate::{
-    model::{AgentToolControls, ChatMessage, LlmProvider, ToolCall, ToolChoice, UserContent},
+    model::{
+        AgentToolControls, ChatMessage, LlmProvider, ProviderAttemptEvent, ToolCall, ToolChoice,
+        UserContent,
+    },
     response_sanitizer::recover_tool_calls_from_content,
     tool_arg_validator::{coerce_scalar_args, validate_tool_args},
     tool_loop_detector::ToolCallFingerprint,
@@ -27,14 +30,14 @@ use super::{
     channel_binding_from_tool_context, dispatch_after_llm_call_hook,
     dispatch_before_agent_start_hook, empty_tool_name_retry_prompt,
     explicit_shell_command_from_user_content, find_empty_tool_name_call, finish_agent_run,
-    has_named_tool_call, is_substantive_answer_text, log_tool_argument_diagnostic,
+    has_named_tool_call, instrumentation, is_substantive_answer_text, log_tool_argument_diagnostic,
     record_answer_text, resolve_tool_lookup,
     retry::{
         RATE_LIMIT_MAX_RETRIES, is_context_window_error, next_retry_delay_ms,
         resolve_agent_max_iterations,
     },
     sanitize_tool_name,
-    tool_result::sanitize_tool_result,
+    tool_result::{sanitize_tool_result, tool_result_failure},
 };
 
 use crate::tool_loop_detector::ToolLoopDetector;
@@ -154,9 +157,29 @@ pub async fn run_agent_loop_with_context_and_limits(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let trace_correlation_key = tool_context
+        .as_ref()
+        .and_then(|ctx| ctx.get("_trace_correlation_key"))
+        .and_then(|value| value.as_str());
     let channel_for_hooks =
         channel_binding_from_tool_context(&session_key_for_hooks, tool_context.as_ref());
 
+    // Instrumentation. This path serves sub-agents (`spawn_agent`) and silent
+    // turns, so leaving it uninstrumented would drop exactly the nested-agent
+    // traces the observation taxonomy exists to represent.
+    let turn_recorder = Arc::new(instrumentation::begin_turn(
+        &session_key_for_hooks,
+        trace_correlation_key,
+        channel_for_hooks.as_ref(),
+        provider.name(),
+        provider.id(),
+        user_content,
+        instrumentation::recorder_settings(&config.instrumentation),
+        config.instrumentation.environment.clone(),
+        instrumentation::release(&config.instrumentation),
+    ));
+
+    let result: std::result::Result<AgentRunResult, AgentRunError> = async {
     dispatch_before_agent_start_hook(
         hook_registry.as_ref(),
         &session_key_for_hooks,
@@ -292,13 +315,57 @@ pub async fn run_agent_loop_with_context_and_limits(
             cb(RunnerEvent::Thinking);
         }
 
-        let mut response = match provider
-            .complete_with_options(&messages, &schemas_for_api, &tool_controls)
-            .await
-        {
+        let mut generation_step = None;
+        let completion_result = {
+            let mut on_attempt = |event| match event {
+                ProviderAttemptEvent::Started(identity) => {
+                    if let Some(recorder) = turn_recorder.as_ref().as_ref() {
+                        recorder.set_metadata(
+                            "provider",
+                            serde_json::Value::String(identity.provider.clone()),
+                        );
+                        recorder.set_metadata(
+                            "model",
+                            serde_json::Value::String(identity.model.clone()),
+                        );
+                    }
+                    generation_step = instrumentation::begin_generation_step(
+                        turn_recorder.as_ref().as_ref(),
+                        &identity,
+                        provider.as_ref(),
+                        &tool_controls,
+                        iterations,
+                        schemas_for_api.len(),
+                        &messages,
+                    );
+                },
+                ProviderAttemptEvent::Failed { error, .. } => {
+                    if let Some(mut step) = generation_step.take() {
+                        step.fail(error);
+                        step.finish();
+                    }
+                },
+            };
+
+            provider
+                .complete_with_options_tracked(
+                    &messages,
+                    &schemas_for_api,
+                    &tool_controls,
+                    &mut on_attempt,
+                )
+                .await
+        };
+        let mut response = match completion_result {
             Ok(r) => r,
             Err(e) => {
                 let msg = e.to_string();
+                // Close as failed before any early return, so a failed call is
+                // not rendered as a successful span by the drop guard.
+                if let Some(mut step) = generation_step.take() {
+                    step.fail(msg.clone());
+                    step.finish();
+                }
                 if is_context_window_error(&msg) {
                     return Err(AgentRunError::ContextWindowExceeded(msg));
                 }
@@ -331,6 +398,21 @@ pub async fn run_agent_loop_with_context_and_limits(
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::ThinkingDone);
+        }
+
+        if let Some(mut step) = generation_step.take() {
+            step.set_usage(instrumentation::to_token_usage(&response.usage));
+            step.set_output(serde_json::json!({
+                "text": response.text,
+                "tool_calls": response.tool_calls.iter().map(|call| serde_json::json!({
+                    "id": call.id,
+                    "name": call.name,
+                })).collect::<Vec<_>>(),
+            }));
+            if !response.tool_calls.is_empty() {
+                step.set_metadata("tool_calls", serde_json::json!(response.tool_calls.len()));
+            }
+            step.finish();
         }
 
         usage_accumulator.record_request(response.usage.clone());
@@ -554,6 +636,7 @@ pub async fn run_agent_loop_with_context_and_limits(
             .tool_calls
             .iter()
             .map(|tc| {
+                let tool_turn_recorder = Arc::clone(&turn_recorder);
                 let sanitized = sanitize_tool_name(&tc.name);
                 if *sanitized != tc.name {
                     debug!(original = %tc.name, sanitized = %sanitized, "sanitized mangled tool name");
@@ -635,13 +718,26 @@ pub async fn run_agent_loop_with_context_and_limits(
                 }
 
                 async move {
+                    let mut tool_step = tool_turn_recorder.as_ref().as_ref().map(|recorder| {
+                        recorder.step(
+                            instrumentation::tool_observation_kind(&tc_name),
+                            tc_name.clone(),
+                        )
+                    });
                     if let Some(err_msg) = validation_error {
+                        if let Some(step) = tool_step.as_mut() {
+                            step.set_input(args);
+                        }
                         return (
                             false,
                             serde_json::json!({ "error": err_msg.clone() }),
                             Some(err_msg),
                             true,
+                            tool_step,
                         );
+                    }
+                    if let Some(step) = tool_step.as_mut() {
+                        step.set_input(args.clone());
                     }
                     // Run BeforeToolCall hook.
                     if let Some(ref hooks) = hook_registry {
@@ -660,6 +756,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                                     serde_json::json!({ "error": err_str }),
                                     Some(err_str),
                                     false,
+                                    tool_step,
                                 );
                             },
                             Ok(HookAction::ModifyPayload(v)) => {
@@ -679,6 +776,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                                             serde_json::json!({ "error": err_str.clone() }),
                                             Some(err_str),
                                             false,
+                                            tool_step,
                                         );
                                     }
                                 }
@@ -690,27 +788,21 @@ pub async fn run_agent_loop_with_context_and_limits(
                         }
                     }
 
+                    if let Some(step) = tool_step.as_mut() {
+                        step.set_input(args.clone());
+                    }
+
                     if let Some(tool) = tool {
                         match tool.execute(args).await {
                             Ok(val) => {
-                                // Check if the result indicates a logical failure
-                                // (e.g., BrowserResponse with success: false)
-                                let has_error = val.get("error").is_some()
-                                    || val.get("success") == Some(&serde_json::json!(false));
-                                let error_msg = if has_error {
-                                    val.get("error")
-                                        .and_then(|e| e.as_str())
-                                        .map(String::from)
-                                } else {
-                                    None
-                                };
-
+                                let error = tool_result_failure(&val);
+                                let success = error.is_none();
                                 // Dispatch AfterToolCall hook.
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
                                         tool_name: tc_name.clone(),
-                                        success: !has_error,
+                                        success,
                                         result: Some(val.clone()),
                                         channel: channel_for_hooks.clone(),
                                     };
@@ -719,12 +811,13 @@ pub async fn run_agent_loop_with_context_and_limits(
                                     }
                                 }
 
-                                if has_error {
-                                    // Tool executed but returned an error in the result
-                                    (false, serde_json::json!({ "result": val }), error_msg, false)
-                                } else {
-                                    (true, serde_json::json!({ "result": val }), None, false)
-                                }
+                                (
+                                    success,
+                                    serde_json::json!({ "result": val }),
+                                    error,
+                                    false,
+                                    tool_step,
+                                )
                             },
                             Err(e) => {
                                 let err_str = e.to_string();
@@ -746,6 +839,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                                     serde_json::json!({ "error": err_str }),
                                     Some(err_str),
                                     false,
+                                    tool_step,
                                 )
                             },
                         }
@@ -756,6 +850,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                             serde_json::json!({ "error": err_str }),
                             Some(err_str),
                             false,
+                            tool_step,
                         )
                     }
                 }
@@ -775,7 +870,8 @@ pub async fn run_agent_loop_with_context_and_limits(
         //      stale intervention — the reset() abandons it cleanly.
         //   2. A batch that races through both escalation stages must still
         //      deliver the stage-1 nudge first, not skip straight to strip.
-        for (tc, (success, mut result, error, rejected)) in response.tool_calls.iter().zip(results)
+        for (tc, (success, mut result, error, rejected, mut tool_step)) in
+            response.tool_calls.iter().zip(results)
         {
             if success {
                 info!(tool = %tc.name, id = %tc.id, "tool execution succeeded");
@@ -815,7 +911,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                         id: tc.id.clone(),
                         name: tc.name.clone(),
                         success,
-                        error,
+                            error: error.clone(),
                         result: if success {
                             result.get("result").cloned()
                         } else {
@@ -860,6 +956,13 @@ pub async fn run_agent_loop_with_context_and_limits(
             // multimodal content in tool results. Images are stripped but the UI
             // still receives them via ToolCallEnd event.
             let tool_result_str = sanitize_tool_result(&result.to_string(), max_tool_result_bytes);
+            instrumentation::finish_tool_step(
+                tool_step.take(),
+                &tool_result_str,
+                success,
+                error.as_deref(),
+                &result,
+            );
             debug!(
                 tool = %tc.name,
                 id = %tc.id,
@@ -879,6 +982,11 @@ pub async fn run_agent_loop_with_context_and_limits(
             on_event,
         );
     }
+    }
+    .await;
+
+    instrumentation::finish_turn(turn_recorder.as_ref().as_ref(), &result);
+    result
 }
 
 /// Convenience wrapper matching the old stub signature.

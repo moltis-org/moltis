@@ -7,7 +7,10 @@ use {
 use {
     moltis_channels::{
         Error as ChannelError, Result as ChannelResult,
-        plugin::{ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver},
+        plugin::{
+            ChannelOutbound, ChannelStreamOutbound, ChannelThreadContext, StreamEvent,
+            StreamReceiver, ThreadMessage,
+        },
     },
     moltis_common::types::ReplyPayload,
 };
@@ -379,6 +382,7 @@ impl MsTeamsOutbound {
                         session.mark_edited();
                     }
                 },
+                Some(StreamEvent::TaskUpdate(_)) => {},
                 Some(StreamEvent::Error(err)) => {
                     if !session.has_text() {
                         session.push_delta(&err);
@@ -408,6 +412,56 @@ impl MsTeamsOutbound {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ChannelThreadContext for MsTeamsOutbound {
+    async fn fetch_thread_messages(
+        &self,
+        account_id: &str,
+        channel_id: &str,
+        _thread_id: &str,
+        limit: usize,
+    ) -> ChannelResult<Vec<ThreadMessage>> {
+        let (http, config, graph_cache) = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            let state = accounts
+                .get(account_id)
+                .ok_or_else(|| ChannelError::unknown_account(account_id))?;
+            (
+                state.http.clone(),
+                state.config.clone(),
+                std::sync::Arc::clone(&state.graph_token_cache),
+            )
+        };
+        let token = crate::auth::get_graph_token(&http, &config, &graph_cache)
+            .await
+            .map_err(|error| ChannelError::unavailable(format!("Teams Graph token: {error}")))?;
+        let effective_limit = if limit == 0 {
+            config.history_limit
+        } else {
+            limit.min(config.history_limit)
+        };
+        let messages =
+            crate::graph::fetch_chat_messages(&http, &token, channel_id, effective_limit)
+                .await
+                .map_err(|error| {
+                    ChannelError::external(
+                        "Teams Graph fetch messages",
+                        std::io::Error::other(error.to_string()),
+                    )
+                })?;
+        Ok(messages
+            .into_iter()
+            .map(|message| ThreadMessage {
+                message_id: message.id,
+                sender_id: message.from_user_id.unwrap_or_default(),
+                is_bot: message.is_bot,
+                text: message.body_content.unwrap_or_default(),
+                timestamp: message.created_at.unwrap_or_default(),
+            })
+            .collect())
     }
 }
 
@@ -711,6 +765,7 @@ impl ChannelStreamOutbound for MsTeamsOutbound {
                         StreamEvent::Delta(delta) | StreamEvent::ProgressDelta(delta) => {
                             text.push_str(&delta)
                         },
+                        StreamEvent::TaskUpdate(_) => {},
                         StreamEvent::Done => break,
                         StreamEvent::Error(err) => {
                             debug!(account_id, chat_id = to, "Teams stream error: {err}");

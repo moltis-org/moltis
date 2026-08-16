@@ -218,20 +218,15 @@ async function moveToVoiceStep(page) {
 }
 
 async function moveToChannelStep(page) {
-	const reachedLlm = await moveToLlmStep(page);
-	if (!reachedLlm) return false;
-
 	const channelHeading = page.getByRole("heading", { name: "Connect a Channel", exact: true });
-	if (await isVisible(channelHeading)) return true;
-
-	for (let i = 0; i < 6; i++) {
-		if (await clickFirstVisibleButton(page, { name: "Skip for now", exact: true })) {
-			if (await isVisible(channelHeading)) return true;
-			continue;
-		}
-
-		if (!(await clickFirstVisibleButton(page, { name: "Continue", exact: true }))) break;
+	for (let i = 0; i < 50; i++) {
+		await waitForOnboardingStepLoaded(page);
 		if (await isVisible(channelHeading)) return true;
+		if (await maybeSkipOpenClawImport(page)) continue;
+		if (await maybeSkipAuth(page)) continue;
+		if (await maybeCompleteIdentity(page)) continue;
+		if (await advanceVisibleOnboardingStep(page)) continue;
+		break;
 	}
 
 	return isVisible(channelHeading);
@@ -706,6 +701,55 @@ test.describe("Onboarding wizard", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("slack native streaming selection persists through onboarding", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+
+		expect(await moveToChannelStep(page)).toBeTruthy();
+		await page.getByRole("button", { name: "Slack", exact: true }).click();
+
+		await page.evaluate(async () => {
+			const onboardingScript = document.querySelector('script[type="module"][src*="js/onboarding-app.js"]');
+			if (!onboardingScript) throw new Error("onboarding-app.js script not found");
+			const appUrl = new URL(onboardingScript.src, window.location.origin).href;
+			const marker = "js/onboarding-app.js";
+			const prefix = appUrl.slice(0, appUrl.indexOf(marker));
+			const state = await import(`${prefix}js/state.js`);
+			const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
+			window.__onboardingSlackAddRequest = null;
+			state.setConnected(true);
+			state.setWs({
+				readyState: wsOpen,
+				send(raw) {
+					const req = JSON.parse(raw || "{}");
+					const resolver = state.pending[req.id];
+					if (!resolver) return;
+					if (req.method === "channels.add") window.__onboardingSlackAddRequest = req.params || null;
+					resolver({ ok: true, payload: {} });
+					delete state.pending[req.id];
+				},
+			});
+		});
+
+		await page.locator('input[name="slack_account_id"]').fill("onboarding-slack");
+		await page.locator('input[name="slack_bot_token"]').fill("xoxb-test");
+		await page.locator('input[name="slack_app_token"]').fill("xapp-test");
+		await page.getByText("Advanced Config JSON", { exact: true }).click();
+		await page
+			.locator('textarea[name="channel_advanced_config"]')
+			.fill('{"stream_mode":"native","thread_replies":false,"rich_blocks":true}');
+		await page.getByRole("button", { name: "Connect Slack", exact: true }).click();
+
+		await expect
+			.poll(() => page.evaluate(() => window.__onboardingSlackAddRequest))
+			.toMatchObject({
+				account_id: "onboarding-slack",
+				config: { stream_mode: "native", thread_replies: true, rich_blocks: false },
+			});
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("whatsapp pairing renders SVG QR from channel event", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/onboarding");
@@ -1082,15 +1126,21 @@ test.describe("Onboarding wizard", () => {
 			test.skip(true, "Matrix onboarding option is not available in this run");
 			return;
 		}
-		await expect(page.getByText("Encrypted Matrix chats require Password auth.", { exact: false })).toBeVisible();
+		await expect(
+			page.getByText("Encrypted Matrix chats require OIDC or Password auth.", { exact: false }),
+		).toBeVisible();
 		await expect(
 			page.getByText("Password is the default because it supports encrypted Matrix chats", { exact: false }),
 		).toBeVisible();
 		await expect(
-			page.getByText("Use Password so Moltis creates and persists its own Matrix device keys", { exact: false }),
+			page.getByText("Use OIDC (recommended) or Password so Moltis creates and persists its own Matrix device keys", {
+				exact: false,
+			}),
 		).toBeVisible();
 		await expect(
-			page.getByText("do not transfer that device's private encryption keys into Moltis", { exact: false }),
+			page.getByText("reuses an existing Matrix session without that device's private encryption keys", {
+				exact: false,
+			}),
 		).toBeVisible();
 		await expect(page.getByText("verify yes", { exact: false })).toBeVisible();
 

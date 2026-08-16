@@ -557,6 +557,17 @@ fn classify_container_copy_error(stderr: &str) -> Option<ContainerCopyErrorKind>
     None
 }
 
+fn container_copy_failure_detail(stderr: &str, exit_code: Option<i32>) -> String {
+    let detail = stderr.trim();
+    if !detail.is_empty() {
+        return detail.to_string();
+    }
+    match exit_code {
+        Some(code) => format!("copy command exited with code {code} and no stderr"),
+        None => "copy command exited without a status code or stderr".to_string(),
+    }
+}
+
 async fn oci_exec_shell(
     cli: &str,
     container_name: &str,
@@ -891,11 +902,37 @@ pub async fn native_host_write_file(file_path: &str, content: &[u8]) -> Result<O
 /// Native host-backed file listing implementation for sandbox backends whose
 /// paths are just host paths.
 pub async fn native_host_list_files(root: &str) -> Result<SandboxListFilesResult> {
+    native_host_list_files_with_behavior(root, MissingRootBehavior::ReturnEmpty).await
+}
+
+pub(crate) async fn native_host_list_files_strict(root: &str) -> Result<SandboxListFilesResult> {
+    native_host_list_files_with_behavior(root, MissingRootBehavior::ReturnError).await
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MissingRootBehavior {
+    ReturnEmpty,
+    ReturnError,
+}
+
+async fn native_host_list_files_with_behavior(
+    root: &str,
+    missing_root_behavior: MissingRootBehavior,
+) -> Result<SandboxListFilesResult> {
     let root = PathBuf::from(root);
     tokio::task::spawn_blocking(move || -> Result<SandboxListFilesResult> {
         match std::fs::symlink_metadata(&root) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
+            Ok(metadata)
+                if metadata.file_type().is_symlink()
+                    && missing_root_behavior == MissingRootBehavior::ReturnEmpty =>
+            {
                 return Ok(SandboxListFilesResult::complete(Vec::new()));
+            },
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::message(format!(
+                    "sandbox list_files '{}' failed: root is a symlink",
+                    root.display()
+                )));
             },
             Ok(metadata) if metadata.is_file() => {
                 return Ok(SandboxListFilesResult::complete(vec![
@@ -903,7 +940,10 @@ pub async fn native_host_list_files(root: &str) -> Result<SandboxListFilesResult
                 ]));
             },
             Ok(_) => {},
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound
+                    && missing_root_behavior == MissingRootBehavior::ReturnEmpty =>
+            {
                 return Ok(SandboxListFilesResult::complete(Vec::new()));
             },
             Err(error) => {
@@ -914,6 +954,7 @@ pub async fn native_host_list_files(root: &str) -> Result<SandboxListFilesResult
             },
         }
 
+        let root_path = root.clone();
         let mut stack = vec![root];
         let mut files = Vec::new();
 
@@ -921,7 +962,10 @@ pub async fn native_host_list_files(root: &str) -> Result<SandboxListFilesResult
             let entries = match std::fs::read_dir(&dir) {
                 Ok(entries) => entries,
                 Err(error) => {
-                    if error.kind() == io::ErrorKind::NotFound {
+                    if error.kind() == io::ErrorKind::NotFound
+                        && (dir != root_path
+                            || missing_root_behavior == MissingRootBehavior::ReturnEmpty)
+                    {
                         continue;
                     }
                     return Err(Error::message(format!(
@@ -1084,7 +1128,7 @@ pub async fn oci_container_read_file(
 
                 Err(Error::message(format!(
                     "{cli} cp failed for '{file_path}': {}",
-                    stderr.trim()
+                    container_copy_failure_detail(stderr.trim(), status.code())
                 )))
             })
             .await
@@ -1148,7 +1192,8 @@ pub async fn oci_container_write_file(
     }
 
     Err(Error::message(format!(
-        "{cli} cp failed for '{file_path}': {detail}"
+        "{cli} cp failed for '{file_path}': {}",
+        container_copy_failure_detail(detail, output.status.code())
     )))
 }
 
@@ -1421,5 +1466,17 @@ mod tests {
         .unwrap();
 
         assert!(matches!(result, SandboxReadResult::NotFound));
+    }
+
+    #[test]
+    fn oci_copy_failure_detail_is_not_empty_when_stderr_is_empty() {
+        assert_eq!(
+            container_copy_failure_detail("", Some(1)),
+            "copy command exited with code 1 and no stderr"
+        );
+        assert_eq!(
+            container_copy_failure_detail("explicit failure", Some(1)),
+            "explicit failure"
+        );
     }
 }

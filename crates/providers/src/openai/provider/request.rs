@@ -2,7 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::warn;
 
-use {crate::raw_model_id, moltis_agents::model::ChatMessage};
+use {
+    crate::{openai_compat::split_responses_instructions_and_input, raw_model_id},
+    moltis_agents::model::{AgentToolControls, ChatMessage},
+};
 
 use {
     super::OpenAiProvider,
@@ -10,6 +13,30 @@ use {
 };
 
 impl OpenAiProvider {
+    pub(super) fn prepare_responses_sse_body(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: &[serde_json::Value],
+        options: &AgentToolControls,
+    ) -> anyhow::Result<serde_json::Value> {
+        let (instructions, input) = split_responses_instructions_and_input(messages);
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "input": input,
+            "stream": true,
+        });
+        if let Some(instructions) = instructions {
+            body["instructions"] = serde_json::Value::String(instructions);
+        }
+        if !tools.is_empty() {
+            body["tools"] =
+                serde_json::Value::Array(crate::openai_compat::to_responses_api_tools(tools));
+        }
+        super::core::apply_openai_responses_tool_choice(&mut body, options)?;
+        self.apply_reasoning_effort_responses(&mut body);
+        Ok(body)
+    }
+
     /// For OpenRouter Anthropic models, inject `cache_control` breakpoints
     /// on the system message and the last user message to enable prompt
     /// caching passthrough to Anthropic.
@@ -494,6 +521,38 @@ mod tests {
             panic!("messages should be an array");
         };
         messages
+    }
+
+    #[test]
+    fn responses_sse_body_combines_reasoning_and_function_tools() {
+        let mut provider = provider("gpt-5.6-sol", "openai", "https://api.openai.com/v1");
+        provider.reasoning_effort = Some(moltis_agents::model::ReasoningEffort::High);
+        let tools = [serde_json::json!({
+            "name": "get_weather",
+            "description": "Get weather",
+            "parameters": {
+                "type": "object",
+                "properties": { "location": { "type": "string" } },
+                "required": ["location"]
+            }
+        })];
+
+        let Ok(body) = provider.prepare_responses_sse_body(
+            vec![
+                ChatMessage::system("Be concise"),
+                ChatMessage::user("Weather?"),
+            ],
+            &tools,
+            &AgentToolControls::default(),
+        ) else {
+            panic!("responses request body should be valid");
+        };
+
+        assert_eq!(body["reasoning"]["effort"], "high");
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["name"], "get_weather");
+        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["instructions"], "Be concise");
     }
 
     #[test]

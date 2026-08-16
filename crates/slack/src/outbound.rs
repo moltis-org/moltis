@@ -205,7 +205,7 @@ impl SlackOutbound {
         to: &str,
         thread_ts: &str,
         stream: &mut StreamReceiver,
-    ) -> ChannelResult<()> {
+    ) -> ChannelResult<Vec<String>> {
         let (bot_token, api_base_url, throttle, recipient) =
             self.get_native_stream_config(account_id, to, thread_ts)?;
         let api = HttpNativeStreamApi::new(shared_http_client(), api_base_url, bot_token);
@@ -219,7 +219,7 @@ impl SlackOutbound {
         to: &str,
         thread_ts: Option<&str>,
         stream: &mut StreamReceiver,
-    ) -> ChannelResult<()> {
+    ) -> ChannelResult<Vec<String>> {
         let (client, token) = self.get_session(account_id)?;
         let throttle = self.get_edit_throttle(account_id);
 
@@ -284,6 +284,7 @@ impl SlackOutbound {
                         },
                     }
                 },
+                Some(StreamEvent::TaskUpdate(_)) => {},
                 Some(StreamEvent::Done) => break,
                 Some(StreamEvent::Error(e)) => {
                     accumulated.push_str(&format!("\n\n:warning: {e}"));
@@ -294,11 +295,12 @@ impl SlackOutbound {
         }
 
         if accumulated.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let final_text = markdown_to_slack(&accumulated);
         let chunks = chunk_message(&final_text, SLACK_MAX_MESSAGE_LEN);
+        let mut ids = Vec::with_capacity(chunks.len());
 
         // Final delivery failures are returned, not swallowed: the caller uses
         // the result to decide whether the reply actually landed.
@@ -310,27 +312,30 @@ impl SlackOutbound {
                         .inspect_err(|e| {
                             warn!(account_id, to, "failed to finalize stream message: {e}");
                         })?;
+                    ids.push(ts.to_string());
                 }
                 for chunk in chunks.iter().skip(1) {
-                    post_message(&client, &token, to, chunk, thread_ts)
+                    let ts = post_message(&client, &token, to, chunk, thread_ts)
                         .await
                         .inspect_err(|e| {
                             warn!(account_id, to, "failed to send overflow chunk: {e}")
                         })?;
+                    ids.push(ts.to_string());
                 }
             },
             None => {
                 for chunk in &chunks {
-                    post_message(&client, &token, to, chunk, thread_ts)
+                    let ts = post_message(&client, &token, to, chunk, thread_ts)
                         .await
                         .inspect_err(|e| {
                             warn!(account_id, to, "failed to send stream message: {e}")
                         })?;
+                    ids.push(ts.to_string());
                 }
             },
         }
 
-        Ok(())
+        Ok(ids)
     }
 }
 
@@ -371,7 +376,7 @@ async fn post_message_with_blocks(
     fallback_text: &str,
     blocks: &[serde_json::Value],
     thread_ts: Option<&str>,
-) -> ChannelResult<()> {
+) -> ChannelResult<SlackTs> {
     let session = client.open_session(token);
     let mut body = serde_json::json!({
         "channel": channel,
@@ -397,7 +402,11 @@ async fn post_message_with_blocks(
             "chat.postMessage (blocks) error: {err}"
         )));
     }
-    Ok(())
+    let ts = resp
+        .get("ts")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| ChannelError::unavailable("chat.postMessage (blocks) did not return ts"))?;
+    Ok(SlackTs(ts.to_string()))
 }
 
 /// Update an existing message.
@@ -458,6 +467,7 @@ fn extension_for_mime(mime: &str) -> &'static str {
 }
 
 /// Upload a file to Slack using the V2 upload flow.
+#[allow(dead_code)]
 async fn upload_file(
     client: &SlackClient<SlackClientHyperHttpsConnector>,
     token: &SlackApiToken,
@@ -468,6 +478,31 @@ async fn upload_file(
     caption: Option<&str>,
     thread_ts: Option<&str>,
 ) -> ChannelResult<()> {
+    upload_file_reporting_ids(
+        client,
+        token,
+        channel,
+        filename,
+        content_type,
+        data,
+        caption,
+        thread_ts,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Upload a file to Slack and report identifiers that Slack reactions can carry.
+async fn upload_file_reporting_ids(
+    client: &SlackClient<SlackClientHyperHttpsConnector>,
+    token: &SlackApiToken,
+    channel: &str,
+    filename: &str,
+    content_type: &str,
+    data: &[u8],
+    caption: Option<&str>,
+    thread_ts: Option<&str>,
+) -> ChannelResult<Vec<String>> {
     let session = client.open_session(token);
 
     // Step 1: Get the upload URL.
@@ -499,12 +534,16 @@ async fn upload_file(
     if let Some(ts) = thread_ts {
         complete_req = complete_req.with_thread_ts(ts.into());
     }
-    session
+    let complete_resp = session
         .files_complete_upload_external(&complete_req)
         .await
         .map_err(|e| ChannelError::unavailable(format!("completeUploadExternal failed: {e}")))?;
 
-    Ok(())
+    Ok(complete_resp
+        .files
+        .into_iter()
+        .map(|file| file.id.0)
+        .collect())
 }
 
 /// Add or remove a reaction on a Slack message using the Web API.
@@ -586,6 +625,99 @@ impl ChannelOutbound for SlackOutbound {
         Ok(())
     }
 
+    async fn send_text_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
+        let (client, token) = self.get_session(account_id)?;
+        let thread_ts = self.get_reply_thread_ts(account_id, reply_to);
+        let slack_text = markdown_to_slack(text);
+        let chunks = chunk_message(&slack_text, SLACK_MAX_MESSAGE_LEN);
+        let rendered_blocks = (self.get_rich_blocks(account_id) && chunks.len() == 1)
+            .then(|| crate::blocks::markdown_to_blocks(text))
+            .flatten();
+
+        let mut ids = Vec::new();
+        if let Some(blocks) = rendered_blocks {
+            let fallback = chunks.first().copied().unwrap_or(&slack_text);
+            let ts = post_message_with_blocks(
+                &client,
+                &token,
+                to,
+                fallback,
+                &blocks,
+                thread_ts.as_deref(),
+            )
+            .await?;
+            ids.push(ts.to_string());
+        } else {
+            for chunk in chunks {
+                let ts = post_message(&client, &token, to, chunk, thread_ts.as_deref()).await?;
+                ids.push(ts.to_string());
+            }
+        }
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::counter!(
+            moltis_metrics::channels::MESSAGES_SENT_TOTAL,
+            moltis_metrics::labels::CHANNEL => "slack"
+        )
+        .increment(1);
+
+        Ok(ids)
+    }
+
+    async fn send_text_with_suffix(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<()> {
+        self.send_text_with_suffix_reporting_ids(account_id, to, text, suffix_html, reply_to)
+            .await?;
+        Ok(())
+    }
+
+    async fn send_text_with_suffix_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        _suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
+        self.send_text_reporting_ids(account_id, to, text, reply_to)
+            .await
+    }
+
+    async fn send_html(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<()> {
+        self.send_html_reporting_ids(account_id, to, html, reply_to)
+            .await?;
+        Ok(())
+    }
+
+    async fn send_html_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
+        self.send_text_reporting_ids(account_id, to, html, reply_to)
+            .await
+    }
+
     async fn send_media(
         &self,
         account_id: &str,
@@ -593,6 +725,18 @@ impl ChannelOutbound for SlackOutbound {
         payload: &ReplyPayload,
         reply_to: Option<&str>,
     ) -> ChannelResult<()> {
+        self.send_media_reporting_ids(account_id, to, payload, reply_to)
+            .await?;
+        Ok(())
+    }
+
+    async fn send_media_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        payload: &ReplyPayload,
+        reply_to: Option<&str>,
+    ) -> ChannelResult<Vec<String>> {
         let media_url = payload.media.as_ref().map(|m| m.url.as_str());
 
         match media_url {
@@ -615,7 +759,7 @@ impl ChannelOutbound for SlackOutbound {
                 let (client, token) = self.get_session(account_id)?;
                 let thread_ts = self.get_reply_thread_ts(account_id, reply_to);
 
-                upload_file(
+                upload_file_reporting_ids(
                     &client,
                     &token,
                     to,
@@ -634,7 +778,8 @@ impl ChannelOutbound for SlackOutbound {
                 } else {
                     format!("{}\n{url}", payload.text)
                 };
-                self.send_text(account_id, to, &text, reply_to).await
+                self.send_text_reporting_ids(account_id, to, &text, reply_to)
+                    .await
             },
             None => {
                 // No media — send text only.
@@ -643,7 +788,8 @@ impl ChannelOutbound for SlackOutbound {
                 } else {
                     payload.text.clone()
                 };
-                self.send_text(account_id, to, &text, reply_to).await
+                self.send_text_reporting_ids(account_id, to, &text, reply_to)
+                    .await
             },
         }
     }
@@ -768,8 +914,20 @@ impl ChannelStreamOutbound for SlackOutbound {
         account_id: &str,
         to: &str,
         reply_to: Option<&str>,
-        mut stream: StreamReceiver,
+        stream: StreamReceiver,
     ) -> ChannelResult<()> {
+        self.send_stream_reporting_ids(account_id, to, reply_to, stream)
+            .await?;
+        Ok(())
+    }
+
+    async fn send_stream_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        mut stream: StreamReceiver,
+    ) -> ChannelResult<Vec<String>> {
         let stream_mode = self.get_stream_mode(account_id);
         let thread_ts = self.get_reply_thread_ts(account_id, reply_to);
 
@@ -796,6 +954,7 @@ impl ChannelStreamOutbound for SlackOutbound {
                         Some(StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk)) => {
                             accumulated.push_str(&chunk)
                         },
+                        Some(StreamEvent::TaskUpdate(_)) => {},
                         Some(StreamEvent::Error(e)) => {
                             accumulated.push_str(&format!("\n\n:warning: {e}"));
                             break;
@@ -803,18 +962,20 @@ impl ChannelStreamOutbound for SlackOutbound {
                         Some(StreamEvent::Done) | None => break,
                     }
                 }
+                let mut ids = Vec::new();
                 if !accumulated.is_empty() {
                     let (client, token) = self.get_session(account_id)?;
                     let final_text = markdown_to_slack(&accumulated);
                     for chunk in chunk_message(&final_text, SLACK_MAX_MESSAGE_LEN) {
-                        if let Err(e) =
-                            post_message(&client, &token, to, chunk, thread_ts.as_deref()).await
-                        {
-                            warn!(account_id, to, "failed to send stream message: {e}");
+                        match post_message(&client, &token, to, chunk, thread_ts.as_deref()).await {
+                            Ok(ts) => ids.push(ts.to_string()),
+                            Err(e) => {
+                                warn!(account_id, to, "failed to send stream message: {e}");
+                            },
                         }
                     }
                 }
-                Ok(())
+                Ok(ids)
             },
         }
     }
@@ -824,6 +985,16 @@ impl ChannelStreamOutbound for SlackOutbound {
         // When rich rendering is requested it wins: the reply is delivered once,
         // complete, through `send_text` so it actually renders as blocks.
         self.get_stream_mode(account_id) != StreamMode::Off && !self.get_rich_blocks(account_id)
+    }
+
+    async fn receives_task_updates(&self, account_id: &str) -> bool {
+        self.get_stream_mode(account_id) == StreamMode::Native && !self.get_rich_blocks(account_id)
+    }
+
+    async fn claims_stream_delivery(&self, account_id: &str, reply_to: Option<&str>) -> bool {
+        self.get_stream_mode(account_id) == StreamMode::Native
+            && !self.get_rich_blocks(account_id)
+            && self.get_reply_thread_ts(account_id, reply_to).is_some()
     }
 }
 
@@ -862,6 +1033,7 @@ impl ChannelThreadContext for SlackOutbound {
                 let timestamp = msg.origin.ts.to_string();
 
                 ThreadMessage {
+                    message_id: timestamp.clone(),
                     sender_id,
                     is_bot,
                     text,
@@ -880,10 +1052,20 @@ mod tests {
     use super::*;
 
     fn outbound_with_thread_replies(thread_replies: bool) -> SlackOutbound {
+        outbound_with_config(thread_replies, StreamMode::EditInPlace, false)
+    }
+
+    fn outbound_with_config(
+        thread_replies: bool,
+        stream_mode: StreamMode,
+        rich_blocks: bool,
+    ) -> SlackOutbound {
         let accounts =
             std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
         let config = crate::config::SlackAccountConfig {
             thread_replies,
+            stream_mode,
+            rich_blocks,
             ..Default::default()
         };
         accounts
@@ -918,6 +1100,25 @@ mod tests {
                 .get_reply_thread_ts("acct", Some("1234567.890"))
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn task_updates_require_native_streaming_without_rich_blocks() {
+        let native = outbound_with_config(true, StreamMode::Native, false);
+        assert!(native.receives_task_updates("acct").await);
+        assert!(native.claims_stream_delivery("acct", Some("1.0")).await);
+        assert!(!native.claims_stream_delivery("acct", None).await);
+
+        let edit = outbound_with_config(true, StreamMode::EditInPlace, false);
+        assert!(!edit.receives_task_updates("acct").await);
+        assert!(!edit.claims_stream_delivery("acct", Some("1.0")).await);
+
+        let rich = outbound_with_config(true, StreamMode::Native, true);
+        assert!(!rich.receives_task_updates("acct").await);
+        assert!(!rich.claims_stream_delivery("acct", Some("1.0")).await);
+
+        let top_level = outbound_with_config(false, StreamMode::Native, false);
+        assert!(!top_level.claims_stream_delivery("acct", Some("1.0")).await);
     }
 
     #[test]
@@ -996,5 +1197,20 @@ mod tests {
         assert_eq!(extension_for_mime("image/jpeg"), "jpg");
         assert_eq!(extension_for_mime("application/pdf"), "pdf");
         assert_eq!(extension_for_mime("text/plain"), "bin");
+    }
+
+    #[test]
+    fn trace_link_delivery_modes_override_reporting_contracts() {
+        let implementation = include_str!("outbound.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or_default();
+        for mode in ["text", "media", "text_with_suffix", "html", "stream"] {
+            let method = format!("async fn send_{mode}_reporting_ids(");
+            assert!(
+                implementation.contains(&method),
+                "Slack must override {method} so reactions retain trace links"
+            );
+        }
     }
 }

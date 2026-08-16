@@ -358,9 +358,12 @@ local-validate-full pr_number='':
     if [[ -n {{ quote(pr_number) }} ]]; then
         args+=({{ quote(pr_number) }})
     fi
+    # `"${args[@]+...}"` is required: bash 3.2 (the default /bin/bash on macOS)
+    # treats a plain `"${args[@]}"` on an empty array as an unbound variable
+    # under `set -u`. The array is empty in the supported no-PR local-only mode.
     LOCAL_VALIDATE_TEST_CMD="just test" \
     LOCAL_VALIDATE_E2E_CMD="cd crates/web/ui && npm run e2e:install && npm run e2e" \
-        ./scripts/local-validate.sh "${args[@]}"
+        ./scripts/local-validate.sh "${args[@]+"${args[@]}"}"
 
 # Run all tests (nightly to share build cache with clippy/lint, OS-aware).
 # On macOS: single nextest run using default features (includes Metal, not CUDA).
@@ -446,6 +449,7 @@ ios-graphql:
 
 # Build iOS app (generic iOS destination, no signing).
 ios-build: ios-generate ios-graphql
+    ./scripts/generate-ios-project.sh
     xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build
 
 # Lint iOS app sources with SwiftLint.
@@ -454,6 +458,7 @@ ios-lint:
 
 # Open iOS project in Xcode (regenerates GraphQL types and project first).
 ios-open: ios-generate ios-graphql
+    ./scripts/generate-ios-project.sh
     open apps/ios/Moltis.xcodeproj
 
 # Build the APNS push relay.

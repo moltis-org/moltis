@@ -32,6 +32,7 @@ export function EditChannelModal(): VNode | null {
 	const editAgent = useSignal("");
 	const agentsList = useSignal<Array<{ id: string; name: string; emoji?: string }>>([]);
 	const allowlistItems = useSignal<string[]>([]);
+	const operatorItems = useSignal<string[]>([]);
 	const roomAllowlistItems = useSignal<string[]>([]);
 	const editCredential = useSignal("");
 	const editWebhookSecret = useSignal("");
@@ -61,6 +62,7 @@ export function EditChannelModal(): VNode | null {
 			ch?.config?.user_allowlist ||
 			ch?.config?.allowed_pubkeys ||
 			[]) as string[];
+		operatorItems.value = (ch?.config?.operators || []) as string[];
 		roomAllowlistItems.value = (ch?.config?.room_allowlist || ch?.config?.group_allowlist || []) as string[];
 		editCredential.value = "";
 		editWebhookSecret.value = (ch?.config?.webhook_secret as string) || "";
@@ -163,6 +165,7 @@ export function EditChannelModal(): VNode | null {
 		const dmFallback = isWhatsApp ? "open" : "allowlist";
 		updateConfig.dm_policy = (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement)?.value || dmFallback;
 		updateConfig.allowlist = allowlistItems.value;
+		updateConfig.operators = operatorItems.value;
 		if (isMatrix) {
 			updateConfig.user_allowlist = allowlistItems.value;
 			updateConfig.room_policy =
@@ -199,6 +202,8 @@ export function EditChannelModal(): VNode | null {
 		}
 		if (isSlack) {
 			updateConfig.api_base_url = editSlackApiBaseUrl.value.trim() || "https://slack.com/api";
+			updateConfig.stream_mode = editStreamMode.value;
+			updateConfig.thread_replies = editStreamMode.value === "native" ? true : cfg.thread_replies !== false;
 			updateConfig.ack_reactions = editSlackAckReactions.value;
 			updateConfig.reaction_triggers = editSlackReactionTriggers.value;
 			updateConfig.rich_blocks = editSlackRichBlocks.value;
@@ -228,6 +233,10 @@ export function EditChannelModal(): VNode | null {
 		saving.value = true;
 		const updateConfig = buildUpdateConfig(form);
 		Object.assign(updateConfig, advancedPatch.value);
+		if (isSlack && updateConfig.stream_mode === "native") {
+			updateConfig.thread_replies = true;
+			updateConfig.rich_blocks = false;
+		}
 		sendRpc("channels.update", {
 			type: channelType(ch.type),
 			account_id: ch.account_id,
@@ -410,6 +419,27 @@ export function EditChannelModal(): VNode | null {
 						<div className="text-xs text-[var(--muted)]">
 							Use Slack's default endpoint unless you use a Slack-compatible proxy or test gateway.
 						</div>
+						<label className="text-xs text-[var(--muted)]" htmlFor="edit-slack-stream-mode">
+							Response streaming
+						</label>
+						<select
+							id="edit-slack-stream-mode"
+							className="channel-select"
+							value={editStreamMode.value}
+							onChange={(e) => {
+								const mode = targetValue(e);
+								editStreamMode.value = mode;
+								if (mode === "native") editSlackRichBlocks.value = false;
+							}}
+							aria-label="Response streaming"
+						>
+							<option value="edit_in_place">Edit-in-place text (default)</option>
+							<option value="native">Slack live text and tool cards</option>
+							<option value="off">Off (send once complete)</option>
+						</select>
+						<div className="text-xs text-[var(--muted)]">
+							Native streaming requires threaded replies and shows tool names without arguments or results.
+						</div>
 						<label className="flex items-start gap-2 cursor-pointer mt-1">
 							<input
 								type="checkbox"
@@ -446,7 +476,11 @@ export function EditChannelModal(): VNode | null {
 								type="checkbox"
 								checked={editSlackRichBlocks.value}
 								onChange={(e) => {
-									editSlackRichBlocks.value = targetChecked(e);
+									const enabled = targetChecked(e);
+									editSlackRichBlocks.value = enabled;
+									if (enabled && editStreamMode.value === "native") {
+										editStreamMode.value = "edit_in_place";
+									}
 								}}
 							/>
 							<span className="flex flex-col gap-1">
@@ -745,6 +779,25 @@ export function EditChannelModal(): VNode | null {
 						allowlistItems.value = v;
 					}}
 				/>
+				<label className="text-xs text-[var(--muted)]">Operators</label>
+				<p className="text-xs text-[var(--muted)]" data-testid="operators-description">
+					Senders who may run <code>/sh</code> and other commands on <strong>this machine</strong>, and read this
+					instance's sessions and memory. This is equivalent to giving someone your terminal — add yourself, or someone
+					you trust with the host. Entries are exact, case-sensitive platform sender IDs.
+				</p>
+				<AllowlistInput
+					value={operatorItems.value}
+					preserveAt={true}
+					placeholder="Type a user ID and press Enter"
+					onChange={(v) => {
+						operatorItems.value = v;
+					}}
+				/>
+				<p className="text-xs text-[var(--muted)]" data-testid="operators-hint">
+					{operatorItems.value.length > 0
+						? "Only these exact sender IDs can use privileged commands. Shared-room agent turns remain restricted for everyone."
+						: "No operators set — privileged commands and private host access are disabled for every sender on this channel."}
+				</p>
 				{isMatrix && (
 					<>
 						<label className="text-xs text-[var(--muted)]">Room Allowlist</label>

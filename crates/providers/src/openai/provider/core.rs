@@ -25,6 +25,7 @@ impl OpenAiProvider {
         Self::new_with_name(api_key, model, base_url, "openai".into()).with_capabilities(
             OpenAiProviderCapabilities {
                 responses_websocket_policy: super::super::ResponsesWebSocketPolicy::OpenAiPlatform,
+                responses_required_for_reasoning_tools: true,
                 ..OpenAiProviderCapabilities::DEFAULT
             },
         )
@@ -331,6 +332,18 @@ impl OpenAiProvider {
             format!("{base}/v1/responses")
         }
     }
+
+    fn wire_api_for_request(&self, has_tools: bool) -> WireApi {
+        if matches!(self.wire_api, WireApi::Responses)
+            || (self.capabilities.responses_required_for_reasoning_tools
+                && self.reasoning_effort.is_some()
+                && has_tools)
+        {
+            WireApi::Responses
+        } else {
+            WireApi::ChatCompletions
+        }
+    }
 }
 
 fn default_capabilities_for_provider(provider_name: &str) -> OpenAiProviderCapabilities {
@@ -461,7 +474,10 @@ impl LlmProvider for OpenAiProvider {
         tools: &[serde_json::Value],
         options: &AgentToolControls,
     ) -> anyhow::Result<CompletionResponse> {
-        if matches!(self.wire_api, WireApi::Responses) {
+        if matches!(
+            self.wire_api_for_request(!tools.is_empty()),
+            WireApi::Responses
+        ) {
             return self.complete_responses(messages, tools, options).await;
         }
         self.complete_chat(messages, tools, options).await
@@ -505,7 +521,10 @@ impl LlmProvider for OpenAiProvider {
         tools: Vec<serde_json::Value>,
         options: AgentToolControls,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-        match (self.wire_api, self.stream_transport) {
+        match (
+            self.wire_api_for_request(!tools.is_empty()),
+            self.stream_transport,
+        ) {
             (WireApi::Responses, ProviderStreamTransport::Sse) => {
                 self.stream_responses_sse(messages, tools, options)
             },
@@ -651,6 +670,52 @@ mod tests {
                 .with_reasoning_effort(ReasoningEffort::High)
                 .is_some(),
             "provider URLs must not enable provider-specific reasoning behavior"
+        );
+    }
+
+    #[test]
+    fn openai_reasoning_with_tools_uses_responses_api() {
+        let mut provider = OpenAiProvider::new(
+            secrecy::Secret::new("test-key".to_string()),
+            "gpt-5.6-sol".to_string(),
+            "https://api.openai.com/v1".to_string(),
+        );
+        provider.reasoning_effort = Some(ReasoningEffort::High);
+
+        assert_eq!(provider.wire_api_for_request(true), WireApi::Responses);
+        assert_eq!(
+            provider.wire_api_for_request(false),
+            WireApi::ChatCompletions
+        );
+    }
+
+    #[test]
+    fn openai_tools_without_reasoning_keep_configured_chat_api() {
+        let provider = OpenAiProvider::new(
+            secrecy::Secret::new("test-key".to_string()),
+            "gpt-5.6-sol".to_string(),
+            "https://api.openai.com/v1".to_string(),
+        );
+
+        assert_eq!(
+            provider.wire_api_for_request(true),
+            WireApi::ChatCompletions
+        );
+    }
+
+    #[test]
+    fn compatible_provider_does_not_switch_wire_api_implicitly() {
+        let mut provider = OpenAiProvider::new_with_name(
+            secrecy::Secret::new("test-key".to_string()),
+            "gpt-5.6-sol".to_string(),
+            "https://example.com/v1".to_string(),
+            "custom-openai".to_string(),
+        );
+        provider.reasoning_effort = Some(ReasoningEffort::High);
+
+        assert_eq!(
+            provider.wire_api_for_request(true),
+            WireApi::ChatCompletions
         );
     }
 

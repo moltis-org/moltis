@@ -810,6 +810,55 @@ mod tests {
     }
 
     #[test]
+    fn wacrawl_install_metadata_uses_openclaw_sources() {
+        let skills = store().discover();
+        let wacrawl = skills
+            .iter()
+            .find(|s| s.name == "wacrawl")
+            .expect("wacrawl should be bundled");
+
+        let modules: Vec<&str> = wacrawl
+            .requires
+            .install
+            .iter()
+            .filter_map(|install| install.module.as_deref())
+            .collect();
+
+        assert_eq!(
+            wacrawl.homepage.as_deref(),
+            Some("https://github.com/openclaw/wacrawl")
+        );
+        assert!(
+            wacrawl
+                .requires
+                .install
+                .iter()
+                .any(|install| install.formula.as_deref() == Some("openclaw/tap/wacrawl"))
+        );
+        assert!(modules.contains(&"github.com/openclaw/wacrawl/cmd/wacrawl@latest"));
+        assert!(
+            !wacrawl
+                .homepage
+                .as_deref()
+                .is_some_and(|homepage| { homepage.contains("github.com/steipete/wacrawl") })
+        );
+        assert!(!wacrawl.requires.install.iter().any(|install| {
+            install
+                .formula
+                .as_deref()
+                .is_some_and(|formula| formula.contains("steipete/tap/wacrawl"))
+        }));
+        // Load-bearing: `go install` compares the declared module path against the
+        // required one, so the pre-rename path fails outright — the repo was renamed
+        // into the openclaw org and its go.mod declares `github.com/openclaw/wacrawl`.
+        assert!(
+            !modules
+                .iter()
+                .any(|module| module.contains("github.com/steipete/wacrawl"))
+        );
+    }
+
+    #[test]
     fn webhook_subscriptions_is_moltis_native() {
         let s = store();
         let body = s.read_skill("webhook-subscriptions").expect("should exist");

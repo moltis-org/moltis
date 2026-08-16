@@ -6,19 +6,23 @@
 
 pub mod activity;
 pub mod channel_webhook_middleware;
+mod chat_classification;
 pub mod commands;
 pub mod config_view;
 pub mod contract;
 pub mod error;
 pub mod fair_queue;
+pub mod feedback;
 pub mod gating;
 pub mod media_download;
 pub mod message_log;
+pub mod operators;
 pub mod otp;
 pub mod plugin;
 pub mod registry;
 pub mod slack_api_url;
 pub mod store;
+pub mod trace_link;
 
 pub use {
     activity::{ChannelAckOutcome, ChannelActivity},
@@ -28,6 +32,7 @@ pub use {
     },
     config_view::ChannelConfigView,
     error::{Error, Result},
+    feedback::{FeedbackOutcome, FeedbackService},
     media_download::{InboundMediaDownloader, InboundMediaSource},
     plugin::{
         ButtonRow, ButtonStyle, ChannelAttachment, ChannelCapabilities, ChannelDescriptor,
@@ -40,4 +45,5 @@ pub use {
     },
     registry::{ChannelRegistry, RegistryOutboundRouter},
     slack_api_url::{normalize_slack_api_base_url, validate_slack_api_base_url},
+    trace_link::{TraceLink, TraceLinkStore, WEB_CHANNEL},
 };

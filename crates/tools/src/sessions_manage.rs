@@ -147,7 +147,7 @@ impl AgentTool for SessionsDeleteTool {
 
     fn description(&self) -> &str {
         "Delete a chat session and its history by key. \
-         Deleting the main session is not allowed."
+         The main session is recreated empty on its next message."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -170,10 +170,6 @@ impl AgentTool for SessionsDeleteTool {
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let key = require_str(&params, "key")?;
         let force = bool_param(&params, "force", false);
-
-        if key == "main" {
-            return Err(Error::message("cannot delete the main session").into());
-        }
 
         if self.metadata.get(key).await.is_none() {
             return Err(Error::message(format!("session not found: {key}")).into());
@@ -327,24 +323,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sessions_delete_rejects_main_session() -> TestResult<()> {
+    async fn sessions_delete_allows_main_session() -> TestResult<()> {
         let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
         metadata.upsert("main", Some("Main".to_string())).await?;
 
-        let delete_fn: DeleteSessionFn =
-            Arc::new(move |_req| Box::pin(async move { Ok(serde_json::json!({ "ok": true })) }));
+        let deleted = Arc::new(AtomicBool::new(false));
+        let deleted_flag = Arc::clone(&deleted);
+        let delete_fn: DeleteSessionFn = Arc::new(move |req| {
+            let deleted_flag = Arc::clone(&deleted_flag);
+            Box::pin(async move {
+                assert_eq!(req.key, "main");
+                deleted_flag.store(true, Ordering::SeqCst);
+                Ok(serde_json::json!({ "ok": true }))
+            })
+        });
 
         let tool = SessionsDeleteTool::new(metadata, delete_fn);
-        let result = tool
+        let value = tool
             .execute(serde_json::json!({
                 "key": "main"
             }))
-            .await;
+            .await
+            .map_err(|e| std::io::Error::other(format!("main-session delete failed: {e}")))?;
 
-        let err = result
-            .err()
-            .ok_or_else(|| std::io::Error::other("expected main-session delete to fail"))?;
-        assert!(err.to_string().contains("cannot delete the main session"));
+        assert_eq!(value.get("deleted").and_then(|v| v.as_bool()), Some(true));
+        assert!(deleted.load(Ordering::SeqCst));
         Ok(())
     }
 }

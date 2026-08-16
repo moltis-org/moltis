@@ -8,6 +8,40 @@ use super::{
     types::{CompletionResponse, ModelMetadata, Usage},
 };
 
+/// Concrete provider and model selected for one completion attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderIdentity {
+    pub provider: String,
+    pub model: String,
+}
+
+impl ProviderIdentity {
+    #[must_use]
+    pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            provider: provider.into(),
+            model: model.into(),
+        }
+    }
+}
+
+/// Lifecycle events for attempts made by a provider wrapper.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderAttemptEvent {
+    Started(ProviderIdentity),
+    Failed {
+        identity: ProviderIdentity,
+        error: String,
+    },
+}
+
+/// Event returned by the runner-facing tracked streaming API.
+#[derive(Debug, Clone)]
+pub enum TrackedStreamEvent {
+    Attempt(ProviderAttemptEvent),
+    Event(StreamEvent),
+}
+
 // ── Stream events ───────────────────────────────────────────────────────────
 
 /// Events emitted during streaming LLM completion.
@@ -72,6 +106,26 @@ pub trait LlmProvider: Send + Sync {
         self.complete(messages, tools).await
     }
 
+    /// Complete while reporting each concrete provider attempt.
+    async fn complete_with_options_tracked(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        options: &AgentToolControls,
+        on_attempt: &mut (dyn FnMut(ProviderAttemptEvent) + Send),
+    ) -> anyhow::Result<CompletionResponse> {
+        let identity = ProviderIdentity::new(self.name(), self.id());
+        on_attempt(ProviderAttemptEvent::Started(identity.clone()));
+        let result = self.complete_with_options(messages, tools, options).await;
+        if let Err(error) = &result {
+            on_attempt(ProviderAttemptEvent::Failed {
+                identity,
+                error: error.to_string(),
+            });
+        }
+        result
+    }
+
     /// Whether this provider supports tool/function calling.
     /// Defaults to false; providers that handle the `tools` parameter
     /// in `complete()` should override this to return true.
@@ -132,6 +186,24 @@ pub trait LlmProvider: Send + Sync {
             return Box::pin(tokio_stream::once(StreamEvent::Error(error.to_string())));
         }
         self.stream_with_tools(messages, tools)
+    }
+
+    /// Stream while reporting the concrete provider/model selected for the attempt.
+    fn stream_with_tools_and_options_tracked(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+        options: AgentToolControls,
+    ) -> Pin<Box<dyn Stream<Item = TrackedStreamEvent> + Send + '_>> {
+        let attempt = TrackedStreamEvent::Attempt(ProviderAttemptEvent::Started(
+            ProviderIdentity::new(self.name(), self.id()),
+        ));
+        Box::pin(
+            tokio_stream::once(attempt).chain(
+                self.stream_with_tools_and_options(messages, tools, options)
+                    .map(TrackedStreamEvent::Event),
+            ),
+        )
     }
 
     /// Configured reasoning effort for this provider instance, if any.

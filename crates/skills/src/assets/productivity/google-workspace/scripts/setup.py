@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Google Workspace OAuth2 setup for Hermes Agent.
+"""Google Workspace OAuth2 setup for Moltis.
 
 Fully non-interactive — designed to be driven by the agent via terminal commands.
 The agent mediates between this script and the user (works on CLI, Telegram, Discord, etc.)
@@ -26,20 +26,18 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-try:
-    from hermes_constants import display_hermes_home, get_hermes_home
-except ModuleNotFoundError:
-    HERMES_AGENT_ROOT = Path(__file__).resolve().parents[4]
-    if HERMES_AGENT_ROOT.exists():
-        sys.path.insert(0, str(HERMES_AGENT_ROOT))
-    from hermes_constants import display_hermes_home, get_hermes_home
+def get_moltis_home() -> Path:
+    configured = os.getenv("MOLTIS_DATA_DIR") or os.getenv("HERMES_HOME")
+    return Path(configured).expanduser() if configured else Path.home() / ".moltis"
 
-HERMES_HOME = get_hermes_home()
-TOKEN_PATH = HERMES_HOME / "google_token.json"
-CLIENT_SECRET_PATH = HERMES_HOME / "google_client_secret.json"
-PENDING_AUTH_PATH = HERMES_HOME / "google_oauth_pending.json"
+
+MOLTIS_HOME = get_moltis_home()
+TOKEN_PATH = MOLTIS_HOME / "google_token.json"
+CLIENT_SECRET_PATH = MOLTIS_HOME / "google_client_secret.json"
+PENDING_AUTH_PATH = MOLTIS_HOME / "google_oauth_pending.json"
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -51,6 +49,16 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/documents.readonly",
 ]
+
+SERVICE_SCOPES = {
+    "gmail-readonly": ["https://www.googleapis.com/auth/gmail.readonly"],
+    "email": SCOPES[:3],
+    "calendar": ["https://www.googleapis.com/auth/calendar"],
+    "drive": ["https://www.googleapis.com/auth/drive.readonly"],
+    "contacts": ["https://www.googleapis.com/auth/contacts.readonly"],
+    "sheets": ["https://www.googleapis.com/auth/spreadsheets"],
+    "docs": ["https://www.googleapis.com/auth/documents.readonly"],
+}
 
 REQUIRED_PACKAGES = ["google-api-python-client", "google-auth-oauthlib", "google-auth-httplib2"]
 
@@ -65,6 +73,24 @@ def _normalize_authorized_user_payload(payload: dict) -> dict:
     if not normalized.get("type"):
         normalized["type"] = "authorized_user"
     return normalized
+
+
+def _write_private_json(path: Path, payload: dict):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as file:
+            json.dump(payload, file, indent=2)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def _load_token_payload(path: Path = TOKEN_PATH) -> dict:
@@ -87,7 +113,7 @@ def _format_missing_scopes(missing_scopes: list[str]) -> str:
     return (
         "Token is valid but missing required Google Workspace scopes:\n"
         f"{bullets}\n"
-        "Run the Google Workspace setup again from this same Hermes profile to refresh consent."
+        "Run the Google Workspace setup again from this same Moltis data directory to refresh consent."
     )
 
 
@@ -158,11 +184,9 @@ def check_auth():
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            TOKEN_PATH.write_text(
-                json.dumps(
-                    _normalize_authorized_user_payload(json.loads(creds.to_json())),
-                    indent=2,
-                )
+            _write_private_json(
+                TOKEN_PATH,
+                _normalize_authorized_user_payload(json.loads(creds.to_json())),
             )
             missing_scopes = _missing_scopes_from_payload(_load_token_payload(TOKEN_PATH))
             if missing_scopes:
@@ -180,7 +204,7 @@ def check_auth():
 
 
 def store_client_secret(path: str):
-    """Copy and validate client_secret.json to Hermes home."""
+    """Copy and validate client_secret.json to the Moltis data directory."""
     src = Path(path).expanduser().resolve()
     if not src.exists():
         print(f"ERROR: File not found: {src}")
@@ -197,21 +221,20 @@ def store_client_secret(path: str):
         print("Download the correct file from: https://console.cloud.google.com/apis/credentials")
         sys.exit(1)
 
-    CLIENT_SECRET_PATH.write_text(json.dumps(data, indent=2))
+    _write_private_json(CLIENT_SECRET_PATH, data)
     print(f"OK: Client secret saved to {CLIENT_SECRET_PATH}")
 
 
-def _save_pending_auth(*, state: str, code_verifier: str):
+def _save_pending_auth(*, state: str, code_verifier: str, scopes: list[str]):
     """Persist the OAuth session bits needed for a later token exchange."""
-    PENDING_AUTH_PATH.write_text(
-        json.dumps(
-            {
-                "state": state,
-                "code_verifier": code_verifier,
-                "redirect_uri": REDIRECT_URI,
-            },
-            indent=2,
-        )
+    _write_private_json(
+        PENDING_AUTH_PATH,
+        {
+            "state": state,
+            "code_verifier": code_verifier,
+            "redirect_uri": REDIRECT_URI,
+            "scopes": scopes,
+        },
     )
 
 
@@ -253,7 +276,18 @@ def _extract_code_and_state(code_or_url: str) -> tuple[str, str | None]:
     return params["code"][0], state
 
 
-def get_auth_url():
+def selected_scopes(services: str) -> list[str]:
+    names = [name.strip() for name in services.split(",") if name.strip()]
+    if not names or names == ["all"]:
+        return list(SCOPES)
+    unknown = sorted(set(names) - SERVICE_SCOPES.keys())
+    if unknown:
+        print(f"ERROR: Unknown Google services: {', '.join(unknown)}")
+        sys.exit(1)
+    return list(dict.fromkeys(scope for name in names for scope in SERVICE_SCOPES[name]))
+
+
+def get_auth_url(scopes: list[str]):
     """Print the OAuth authorization URL. User visits this in a browser."""
     if not CLIENT_SECRET_PATH.exists():
         print("ERROR: No client secret stored. Run --client-secret first.")
@@ -264,7 +298,7 @@ def get_auth_url():
 
     flow = Flow.from_client_secrets_file(
         str(CLIENT_SECRET_PATH),
-        scopes=SCOPES,
+        scopes=scopes,
         redirect_uri=REDIRECT_URI,
         autogenerate_code_verifier=True,
     )
@@ -272,7 +306,7 @@ def get_auth_url():
         access_type="offline",
         prompt="consent",
     )
-    _save_pending_auth(state=state, code_verifier=flow.code_verifier)
+    _save_pending_auth(state=state, code_verifier=flow.code_verifier, scopes=scopes)
     # Print just the URL so the agent can extract it cleanly
     print(auth_url)
 
@@ -291,21 +325,8 @@ def exchange_auth_code(code: str):
 
     _ensure_deps()
     from google_auth_oauthlib.flow import Flow
-    from urllib.parse import parse_qs, urlparse
 
-    # Extract granted scopes from the callback URL if present
-    if returned_state and "scope" in parse_qs(urlparse(code).query if isinstance(code, str) and code.startswith("http") else {}):
-        granted_scopes = parse_qs(urlparse(code).query)["scope"][0].split()
-    else:
-        # Try to extract from code_or_url parameter
-        if isinstance(code, str) and code.startswith("http"):
-            params = parse_qs(urlparse(code).query)
-            if "scope" in params:
-                granted_scopes = params["scope"][0].split()
-            else:
-                granted_scopes = SCOPES
-        else:
-            granted_scopes = SCOPES
+    granted_scopes = pending_auth.get("scopes") or SCOPES
 
     flow = Flow.from_client_secrets_file(
         str(CLIENT_SECRET_PATH),
@@ -342,10 +363,10 @@ def exchange_auth_code(code: str):
         print(f"WARNING: Token missing some Google Workspace scopes: {', '.join(missing_scopes)}")
         print("Some services may not be available.")
 
-    TOKEN_PATH.write_text(json.dumps(token_payload, indent=2))
+    _write_private_json(TOKEN_PATH, token_payload)
     PENDING_AUTH_PATH.unlink(missing_ok=True)
     print(f"OK: Authenticated. Token saved to {TOKEN_PATH}")
-    print(f"Profile-scoped token location: {display_hermes_home()}/google_token.json")
+    print(f"Moltis token location: {TOKEN_PATH}")
 
 
 def revoke():
@@ -381,7 +402,7 @@ def revoke():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Google Workspace OAuth setup for Hermes")
+    parser = argparse.ArgumentParser(description="Google Workspace OAuth setup for Moltis")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true", help="Check if auth is valid (exit 0=yes, 1=no)")
     group.add_argument("--client-secret", metavar="PATH", help="Store OAuth client_secret.json")
@@ -389,6 +410,11 @@ def main():
     group.add_argument("--auth-code", metavar="CODE", help="Exchange auth code for token")
     group.add_argument("--revoke", action="store_true", help="Revoke and delete stored token")
     group.add_argument("--install-deps", action="store_true", help="Install Python dependencies")
+    parser.add_argument(
+        "--services",
+        default="all",
+        help="Comma-separated services: gmail-readonly,email,calendar,drive,contacts,sheets,docs,all",
+    )
     args = parser.parse_args()
 
     if args.check:
@@ -396,7 +422,7 @@ def main():
     elif args.client_secret:
         store_client_secret(args.client_secret)
     elif args.auth_url:
-        get_auth_url()
+        get_auth_url(selected_scopes(args.services))
     elif args.auth_code:
         exchange_auth_code(args.auth_code)
     elif args.revoke:

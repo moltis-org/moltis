@@ -135,6 +135,63 @@ async fn test_simple_text_response() {
     assert_eq!(result.tool_calls_made, 0);
 }
 
+struct NestedErrorDataTool;
+
+#[async_trait]
+impl crate::tool_registry::AgentTool for NestedErrorDataTool {
+    fn name(&self) -> &str {
+        "echo_tool"
+    }
+
+    fn description(&self) -> &str {
+        "Returns successful nested data"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+
+    async fn execute(&self, _params: serde_json::Value) -> Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "success": true,
+            "result": {"error": "page value"}
+        }))
+    }
+}
+
+#[tokio::test]
+async fn test_nested_error_data_does_not_fail_a_successful_tool_call() {
+    let provider = Arc::new(ToolCallingProvider {
+        call_count: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut tools = ToolRegistry::new();
+    tools.register(Box::new(NestedErrorDataTool));
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = Arc::clone(&events);
+    let on_event: OnEvent = Box::new(move |event| {
+        captured.lock().unwrap().push(event);
+    });
+
+    run_agent_loop(
+        provider,
+        &tools,
+        "You are a test bot.",
+        &UserContent::text("Hi"),
+        Some(&on_event),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| { matches!(event, RunnerEvent::ToolCallEnd { success: true, .. }) })
+    );
+}
+
 #[tokio::test]
 async fn test_non_streaming_runner_uses_max_iteration_override() {
     let provider = Arc::new(ToolCallingProvider {

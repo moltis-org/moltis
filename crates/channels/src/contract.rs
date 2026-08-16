@@ -63,7 +63,7 @@ pub async fn config_view_after_start(plugin: &mut dyn ChannelPlugin) -> Result<(
     let config = serde_json::json!({});
 
     plugin.start_account(id, config).await?;
-    let view = plugin.account_config(id);
+    let view = plugin.account_config(id).await;
     assert!(
         view.is_some(),
         "account_config must return Some after start_account"
@@ -71,7 +71,7 @@ pub async fn config_view_after_start(plugin: &mut dyn ChannelPlugin) -> Result<(
 
     plugin.stop_account(id).await?;
     assert!(
-        plugin.account_config(id).is_none(),
+        plugin.account_config(id).await.is_none(),
         "account_config must return None after stop_account"
     );
     Ok(())

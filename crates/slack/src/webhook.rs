@@ -286,7 +286,7 @@ pub async fn handle_verified_interaction_webhook(
             thread_id: None,
         };
         let response = sink
-            .dispatch_interaction(action_id, reply_to)
+            .dispatch_interaction(action_id, reply_to, Some(user_id))
             .await
             .unwrap_or_else(|error| format!("Error: {error}"));
         if let Some(response_url) = payload.get("response_url").and_then(|value| value.as_str())
@@ -568,7 +568,7 @@ mod tests {
     /// Mock sink that records the command string passed to `dispatch_command`.
     struct RecordingSink {
         commands: Mutex<Vec<String>>,
-        interactions: Mutex<Vec<(String, ChannelReplyTarget)>>,
+        interactions: Mutex<Vec<(String, ChannelReplyTarget, Option<String>)>>,
     }
 
     impl RecordingSink {
@@ -606,11 +606,13 @@ mod tests {
             &self,
             callback_data: &str,
             reply_to: ChannelReplyTarget,
+            sender_id: Option<&str>,
         ) -> ChannelResult<String> {
-            self.interactions
-                .lock()
-                .unwrap()
-                .push((callback_data.to_string(), reply_to));
+            self.interactions.lock().unwrap().push((
+                callback_data.to_string(),
+                reply_to,
+                sender_id.map(String::from),
+            ));
             Ok("updated".to_string())
         }
 
@@ -902,6 +904,7 @@ mod tests {
         assert_eq!(interactions.len(), 1);
         assert_eq!(interactions[0].0, "model_switch:gpt");
         assert_eq!(interactions[0].1.message_id.as_deref(), Some("100.1"));
+        assert_eq!(interactions[0].2.as_deref(), Some("U123"));
     }
 
     #[tokio::test]

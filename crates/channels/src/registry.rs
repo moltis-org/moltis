@@ -218,7 +218,7 @@ impl ChannelRegistry {
         let channel_type = self.resolve_channel_type(account_id)?;
         let plugin = self.plugins.get(&channel_type)?;
         let p = plugin.read().await;
-        p.account_config(account_id)
+        p.account_config(account_id).await
     }
 
     /// Get the raw JSON config for an account via the registry.
@@ -226,7 +226,7 @@ impl ChannelRegistry {
         let channel_type = self.resolve_channel_type(account_id)?;
         let plugin = self.plugins.get(&channel_type)?;
         let p = plugin.read().await;
-        p.account_config_json(account_id)
+        p.account_config_json(account_id).await
     }
 
     /// Fetch thread messages for context injection.
@@ -247,14 +247,25 @@ impl ChannelRegistry {
             .plugins
             .get(&channel_type)
             .ok_or_else(|| Error::invalid_input(format!("unknown channel type: {channel_type}")))?;
-        let p = plugin.read().await;
-        match p.thread_context() {
+        let context = plugin.read().await.shared_thread_context();
+        match context {
             Some(ctx) => {
                 ctx.fetch_thread_messages(account_id, channel_id, thread_id, limit)
                     .await
             },
             None => Ok(Vec::new()),
         }
+    }
+
+    /// Whether an active account exposes the shared thread-history capability.
+    pub async fn supports_thread_history(&self, account_id: &str) -> bool {
+        let Some(channel_type) = self.resolve_channel_type(account_id) else {
+            return false;
+        };
+        let Some(plugin) = self.plugins.get(&channel_type) else {
+            return false;
+        };
+        plugin.read().await.shared_thread_context().is_some()
     }
 
     /// Update account config via the registry.
@@ -271,7 +282,7 @@ impl ChannelRegistry {
             .get(&channel_type)
             .ok_or_else(|| Error::invalid_input(format!("unknown channel type: {channel_type}")))?;
         let p = plugin.read().await;
-        p.update_account_config(account_id, config)
+        p.update_account_config(account_id, config).await
     }
 
     /// Retry deferred account setup for a running account.
@@ -333,6 +344,26 @@ impl ChannelOutbound for RegistryOutboundRouter {
         outbound.send_text(account_id, to, text, reply_to).await
     }
 
+    /// Delegate rather than inherit the trait default: the default reports no
+    /// ids, which would silently strip attribution from every channel behind
+    /// this facade even though the concrete outbound can report them.
+    async fn send_text_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let outbound = self
+            .registry
+            .resolve_outbound(account_id)
+            .await
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        outbound
+            .send_text_reporting_ids(account_id, to, text, reply_to)
+            .await
+    }
+
     async fn send_media(
         &self,
         account_id: &str,
@@ -375,6 +406,24 @@ impl ChannelOutbound for RegistryOutboundRouter {
             .await
     }
 
+    async fn send_text_with_suffix_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let outbound = self
+            .registry
+            .resolve_outbound(account_id)
+            .await
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        outbound
+            .send_text_with_suffix_reporting_ids(account_id, to, text, suffix_html, reply_to)
+            .await
+    }
+
     async fn send_html(
         &self,
         account_id: &str,
@@ -388,6 +437,23 @@ impl ChannelOutbound for RegistryOutboundRouter {
             .await
             .ok_or_else(|| Error::unknown_account(account_id))?;
         outbound.send_html(account_id, to, html, reply_to).await
+    }
+
+    async fn send_html_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let outbound = self
+            .registry
+            .resolve_outbound(account_id)
+            .await
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        outbound
+            .send_html_reporting_ids(account_id, to, html, reply_to)
+            .await
     }
 
     async fn send_text_silent(
@@ -497,6 +563,23 @@ impl ChannelStreamOutbound for RegistryOutboundRouter {
             .await
     }
 
+    async fn send_stream_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> Result<Vec<String>> {
+        let stream_out = self
+            .registry
+            .resolve_stream(account_id)
+            .await
+            .ok_or_else(|| Error::unknown_account(account_id))?;
+        stream_out
+            .send_stream_reporting_ids(account_id, to, reply_to, stream)
+            .await
+    }
+
     async fn is_stream_enabled(&self, account_id: &str) -> bool {
         let Some(stream_out) = self.registry.resolve_stream(account_id).await else {
             return false;
@@ -511,11 +594,27 @@ impl ChannelStreamOutbound for RegistryOutboundRouter {
         stream_out.streams_final_replies(account_id).await
     }
 
+    async fn claims_stream_delivery(&self, account_id: &str, reply_to: Option<&str>) -> bool {
+        let Some(stream_out) = self.registry.resolve_stream(account_id).await else {
+            return false;
+        };
+        stream_out
+            .claims_stream_delivery(account_id, reply_to)
+            .await
+    }
+
     async fn receives_progress_deltas(&self, account_id: &str) -> bool {
         let Some(stream_out) = self.registry.resolve_stream(account_id).await else {
             return false;
         };
         stream_out.receives_progress_deltas(account_id).await
+    }
+
+    async fn receives_task_updates(&self, account_id: &str) -> bool {
+        let Some(stream_out) = self.registry.resolve_stream(account_id).await else {
+            return false;
+        };
+        stream_out.receives_task_updates(account_id).await
     }
 }
 
@@ -567,7 +666,9 @@ mod tests {
         accounts: std::sync::Mutex<HashMap<String, serde_json::Value>>,
         outbound: NullOutbound,
         streams_final_replies: bool,
+        claims_stream_delivery: bool,
         receives_progress_deltas: bool,
+        receives_task_updates: bool,
     }
 
     impl TestPlugin {
@@ -577,7 +678,9 @@ mod tests {
                 accounts: std::sync::Mutex::new(HashMap::new()),
                 outbound: NullOutbound,
                 streams_final_replies: true,
+                claims_stream_delivery: false,
                 receives_progress_deltas: false,
+                receives_task_updates: false,
             }
         }
 
@@ -587,7 +690,9 @@ mod tests {
                 accounts: std::sync::Mutex::new(HashMap::new()),
                 outbound: NullOutbound,
                 streams_final_replies: false,
+                claims_stream_delivery: true,
                 receives_progress_deltas: true,
+                receives_task_updates: true,
             }
         }
     }
@@ -635,7 +740,7 @@ mod tests {
             self.accounts.lock().unwrap().keys().cloned().collect()
         }
 
-        fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+        async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
             if self.has_account(account_id) {
                 Some(Box::new(TestConfigView))
             } else {
@@ -643,7 +748,7 @@ mod tests {
             }
         }
 
-        fn update_account_config(
+        async fn update_account_config(
             &self,
             _account_id: &str,
             _config: serde_json::Value,
@@ -658,7 +763,9 @@ mod tests {
         fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound> {
             Arc::new(NullStreamOutbound {
                 streams_final_replies: self.streams_final_replies,
+                claims_stream_delivery: self.claims_stream_delivery,
                 receives_progress_deltas: self.receives_progress_deltas,
+                receives_task_updates: self.receives_task_updates,
             })
         }
     }
@@ -692,11 +799,36 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
+
+        // Sentinel ids: the trait defaults report none, so a router that
+        // inherits them instead of delegating produces an empty list.
+        async fn send_text_reporting_ids(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<Vec<String>> {
+            Ok(vec!["text-1".into()])
+        }
+
+        async fn send_text_with_suffix_reporting_ids(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<Vec<String>> {
+            Ok(vec!["suffix-1".into()])
+        }
     }
 
     struct NullStreamOutbound {
         streams_final_replies: bool,
+        claims_stream_delivery: bool,
         receives_progress_deltas: bool,
+        receives_task_updates: bool,
     }
 
     #[async_trait]
@@ -716,12 +848,31 @@ mod tests {
             Ok(())
         }
 
+        async fn send_stream_reporting_ids(
+            &self,
+            account_id: &str,
+            to: &str,
+            reply_to: Option<&str>,
+            stream: StreamReceiver,
+        ) -> Result<Vec<String>> {
+            self.send_stream(account_id, to, reply_to, stream).await?;
+            Ok(vec!["stream-1".into()])
+        }
+
         async fn streams_final_replies(&self, _: &str) -> bool {
             self.streams_final_replies
         }
 
         async fn receives_progress_deltas(&self, _: &str) -> bool {
             self.receives_progress_deltas
+        }
+
+        async fn claims_stream_delivery(&self, _: &str, _: Option<&str>) -> bool {
+            self.claims_stream_delivery
+        }
+
+        async fn receives_task_updates(&self, _: &str) -> bool {
+            self.receives_task_updates
         }
     }
 
@@ -866,6 +1017,51 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// The id-reporting sends must be delegated, not inherited.
+    ///
+    /// Every channel reaches the outbound trait through this router, so a
+    /// router that fell back to the trait defaults would report no ids for any
+    /// channel and silently strip feedback attribution from the whole system.
+    #[tokio::test]
+    async fn outbound_router_delegates_id_reporting_sends() {
+        let mut registry = ChannelRegistry::new();
+        registry
+            .register(Arc::new(RwLock::new(TestPlugin::new("telegram"))))
+            .await;
+        registry
+            .start_account("telegram", "bot1", serde_json::json!({}))
+            .await
+            .unwrap();
+
+        let router = RegistryOutboundRouter::new(Arc::new(registry));
+
+        assert_eq!(
+            router
+                .send_text_reporting_ids("bot1", "42", "hello", None)
+                .await
+                .unwrap(),
+            vec!["text-1".to_string()]
+        );
+        assert_eq!(
+            router
+                .send_text_with_suffix_reporting_ids("bot1", "42", "hello", "<i>log</i>", None)
+                .await
+                .unwrap(),
+            vec!["suffix-1".to_string()]
+        );
+
+        let (tx, rx) = mpsc::channel(8);
+        tx.send(StreamEvent::Done).await.unwrap();
+        drop(tx);
+        assert_eq!(
+            router
+                .send_stream_reporting_ids("bot1", "42", None, rx)
+                .await
+                .unwrap(),
+            vec!["stream-1".to_string()]
+        );
+    }
+
     #[tokio::test]
     async fn outbound_router_unknown_account_errors() {
         let registry = Arc::new(ChannelRegistry::new());
@@ -916,7 +1112,9 @@ mod tests {
         let router = RegistryOutboundRouter::new(Arc::clone(&registry));
 
         assert!(!router.streams_final_replies("bot1").await);
+        assert!(router.claims_stream_delivery("bot1", Some("reply")).await);
         assert!(router.receives_progress_deltas("bot1").await);
+        assert!(router.receives_task_updates("bot1").await);
     }
 
     #[tokio::test]

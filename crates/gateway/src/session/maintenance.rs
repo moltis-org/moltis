@@ -7,10 +7,6 @@ impl LiveSessionService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'key' parameter".to_string())?;
 
-        if key == "main" {
-            return Err("cannot delete the main session".into());
-        }
-
         let force = params
             .get("force")
             .and_then(|v| v.as_bool())

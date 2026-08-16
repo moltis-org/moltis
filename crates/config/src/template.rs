@@ -570,6 +570,64 @@ port = {port}                           # Port number (auto-generated for this i
 # prometheus_endpoint = true        # Expose /metrics endpoint
 
 # ══════════════════════════════════════════════════════════════════════════════
+# INSTRUMENTATION (Langfuse / OpenTelemetry / Datadog)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Exports completed agent runs — LLM calls, tool calls and retrievals — to an
+# external backend. Observations are immutable and sent once, after completion.
+# Disabled by default: enabling it sends conversation data to a third party.
+# See docs/src/instrumentation.md.
+#
+# Backends deliberately receive different data. Langfuse gets the full
+# conversation, token usage and session context for LLM observability and cost
+# inference. Prompt Management, datasets, evaluators and media uploads are not
+# integrated. OTLP and Datadog receive operational shape only.
+
+# [instrumentation]
+# enabled = false                   # Master switch, gates every backend
+# environment = "production"        # Reported to every backend
+# sample_rate = 1.0                 # Fraction of turns traced (0.0-1.0)
+# redact = ["customer_ref"]         # Extra keys to redact; extends the defaults
+# queue_capacity = 10000            # Must be nonzero; full queues drop events
+# flush_interval_ms = 5000          # Must be nonzero
+# max_batch_bytes = 3000000         # Must be nonzero
+
+# [instrumentation.langfuse]
+# enabled = false
+# host = "https://cloud.langfuse.com"   # Or a self-hosted URL
+# public_key = "pk-lf-..."
+# Prefer MOLTIS_INSTRUMENTATION__LANGFUSE__SECRET_KEY in the process environment.
+# A secret_key config value is also accepted.
+# capture_input = true              # Turn and LLM inputs
+# capture_output = true             # Turn and LLM outputs
+# capture_tool_io = true            # Tool arguments and results
+# timeout_secs = 10                 # Must be nonzero
+
+# [instrumentation.otlp]            # Grafana Tempo/Alloy, Honeycomb, a collector
+# enabled = false
+# endpoint = "http://localhost:4318/v1/traces"
+# content = "metadata_only"         # "full" | "metadata_only" | "none"
+# emit_user_id = false              # High-cardinality in an APM index
+# timeout_secs = 10                 # Must be nonzero
+
+# [instrumentation.datadog]         # Via the Datadog Agent's OTLP intake
+# enabled = false
+# endpoint = "http://localhost:4318/v1/traces"
+# service = "moltis"
+# content = "metadata_only"
+# timeout_secs = 10                 # Must be nonzero
+
+# Reaction feedback. A thumbs up/down on a reply in Telegram, Discord or Slack
+# becomes a BOOLEAN "user-feedback" score through Langfuse's dedicated Scores
+# API. Score creates/replacements and deletions retain queue order. Lists accept
+# raw emoji or shortcodes; empty means the built-in vocabulary.
+# [instrumentation.feedback]
+# enabled = true
+# positive = ["\U0001F44D", "+1", "thumbsup"]
+# negative = ["\U0001F44E", "-1", "thumbsdown"]
+# link_retention_days = 30          # How long a reply stays attributable
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CRON
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -818,7 +876,9 @@ port = {port}                           # Port number (auto-generated for this i
 # api_base_url = "https://slack.com/api"
 # dm_policy = "allowlist"
 # allowlist = []
+# operators = []             # Exact sender IDs allowed to run privileged commands; empty means nobody.
 # thread_replies = true
+# stream_mode = "edit_in_place" # use "native" for Slack live text and tool task cards
 # ack_reactions = true       # 👀 on receipt, phase emoji while working, ✅/❌ on completion
 # reaction_triggers = false  # route user reactions into the agent (react ✅ to approve)
 # rich_blocks = false        # render replies as Block Kit blocks (fallback to plain text)
@@ -831,8 +891,26 @@ port = {port}                           # Port number (auto-generated for this i
 # app_password = "..."
 # dm_policy = "allowlist"
 # allowlist = []
+# operators = []             # Exact sender IDs; no allowlist fallback.
 # otp_self_approval = true
 # otp_cooldown_secs = 300
+
+# Example Nostr account. Handles NIP-04/NIP-59 encrypted DMs and, when `groups`
+# is set, NIP-29 group chat on Buzz-style relays (https://github.com/block/buzz).
+# [channels.nostr.my-bot]
+# secret_key = "nsec1..."
+# relays = ["wss://relay.damus.io", "wss://relay.nostr.band", "wss://nos.lol"]
+# dm_policy = "allowlist"
+# allowed_pubkeys = ["npub1..."]
+# # Buzz / NIP-29 group chat: the `h`-tag group ids the bot joins. Requires a
+# # relay that supports NIP-29 + NIP-42 (Buzz relays do). Empty = DM-only.
+# # This list is also the allowlist — messages for any other group are dropped.
+# groups = ["buzz-general"]
+# group_mention_mode = "mention"  # mention (p-tagged only) | always | none (receive-only)
+# # Dialect for bot-initiated group messages. Both kinds are always read and
+# # replies mirror the message they answer; set buzz_v2 on a Buzz relay.
+# group_message_kind = "nip29"    # nip29 (kind:9) | buzz_v2 (kind:40002)
+# group_ack_reactions = true      # 👀 on receipt, phase glyphs, ✅/❌ at the end (NIP-25)
 
 # See docs or defaults.toml for full channel configuration examples
 # (WhatsApp, Telegram, Teams, Discord, Slack, Matrix, Nostr, Signal).

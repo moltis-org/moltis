@@ -52,6 +52,14 @@ pub trait ChatRuntime: Send + Sync {
     /// Broadcast a WebSocket event to all connected clients.
     async fn broadcast(&self, topic: &str, payload: Value);
 
+    /// Reaction-feedback service, when one is configured.
+    ///
+    /// Defaulted to `None` so runtimes that do not collect feedback — tests,
+    /// embedders — need no change.
+    fn feedback(&self) -> Option<Arc<moltis_channels::FeedbackService>> {
+        None
+    }
+
     // ── Channel reply queue ──────────────────────────────────────────────
 
     /// Push a reply target for a session (channel message triggered a chat run).

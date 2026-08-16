@@ -41,6 +41,7 @@ tempfile = { workspace = true }
 agent              = ["moltis-gateway/agent"]
 bundled-skills     = ["moltis-skills/bundled-skills"]
 cloudflare-tunnel  = ["moltis-httpd/cloudflare-tunnel"]
+connectors         = ["moltis-gateway/connectors", "moltis-httpd/connectors"]
 default            = ["embedded-assets"]
 embedded-assets    = ["dep:include_dir"]
 graphql            = ["moltis-gateway/graphql", "moltis-httpd/graphql"]

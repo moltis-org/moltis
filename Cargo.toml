@@ -17,6 +17,10 @@ default-members = [
   "crates/codex-import",
   "crates/common",
   "crates/config",
+  "crates/connector-caldav",
+  "crates/connector-gmail",
+  "crates/connector-himalaya",
+  "crates/connectors",
   "crates/cron",
   "crates/ctl",
   "crates/discord",
@@ -39,6 +43,7 @@ default-members = [
   "crates/node-host",
   "crates/nostr",
   "crates/oauth",
+  "crates/observability",
   "crates/onboarding",
   "crates/openclaw-import",
   "crates/plugins",
@@ -90,6 +95,10 @@ members = [
   "crates/codex-import",
   "crates/common",
   "crates/config",
+  "crates/connector-caldav",
+  "crates/connector-gmail",
+  "crates/connector-himalaya",
+  "crates/connectors",
   "crates/cron",
   "crates/ctl",
   "crates/external-agents",
@@ -110,6 +119,7 @@ members = [
   "crates/node-host",
   "crates/nostr",
   "crates/oauth",
+  "crates/observability",
   "crates/onboarding",
   "crates/openclaw-import",
   "crates/plugins",
@@ -227,7 +237,7 @@ zvec-sys = { git = "https://github.com/zvec-ai/zvec-rust", rev = "f8e81a1645db9e
 # HTTP client
 reqwest = { features = ["form", "json", "multipart", "query", "socks", "stream"], version = "0.13" }
 # UUID
-uuid = { features = ["v4"], version = "1" }
+uuid = { features = ["v4", "v5"], version = "1" }
 # Async
 async-stream = "0.3"
 async-trait  = "0.1"
@@ -256,30 +266,31 @@ fd-lock         = "4"
 genai           = "0.5"
 json_schema_ast = "0.3.1"
 # GraphQL
-async-graphql      = "7"
-async-graphql-axum = "7"
-gix                = "0.83"
-half               = "2"
-hex                = "0.4"
-hmac               = "0.12"
-jsonwebtoken       = { features = ["aws_lc_rs"], version = "10" }
-libc               = "0.2"
-llama-cpp-2        = "0.1"
-matrix-sdk         = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
-mockito            = "1.7"
-nostr-sdk          = { features = ["nip04", "nip44", "nip59"], version = "0.44" }
-open               = "5.3"
-rand               = "0.10"
-regex              = "1"
-ring               = "0.17"
-secrecy            = { features = ["serde"], version = "0.8" }
-serenity           = { features = ["cache", "client", "gateway", "model", "rustls_backend"], version = "0.12" }
-sha1               = "0.10"
-sha2               = "0.10"
-slack-morphism     = { features = ["axum", "hyper"], version = "2.20" }
-sled               = "0.34"
-sysinfo            = "0.34"
-teloxide           = { features = ["macros"], version = "0.17" }
+async-graphql       = "7"
+async-graphql-axum  = "7"
+gix                 = "0.83"
+half                = "2"
+hex                 = "0.4"
+hmac                = "0.12"
+jsonwebtoken        = { features = ["aws_lc_rs"], version = "10" }
+libc                = "0.2"
+llama-cpp-2         = "0.1"
+matrix-sdk          = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
+mockito             = "1.7"
+nostr-relay-builder = { version = "0.44" }
+nostr-sdk           = { features = ["nip04", "nip44", "nip59"], version = "0.44" }
+open                = "5.3"
+rand                = "0.10"
+regex               = "1"
+ring                = "0.17"
+secrecy             = { features = ["serde"], version = "0.8" }
+serenity            = { features = ["cache", "client", "gateway", "model", "rustls_backend"], version = "0.12" }
+sha1                = "0.10"
+sha2                = "0.10"
+slack-morphism      = { features = ["axum", "hyper"], version = "2.20" }
+sled                = "0.34"
+sysinfo             = "0.34"
+teloxide            = { features = ["macros"], version = "0.17" }
 # WhatsApp (sqlite-storage disabled to avoid libsqlite3-sys conflict with sqlx;
 # re-enable once sqlx 0.9 stabilises).
 wacore                         = { default-features = false, version = "0.6" }
@@ -363,6 +374,7 @@ grep-searcher         = "0.1"
 ignore                = "0.4"
 include_dir           = "0.7"
 json5                 = "0.4"
+mail-parser           = "0.11.6"
 notify-debouncer-full = "0.7"
 pdf-extract           = "0.10"
 portable-pty          = "0.9"
@@ -401,6 +413,10 @@ moltis-code-index       = { path = "crates/code-index" }
 moltis-codex-import     = { path = "crates/codex-import" }
 moltis-common           = { path = "crates/common" }
 moltis-config           = { path = "crates/config" }
+moltis-connector-caldav = { path = "crates/connector-caldav" }
+moltis-connector-gmail  = { path = "crates/connector-gmail" }
+moltis-connector-himalaya = { path = "crates/connector-himalaya" }
+moltis-connectors       = { path = "crates/connectors" }
 moltis-cron             = { path = "crates/cron" }
 moltis-discord          = { path = "crates/discord" }
 moltis-external-agents  = { path = "crates/external-agents" }
@@ -423,6 +439,7 @@ moltis-network-filter   = { default-features = false, path = "crates/network-fil
 moltis-node-host        = { path = "crates/node-host" }
 moltis-nostr            = { path = "crates/nostr" }
 moltis-oauth            = { path = "crates/oauth" }
+moltis-observability    = { default-features = false, path = "crates/observability" }
 moltis-onboarding       = { path = "crates/onboarding" }
 moltis-openclaw-import  = { path = "crates/openclaw-import" }
 moltis-plugins          = { path = "crates/plugins" }

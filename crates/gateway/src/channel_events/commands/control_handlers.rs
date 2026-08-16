@@ -14,8 +14,8 @@ use crate::{
 
 use super::{
     super::{
-        ApprovalListResponse, format_pending_approvals_list, is_sender_on_allowlist,
-        parse_numbered_selection,
+        ApprovalListResponse, format_pending_approvals_list, is_sender_authorized_for_target,
+        operator_denied_message, parse_numbered_selection,
     },
     formatting::{format_model_list, unique_providers},
 };
@@ -69,14 +69,11 @@ pub(in crate::channel_events) async fn handle_approve_deny(
     cmd: &str,
     args: &str,
 ) -> ChannelResult<String> {
-    let authorized = match sender_id {
-        Some(sid) => is_sender_on_allowlist(state, &reply_to.account_id, sid).await,
-        None => false,
-    };
-    if !authorized {
-        return Err(ChannelError::invalid_input(
-            "You are not authorized to manage approvals. Only users on this bot's allowlist can use /approve and /deny.",
-        ));
+    if !is_sender_authorized_for_target(state, reply_to, sender_id).await {
+        return Err(ChannelError::invalid_input(operator_denied_message(
+            "Managing exec approvals",
+            sender_id,
+        )));
     }
     if args.is_empty() {
         return Err(ChannelError::invalid_input(format!(
@@ -630,8 +627,20 @@ pub(in crate::channel_events) async fn handle_sandbox(
 pub(in crate::channel_events) async fn handle_sh(
     state: &Arc<GatewayState>,
     session_key: &str,
+    reply_to: &ChannelReplyTarget,
+    sender_id: Option<&str>,
     args: &str,
 ) -> ChannelResult<String> {
+    // `/sh` toggles a mode that turns every later message in this chat into a
+    // shell command. Only operators in proven direct chats may touch it,
+    // including the read-only `status` form.
+    if !is_sender_authorized_for_target(state, reply_to, sender_id).await {
+        return Err(ChannelError::invalid_input(operator_denied_message(
+            "Shell access",
+            sender_id,
+        )));
+    }
+
     let route = if let Some(ref router) = state.sandbox_router {
         if router.is_sandboxed(session_key).await {
             "sandboxed"
@@ -699,15 +708,11 @@ pub(in crate::channel_events) async fn handle_update(
     sender_id: Option<&str>,
     args: &str,
 ) -> ChannelResult<String> {
-    // Owner-only: same allowlist check as approve/deny.
-    let authorized = match sender_id {
-        Some(sid) => is_sender_on_allowlist(state, &reply_to.account_id, sid).await,
-        None => false,
-    };
-    if !authorized {
-        return Err(ChannelError::invalid_input(
-            "You are not authorized to update moltis. Only users on this bot's allowlist can use /update.",
-        ));
+    // Operator direct-chat only: same check as approve/deny.
+    if !is_sender_authorized_for_target(state, reply_to, sender_id).await {
+        return Err(ChannelError::invalid_input(operator_denied_message(
+            "/update", sender_id,
+        )));
     }
 
     let requested_version = if args.is_empty() {

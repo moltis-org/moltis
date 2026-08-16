@@ -461,7 +461,8 @@ pub async fn handle_message_direct(
                 message_id: Some(msg.id.0.to_string()),
                 thread_id: extract_thread_id(&msg),
             };
-            sink.update_location(&reply_target, lat, lon).await
+            sink.update_location(&reply_target, Some(&peer_id), lat, lon)
+                .await
         } else {
             false
         };
@@ -843,7 +844,9 @@ pub async fn handle_edited_location(
             message_id: Some(msg.id.0.to_string()),
             thread_id: extract_thread_id(&msg),
         };
-        sink.update_location(&reply_target, lat, lon).await;
+        let sender_id = msg.from.as_ref().map(|user| user.id.0.to_string());
+        sink.update_location(&reply_target, sender_id.as_deref(), lat, lon)
+            .await;
     }
 
     Ok(())

@@ -127,6 +127,7 @@ app_password = "your-client-secret-here"
 | `mention_mode` | no | `"mention"` | When the bot responds in groups: `"always"`, `"mention"`, or `"none"` |
 | `allowlist` | no | `[]` | AAD object IDs or user IDs allowed to DM the bot |
 | `group_allowlist` | no | `[]` | Conversation/team IDs allowed for group messages |
+| `operators` | no | `[]` | Exact sender IDs eligible for privileged access. Teams currently fails closed as shared even in personal chats |
 | `otp_self_approval` | no | `true` | Enable OTP self-approval for non-allowlisted DM users |
 | `otp_cooldown_secs` | no | `300` | Cooldown after failed OTP attempts |
 | `model` | no | — | Override the default model for this channel |
@@ -205,6 +206,13 @@ When `dm_policy = "allowlist"` and `otp_self_approval = true`, unknown DM users
 receive a verification prompt. The PIN is visible to the bot owner in the web UI
 under **Channels → Senders**. After a correct PIN reply, Moltis adds the sender's
 Teams user ID to the account allowlist.
+
+```admonish note title="Privileged access fails closed"
+Teams personal chats currently support normal tool-free chat only. The gateway
+cannot yet prove Teams topology from its conversation ID, so tools, private
+owner context, `/sh`, location updates, and privileged commands are denied even
+for configured operators. Use the authenticated web UI for privileged work.
+```
 
 ### Group Policy
 

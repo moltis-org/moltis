@@ -80,6 +80,7 @@ moltis-claude-import    = { optional = true, workspace = true }
 moltis-codex-import     = { optional = true, workspace = true }
 moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
+moltis-connectors       = { optional = true, workspace = true }
 moltis-cron             = { workspace = true }
 moltis-gateway          = { workspace = true }
 moltis-hermes-import    = { optional = true, workspace = true }
@@ -134,6 +135,12 @@ acp = [
 agent = ["moltis-gateway/agent", "moltis-web?/agent"]
 caldav = ["moltis-gateway/caldav"]
 cloudflare-tunnel = ["moltis-httpd/cloudflare-tunnel", "moltis-web?/cloudflare-tunnel"]
+connectors = [
+  "dep:moltis-connectors",
+  "moltis-gateway/connectors",
+  "moltis-httpd/connectors",
+  "moltis-web?/connectors",
+]
 home-assistant = ["moltis-gateway/home-assistant"]
 # User-facing integrations stay default-on in the CLI crate per workspace policy,
 # even when the underlying implementation remains feature-gated in lower crates.
@@ -154,6 +161,7 @@ full = [
   "code-index-builtin",
   "code-splitter",
   "codex-import",
+  "connectors",
   "discord",
   "file-watcher",
   "firecrawl",
@@ -177,6 +185,7 @@ full = [
   "lang-rust",
   "lang-toml",
   "lang-typescript",
+  "langfuse",
   "llm-compaction",
   "local-embeddings",
   "local-llm",
@@ -189,6 +198,7 @@ full = [
   "ngrok",
   "nostr",
   "openclaw-import",
+  "otlp",
   "prometheus",
   "provider-github-copilot",
   "provider-kimi-code",
@@ -241,8 +251,13 @@ lang-typescript    = ["moltis-memory/lang-typescript"]
 # jemalloc is intentionally unavailable on linux/aarch64 to avoid runtime
 # crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
 claude-import = ["dep:moltis-claude-import", "moltis-gateway/claude-import"]
-codex-import = ["dep:moltis-codex-import", "moltis-gateway/codex-import"]
+codex-import  = ["dep:moltis-codex-import", "moltis-gateway/codex-import"]
 hermes-import = ["dep:moltis-hermes-import", "moltis-gateway/hermes-import"]
+# Instrumentation exporters. Default-on so the `[instrumentation]` config can be
+# switched on without a rebuild; enabling the config, not the feature, is what
+# starts sending data. `langfuse` implies `otlp`: Langfuse ingests traces over
+# the OTLP wire format.
+langfuse = ["moltis-gateway/langfuse"]
 lightweight = ["jemalloc", "tls", "web-ui"]
 local-embeddings = ["moltis-gateway/local-embeddings"]
 local-llm = ["moltis-gateway/local-llm"]
@@ -257,6 +272,7 @@ netbird = ["moltis-httpd/netbird", "moltis-web?/netbird"]
 ngrok = ["moltis-httpd/ngrok", "moltis-web?/ngrok"]
 nostr = ["moltis-httpd/nostr"]
 openclaw-import = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-import"]
+otlp = ["moltis-gateway/otlp"]
 prometheus = ["moltis-httpd/prometheus"]
 provider-github-copilot = [
   "moltis-gateway/provider-github-copilot",
