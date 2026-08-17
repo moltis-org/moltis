@@ -1062,3 +1062,123 @@ async fn test_zero_wake_cooldown_disables_guard() {
         "wake should proceed when cooldown is zero (disabled)"
     );
 }
+
+// ── heartbeat active hours ───────────────────────────────────────────────
+
+/// A service whose scheduled heartbeat is confined to `start`–`end` local time.
+fn make_svc_with_active_hours(
+    store: Arc<InMemoryStore>,
+    agent: AgentTurnFn,
+    start: &str,
+    end: &str,
+) -> Arc<CronService> {
+    CronService::with_events_queue(
+        store,
+        noop_system_event(),
+        agent,
+        None,
+        RateLimitConfig::default(),
+        DEFAULT_WAKE_COOLDOWN_MS,
+        SystemEventsQueue::new(),
+        Some(ActiveHoursConfig {
+            start: start.into(),
+            end: end.into(),
+            timezone: "local".into(),
+        }),
+    )
+}
+
+/// Add a heartbeat job and make it due right now.
+async fn add_due_heartbeat(svc: &Arc<CronService>) {
+    svc.add(CronJobCreate {
+        id: Some("__heartbeat__".into()),
+        name: "__heartbeat__".into(),
+        schedule: CronSchedule::Every {
+            every_ms: 30_000,
+            anchor_ms: None,
+        },
+        payload: CronPayload::AgentTurn {
+            message: "tick".into(),
+            model: None,
+            agent_id: None,
+            timeout_secs: None,
+            tool_controls: Default::default(),
+            deliver: false,
+            channel: None,
+            to: None,
+        },
+        session_target: SessionTarget::Named("heartbeat".into()),
+        delete_after_run: false,
+        enabled: true,
+        system: true,
+        sandbox: CronSandboxConfig::default(),
+        wake_mode: CronWakeMode::default(),
+    })
+    .await
+    .unwrap();
+
+    let mut jobs = svc.jobs.write().await;
+    jobs[0].state.next_run_at_ms = Some(now_ms());
+}
+
+#[tokio::test]
+async fn heartbeat_outside_active_hours_is_skipped_and_rescheduled() {
+    // An equal start and end leaves no minute inside the window, so this is
+    // outside it whatever the clock says.
+    let svc = make_svc_with_active_hours(
+        Arc::new(InMemoryStore::new()),
+        noop_agent_turn(),
+        "12:00",
+        "12:00",
+    );
+    add_due_heartbeat(&svc).await;
+
+    let before = now_ms();
+    svc.process_due_jobs().await;
+
+    let jobs = svc.jobs.read().await;
+    assert!(
+        jobs[0].state.running_at_ms.is_none(),
+        "heartbeat ran outside its active hours"
+    );
+    assert!(
+        jobs[0].state.next_run_at_ms.is_some_and(|t| t > before),
+        "skipped heartbeat stayed due instead of rolling forward"
+    );
+}
+
+#[tokio::test]
+async fn heartbeat_inside_active_hours_still_runs() {
+    // The control for the test above: 00:00–24:00 covers every minute.
+    let svc = make_svc_with_active_hours(
+        Arc::new(InMemoryStore::new()),
+        noop_agent_turn(),
+        "00:00",
+        "24:00",
+    );
+    add_due_heartbeat(&svc).await;
+
+    svc.process_due_jobs().await;
+
+    let jobs = svc.jobs.read().await;
+    assert!(
+        jobs[0].state.running_at_ms.is_some(),
+        "heartbeat did not run inside its active hours"
+    );
+}
+
+#[tokio::test]
+async fn heartbeat_without_configured_hours_runs() {
+    // Callers that do not carry heartbeat config must not be gated.
+    let svc = make_svc(
+        Arc::new(InMemoryStore::new()),
+        noop_system_event(),
+        noop_agent_turn(),
+    );
+    add_due_heartbeat(&svc).await;
+
+    svc.process_due_jobs().await;
+
+    let jobs = svc.jobs.read().await;
+    assert!(jobs[0].state.running_at_ms.is_some());
+}

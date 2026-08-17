@@ -371,6 +371,21 @@ mod tests {
         let _ = is_within_active_hours("22:00", "06:00", "local");
     }
 
+    #[test]
+    fn full_day_window_is_always_active() {
+        // 00:00–24:00 covers every minute, so this holds whatever the clock says.
+        assert!(is_within_active_hours("00:00", "24:00", "local"));
+        assert!(is_within_active_hours("00:00", "24:00", "UTC"));
+    }
+
+    #[test]
+    fn empty_window_is_never_active() {
+        // An equal start and end leaves no minute in `now >= start && now < end`,
+        // which is what the config validator already warns about.
+        assert!(!is_within_active_hours("12:00", "12:00", "local"));
+        assert!(!is_within_active_hours("00:00", "00:00", "UTC"));
+    }
+
     // ── resolve_heartbeat_prompt ─────────────────────────────────────────
 
     #[test]

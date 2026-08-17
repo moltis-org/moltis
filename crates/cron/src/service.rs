@@ -19,9 +19,11 @@ use {
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, cron as cron_metrics, gauge, histogram};
 
+use moltis_config::schema::ActiveHoursConfig;
+
 use crate::{
-    Error, Result, schedule::compute_next_run, store::CronStore, system_events::SystemEventsQueue,
-    types::*,
+    Error, Result, heartbeat::is_within_active_hours, schedule::compute_next_run, store::CronStore,
+    system_events::SystemEventsQueue, types::*,
 };
 
 /// Result of an agent turn, including optional token usage.
@@ -132,6 +134,10 @@ pub struct CronService {
     events_queue: Arc<SystemEventsQueue>,
     /// Minimum ms between exec-triggered heartbeat wakes. Zero disables cooldown.
     wake_cooldown_ms: u64,
+    /// Window the scheduled heartbeat is allowed to run in. `None` leaves it
+    /// unrestricted, which is what callers that do not carry heartbeat config
+    /// (tests, embedders) get.
+    heartbeat_active_hours: Option<ActiveHoursConfig>,
 }
 
 /// Max time a job can be in "running" state before we consider it stuck (2 hours).
@@ -211,6 +217,7 @@ impl CronService {
             rate_limit_config,
             wake_cooldown_ms,
             SystemEventsQueue::new(),
+            None,
         )
     }
 
@@ -226,6 +233,7 @@ impl CronService {
         rate_limit_config: RateLimitConfig,
         wake_cooldown_ms: u64,
         events_queue: Arc<SystemEventsQueue>,
+        heartbeat_active_hours: Option<ActiveHoursConfig>,
     ) -> Arc<Self> {
         Arc::new(Self {
             store,
@@ -239,7 +247,18 @@ impl CronService {
             rate_limiter: Mutex::new(RateLimiter::new(rate_limit_config)),
             events_queue,
             wake_cooldown_ms,
+            heartbeat_active_hours,
         })
+    }
+
+    /// Whether the scheduled heartbeat may run right now.
+    ///
+    /// Only the timer path consults this. An explicit [`CronService::wake`] is
+    /// a response to something that already happened, so it is not gated.
+    fn heartbeat_may_run_now(&self) -> bool {
+        self.heartbeat_active_hours
+            .as_ref()
+            .is_none_or(|hours| is_within_active_hours(&hours.start, &hours.end, &hours.timezone))
     }
 
     /// Access the shared events queue for enqueueing system events.
@@ -553,6 +572,7 @@ impl CronService {
 
     async fn process_due_jobs(self: &Arc<Self>) {
         let now = now_ms();
+        let heartbeat_may_run = self.heartbeat_may_run_now();
         let due_jobs: Vec<CronJob> = {
             let mut jobs = self.jobs.write().await;
             let mut due = Vec::new();
@@ -561,6 +581,15 @@ impl CronService {
                     && job.state.next_run_at_ms.is_some_and(|t| t <= now)
                     && job.state.running_at_ms.is_none()
                 {
+                    if job.id == "__heartbeat__" && !heartbeat_may_run {
+                        // Outside the configured window. Roll the schedule
+                        // forward instead of running, so the job stops being
+                        // due and picks back up once the window reopens.
+                        debug!("skipping heartbeat — outside active hours");
+                        job.state.next_run_at_ms =
+                            compute_next_run(&job.schedule, now).unwrap_or(None);
+                        continue;
+                    }
                     // Mark as running under the write lock BEFORE spawning,
                     // so the next timer tick won't pick up the same job again.
                     job.state.running_at_ms = Some(now);
