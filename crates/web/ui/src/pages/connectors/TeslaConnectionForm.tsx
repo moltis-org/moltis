@@ -113,7 +113,7 @@ export function TeslaConnectionFormModal({ account, onClose, onSaved }: TeslaCon
 					<button type="button" className="provider-btn provider-btn-secondary" onClick={onClose}>
 						{t("cancel")}
 					</button>
-					<SaveButton saving={saving} label={t("connections.save")} savingLabel={t("connections.saving")} />
+					<SaveButton type="submit" saving={saving} label={account ? t("connections.save") : t("connections.create")} />
 				</div>
 			</form>
 		</Modal>

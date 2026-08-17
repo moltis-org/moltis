@@ -914,7 +914,7 @@ test.describe("Settings > Connectors", () => {
 		await modal.getByLabel("Tesla account region", { exact: true }).selectOption("europe");
 		await modal.getByLabel("Client ID", { exact: true }).fill("tesla-client-id");
 		await modal.getByLabel("Refresh token", { exact: true }).fill("tesla-refresh-token");
-		await modal.getByRole("button", { name: "Save connection", exact: true }).click();
+		await modal.getByRole("button", { name: "Add connection", exact: true }).click();
 
 		const addRequest = await page.evaluate(() =>
 			window.__connectorRpcState.requests.findLast((request) => request.method === "connectors.accounts.add"),

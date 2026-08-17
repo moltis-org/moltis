@@ -19,6 +19,7 @@ const MAX_ID_CHARS: usize = 256;
 const MAX_DATASETS: usize = 100;
 const MAX_DATASET_NAME_CHARS: usize = 128;
 const MAX_VEHICLE_SCAN: u64 = 500;
+const VEHICLE_LOOKUP_WINDOW: u64 = 50;
 const MAX_RESULT_BYTES: usize = 40 * 1024;
 
 pub struct TeslaConnectorTool {
@@ -228,11 +229,15 @@ impl TeslaConnectorTool {
         }))
     }
 
+    /// Returns the newest reading for one VIN. Full-text matching is fuzzy, so
+    /// a window of candidates is scanned and the VIN checked exactly; asking for
+    /// a single row would let another vehicle's reading rank first and make a
+    /// stored vehicle look absent.
     async fn get_vehicle(&self, dataset_id: String, vin: String) -> Result<Value> {
         let items = self
             .reader
             .query_items_for_kind(ConnectorKind::Tesla, &dataset_id, ItemQuery {
-                limit: 1,
+                limit: VEHICLE_LOOKUP_WINDOW,
                 offset: 0,
                 include_deleted: false,
                 text: Some(vin.clone()),
@@ -630,6 +635,26 @@ mod tests {
         let readings = result["readings"].as_array().unwrap();
         assert_eq!(readings.len(), 1);
         assert_eq!(readings[0]["vin"], VIN_A);
+    }
+
+    #[tokio::test]
+    async fn get_vehicle_finds_a_vin_that_does_not_rank_first() {
+        // The stub returns rows in order regardless of the query text, standing
+        // in for a fuzzy full-text match that ranks another vehicle first.
+        let tool = tool(vec![
+            item("b:2026-08-17T10:00:00Z", VIN_B, "2026-08-17T10:00:00Z", 40),
+            item("a:2026-08-17T09:00:00Z", VIN_A, "2026-08-17T09:00:00Z", 80),
+        ]);
+        let result = tool
+            .execute(json!({
+                "operation": "get_vehicle",
+                "dataset_id": "dataset-1",
+                "vin": VIN_A,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result["vehicle"]["vin"], VIN_A);
+        assert_eq!(result["vehicle"]["observedAt"], "2026-08-17T09:00:00Z");
     }
 
     #[tokio::test]
