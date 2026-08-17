@@ -17,16 +17,16 @@ use crate::{
 /// also descends into open shadow roots, so elements rendered inside web
 /// components (e.g. Salesforce Lightning login fields) are reachable. Closed
 /// shadow roots (`mode: 'closed'`) cannot be pierced from page script and are
-/// skipped. Prepend to any snippet that resolves an element by ref.
+/// skipped. Invalid selectors throw a SyntaxError immediately (validated on an
+/// empty fragment before the walk), matching `querySelector` semantics so
+/// callers fail fast instead of polling to a timeout. Prepend to any snippet
+/// that resolves an element by ref.
 pub(crate) const DEEP_FIND_FN: &str = r#"
 window.__mDeepFind = window.__mDeepFind || ((sel) => {
+  document.createDocumentFragment().querySelector(sel);
   const visit = (root) => {
-    let all = [];
-    try { all = root.querySelectorAll('*'); } catch (e) { all = []; }
-    for (const el of all) {
-      let isMatch = false;
-      try { isMatch = el.matches(sel); } catch (e) { isMatch = false; }
-      if (isMatch) return el;
+    for (const el of root.querySelectorAll('*')) {
+      if (el.matches(sel)) return el;
       if (el.shadowRoot) { const f = visit(el.shadowRoot); if (f) return f; }
     }
     return null;
@@ -37,16 +37,14 @@ window.__mDeepFind = window.__mDeepFind || ((sel) => {
 
 /// JS helper defining `__mDeepCollect(sel)` — like `document.querySelectorAll`
 /// but also descends into open shadow roots. Returns a flat array of matches.
+/// Invalid selectors throw immediately, same as [`DEEP_FIND_FN`].
 pub(crate) const DEEP_COLLECT_FN: &str = r#"
 window.__mDeepCollect = window.__mDeepCollect || ((sel) => {
+  document.createDocumentFragment().querySelector(sel);
   const out = [];
   const visit = (root) => {
-    let matches = [];
-    try { matches = root.querySelectorAll('*'); } catch (e) { matches = []; }
-    for (const el of matches) {
-      let isMatch = false;
-      try { isMatch = el.matches(sel); } catch (e) { isMatch = false; }
-      if (isMatch) out.push(el);
+    for (const el of root.querySelectorAll('*')) {
+      if (el.matches(sel)) out.push(el);
       if (el.shadowRoot) visit(el.shadowRoot);
     }
   };
@@ -68,6 +66,14 @@ const EXTRACT_ELEMENTS_JS: &str = r#"
     ];
 
     const selector = interactive.join(', ');
+
+    // Drop refs assigned by earlier snapshots first: an element that has since
+    // become hidden (and is skipped below) would otherwise keep its old number
+    // and could shadow the same ref freshly assigned to another element.
+    for (const el of __mDeepCollect('[data-moltis-ref]')) {
+        delete el.dataset.moltisRef;
+    }
+
     const elements = __mDeepCollect(selector);
     const results = [];
 
@@ -398,7 +404,26 @@ mod tests {
     fn deep_find_uses_one_dom_walk_for_matches_and_shadow_hosts() {
         assert!(!DEEP_FIND_FN.contains("root.querySelector(sel)"));
         assert!(DEEP_FIND_FN.contains("el.matches(sel)"));
-        assert!(DEEP_FIND_FN.contains("if (isMatch) return el;"));
+    }
+
+    #[test]
+    fn deep_helpers_fail_fast_on_invalid_selectors() {
+        // A bad selector must throw on first use (validated against an empty
+        // fragment) so `wait` errors immediately instead of polling to its
+        // timeout. No try/catch may swallow matching errors.
+        let validation = "document.createDocumentFragment().querySelector(sel);";
+        assert!(DEEP_FIND_FN.contains(validation));
+        assert!(DEEP_COLLECT_FN.contains(validation));
+        assert!(!DEEP_FIND_FN.contains("catch"));
+        assert!(!DEEP_COLLECT_FN.contains("catch"));
+    }
+
+    #[test]
+    fn snapshot_js_clears_stale_refs_before_renumbering() {
+        // Elements tagged by a previous snapshot that are now hidden must not
+        // keep their old ref, or find-by-ref could resolve to the wrong node.
+        assert!(EXTRACT_ELEMENTS_JS.contains("__mDeepCollect('[data-moltis-ref]')"));
+        assert!(EXTRACT_ELEMENTS_JS.contains("delete el.dataset.moltisRef;"));
     }
 
     #[test]
