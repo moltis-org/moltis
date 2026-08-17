@@ -15,6 +15,8 @@ mod chat;
 mod code_index;
 #[path = "schema/hooks.rs"]
 mod hooks;
+
+mod instrumentation;
 #[path = "schema/memory.rs"]
 mod memory;
 #[path = "schema/modes.rs"]
@@ -33,8 +35,8 @@ mod tools;
 mod voice;
 
 pub use {
-    agents::*, chat::*, code_index::*, hooks::*, memory::*, modes::*, phone::*, providers::*,
-    runtime::*, system::*, tools::*, voice::*,
+    agents::*, chat::*, code_index::*, hooks::*, instrumentation::*, memory::*, modes::*, phone::*,
+    providers::*, runtime::*, system::*, tools::*, voice::*,
 };
 
 // ── Reasoning effort ──────────────────────────────────────────────────────
@@ -305,6 +307,8 @@ pub struct MoltisConfig {
     pub auth: AuthConfig,
     pub graphql: GraphqlConfig,
     pub metrics: MetricsConfig,
+    /// Agent instrumentation exported to Langfuse, OTLP collectors and Datadog.
+    pub instrumentation: InstrumentationConfig,
     pub identity: AgentIdentity,
     pub user: UserProfile,
     pub hooks: Option<HooksConfig>,
@@ -358,7 +362,7 @@ pub struct MoltisConfig {
 }
 
 /// Configuration for external CLI agent integrations.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExternalAgentsConfig {
     pub enabled: bool,
@@ -366,13 +370,21 @@ pub struct ExternalAgentsConfig {
     pub agents: HashMap<String, ExternalAgentConfig>,
 }
 
+impl Default for ExternalAgentsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            agents: HashMap::new(),
+        }
+    }
+}
+
 /// Per-agent configuration for an external CLI agent.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExternalAgentConfig {
     pub binary: Option<String>,
-    #[serde(default)]
-    pub args: Vec<String>,
+    pub args: Option<Vec<String>>,
     #[serde(default)]
     pub models: Vec<String>,
     #[serde(default)]

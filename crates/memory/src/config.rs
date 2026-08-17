@@ -107,3 +107,22 @@ impl Default for MemoryConfig {
         }
     }
 }
+
+/// Rank constant `k` for Reciprocal Rank Fusion. Applied when
+/// `merge_strategy == MergeStrategy::Rrf`.
+const DEFAULT_RRF_K: u32 = 60;
+
+impl MemoryConfig {
+    /// Build the runtime [`crate::store::MergeStrategy`] from this config.
+    ///
+    /// Centralizes the mapping between the user-facing merge mode
+    /// ([`MergeStrategy`]: `Rrf` / `Linear`) and the parameterized runtime
+    /// strategy used by store backends, so callers don't sprinkle manual
+    /// conversions at each call site.
+    pub fn search_strategy(&self) -> crate::store::MergeStrategy {
+        match self.merge_strategy {
+            MergeStrategy::Rrf => crate::store::MergeStrategy::Rrf { k: DEFAULT_RRF_K },
+            MergeStrategy::Linear => crate::store::MergeStrategy::Weighted,
+        }
+    }
+}

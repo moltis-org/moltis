@@ -21,6 +21,7 @@ pub(crate) enum RateLimitPolicy {
 pub(crate) enum ReasoningEffortPolicy {
     OpenAi,
     DeepSeek,
+    KimiMax,
     Unsupported,
 }
 
@@ -71,6 +72,7 @@ pub(crate) struct OpenAiProviderCapabilities {
     pub(crate) probe_fallback_policy: ProbeFallbackPolicy,
     pub(crate) probe_output_cap_policy: ProbeOutputCapPolicy,
     pub(crate) responses_websocket_policy: ResponsesWebSocketPolicy,
+    pub(crate) responses_required_for_reasoning_tools: bool,
 }
 
 impl OpenAiProviderCapabilities {
@@ -91,6 +93,7 @@ impl OpenAiProviderCapabilities {
         probe_fallback_policy: ProbeFallbackPolicy::None,
         probe_output_cap_policy: ProbeOutputCapPolicy::ReasoningModelsUseMaxCompletionTokens,
         responses_websocket_policy: ResponsesWebSocketPolicy::Unsupported,
+        responses_required_for_reasoning_tools: false,
     };
 }
 

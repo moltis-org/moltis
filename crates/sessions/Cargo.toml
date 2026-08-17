@@ -9,6 +9,8 @@ metrics = ["dep:moltis-metrics"]
 
 [dependencies]
 fd-lock        = { workspace = true }
+hex            = { workspace = true }
+libc           = { workspace = true }
 moltis-common  = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 serde          = { workspace = true }

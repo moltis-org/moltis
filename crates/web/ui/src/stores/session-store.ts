@@ -48,6 +48,7 @@ export class Session {
 	contextWindow: Signal<number>;
 	toolsEnabled: Signal<boolean>;
 	lastToolOutput: Signal<string>;
+	sendErrors: Signal<string[]>;
 	badgeCount: Signal<number>;
 	dataVersion: Signal<number>;
 
@@ -68,7 +69,7 @@ export class Session {
 		this.sandbox_image = serverData.sandbox_image || null;
 		this.channelBinding = serverData.channelBinding || null;
 		this.parentSessionKey = serverData.parentSessionKey || "";
-		this.forkPoint = serverData.forkPoint != null ? serverData.forkPoint : null;
+		this.forkPoint = serverData.forkPoint == null ? null : serverData.forkPoint;
 		this.agent_id = serverData.agent_id || "main";
 		this.mode_id = serverData.mode_id || "";
 		this.node_id = serverData.node_id || null;
@@ -90,6 +91,7 @@ export class Session {
 		this.contextWindow = signal(0);
 		this.toolsEnabled = signal(true);
 		this.lastToolOutput = signal("");
+		this.sendErrors = signal<string[]>([]);
 		// Total message count — reactive signal that drives the sidebar badge.
 		// Components read this to show/hide badge and compute unread tinting.
 		this.badgeCount = signal(this.messageCount);
@@ -127,7 +129,7 @@ export class Session {
 		this.sandbox_image = serverData.sandbox_image || null;
 		this.channelBinding = serverData.channelBinding || null;
 		this.parentSessionKey = serverData.parentSessionKey || "";
-		this.forkPoint = serverData.forkPoint != null ? serverData.forkPoint : null;
+		this.forkPoint = serverData.forkPoint == null ? null : serverData.forkPoint;
 		this.agent_id = serverData.agent_id || "main";
 		this.mode_id = serverData.mode_id || "";
 		this.node_id = serverData.node_id || null;

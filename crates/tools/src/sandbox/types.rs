@@ -562,7 +562,7 @@ pub(crate) fn canonical_sandbox_packages(packages: &[String]) -> Vec<String> {
 }
 
 pub(crate) const SANDBOX_HOME_DIR: &str = "/home/sandbox";
-pub(crate) const GOGCLI_MODULE_PATH: &str = "github.com/steipete/gogcli/cmd/gog";
+pub(crate) const GOGCLI_MODULE_PATH: &str = "github.com/openclaw/gogcli/cmd/gog";
 pub(crate) const GOGCLI_VERSION: &str = "latest";
 
 /// Additional Go-based CLI tools installed via `go install` in the sandbox image.

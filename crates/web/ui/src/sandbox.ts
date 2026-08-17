@@ -9,6 +9,24 @@ interface SandboxInfoRecord {
 	backend?: string;
 }
 
+interface AvailableBackend {
+	id: string;
+	label?: string;
+	kind?: string;
+	available?: boolean;
+}
+
+interface BackendsResponse {
+	backends?: AvailableBackend[];
+	default?: string;
+}
+
+interface CachedImage {
+	tag: string;
+	skill_name?: string;
+	size?: string;
+}
+
 interface SessionPatchResult {
 	result?: {
 		sandbox_enabled?: boolean;
@@ -17,10 +35,39 @@ interface SessionPatchResult {
 }
 
 const SANDBOX_DISABLED_HINT = (): string => t("chat:sandboxDisabledHint");
+const NON_SANDBOX_BACKENDS = new Set(["none", "restricted-host"]);
+
+let availableBackends: AvailableBackend[] | null = null;
+let backendsFetchStarted = false;
+
+function isRealSandboxBackend(backend: string | null | undefined): boolean {
+	return !!backend && !NON_SANDBOX_BACKENDS.has(backend);
+}
 
 function sandboxRuntimeAvailable(): boolean {
+	if (availableBackends) {
+		return availableBackends.some((backend) => backend.available !== false && isRealSandboxBackend(backend.id));
+	}
 	const info = S.sandboxInfo as SandboxInfoRecord | null;
-	return (info?.backend || "none") !== "none";
+	return isRealSandboxBackend(info?.backend || "none");
+}
+
+function refreshAvailableBackends(): void {
+	if (backendsFetchStarted) return;
+	backendsFetchStarted = true;
+	fetch("/api/sandbox/available-backends")
+		.then((r) => (r.ok ? r.json() : { backends: [] }))
+		.then((data: BackendsResponse) => {
+			availableBackends = data.backends || [];
+			updateSandboxUI(S.sessionSandboxEnabled);
+			updateSandboxImageUI(S.sessionSandboxImage);
+		})
+		.catch(() => {
+			availableBackends = [];
+			backendsFetchStarted = false;
+			updateSandboxUI(S.sessionSandboxEnabled);
+			updateSandboxImageUI(S.sessionSandboxImage);
+		});
 }
 
 /** Truncate long hash suffixes: "repo:abcdef...uvwxyz" */
@@ -51,7 +98,6 @@ function applyButtonAvailability(
 	btn.title = available ? enabledTitle : disabledTitle;
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: UI state management with multiple controls
 function applySandboxControlAvailability(): boolean {
 	const available = sandboxRuntimeAvailable();
 	const hint = available ? "" : SANDBOX_DISABLED_HINT();
@@ -87,7 +133,7 @@ export function updateSandboxUI(enabled: boolean): void {
 	const toggleBtn = S.sandboxToggleBtn;
 	if (!(label && toggleBtn)) return;
 	if (!applySandboxControlAvailability()) {
-		label.textContent = t("chat:sandboxDisabled");
+		label.textContent = t("chat:sandboxDirect");
 		toggleBtn.style.borderColor = "";
 		toggleBtn.style.color = "var(--muted)";
 		return;
@@ -104,6 +150,7 @@ export function updateSandboxUI(enabled: boolean): void {
 }
 
 export function bindSandboxToggleEvents(): void {
+	refreshAvailableBackends();
 	const toggleBtn = S.sandboxToggleBtn;
 	if (!toggleBtn) return;
 	toggleBtn.addEventListener("click", () => {
@@ -142,6 +189,7 @@ export function updateSandboxImageUI(image: string | null): void {
 }
 
 export function bindSandboxImageEvents(): void {
+	refreshAvailableBackends();
 	const imageBtn = S.sandboxImageBtn;
 	if (!imageBtn) return;
 	if (sandboxImageBtnEl && sandboxImageBtnClickHandler) {
@@ -236,20 +284,6 @@ function populateImageDropdown(): void {
 	dropdown.textContent = "";
 
 	// Fetch available backends and images in parallel.
-	interface AvailableBackend {
-		id: string;
-		label: string;
-		kind: string;
-	}
-	interface BackendsResponse {
-		backends?: AvailableBackend[];
-		default?: string;
-	}
-	interface CachedImage {
-		tag: string;
-		skill_name?: string;
-		size?: string;
-	}
 	interface CachedImagesResponse {
 		images?: CachedImage[];
 	}
@@ -262,53 +296,56 @@ function populateImageDropdown(): void {
 			.then((r) => r.json())
 			.catch(() => ({ images: [] })),
 	]).then(([backendsData, imagesData]: [BackendsResponse, CachedImagesResponse]) => {
-		const backends = backendsData.backends || [];
-		const images = imagesData.images || [];
-
-		// Backend section header.
-		if (backends.length > 0) {
-			const header = document.createElement("div");
-			header.className = "px-3 py-1 text-[10px] font-medium text-[var(--muted)] uppercase tracking-wider";
-			header.textContent = "Backend";
-			dropdown.appendChild(header);
-
-			for (const b of backends) {
-				const isCurrent = S.sessionSandboxBackend === b.id;
-				const opt = document.createElement("div");
-				opt.className =
-					"px-3 py-1.5 text-xs cursor-pointer hover:bg-[var(--surface2)] transition-colors flex items-center gap-2";
-				if (isCurrent) {
-					opt.style.color = "var(--accent, #f59e0b)";
-					opt.style.fontWeight = "600";
-				}
-				const kindBadge = b.kind === "remote" ? " \u2601" : "";
-				opt.textContent = `${b.label}${kindBadge}`;
-				opt.addEventListener("click", (e: MouseEvent): void => {
-					e.stopPropagation();
-					selectBackend(b.id);
-				});
-				dropdown.appendChild(opt);
-			}
-		}
-
-		// Image section (only relevant for container backends).
-		const divider = document.createElement("div");
-		divider.className = "border-t border-[var(--border)] my-1";
-		dropdown.appendChild(divider);
-
-		const imgHeader = document.createElement("div");
-		imgHeader.className = "px-3 py-1 text-[10px] font-medium text-[var(--muted)] uppercase tracking-wider";
-		imgHeader.textContent = "Image";
-		dropdown.appendChild(imgHeader);
-
-		addImageOption(dropdown, DEFAULT_IMAGE, !S.sessionSandboxImage);
-		for (const img of images) {
-			const isCurrent = S.sessionSandboxImage === img.tag;
-			addImageOption(dropdown, img.tag, isCurrent, `${img.skill_name} (${img.size})`);
-		}
+		appendBackendOptions(dropdown, backendsData.backends || []);
+		appendImageOptions(dropdown, imagesData.images || []);
 
 		requestAnimationFrame(positionImageDropdown);
 	});
+}
+
+function appendBackendOptions(dropdown: HTMLElement, backends: AvailableBackend[]): void {
+	const available = backends.filter((backend) => backend.available !== false && isRealSandboxBackend(backend.id));
+	if (available.length === 0) return;
+
+	const header = document.createElement("div");
+	header.className = "px-3 py-1 text-[10px] font-medium text-[var(--muted)] uppercase tracking-wider";
+	header.textContent = "Backend";
+	dropdown.appendChild(header);
+
+	for (const backend of available) {
+		const isCurrent = S.sessionSandboxBackend === backend.id;
+		const opt = document.createElement("div");
+		opt.className =
+			"px-3 py-1.5 text-xs cursor-pointer hover:bg-[var(--surface2)] transition-colors flex items-center gap-2";
+		if (isCurrent) {
+			opt.style.color = "var(--accent, #f59e0b)";
+			opt.style.fontWeight = "600";
+		}
+		const kindBadge = backend.kind === "remote" ? " \u2601" : "";
+		opt.textContent = `${backend.label || backend.id}${kindBadge}`;
+		opt.addEventListener("click", (e: MouseEvent): void => {
+			e.stopPropagation();
+			selectBackend(backend.id);
+		});
+		dropdown.appendChild(opt);
+	}
+}
+
+function appendImageOptions(dropdown: HTMLElement, images: CachedImage[]): void {
+	const divider = document.createElement("div");
+	divider.className = "border-t border-[var(--border)] my-1";
+	dropdown.appendChild(divider);
+
+	const imgHeader = document.createElement("div");
+	imgHeader.className = "px-3 py-1 text-[10px] font-medium text-[var(--muted)] uppercase tracking-wider";
+	imgHeader.textContent = "Image";
+	dropdown.appendChild(imgHeader);
+
+	addImageOption(dropdown, DEFAULT_IMAGE, !S.sessionSandboxImage);
+	for (const img of images) {
+		const isCurrent = S.sessionSandboxImage === img.tag;
+		addImageOption(dropdown, img.tag, isCurrent, `${img.skill_name} (${img.size})`);
+	}
 }
 
 function selectBackend(backendId: string): void {

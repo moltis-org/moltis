@@ -5,9 +5,10 @@
     "build": "node scripts/build-statement.mjs && node scripts/build-changelog.mjs --published-only",
     "build:changelog": "node scripts/build-changelog.mjs --published-only",
     "install-manifest:update": "node scripts/generate-install-release-manifest.mjs",
-    "i18n:validate": "node scripts/validate-i18n.mjs"
+    "i18n:validate": "node scripts/validate-i18n.mjs",
+    "test": "node --test tests/*.test.mjs && npm run i18n:validate"
   },
   "devDependencies": {
-    "jsdom": "^28.1.0"
+    "jsdom": "^30.0.1"
   }
 }

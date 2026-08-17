@@ -17,6 +17,7 @@ interface ClawHubResult {
 	downloads?: number;
 	ownerHandle?: string;
 	ownerImage?: string;
+	installRef?: string;
 	stars?: number;
 }
 
@@ -44,7 +45,7 @@ interface ClawHubSkillInfo {
 
 // ── Helpers ──────────────────────────────────────────────────
 
-let searchTimer: ReturnType<typeof setTimeout> | null = null;
+const CLAWHUB_SEARCH_TIMEOUT_MS = 20_000;
 
 function relativeTime(ms: number): string {
 	const diff = Date.now() - ms;
@@ -124,10 +125,12 @@ function SecurityScanPanel({ scan }: { scan: ScanData | null }): VNode | null {
 
 function DetailPanel({
 	slug,
+	reference,
 	onClose,
 	onInstalled,
 }: {
 	slug: string;
+	reference: string;
 	onClose: () => void;
 	onInstalled: () => void;
 }): VNode {
@@ -143,11 +146,11 @@ function DetailPanel({
 	useEffect(() => {
 		if (fetched.current) return;
 		fetched.current = true;
-		Promise.all([sendRpc("skills.clawhub.info", { slug }), sendRpc("skills.clawhub.scan", { slug })])
+		Promise.all([sendRpc("skills.clawhub.info", { reference }), sendRpc("skills.clawhub.scan", { reference })])
 			.then(([infoRes, scanRes]) => {
 				loading.value = false;
 				if (infoRes?.ok) info.value = infoRes.payload as ClawHubSkillInfo;
-				else error.value = String(infoRes?.error || "Failed to load skill info");
+				else error.value = infoRes?.error?.message || "Failed to load skill info";
 				if (scanRes?.ok) {
 					const p = scanRes.payload as { security?: ScanData } | undefined;
 					if (p?.security) scan.value = p.security;
@@ -157,12 +160,12 @@ function DetailPanel({
 				loading.value = false;
 				error.value = "Failed to load skill info";
 			});
-	}, [slug]);
+	}, [reference]);
 
 	async function doInstall(): Promise<void> {
 		installing.value = true;
 		try {
-			const res = await sendRpc("skills.clawhub.install", { slug });
+			const res = await sendRpc("skills.clawhub.install", { reference });
 			if (res?.ok) {
 				installed.value = true;
 				showToast("Installed — review and enable the skill in the Skills tab.", "success");
@@ -375,6 +378,7 @@ function ResultCard({ result, onInstalled }: { result: ClawHubResult; onInstalle
 			{expanded.value && (
 				<DetailPanel
 					slug={result.slug}
+					reference={result.installRef || result.slug}
 					onInstalled={onInstalled}
 					onClose={() => {
 						expanded.value = false;
@@ -392,45 +396,82 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 	const results = useSignal<ClawHubResult[]>([]);
 	const searching = useSignal(false);
 	const searched = useSignal(false);
+	const error = useSignal<string | null>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
+	const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const searchGeneration = useRef(0);
 
-	function doSearch(q: string): void {
-		if (!q.trim()) {
+	useEffect(
+		() => () => {
+			searchGeneration.current += 1;
+			if (searchTimer.current) clearTimeout(searchTimer.current);
+		},
+		[],
+	);
+
+	function doSearch(q: string, generation: number): void {
+		if (generation !== searchGeneration.current) return;
+		const trimmedQuery = q.trim();
+		if (!trimmedQuery) {
 			results.value = [];
 			searched.value = false;
+			error.value = null;
 			return;
 		}
 		searching.value = true;
-		sendRpc("skills.clawhub.search", { query: q.trim() })
+		error.value = null;
+		sendRpc("skills.clawhub.search", { query: trimmedQuery }, CLAWHUB_SEARCH_TIMEOUT_MS)
 			.then((res) => {
+				if (generation !== searchGeneration.current) return;
 				searching.value = false;
 				searched.value = true;
 				if (res?.ok) {
 					const payload = res.payload as { results?: ClawHubResult[] } | undefined;
 					results.value = payload?.results || [];
+					console.info("ClawHub search completed", { query: trimmedQuery, resultCount: results.value.length });
+					return;
 				}
+				const message = res?.error?.message || "ClawHub search failed";
+				results.value = [];
+				error.value = message;
+				console.error("ClawHub search failed", { query: trimmedQuery, error: res?.error });
+				showToast(message, "error");
 			})
-			.catch(() => {
+			.catch((cause: unknown) => {
+				if (generation !== searchGeneration.current) return;
 				searching.value = false;
+				searched.value = true;
+				results.value = [];
+				const message = cause instanceof Error ? cause.message : "ClawHub search failed";
+				error.value = message;
+				console.error("ClawHub search failed", { query: trimmedQuery, cause });
+				showToast(message, "error");
 			});
+	}
+
+	function searchNow(q: string): void {
+		doSearch(q, ++searchGeneration.current);
 	}
 
 	function onInput(e: Event): void {
 		const v = (e.target as HTMLInputElement).value;
 		query.value = v;
-		if (searchTimer) clearTimeout(searchTimer);
+		const generation = ++searchGeneration.current;
+		searching.value = false;
+		searched.value = false;
+		results.value = [];
+		error.value = null;
+		if (searchTimer.current) clearTimeout(searchTimer.current);
 		if (!v.trim()) {
-			results.value = [];
-			searched.value = false;
 			return;
 		}
-		searchTimer = setTimeout(() => doSearch(v), 300);
+		searchTimer.current = setTimeout(() => doSearch(v, generation), 300);
 	}
 
 	function onKeyDown(e: Event): void {
 		if ((e as KeyboardEvent).key === "Enter") {
-			if (searchTimer) clearTimeout(searchTimer);
-			doSearch(query.value);
+			if (searchTimer.current) clearTimeout(searchTimer.current);
+			searchNow(query.value);
 		}
 	}
 
@@ -465,19 +506,27 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 				<button
 					className="provider-btn"
 					disabled={searching.value || !query.value.trim()}
-					onClick={() => doSearch(query.value)}
+					onClick={() => searchNow(query.value)}
 				>
 					{searching.value ? "Searching\u2026" : "Search"}
 				</button>
 			</div>
+			{error.value && (
+				<div
+					role="alert"
+					className="mt-2 rounded border border-[var(--danger)]/40 bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]"
+				>
+					ClawHub search failed: {error.value}
+				</div>
+			)}
 			{results.value.length > 0 && (
 				<div style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "8px" }}>
 					{results.value.map((r) => (
-						<ResultCard key={r.slug} result={r} onInstalled={onChanged} />
+						<ResultCard key={r.installRef || `${r.ownerHandle || ""}/${r.slug}`} result={r} onInstalled={onChanged} />
 					))}
 				</div>
 			)}
-			{searched.value && results.value.length === 0 && !searching.value && (
+			{searched.value && !error.value && results.value.length === 0 && !searching.value && (
 				<div
 					style={{
 						fontSize: ".78rem",

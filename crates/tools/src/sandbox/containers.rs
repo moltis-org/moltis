@@ -241,6 +241,17 @@ pub struct SandboxImage {
 
 /// List all local `<instance>-sandbox:*` images across available container CLIs.
 pub async fn list_sandbox_images() -> Result<Vec<SandboxImage>> {
+    list_images_matching(is_sandbox_image_tag).await
+}
+
+pub async fn list_moltis_images(extra_repositories: &[String]) -> Result<Vec<SandboxImage>> {
+    list_images_matching(|tag| {
+        is_sandbox_image_tag(tag) || extra_repositories.iter().any(|repo| tag.starts_with(repo))
+    })
+    .await
+}
+
+async fn list_images_matching(matches_tag: impl Fn(&str) -> bool) -> Result<Vec<SandboxImage>> {
     let mut images = Vec::new();
     let mut seen = HashSet::new();
 
@@ -267,7 +278,7 @@ pub async fn list_sandbox_images() -> Result<Vec<SandboxImage>> {
                 }
                 // Podman prefixes local repos with "localhost/"; normalize.
                 let tag = parts[0].strip_prefix("localhost/").unwrap_or(parts[0]);
-                if is_sandbox_image_tag(tag) && seen.insert(tag.to_string()) {
+                if matches_tag(tag) && seen.insert(tag.to_string()) {
                     images.push(SandboxImage {
                         tag: tag.to_string(),
                         size: parts[1].to_string(),
@@ -290,8 +301,11 @@ pub async fn list_sandbox_images() -> Result<Vec<SandboxImage>> {
             for line in stdout.lines().skip(1) {
                 // Columns are whitespace-separated: NAME TAG DIGEST
                 let cols: Vec<&str> = line.split_whitespace().collect();
-                if cols.len() >= 2 && cols[0].ends_with("-sandbox") {
+                if cols.len() >= 2 {
                     let tag = format!("{}:{}", cols[0], cols[1]);
+                    if !matches_tag(&tag) {
+                        continue;
+                    }
                     if !seen.insert(tag.clone()) {
                         continue;
                     }
@@ -478,15 +492,21 @@ pub(crate) fn is_zombie(name: &str) -> bool {
 /// Queries both Apple Container and Docker backends when available,
 /// merging results with the appropriate backend label.
 pub async fn list_running_containers(container_prefix: &str) -> Result<Vec<RunningContainer>> {
+    list_running_containers_for_prefixes(&[container_prefix.to_string()]).await
+}
+
+pub async fn list_running_containers_for_prefixes(
+    prefixes: &[String],
+) -> Result<Vec<RunningContainer>> {
     let mut containers = Vec::new();
     let mut seen = HashSet::new();
 
-    // Apple Container: `container list --format json` outputs a JSON array.
+    // Apple Container: `container list --all --format json` outputs a JSON array.
     // Each element has nested fields: configuration.id, status,
     // configuration.image.reference, configuration.resources, networks[].
     if is_cli_available("container") {
         let output = tokio::process::Command::new("container")
-            .args(["list", "--format", "json"])
+            .args(["list", "--all", "--format", "json"])
             .output()
             .await;
         if let Ok(output) = output
@@ -499,11 +519,13 @@ pub async fn list_running_containers(container_prefix: &str) -> Result<Vec<Runni
                     .pointer("/configuration/id")
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
-                if !name.starts_with(container_prefix) || !seen.insert(name.to_string()) {
+                if !prefixes.iter().any(|prefix| name.starts_with(prefix))
+                    || !seen.insert(name.to_string())
+                {
                     continue;
                 }
                 let state_str = entry
-                    .get("status")
+                    .pointer("/status/state")
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
                 let state = match state_str {
@@ -527,17 +549,23 @@ pub async fn list_running_containers(container_prefix: &str) -> Result<Vec<Runni
                     .map(|v| v / (1024 * 1024));
                 // startedDate is a Core Foundation absolute time (seconds since 2001-01-01).
                 // Store as unix timestamp string; the frontend formats for display.
-                let started =
-                    entry
-                        .get("startedDate")
-                        .and_then(|v| v.as_f64())
-                        .map(|cf_timestamp| {
-                            // CF absolute time epoch: 2001-01-01T00:00:00Z = 978307200 unix seconds.
-                            let unix_secs = cf_timestamp as i64 + 978_307_200;
-                            unix_secs.to_string()
-                        });
+                let started = entry
+                    .pointer("/status/startedDate")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .or_else(|| {
+                        entry
+                            .get("startedDate")
+                            .and_then(|v| v.as_f64())
+                            .map(|cf_timestamp| {
+                                // Legacy CF absolute time epoch: 2001-01-01T00:00:00Z = 978307200 unix seconds.
+                                let unix_secs = cf_timestamp as i64 + 978_307_200;
+                                unix_secs.to_string()
+                            })
+                    });
                 let addr = entry
-                    .pointer("/networks/0/ipv4Address")
+                    .pointer("/status/networks/0/ipv4Address")
+                    .or_else(|| entry.pointer("/networks/0/ipv4Address"))
                     .and_then(|v| v.as_str())
                     .map(String::from);
 
@@ -564,14 +592,7 @@ pub async fn list_running_containers(container_prefix: &str) -> Result<Vec<Runni
             continue;
         }
         let output = tokio::process::Command::new(cli)
-            .args([
-                "ps",
-                "-a",
-                "--filter",
-                &format!("name={container_prefix}"),
-                "--format",
-                "{{json .}}",
-            ])
+            .args(["ps", "-a", "--format", "{{json .}}"])
             .output()
             .await;
         if let Ok(output) = output
@@ -592,7 +613,9 @@ pub async fn list_running_containers(container_prefix: &str) -> Result<Vec<Runni
                     .get("Names")
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
-                if !name.starts_with(container_prefix) || !seen.insert(name.to_string()) {
+                if !prefixes.iter().any(|prefix| name.starts_with(prefix))
+                    || !seen.insert(name.to_string())
+                {
                     continue;
                 }
                 let state_str = json

@@ -381,6 +381,15 @@ async fn available_includes_default_base_urls() {
         kimi_code.get("defaultBaseUrl").and_then(|u| u.as_str()),
         Some("https://api.kimi.com/coding/v1")
     );
+
+    let moonshot = arr
+        .iter()
+        .find(|p| p.get("name").and_then(|n| n.as_str()) == Some("moonshot"))
+        .expect("moonshot not found");
+    assert_eq!(
+        moonshot.get("defaultBaseUrl").and_then(|u| u.as_str()),
+        Some("https://api.moonshot.ai/v1")
+    );
 }
 
 #[tokio::test]

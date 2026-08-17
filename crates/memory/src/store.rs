@@ -1,4 +1,4 @@
-/// Storage abstraction for memory files, chunks, and embedding cache.
+/// Storage abstraction for memory files, chunks, embedding cache, and hybrid search.
 use async_trait::async_trait;
 
 use crate::{
@@ -6,6 +6,25 @@ use crate::{
     schema::{ChunkRow, FileRow},
     search::SearchResult,
 };
+
+/// Strategy for merging vector and keyword search results.
+///
+/// The per-source weights (`vector_weight` / `keyword_weight`) are passed
+/// separately to [`MemoryStore::hybrid_search`] and apply to every variant,
+/// so they are intentionally not duplicated here.
+#[derive(Debug, Clone, Copy)]
+pub enum MergeStrategy {
+    /// Reciprocal Rank Fusion with rank-constant `k` (default k=60).
+    Rrf { k: u32 },
+    /// Weighted linear blend (uses the weights passed to `hybrid_search`).
+    Weighted,
+}
+
+impl Default for MergeStrategy {
+    fn default() -> Self {
+        Self::Rrf { k: 60 }
+    }
+}
 
 /// A single embedding cache entry for batch inserts.
 pub struct CacheEntry<'a> {
@@ -57,11 +76,39 @@ pub trait MemoryStore: Send + Sync {
     async fn evict_embedding_cache(&self, keep: usize) -> Result<usize>;
 
     // ---- search ----
-    async fn vector_search(
+    /// Perform hybrid search: vector similarity + keyword/FTS, merged by the
+    /// chosen strategy. `vector_weight` and `keyword_weight` apply to every
+    /// [`MergeStrategy`] variant. Pass an empty embedding slice for keyword-only
+    /// search (only the FTS sub-query contributes); pass an empty query string
+    /// for vector-only search.
+    async fn hybrid_search(
         &self,
-        query_embedding: &[f32],
+        embedding: &[f32],
+        query: &str,
+        vector_weight: f32,
+        keyword_weight: f32,
+        merge_strategy: MergeStrategy,
         limit: usize,
     ) -> Result<Vec<SearchResult>>;
 
-    async fn keyword_search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>>;
+    /// Backend type identifier: "sqlite" for the built-in SQLite store,
+    /// "zvec" for the zvec HNSW store.
+    fn store_type(&self) -> &'static str {
+        "sqlite"
+    }
+
+    /// HNSW index build percentage (zvec only, returns None for SQLite).
+    fn hnsw_percent(&self) -> Option<f64> {
+        None
+    }
+
+    /// Approximate on-disk footprint of the store's data files in bytes.
+    ///
+    /// Backends that own their data files (zvec) override this so the memory
+    /// status reports real disk usage. The built-in SQLite store reports 0
+    /// here and lets the manager fall back to measuring its `db_path` file.
+    /// Returns 0 for in-memory stores or when the files are unavailable.
+    fn disk_size_bytes(&self) -> u64 {
+        0
+    }
 }

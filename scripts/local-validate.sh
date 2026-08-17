@@ -7,11 +7,15 @@ CURRENT_PID=""
 RUN_CHECK_ASYNC_PID=""
 STATUS_PUBLISH_ENABLED=1
 
+# `"${arr[@]+"${arr[@]}"}"` is required throughout this script: bash 3.2 (the
+# default /bin/bash on macOS) treats a plain `"${arr[@]}"` on an empty array as
+# an unbound variable under `set -u`. ACTIVE_PIDS is empty before the first
+# async check starts and again after the last one is reaped.
 remove_active_pid() {
   local target="$1"
   local -a kept=()
   local pid
-  for pid in "${ACTIVE_PIDS[@]}"; do
+  for pid in "${ACTIVE_PIDS[@]+"${ACTIVE_PIDS[@]}"}"; do
     if [[ "$pid" != "$target" ]]; then
       kept+=("$pid")
     fi
@@ -31,7 +35,7 @@ handle_interrupt() {
   fi
 
   local pid
-  for pid in "${ACTIVE_PIDS[@]}"; do
+  for pid in "${ACTIVE_PIDS[@]+"${ACTIVE_PIDS[@]}"}"; do
     kill -TERM "$pid" 2>/dev/null || true
   done
 
@@ -41,7 +45,7 @@ handle_interrupt() {
     kill -KILL "$CURRENT_PID" 2>/dev/null || true
   fi
 
-  for pid in "${ACTIVE_PIDS[@]}"; do
+  for pid in "${ACTIVE_PIDS[@]+"${ACTIVE_PIDS[@]}"}"; do
     kill -KILL "$pid" 2>/dev/null || true
   done
 
@@ -80,6 +84,7 @@ if [[ "$LOCAL_ONLY" -eq 0 ]]; then
 
   BASE_REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
   SHA="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRefOid -q .headRefOid)"
+  BASE_REF_NAME="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json baseRefName -q .baseRefName)"
   HEAD_OWNER="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRepositoryOwner -q .headRepositoryOwner.login)"
   HEAD_REPO_NAME="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRepository -q .headRepository.name)"
 
@@ -101,6 +106,7 @@ EOF
   fi
 else
   SHA="$(git rev-parse HEAD)"
+  BASE_REF_NAME="${LOCAL_VALIDATE_BASE_REF:-main}"
 fi
 
 # Auto-sync Cargo.lock if stale (common after merging main).
@@ -172,7 +178,7 @@ elif command -v just >/dev/null 2>&1 && [[ -f justfile ]]; then
 else
   fmt_cmd="cargo +${nightly_toolchain} fmt --all -- --check"
 fi
-biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/web/ui/src/ crates/web/ui/e2e/}"
+biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-bash -c 'cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npx biome ci --diagnostic-level=error src/ e2e/'}"
 tsc_cmd="${LOCAL_VALIDATE_TSC_CMD:-bash -c 'cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npx tsc --noEmit'}"
 i18n_cmd="${LOCAL_VALIDATE_I18N_CMD:-./scripts/i18n-check.sh}"
 zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-./scripts/run-zizmor-resilient.sh . --min-severity high}"
@@ -194,7 +200,7 @@ e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ];
 ollama_qwen_e2e_cmd="${LOCAL_VALIDATE_OLLAMA_QWEN_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && MOLTIS_E2E_OLLAMA_QWEN_LIVE=1 npx playwright test --project=ollama-qwen-live e2e/specs/ollama-qwen-live.spec.js}"
 coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo +${nightly_toolchain} llvm-cov --workspace --all-features --html}"
 macos_app_cmd="${LOCAL_VALIDATE_MACOS_APP_CMD:-./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination \"platform=macOS\" -derivedDataPath apps/macos/.derivedData-local-validate CODE_SIGNING_ALLOWED=NO build}"
-ios_app_cmd="${LOCAL_VALIDATE_IOS_APP_CMD:-cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination \"generic/platform=iOS\" CODE_SIGNING_ALLOWED=NO build}"
+ios_app_cmd="${LOCAL_VALIDATE_IOS_APP_CMD:-cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-project.sh && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination \"generic/platform=iOS\" CODE_SIGNING_ALLOWED=NO build}"
 build_cmd="${LOCAL_VALIDATE_BUILD_CMD:-cargo +${nightly_toolchain} build --workspace --all-features --all-targets}"
 
 strip_all_features_flag() {
@@ -204,6 +210,171 @@ strip_all_features_flag() {
   cmd="${cmd//--all-features /}"
   cmd="${cmd//--all-features/}"
   printf '%s' "$cmd"
+}
+
+changed_files() {
+  if [[ "$LOCAL_ONLY" -eq 0 ]]; then
+    # `gh pr diff` answers HTTP 406 once a PR exceeds 20,000 diff lines, and it
+    # exits 0 while printing nothing usable. Left alone that turns the targeted
+    # contexts into no-ops that still report "passed", so a large PR would be
+    # the least tested one. Fall back to the local range instead.
+    local pr_files=""
+    if pr_files="$(gh pr diff "$PR_NUMBER" --repo "$BASE_REPO" --name-only 2>/dev/null)" \
+      && [[ -n "$pr_files" ]]; then
+      printf '%s\n' "$pr_files"
+      return
+    fi
+    echo "[changed-files] gh pr diff unavailable for #${PR_NUMBER}; using the local branch range." >&2
+  fi
+
+  local base_ref="${LOCAL_VALIDATE_BASE_REF:-$BASE_REF_NAME}"
+  local base_commit=""
+  if git rev-parse --verify "origin/${base_ref}" >/dev/null 2>&1; then
+    base_commit="$(git merge-base "origin/${base_ref}" HEAD)"
+  elif git rev-parse --verify "$base_ref" >/dev/null 2>&1; then
+    base_commit="$(git merge-base "$base_ref" HEAD)"
+  elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+    base_commit="HEAD^"
+  fi
+
+  if [[ -n "$base_commit" ]]; then
+    git diff --name-only "$base_commit"...HEAD
+  else
+    git diff --name-only HEAD
+  fi
+}
+
+crate_dir_for_path() {
+  local path="$1"
+  local dir
+  dir="$(dirname "$path")"
+
+  while [[ "$dir" != "." && "$dir" != "/" ]]; do
+    if [[ -f "$dir/Cargo.toml" ]]; then
+      printf '%s' "$dir"
+      return
+    fi
+    dir="$(dirname "$dir")"
+  done
+}
+
+package_name_for_path() {
+  local dir
+  dir="$(crate_dir_for_path "$1")"
+  [[ -n "$dir" ]] || return
+
+  sed -nE 's/^name[[:space:]]*=[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' "$dir/Cargo.toml" \
+    | tr -d '\r' \
+    | head -n1
+}
+
+# Whether a path is a Cargo integration test target (`--test <name>`).
+#
+# Only `.rs` files directly under a crate's own `tests/` directory are separate
+# test binaries. A `tests/` directory nested inside `src/` — e.g.
+# `src/session/tests/tests/channel_binding_tests.rs` — is an ordinary inline
+# module compiled into the lib, and asking nextest for `--test` on it fails with
+# "no test target named ...".
+is_integration_test_target() {
+  local file="$1"
+  local crate_dir
+  crate_dir="$(crate_dir_for_path "$file")"
+  [[ -n "$crate_dir" ]] || return 1
+  [[ "$file" == "$crate_dir"/tests/*.rs ]] || return 1
+  # Reject anything deeper than `tests/<name>.rs`.
+  local rest="${file#"$crate_dir"/tests/}"
+  [[ "$rest" != */* ]]
+}
+
+nextest_base_cmd_for_package() {
+  local package="$1"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    case "$package" in
+      moltis-gateway|moltis-providers)
+        printf 'cargo +%s nextest run -p %s --features local-llm-metal' "$nightly_toolchain" "$package"
+        ;;
+      *)
+        printf 'cargo +%s nextest run -p %s' "$nightly_toolchain" "$package"
+        ;;
+    esac
+  else
+    printf 'cargo +%s nextest run -p %s --all-features' "$nightly_toolchain" "$package"
+  fi
+}
+
+build_targeted_rust_test_cmd() {
+  local -a commands=()
+  local file
+  while IFS= read -r file; do
+    [[ -e "$file" ]] || continue
+    [[ "$file" == *.rs ]] || continue
+
+    local package
+    package="$(package_name_for_path "$file")"
+    [[ -n "$package" ]] || continue
+
+    local base_cmd
+    base_cmd="$(nextest_base_cmd_for_package "$package")"
+    if is_integration_test_target "$file"; then
+      local test_name
+      test_name="$(basename "$file" .rs)"
+      commands+=("$base_cmd --test $test_name")
+    elif [[ "$file" == */tests/*.rs ]]; then
+      # Nested source test modules do not map to Cargo --test targets, and a
+      # basename such as `mod` is not a reliable nextest filter.
+      commands+=("$base_cmd")
+    elif [[ "$(basename "$file")" == *_tests.rs ]]; then
+      # Sibling test files are commonly wired under their production module,
+      # e.g. connectors_tests.rs becomes connectors::tests rather than a
+      # connectors_tests module.
+      local filter_name
+      filter_name="$(basename "$file" _tests.rs)"
+      commands+=("$base_cmd $filter_name")
+    elif grep -Eq '#\[(tokio::)?test\]' "$file" 2>/dev/null; then
+      local filter_name
+      filter_name="$(basename "$file" .rs)"
+      commands+=("$base_cmd $filter_name")
+    fi
+  done < <(changed_files)
+
+  if [[ "${#commands[@]}" -eq 0 ]]; then
+    # Announced here, in the main log: the context's own output is captured and
+    # discarded on success, so a skip would otherwise look like a green run.
+    echo "[local/test] no changed Rust tests detected; nothing to run." >&2
+    printf '%s' 'echo "No changed Rust tests detected; skipping local/test."'
+    return
+  fi
+
+  local joined="${commands[0]}"
+  local command
+  for command in "${commands[@]:1}"; do
+    joined="$joined && $command"
+  done
+  printf '%s' "$joined"
+}
+
+build_targeted_e2e_cmd() {
+  local -a specs=()
+  local file
+  while IFS= read -r file; do
+    [[ -e "$file" ]] || continue
+    case "$file" in
+      crates/web/ui/e2e/specs/*.js|crates/web/ui/e2e/specs/*.ts)
+        specs+=("$file")
+        ;;
+    esac
+  done < <(changed_files)
+
+  if [[ "${#specs[@]}" -eq 0 ]]; then
+    echo "[local/e2e] no changed Playwright specs detected; nothing to run." >&2
+    printf '%s' 'echo "No changed Playwright specs detected; skipping local/e2e."'
+    return
+  fi
+
+  printf 'cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npx playwright test'
+  for file in "${specs[@]}"; do
+    printf ' %s' "${file#crates/web/ui/}"
+  done
 }
 
 if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
@@ -231,6 +402,14 @@ if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
   coverage_cmd="$(strip_all_features_flag "$coverage_cmd")"
   echo "Detected macOS without nvcc; using Darwin-native validation commands (metal for provider/gateway, no Linux CUDA path)." >&2
   echo "CI still covers the Linux/CUDA all-features path. Override with LOCAL_VALIDATE_* if you need a different split." >&2
+fi
+
+if [[ -z "${LOCAL_VALIDATE_TEST_CMD:-}" ]]; then
+  test_cmd="$(build_targeted_rust_test_cmd)"
+fi
+
+if [[ -z "${LOCAL_VALIDATE_E2E_CMD:-}" ]]; then
+  e2e_cmd="$(build_targeted_e2e_cmd)"
 fi
 
 ensure_zizmor() {
@@ -616,14 +795,14 @@ else
   echo "Skipping Ollama Qwen live E2E (LOCAL_VALIDATE_OLLAMA_QWEN_E2E=0)."
 fi
 
-# Coverage (optional — requires cargo-llvm-cov).
-# Skipped silently when the tool is not installed. Disable explicitly with
-# LOCAL_VALIDATE_SKIP_COVERAGE=1.
-if [[ "${LOCAL_VALIDATE_SKIP_COVERAGE:-0}" != "1" ]] && cargo llvm-cov --version >/dev/null 2>&1; then
+# Coverage is opt-in because llvm-cov runs the Rust test suite.
+if [[ "${LOCAL_VALIDATE_COVERAGE:-0}" == "1" ]] && [[ "${LOCAL_VALIDATE_SKIP_COVERAGE:-0}" != "1" ]] && cargo llvm-cov --version >/dev/null 2>&1; then
   run_check "local/coverage" "$coverage_cmd"
   echo "Coverage report: target/llvm-cov/html/index.html"
-elif [[ "${LOCAL_VALIDATE_SKIP_COVERAGE:-0}" != "1" ]]; then
+elif [[ "${LOCAL_VALIDATE_COVERAGE:-0}" == "1" ]] && [[ "${LOCAL_VALIDATE_SKIP_COVERAGE:-0}" != "1" ]]; then
   echo "Skipping coverage (cargo-llvm-cov not installed). Install with: cargo install cargo-llvm-cov"
+else
+  echo "Skipping coverage (set LOCAL_VALIDATE_COVERAGE=1 to run)."
 fi
 
 # Collect local/zizmor result at the end and fail if it found issues.

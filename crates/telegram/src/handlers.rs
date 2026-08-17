@@ -5,5 +5,7 @@
 
 #[path = "handlers/implementation.rs"]
 mod implementation;
+#[path = "handlers/reactions.rs"]
+mod reactions;
 
-pub use self::implementation::*;
+pub use self::{implementation::*, reactions::handle_message_reaction};

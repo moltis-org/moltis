@@ -81,6 +81,11 @@ pub struct TelephonyAccountConfig {
     #[serde(default)]
     pub allowlist: Vec<String>,
 
+    /// Exact sender IDs allowed to run privileged channel commands.
+    /// Empty grants nobody privileged access.
+    #[serde(default)]
+    pub operators: Vec<String>,
+
     // ── Voice settings ──
     /// TTS voice ID to use for bot speech.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -128,6 +133,7 @@ impl Default for TelephonyAccountConfig {
             notify_hangup_delay_secs: default_notify_hangup_delay(),
             inbound_policy: InboundPolicy::default(),
             allowlist: Vec::new(),
+            operators: Vec::new(),
             voice_id: None,
             tts_provider: None,
             model: None,
@@ -140,6 +146,10 @@ impl Default for TelephonyAccountConfig {
 impl ChannelConfigView for TelephonyAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.allowlist
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {

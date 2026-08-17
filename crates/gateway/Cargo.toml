@@ -19,6 +19,7 @@ gix                     = { workspace = true }
 hostname                = { workspace = true }
 http                    = { workspace = true }
 include_dir             = { optional = true, workspace = true }
+isahc                   = { optional = true, workspace = true }
 mdns-sd                 = { optional = true, workspace = true }
 moltis-agents           = { workspace = true }
 moltis-auth             = { workspace = true }
@@ -32,6 +33,10 @@ moltis-code-index       = { workspace = true }
 moltis-codex-import     = { optional = true, workspace = true }
 moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
+moltis-connector-caldav = { optional = true, workspace = true }
+moltis-connector-gmail  = { optional = true, workspace = true }
+moltis-connector-himalaya = { optional = true, workspace = true }
+moltis-connectors       = { optional = true, workspace = true }
 moltis-cron             = { workspace = true }
 moltis-discord          = { optional = true, workspace = true }
 moltis-external-agents  = { workspace = true }
@@ -42,12 +47,14 @@ moltis-mcp              = { workspace = true }
 moltis-mcp-agent-bridge = { workspace = true }
 moltis-media            = { workspace = true }
 moltis-memory           = { workspace = true }
+moltis-memory-zvec      = { optional = true, workspace = true }
 moltis-metrics          = { optional = true, workspace = true }
 moltis-msteams          = { optional = true, workspace = true }
 moltis-netbird          = { optional = true, workspace = true }
 moltis-network-filter   = { features = ["proxy", "service"], optional = true, workspace = true }
 moltis-nostr            = { optional = true, workspace = true }
 moltis-oauth            = { workspace = true }
+moltis-observability    = { workspace = true }
 moltis-onboarding       = { workspace = true }
 moltis-openclaw-import  = { optional = true, workspace = true }
 moltis-plugins          = { workspace = true }
@@ -89,7 +96,7 @@ thiserror               = { workspace = true }
 time                    = { workspace = true }
 tokio                   = { workspace = true }
 tokio-stream            = { workspace = true }
-tokio-util              = { workspace = true }
+tokio-util              = { features = ["rt"], workspace = true }
 toml                    = { workspace = true }
 tracing                 = { workspace = true }
 tracing-subscriber      = { workspace = true }
@@ -111,6 +118,13 @@ caldav = ["dep:moltis-caldav"]
 claude-import = ["dep:moltis-claude-import"]
 code-index-builtin = ["moltis-code-index/builtin"]
 codex-import = ["dep:moltis-codex-import"]
+connectors = [
+  "dep:moltis-caldav",
+  "dep:moltis-connector-caldav",
+  "dep:moltis-connector-gmail",
+  "dep:moltis-connector-himalaya",
+  "dep:moltis-connectors",
+]
 default = [
   "agent",
   "bundled-skills",
@@ -118,6 +132,7 @@ default = [
   "claude-import",
   "code-index-builtin",
   "codex-import",
+  "connectors",
   "discord",
   "file-watcher",
   "firecrawl",
@@ -125,6 +140,7 @@ default = [
   "graphql",
   "hermes-import",
   "home-assistant",
+  "langfuse",
   "local-llm",
   "local-llm-metal",
   "matrix",
@@ -134,7 +150,10 @@ default = [
   "netbird",
   "nostr",
   "openclaw-import",
+  "otlp",
   "prometheus",
+  "provider-github-copilot",
+  "provider-kimi-code",
   "provider-openai-codex",
   "push-notifications",
   "qmd",
@@ -163,6 +182,7 @@ fs-tools = ["moltis-tools/fs-tools"]
 graphql = []
 hermes-import = ["dep:moltis-hermes-import"]
 home-assistant = ["dep:moltis-home-assistant"]
+langfuse = ["moltis-observability/langfuse"]
 llm-compaction = ["moltis-chat/llm-compaction"]
 local-embeddings = ["moltis-memory/local-embeddings"]
 local-llm = [
@@ -178,23 +198,40 @@ mdns = ["dep:mdns-sd"]
 metrics = [
   "dep:moltis-metrics",
   "moltis-chat/metrics",
+  "moltis-connector-caldav?/metrics",
+  "moltis-connector-gmail?/metrics",
+  "moltis-connector-himalaya?/metrics",
+  "moltis-connectors?/metrics",
   "moltis-discord?/metrics",
-  "moltis-matrix/metrics",
+  "moltis-matrix?/metrics",
   "moltis-metrics/sqlite",
   "moltis-msteams?/metrics",
   "moltis-nostr?/metrics",
+  "moltis-observability/metrics",
   "moltis-signal?/metrics",
 ]
 msteams = ["dep:moltis-msteams"]
 netbird = ["dep:moltis-netbird"]
 nostr = ["dep:moltis-nostr"]
 openclaw-import = ["dep:moltis-openclaw-import"]
+otlp = ["moltis-observability/otlp"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
+provider-github-copilot = [
+  "moltis-provider-setup/provider-github-copilot",
+  "moltis-providers/provider-github-copilot",
+]
+provider-kimi-code = ["moltis-providers/provider-kimi-code"]
 provider-openai-codex = [
   "moltis-providers/provider-openai-codex",
   "moltis-tools/provider-openai-codex",
 ]
-push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]
+push-notifications = [
+  "dep:chrono",
+  "dep:isahc",
+  "dep:p256",
+  "dep:web-push",
+  "moltis-chat/push-notifications",
+]
 qmd = ["dep:moltis-qmd", "moltis-code-index/qmd"]
 signal = ["dep:moltis-signal"]
 slack = ["dep:moltis-slack", "moltis-slack/metrics"]
@@ -213,9 +250,11 @@ voice = ["dep:moltis-voice"]
 wasm = ["moltis-tools/wasm"]
 web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
 whatsapp = ["dep:moltis-whatsapp", "dep:qrcode", "moltis-whatsapp/metrics"]
+zvec = ["dep:moltis-memory-zvec"]
 
 [dev-dependencies]
 serial_test = { workspace = true }
+tokio       = { features = ["test-util"], workspace = true }
 
 [lints]
 workspace = true

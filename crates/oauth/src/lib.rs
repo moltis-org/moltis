@@ -20,7 +20,8 @@ pub use {
     device_flow::DeviceCodeResponse,
     discovery::{
         AuthorizationServerMetadata, ClientRegistrationResponse, ProtectedResourceMetadata,
-        fetch_as_metadata, fetch_resource_metadata, parse_www_authenticate, register_client,
+        fetch_as_metadata, fetch_resource_metadata, fetch_resource_metadata_direct,
+        parse_www_authenticate, register_client,
     },
     flow::OAuthFlow,
     kimi::kimi_headers,

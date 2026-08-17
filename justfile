@@ -99,7 +99,7 @@ build-release-with-wasm: build-wasm-artifacts
 dev-server:
     cargo build --bin moltis
     just codesign-debug
-    MOLTIS_CONFIG_DIR=.moltis/config MOLTIS_DATA_DIR=.moltis/ cargo run --bin moltis
+    MOLTIS_SLACK_API_BASE_URL_ALLOWLIST=localhost,127.0.0.1 MOLTIS_CONFIG_DIR=.moltis/config MOLTIS_DATA_DIR=.moltis/ cargo run --bin moltis
 
 # Build Debian package for the current architecture
 deb: build-release build-wasm-artifacts
@@ -350,6 +350,21 @@ changelog-release version:
 ship commit_message='' pr_title='' pr_body='':
     ./scripts/ship-pr.sh {{ quote(commit_message) }} {{ quote(pr_title) }} {{ quote(pr_body) }}
 
+# Run local validation with the full Rust and Playwright test suites.
+local-validate-full pr_number='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    if [[ -n {{ quote(pr_number) }} ]]; then
+        args+=({{ quote(pr_number) }})
+    fi
+    # `"${args[@]+...}"` is required: bash 3.2 (the default /bin/bash on macOS)
+    # treats a plain `"${args[@]}"` on an empty array as an unbound variable
+    # under `set -u`. The array is empty in the supported no-PR local-only mode.
+    LOCAL_VALIDATE_TEST_CMD="just test" \
+    LOCAL_VALIDATE_E2E_CMD="cd crates/web/ui && npm run e2e:install && npm run e2e" \
+        ./scripts/local-validate.sh "${args[@]+"${args[@]}"}"
+
 # Run all tests (nightly to share build cache with clippy/lint, OS-aware).
 # On macOS: single nextest run using default features (includes Metal, not CUDA).
 # On Linux: --all-features (includes CUDA).
@@ -433,7 +448,8 @@ ios-graphql:
     ./scripts/generate-ios-graphql.sh
 
 # Build iOS app (generic iOS destination, no signing).
-ios-build: ios-graphql ios-generate
+ios-build: ios-generate ios-graphql
+    ./scripts/generate-ios-project.sh
     xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build
 
 # Lint iOS app sources with SwiftLint.
@@ -441,7 +457,8 @@ ios-lint:
     cd apps/ios && swiftlint
 
 # Open iOS project in Xcode (regenerates GraphQL types and project first).
-ios-open: ios-graphql ios-generate
+ios-open: ios-generate ios-graphql
+    ./scripts/generate-ios-project.sh
     open apps/ios/Moltis.xcodeproj
 
 # Build the APNS push relay.
@@ -460,7 +477,7 @@ courier-deploy:
 courier-run *ARGS:
     cargo run -p moltis-courier -- {{ARGS}}
 
-# Serve the website locally with SSR partial injection (default port 4000).
+# Serve the website locally with SSR partial injection (default 127.0.0.1:4000).
 website-dev:
     node website/scripts/build-changelog.mjs
     node website/scripts/dev-server.mjs

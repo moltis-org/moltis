@@ -21,6 +21,7 @@ fn resolve_session_channel_binding_classifies_special_sessions() {
 #[test]
 fn resolve_session_channel_binding_extracts_channel_target() {
     let binding_json = serde_json::to_string(&ChannelReplyTarget {
+        ack_message_id: None,
         channel_type: ChannelType::Telegram,
         account_id: "bot-main".into(),
         chat_id: "-100123".into(),

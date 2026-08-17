@@ -16,6 +16,8 @@ if [ "${SWIFT_BRIDGE_PROFILE}" != "release" ]; then
 fi
 SKIP_WASM_PRECOMPILE="${MOLTIS_SWIFT_BRIDGE_SKIP_WASM_PRECOMPILE:-0}"
 SKIP_WASM_BUILD="${MOLTIS_SWIFT_BRIDGE_SKIP_WASM_BUILD:-0}"
+OPENSSL_CFLAGS=""
+OPENSSL_LDFLAGS=""
 
 if [ "${SKIP_WASM_BUILD}" = "1" ] && [ "${SWIFT_BRIDGE_PROFILE}" = "release" ]; then
   echo "error: MOLTIS_SWIFT_BRIDGE_SKIP_WASM_BUILD=1 requires a non-release bridge profile" >&2
@@ -43,6 +45,27 @@ cargo_cmd() {
   fi
 
   command cargo "$@"
+}
+
+configure_macos_openssl() {
+  if [ "$(uname -s)" != "Darwin" ]; then
+    return
+  fi
+
+  local openssl_prefix="${OPENSSL_DIR:-}"
+  if [ -z "${openssl_prefix}" ] && command -v brew >/dev/null 2>&1; then
+    openssl_prefix="$(brew --prefix openssl@3 2>/dev/null || true)"
+  fi
+
+  if [ -z "${openssl_prefix}" ] || [ ! -d "${openssl_prefix}/include/openssl" ]; then
+    return
+  fi
+
+  export OPENSSL_DIR="${openssl_prefix}"
+  export OPENSSL_ROOT_DIR="${openssl_prefix}"
+  export PKG_CONFIG_PATH="${openssl_prefix}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+  OPENSSL_CFLAGS="-I${openssl_prefix}/include"
+  OPENSSL_LDFLAGS="-L${openssl_prefix}/lib"
 }
 
 IFS=',' read -r -a RAW_TARGETS <<< "${SWIFT_BRIDGE_TARGETS_CSV}"
@@ -88,6 +111,22 @@ else
   fi
 fi
 
+configure_macos_openssl
+
+# Rust caches can restore an already-configured llama.cpp CMake tree that was
+# created before OpenSSL flags were present. Force reconfiguration here.
+if [ -n "${OPENSSL_CFLAGS}" ]; then
+  shopt -s nullglob
+  for dir in \
+    "${REPO_ROOT}"/target/*/build/llama-cpp-sys-2-* \
+    "${REPO_ROOT}"/target/*/build/llama-cpp-2-* \
+    "${REPO_ROOT}"/target/*/*/build/llama-cpp-sys-2-* \
+    "${REPO_ROOT}"/target/*/*/build/llama-cpp-2-*; do
+    rm -rf "${dir}"
+  done
+  shopt -u nullglob
+fi
+
 # Keep Rust and C/C++ deps aligned with Xcode app link settings to avoid min-version mismatch.
 export MACOSX_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET}"
 export CMAKE_OSX_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET}"
@@ -95,13 +134,15 @@ for target in "${TARGETS[@]}"; do
   case "${target}" in
     x86_64-apple-darwin)
       export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="${CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS:-} -C link-arg=-mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
-      export CFLAGS_x86_64_apple_darwin="${CFLAGS_x86_64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
-      export CXXFLAGS_x86_64_apple_darwin="${CXXFLAGS_x86_64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
+      export CFLAGS_x86_64_apple_darwin="${CFLAGS_x86_64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET} ${OPENSSL_CFLAGS}"
+      export CXXFLAGS_x86_64_apple_darwin="${CXXFLAGS_x86_64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET} ${OPENSSL_CFLAGS}"
+      export LDFLAGS_x86_64_apple_darwin="${LDFLAGS_x86_64_apple_darwin:-} ${OPENSSL_LDFLAGS}"
       ;;
     aarch64-apple-darwin)
       export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS="${CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS:-} -C link-arg=-mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
-      export CFLAGS_aarch64_apple_darwin="${CFLAGS_aarch64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
-      export CXXFLAGS_aarch64_apple_darwin="${CXXFLAGS_aarch64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
+      export CFLAGS_aarch64_apple_darwin="${CFLAGS_aarch64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET} ${OPENSSL_CFLAGS}"
+      export CXXFLAGS_aarch64_apple_darwin="${CXXFLAGS_aarch64_apple_darwin:-} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET} ${OPENSSL_CFLAGS}"
+      export LDFLAGS_aarch64_apple_darwin="${LDFLAGS_aarch64_apple_darwin:-} ${OPENSSL_LDFLAGS}"
       ;;
   esac
 done

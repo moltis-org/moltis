@@ -9,6 +9,9 @@ pub mod multimodal;
 pub mod prompt;
 pub mod runner;
 pub mod tool_parsing;
+/// Re-export of the `time` crate so dependent crates can use the same
+/// date/time types without declaring their own dependency.
+pub use time;
 pub use {
     model::{ChatMessage, ContentPart, UserContent},
     runner::AgentRunError,

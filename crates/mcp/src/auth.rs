@@ -23,8 +23,8 @@ use crate::{
 
 use moltis_oauth::{
     OAuthConfig, OAuthFlow, OAuthTokens, RegistrationStore, StoredRegistration, TokenStore,
-    fetch_as_metadata, fetch_resource_metadata, normalize_loopback_redirect,
-    parse_www_authenticate, register_client,
+    fetch_as_metadata, fetch_resource_metadata, fetch_resource_metadata_direct,
+    normalize_loopback_redirect, parse_www_authenticate, register_client,
 };
 
 // ── Auth state ─────────────────────────────────────────────────────────────
@@ -410,7 +410,11 @@ impl McpOAuthProvider {
                 debug!(url = %meta_url, "using resource_metadata URL from WWW-Authenticate");
                 let meta_url = Url::parse(&meta_url)
                     .context("invalid resource_metadata URL in WWW-Authenticate header")?;
-                fetch_resource_metadata(&self.http_client, &meta_url).await
+                // The resource_metadata URL from WWW-Authenticate is already the
+                // complete metadata endpoint — do NOT pass through
+                // fetch_resource_metadata() which would append another
+                // /.well-known/oauth-protected-resource suffix.
+                fetch_resource_metadata_direct(&self.http_client, &meta_url).await
             } else {
                 let result = fetch_resource_metadata(&self.http_client, &server_url).await;
                 if result.is_err() && has_path {
@@ -1136,6 +1140,89 @@ mod tests {
             .map(|(_, v)| v.into_owned())
             .expect("auth URL must have redirect_uri");
         assert_eq!(encoded_redirect, http_redirect);
+
+        resource_meta.assert_async().await;
+        as_meta.assert_async().await;
+        register.assert_async().await;
+    }
+
+    /// RFC 9728 origin-based discovery: the `WWW-Authenticate` header carries
+    /// a `resource_metadata` URL that is the **full metadata endpoint**, not
+    /// the resource's base URL. `discover_and_register` must fetch that URL
+    /// directly instead of appending `/.well-known/oauth-protected-resource`.
+    #[tokio::test]
+    async fn discovery_uses_www_authenticate_resource_metadata_directly() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+
+        // Origin-based layout: /.well-known/oauth-protected-resource/mcp
+        // (as opposed to path-aware: /mcp/.well-known/oauth-protected-resource).
+        let resource_meta = server
+            .mock("GET", "/.well-known/oauth-protected-resource/mcp")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "resource": format!("{base}/mcp"),
+                    "authorization_servers": [base.clone()],
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let as_meta = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "issuer": base.clone(),
+                    "authorization_endpoint": format!("{base}/authorize"),
+                    "token_endpoint": format!("{base}/token"),
+                    "registration_endpoint": format!("{base}/register"),
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let redirect_uri = "http://127.0.0.1:6666/auth/callback";
+        let register = server
+            .mock("POST", "/register")
+            .with_status(201)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "client_id": "notion-client",
+                    "redirect_uris": [redirect_uri],
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let provider = McpOAuthProvider::with_stores(
+            "notion",
+            &format!("{base}/mcp"),
+            TokenStore::with_path(dir.path().join("tokens.json")),
+            RegistrationStore::with_path(dir.path().join("registrations.json")),
+        );
+
+        // Simulate the WWW-Authenticate header that Notion sends.
+        let www_authenticate = format!(
+            r#"Bearer realm="OAuth", resource_metadata="{base}/.well-known/oauth-protected-resource/mcp", error="invalid_token""#
+        );
+
+        let (_client_id, _client_secret, _auth_url, _token_url, _scopes, resource) = provider
+            .discover_and_register(Some(&www_authenticate), redirect_uri)
+            .await
+            .unwrap();
+
+        // The resource must come from the metadata JSON (the MCP server URL),
+        // not from the .well-known URL or the origin.
+        assert_eq!(resource, format!("{base}/mcp"));
 
         resource_meta.assert_async().await;
         as_meta.assert_async().await;

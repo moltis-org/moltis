@@ -78,6 +78,7 @@ pub struct ExternalAgentSpec {
     pub effort: Option<String>,
     pub binary: Option<String>,
     pub args: Vec<String>,
+    pub args_configured: bool,
     pub env: HashMap<String, String>,
     pub working_dir: Option<PathBuf>,
     pub timeout_secs: Option<u64>,
@@ -96,6 +97,7 @@ impl ExternalAgentSpec {
             effort: None,
             binary: None,
             args: Vec::new(),
+            args_configured: false,
             env: HashMap::new(),
             working_dir: None,
             timeout_secs: None,
@@ -177,5 +179,7 @@ pub struct ExternalAgentInfo {
     pub kind: AgentTransportKind,
     pub name: String,
     pub installed: bool,
+    #[serde(rename = "isAcp")]
+    pub is_acp: bool,
     pub version: Option<String>,
 }

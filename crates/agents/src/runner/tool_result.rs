@@ -103,6 +103,74 @@ pub fn sanitize_tool_result(input: &str, max_bytes: usize) -> String {
     result
 }
 
+/// Return a stable failure message for tool results that encode logical errors.
+#[must_use]
+pub fn tool_result_failure(result: &serde_json::Value) -> Option<String> {
+    let error = result.get("error").filter(|value| !value.is_null());
+    if let Some(error) = error {
+        return Some(
+            error
+                .as_str()
+                .map_or_else(|| error.to_string(), str::to_string),
+        );
+    }
+    (result.get("success") == Some(&serde_json::Value::Bool(false)))
+        .then(|| "tool returned success: false".to_string())
+}
+
+/// Inspect the runner's `{ "result": <tool payload> }` persistence wrapper.
+#[must_use]
+pub fn persisted_tool_result_failure(result: &serde_json::Value) -> Option<String> {
+    tool_result_failure(result).or_else(|| result.get("result").and_then(tool_result_failure))
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::{persisted_tool_result_failure, tool_result_failure};
+
+    #[test]
+    fn success_false_without_error_has_a_failure_message() {
+        assert_eq!(
+            tool_result_failure(&serde_json::json!({"success": false})).as_deref(),
+            Some("tool returned success: false")
+        );
+    }
+
+    #[test]
+    fn nested_result_data_is_not_treated_as_a_raw_tool_failure() {
+        assert_eq!(
+            tool_result_failure(&serde_json::json!({
+                "success": true,
+                "result": {"error": "page value"}
+            })),
+            None
+        );
+    }
+
+    #[test]
+    fn top_level_failure_wins_even_when_result_is_present() {
+        assert_eq!(
+            tool_result_failure(&serde_json::json!({
+                "error": "denied",
+                "result": {"value": 42}
+            }))
+            .as_deref(),
+            Some("denied")
+        );
+    }
+
+    #[test]
+    fn persisted_tool_errors_are_detected_inside_the_runner_wrapper() {
+        assert_eq!(
+            persisted_tool_result_failure(&serde_json::json!({
+                "result": {"error": "denied"}
+            }))
+            .as_deref(),
+            Some("denied")
+        );
+    }
+}
+
 // ── Multimodal tool result helpers ─────────────────────────────────────────
 
 /// Image extracted from a tool result for multimodal handling.

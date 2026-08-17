@@ -38,12 +38,35 @@ function flattenKeys(value, prefix = "", out = new Set()) {
 // file for import when the original extension is unsupported.
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "i18n-"));
 
+function copyLocaleModules(sourceDir, targetDir) {
+	fs.mkdirSync(targetDir, { recursive: true });
+	for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+		const source = path.join(sourceDir, entry.name);
+		if (entry.isDirectory()) {
+			copyLocaleModules(source, path.join(targetDir, entry.name));
+			continue;
+		}
+		if (!entry.name.endsWith(".ts")) continue;
+		const target = path.join(targetDir, entry.name.replace(/\.ts$/, ".mjs"));
+		const contents = fs.readFileSync(source, "utf8").replace(
+			/(from\s+["'])(\.\.?\/[^"']+)(["'])/g,
+			(_match, prefix, specifier, suffix) => {
+				const rewritten = specifier.endsWith(".ts")
+					? specifier.replace(/\.ts$/, ".mjs")
+					: `${specifier}.mjs`;
+				return `${prefix}${rewritten}${suffix}`;
+			},
+		);
+		fs.writeFileSync(target, contents);
+	}
+}
+
+copyLocaleModules(localesDir, tmpDir);
+
 async function loadLocaleModule(filePath) {
 	let target = filePath;
 	if (filePath.endsWith(".ts")) {
-		const tmp = path.join(tmpDir, `${path.basename(filePath, ".ts")}-${Date.now()}.mjs`);
-		fs.copyFileSync(filePath, tmp);
-		target = tmp;
+		target = path.join(tmpDir, path.relative(localesDir, filePath)).replace(/\.ts$/, ".mjs");
 	}
 	const fileUrl = `${pathToFileURL(target).href}?v=${Date.now()}`;
 	const mod = await import(fileUrl);

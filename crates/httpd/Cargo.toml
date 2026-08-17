@@ -66,8 +66,10 @@ webauthn-rs           = { features = ["danger-allow-state-serialisation"], works
 
 [features]
 cloudflare-tunnel = []
+connectors = ["moltis-gateway/connectors"]
 default = [
   "cloudflare-tunnel",
+  "connectors",
   "discord",
   "graphql",
   "matrix",

@@ -40,6 +40,13 @@ pub struct NostrPlugin {
 }
 
 impl NostrPlugin {
+    /// The account's shared config handle, with the accounts map lock released
+    /// so it is never held across an await.
+    fn config_handle(&self, account_id: &str) -> Option<crate::state::SharedConfig> {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts.get(account_id).map(|s| Arc::clone(&s.config))
+    }
+
     pub fn new() -> Self {
         let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
         Self {
@@ -117,8 +124,7 @@ impl ChannelPlugin for NostrPlugin {
             "starting Nostr account"
         );
 
-        // Build nostr-sdk client
-        let client = Client::new(bot_keys.clone());
+        let client = crate::client::build_client(bot_keys.clone());
 
         // Add relays
         for relay_url in &nostr_config.relays {
@@ -152,16 +158,19 @@ impl ChannelPlugin for NostrPlugin {
             &nostr_config.allowed_pubkeys,
         )));
         let otp_cooldown = nostr_config.otp_cooldown_secs;
-        let shared_config = Arc::new(std::sync::RwLock::new(nostr_config));
+        let shared_config = Arc::new(tokio::sync::RwLock::new(nostr_config));
         let shared_otp = Arc::new(std::sync::Mutex::new(moltis_channels::otp::OtpState::new(
             otp_cooldown,
         )));
+        let shared_reply_ctx =
+            Arc::new(std::sync::Mutex::new(crate::reply_ctx::ReplyContexts::new()));
 
         let loop_client = client.clone();
         let loop_keys = bot_keys.clone();
         let loop_config = Arc::clone(&shared_config);
         let loop_allowlist = Arc::clone(&cached_allowlist);
         let loop_otp = Arc::clone(&shared_otp);
+        let loop_reply_ctx = Arc::clone(&shared_reply_ctx);
         let loop_account_id = account_id.to_string();
         let loop_cancel = cancel.clone();
         let loop_sink = Arc::clone(&event_sink);
@@ -173,6 +182,7 @@ impl ChannelPlugin for NostrPlugin {
                 loop_config,
                 loop_allowlist,
                 loop_otp,
+                loop_reply_ctx,
                 loop_account_id,
                 loop_sink,
                 loop_cancel,
@@ -188,6 +198,7 @@ impl ChannelPlugin for NostrPlugin {
             cached_allowlist,
             cancel,
             otp: shared_otp,
+            reply_ctx: shared_reply_ctx,
         };
 
         self.accounts
@@ -252,49 +263,54 @@ impl ChannelPlugin for NostrPlugin {
             .collect()
     }
 
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
-        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-        accounts.get(account_id).map(|s| {
-            let cfg = s.config.read().unwrap_or_else(|e| e.into_inner());
-            Box::new(cfg.clone()) as Box<dyn ChannelConfigView>
-        })
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+        let config = self.config_handle(account_id)?;
+        let cfg = config.read().await;
+        Some(Box::new(cfg.clone()) as Box<dyn ChannelConfigView>)
     }
 
-    fn account_config_json(&self, account_id: &str) -> Option<Value> {
-        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-        accounts.get(account_id).and_then(|s| {
-            let cfg = s.config.read().unwrap_or_else(|e| e.into_inner());
-            serde_json::to_value(crate::config::RedactedConfig(&cfg)).ok()
-        })
+    async fn account_config_json(&self, account_id: &str) -> Option<Value> {
+        let config = self.config_handle(account_id)?;
+        let cfg = config.read().await;
+        serde_json::to_value(crate::config::RedactedConfig(&cfg)).ok()
     }
 
-    fn update_account_config(&self, account_id: &str, config: Value) -> ChannelResult<()> {
+    async fn update_account_config(&self, account_id: &str, config: Value) -> ChannelResult<()> {
         let mut new_config: NostrAccountConfig = serde_json::from_value(config).map_err(|e| {
             moltis_channels::Error::invalid_input(format!("invalid nostr config: {e}"))
         })?;
 
-        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = accounts.get(account_id) {
-            // Merge guard: if the incoming secret_key is the redacted sentinel,
-            // preserve the existing key instead of corrupting it.
-            if new_config.secret_key.expose_secret() == REDACTED_SENTINEL {
-                let existing = state.config.read().unwrap_or_else(|e| e.into_inner());
-                new_config.secret_key = existing.secret_key.clone();
-            }
+        // Clone the handles out before awaiting: the accounts map is a
+        // `std::sync::RwLock`, whose guard must never be held across an await.
+        let Some((config, cached_allowlist)) = ({
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            accounts
+                .get(account_id)
+                .map(|s| (Arc::clone(&s.config), Arc::clone(&s.cached_allowlist)))
+        }) else {
+            return Ok(());
+        };
 
-            // Update shared config — the bus loop sees this immediately.
-            let mut cfg = state.config.write().unwrap_or_else(|e| e.into_inner());
-            *cfg = new_config.clone();
-            drop(cfg);
+        // Taking the write lock is what makes a withdrawal atomic against
+        // publishing: any group send holding the read guard finishes first, and
+        // any that starts after this returns sees the new config. See
+        // `NostrOutbound::authorized_group_publish`.
+        let mut cfg = config.write().await;
 
-            // Refresh cached allowlist so access control uses the new list
-            // without re-parsing on every DM.
-            let mut al = state
-                .cached_allowlist
-                .write()
-                .unwrap_or_else(|e| e.into_inner());
-            *al = keys::normalize_pubkeys(&new_config.allowed_pubkeys);
+        // Merge guard: if the incoming secret_key is the redacted sentinel,
+        // preserve the existing key instead of corrupting it.
+        if new_config.secret_key.expose_secret() == REDACTED_SENTINEL {
+            new_config.secret_key = cfg.secret_key.clone();
         }
+
+        // Update shared config — the bus loop sees this immediately.
+        *cfg = new_config.clone();
+        drop(cfg);
+
+        // Refresh cached allowlist so access control uses the new list
+        // without re-parsing on every DM.
+        let mut al = cached_allowlist.write().unwrap_or_else(|e| e.into_inner());
+        *al = keys::normalize_pubkeys(&new_config.allowed_pubkeys);
         Ok(())
     }
 
@@ -382,7 +398,7 @@ mod tests {
         let cached_allowlist = Arc::new(std::sync::RwLock::new(keys::normalize_pubkeys(
             &config.allowed_pubkeys,
         )));
-        let shared_config = Arc::new(std::sync::RwLock::new(config));
+        let shared_config = Arc::new(tokio::sync::RwLock::new(config));
         let otp = Arc::new(std::sync::Mutex::new(moltis_channels::otp::OtpState::new(
             300,
         )));
@@ -395,6 +411,7 @@ mod tests {
             cached_allowlist,
             cancel,
             otp,
+            reply_ctx: Arc::new(std::sync::Mutex::new(crate::reply_ctx::ReplyContexts::new())),
         };
 
         let plugin = NostrPlugin::new();
@@ -414,7 +431,7 @@ mod tests {
     #[tokio::test]
     async fn account_config_json_does_not_panic_in_async() {
         let plugin = plugin_with_dummy_account();
-        let json = plugin.account_config_json("test");
+        let json = plugin.account_config_json("test").await;
         assert!(json.is_some(), "should return config for existing account");
     }
 
@@ -425,7 +442,7 @@ mod tests {
         let Ok(new_config) = serde_json::to_value(NostrAccountConfig::default()) else {
             panic!("serialize default config");
         };
-        let result = plugin.update_account_config("test", new_config);
+        let result = plugin.update_account_config("test", new_config).await;
         assert!(result.is_ok(), "update_account_config must not panic");
     }
 
@@ -433,7 +450,7 @@ mod tests {
     #[tokio::test]
     async fn account_config_does_not_panic_in_async() {
         let plugin = plugin_with_dummy_account();
-        let view = plugin.account_config("test");
+        let view = plugin.account_config("test").await;
         assert!(
             view.is_some(),
             "should return config view for existing account"

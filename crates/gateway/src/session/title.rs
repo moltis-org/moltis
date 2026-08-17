@@ -118,7 +118,10 @@ pub(crate) async fn generate_title_for_session(
         }
     };
 
-    let chat_msgs = moltis_agents::model::values_to_chat_messages(&history);
+    let chat_msgs = moltis_agents::model::values_to_chat_messages_with_tool_result_limit(
+        &history,
+        state.config.tools.max_tool_result_bytes,
+    );
     let title = moltis_agents::title::generate_title(provider, &chat_msgs).await?;
     // Persist the title as the session label and read back the
     // entry atomically so the broadcast version is consistent.

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>moltis — offline</title>
+<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+<link rel="icon" href="/assets/icons/icon-192.png">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --text: #0f1115;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #c2410c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --surface: #171a21;
+      --text: #f4f4f5;
+      --muted: #9ca3af;
+      --border: #262b36;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 1.5rem;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main {
+    max-width: 26rem;
+    width: 100%;
+    padding: 2rem;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    background: var(--surface);
+    text-align: center;
+  }
+  img { width: 64px; height: 64px; border-radius: 0.75rem; }
+  h1 { margin: 1rem 0 0.5rem; font-size: 1.125rem; }
+  p { margin: 0; color: var(--muted); font-size: 0.875rem; line-height: 1.6; }
+  button {
+    margin-top: 1.5rem;
+    padding: 0.5rem 1.25rem;
+    border: 0;
+    border-radius: 0.375rem;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+  button:hover { filter: brightness(1.08); }
+  .status { margin-top: 1rem; font-size: 0.75rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <img src="/assets/icons/icon-192.png" alt="">
+  <h1>You're offline</h1>
+  <p>moltis needs a connection to reach your agents. Your conversations are safe on the server and will be here when you reconnect.</p>
+  <button type="button" id="retry">Try again</button>
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+</main>
+<script>
+  var status = document.getElementById("status");
+  document.getElementById("retry").addEventListener("click", function () {
+    location.reload();
+  });
+  // Reload automatically the moment connectivity returns.
+  window.addEventListener("online", function () {
+    status.textContent = "Back online — reconnecting…";
+    location.reload();
+  });
+  window.addEventListener("offline", function () {
+    status.textContent = "Still offline.";
+  });
+  if (!navigator.onLine) {
+    status.textContent = "Still offline.";
+  }
+</script>
+</body>
+</html>

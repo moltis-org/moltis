@@ -273,6 +273,8 @@ This allows you to:
 | `moltis_channels_active` | Gauge | — | Loaded channel plugins |
 | `moltis_channel_messages_received_total` | Counter | channel | Inbound messages |
 | `moltis_channel_messages_sent_total` | Counter | channel | Outbound messages |
+| `moltis_channel_otp_challenges_total` | Counter | channel | OTP challenges issued to non-allowlisted users |
+| `moltis_channel_otp_verifications_total` | Counter | channel, result | OTP verification attempts (`approved`, `wrong_code`, `locked_out`, `expired`) |
 
 ### Telegram-Specific Metrics
 

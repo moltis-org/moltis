@@ -217,11 +217,11 @@ pub fn generate_launchd_plist(
         format!("    <string>{bin}</string>"),
         "    <string>node</string>".to_string(),
         "    <string>run</string>".to_string(),
-        format!("    <string>--host</string>"),
+        "    <string>--host</string>".to_string(),
         format!("    <string>{}</string>", xml_escape(&config.gateway_url)),
-        format!("    <string>--token</string>"),
+        "    <string>--token</string>".to_string(),
         format!("    <string>{}</string>", xml_escape(&config.device_token)),
-        format!("    <string>--timeout</string>"),
+        "    <string>--timeout</string>".to_string(),
         format!("    <string>{}</string>", config.timeout),
     ];
 

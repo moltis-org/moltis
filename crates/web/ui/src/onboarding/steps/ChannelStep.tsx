@@ -596,7 +596,9 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 	const [botToken, setBotToken] = useState("");
 	const [connectionMode, setConnectionMode] = useState("socket_mode");
 	const [appToken, setAppToken] = useState("");
+	const [apiBaseUrl, setApiBaseUrl] = useState("");
 	const [signingSecret, setSigningSecret] = useState("");
+	const [streamMode, setStreamMode] = useState("edit_in_place");
 	const [dmPolicy, setDmPolicy] = useState("allowlist");
 	const [allowlist, setAllowlist] = useState("");
 	const [advancedConfig, setAdvancedConfig] = useState("");
@@ -638,10 +640,16 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 			dm_policy: dmPolicy,
 			mention_mode: "mention",
 			allowlist: allowlistEntries,
+			stream_mode: streamMode,
 		};
 		if (connectionMode === "socket_mode") config.app_token = appToken.trim();
 		if (connectionMode === "events_api") config.signing_secret = signingSecret.trim();
+		if (apiBaseUrl.trim()) config.api_base_url = apiBaseUrl.trim();
 		Object.assign(config, advancedPatch.value);
+		if (config.stream_mode === "native") {
+			config.thread_replies = true;
+			config.rich_blocks = false;
+		}
 		(
 			addChannel("slack", accountId.trim(), config) as Promise<{
 				ok?: boolean;
@@ -659,7 +667,10 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 
 	return (
 		<form onSubmit={onSubmit} className="flex flex-col gap-3">
-			<div className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+			<div
+				className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1"
+				data-testid="slack-setup-guide"
+			>
 				<span className="font-medium text-[var(--text-strong)]">How to set up a Slack bot</span>
 				<span>
 					1. Go to{" "}
@@ -674,17 +685,43 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 					and create a new app
 				</span>
 				<span>
-					2. Under OAuth &amp; Permissions, add bot scopes: <code className="text-[var(--accent)]">chat:write</code>,{" "}
-					<code className="text-[var(--accent)]">channels:history</code>,{" "}
-					<code className="text-[var(--accent)]">im:history</code>,{" "}
-					<code className="text-[var(--accent)]">app_mentions:read</code>
+					2. Under OAuth &amp; Permissions, add bot scopes:{" "}
+					<code className="text-[var(--accent)]">app_mentions:read</code>,{" "}
+					<code className="text-[var(--accent)]">chat:write</code>,{" "}
+					<code className="text-[var(--accent)]">files:write</code>,{" "}
+					<code className="text-[var(--accent)]">im:history</code>, and{" "}
+					<code className="text-[var(--accent)]">reactions:write</code>
 				</span>
-				<span>3. Install the app to your workspace and copy the Bot User OAuth Token</span>
 				<span>
-					4. For Socket Mode: enable it and generate an App-Level Token with{" "}
+					3. Subscribe to bot events: <code className="text-[var(--accent)]">app_mention</code> and{" "}
+					<code className="text-[var(--accent)]">message.im</code>. For reaction triggers, also add the{" "}
+					<code className="text-[var(--accent)]">reactions:read</code> scope and{" "}
+					<code className="text-[var(--accent)]">reaction_added</code> event
+				</span>
+				<span>
+					4. For <code className="text-[var(--accent)]">mention_mode = always</code> in public channels, add both{" "}
+					<code className="text-[var(--accent)]">channels:history</code> and{" "}
+					<code className="text-[var(--accent)]">message.channels</code>. For private channels, add{" "}
+					<code className="text-[var(--accent)]">groups:history</code> and{" "}
+					<code className="text-[var(--accent)]">message.groups</code>. For MPIMs, add{" "}
+					<code className="text-[var(--accent)]">mpim:history</code> and{" "}
+					<code className="text-[var(--accent)]">message.mpim</code>. Each scope permits access; its paired event
+					delivers messages
+				</span>
+				<span>5. Install the app to your workspace and copy the Bot User OAuth Token</span>
+				<span>
+					6. For Socket Mode: enable it and generate an App-Level Token with{" "}
 					<code className="text-[var(--accent)]">connections:write</code> scope
 				</span>
-				<span>5. For Events API: set the Request URL to your server&rsquo;s webhook endpoint</span>
+				<span>
+					7. For Events API, set these Request URLs (replace <code className="text-[var(--accent)]">&lt;id&gt;</code>{" "}
+					with the Account ID below): Event Subscriptions{" "}
+					<code className="text-[var(--accent)]">https://your-host/api/channels/slack/&lt;id&gt;/events</code>,
+					Interactivity{" "}
+					<code className="text-[var(--accent)]">https://your-host/api/channels/slack/&lt;id&gt;/interactions</code>,
+					Slash Commands{" "}
+					<code className="text-[var(--accent)]">https://your-host/api/channels/slack/&lt;id&gt;/commands</code>
+				</span>
 			</div>
 			<div>
 				<label className="text-xs text-[var(--muted)] mb-1 block">Account ID</label>
@@ -762,6 +799,43 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 					/>
 				</div>
 			)}
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block">Slack API Base URL</label>
+				<input
+					type="url"
+					className="provider-key-input w-full"
+					value={apiBaseUrl}
+					onInput={(e) => setApiBaseUrl(targetValue(e))}
+					placeholder="https://slack.com/api"
+					autoComplete="off"
+					autoCapitalize="none"
+					autoCorrect="off"
+					spellcheck={false}
+					name="slack_api_base_url"
+				/>
+				<div className="text-xs text-[var(--muted)] mt-1">
+					Leave blank for Slack. Set this only for Slack-compatible proxies or test gateways.
+				</div>
+			</div>
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block" htmlFor="onboarding-slack-stream-mode">
+					Response streaming
+				</label>
+				<select
+					id="onboarding-slack-stream-mode"
+					className="provider-key-input w-full cursor-pointer"
+					value={streamMode}
+					onChange={(e) => setStreamMode(targetValue(e))}
+					aria-label="Response streaming"
+				>
+					<option value="edit_in_place">Edit-in-place text (default)</option>
+					<option value="native">Slack live text and tool cards</option>
+					<option value="off">Off (send once complete)</option>
+				</select>
+				<div className="text-xs text-[var(--muted)] mt-1">
+					Native streaming requires threaded replies and shows tool names without arguments or results.
+				</div>
+			</div>
 			<div>
 				<label className="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
 				<select

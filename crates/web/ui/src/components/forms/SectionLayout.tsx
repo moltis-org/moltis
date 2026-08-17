@@ -126,7 +126,12 @@ export function StatusMessage({ error, success, className }: StatusMessageProps)
 	const color = error ? "var(--error)" : "var(--accent)";
 	const text = error ?? success;
 	return (
-		<div className={className ?? "text-xs mt-2"} style={{ color }}>
+		<div
+			className={className ?? "text-xs mt-2"}
+			style={{ color }}
+			role={error ? "alert" : "status"}
+			aria-live={error ? "assertive" : "polite"}
+		>
 			{text}
 		</div>
 	);

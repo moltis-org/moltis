@@ -248,7 +248,9 @@ impl AgentTool for WriteTool {
     fn description(&self) -> &str {
         "Atomically write a file to the local filesystem. Parent directories \
          must already exist. Refuses to follow symlinks. The entire file is \
-         replaced — use `Edit` for surgical changes."
+         replaced — use `Edit` for surgical changes. In sandboxed sessions, \
+         use absolute workspace/data paths or `/home/sandbox/...` paths; parent \
+         directories must already exist in the target namespace."
     }
 
     fn parameters_schema(&self) -> Value {

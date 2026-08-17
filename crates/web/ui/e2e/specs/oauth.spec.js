@@ -128,13 +128,13 @@ test.describe("OAuth provider connection", () => {
 
 		// Click on OpenAI Codex to start the OAuth flow.
 		await codexCard.click();
-		await expect(page.getByRole("button", { name: "Connect" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
 
 		// Listen for the popup that opens the OAuth auth URL.
 		var popupPromise = context.waitForEvent("page", { timeout: 10_000 });
 
 		// Click "Connect" to start the OAuth flow
-		await page.getByRole("button", { name: "Connect" }).click();
+		await page.getByRole("button", { name: "Connect", exact: true }).click();
 
 		// The popup navigates to the mock server /authorize, which redirects
 		// back to the gateway's /auth/callback with code + state. The gateway
@@ -179,10 +179,10 @@ test.describe("OAuth provider connection", () => {
 
 		var codexCard = await openProviderPicker(page);
 		await codexCard.click();
-		await expect(page.getByRole("button", { name: "Connect" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
 
 		var popupPromise = context.waitForEvent("page", { timeout: 10_000 });
-		await page.getByRole("button", { name: "Connect" }).click();
+		await page.getByRole("button", { name: "Connect", exact: true }).click();
 		await popupPromise;
 
 		var callbackInput = page.getByPlaceholder("http://localhost:1455/auth/callback?code=...&state=...");
@@ -232,10 +232,10 @@ test.describe("OAuth provider connection", () => {
 		// First, connect the provider.
 		var codexCard = await openProviderPicker(page);
 		await codexCard.click();
-		await expect(page.getByRole("button", { name: "Connect" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
 
 		var popupPromise = context.waitForEvent("page", { timeout: 10_000 });
-		await page.getByRole("button", { name: "Connect" }).click();
+		await page.getByRole("button", { name: "Connect", exact: true }).click();
 		var popup = await popupPromise;
 		if (!popup.isClosed()) {
 			await popup.waitForEvent("close", { timeout: 10_000 }).catch(() => {
@@ -279,10 +279,10 @@ test.describe("OAuth provider connection", () => {
 		// Start OAuth flow.
 		var codexCard = await openProviderPicker(page);
 		await codexCard.click();
-		await expect(page.getByRole("button", { name: "Connect" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
 
 		var popupPromise = context.waitForEvent("page", { timeout: 10_000 });
-		await page.getByRole("button", { name: "Connect" }).click();
+		await page.getByRole("button", { name: "Connect", exact: true }).click();
 
 		var popup = await popupPromise;
 

@@ -13,6 +13,8 @@ mod channels;
 mod common;
 #[path = "tests/defaults.rs"]
 mod defaults;
+#[path = "tests/instrumentation.rs"]
+mod instrumentation;
 #[path = "tests/memory.rs"]
 mod memory;
 #[path = "tests/providers.rs"]

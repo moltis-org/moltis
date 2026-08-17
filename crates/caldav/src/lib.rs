@@ -8,6 +8,7 @@ pub mod client;
 pub mod discovery;
 pub mod error;
 pub mod ical;
+mod time_filter;
 pub mod tool;
 pub mod types;
 

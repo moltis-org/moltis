@@ -9,9 +9,7 @@ use {
 
 use tracing::debug;
 
-use crate::{
-    ModelCapabilities, context_window_for_model_with_config, http::retry_after_ms_from_headers,
-};
+use crate::{ModelCapabilities, http::retry_after_ms_from_headers, model_id::capability_model_id};
 
 use moltis_agents::model::{
     AgentToolControls, ChatMessage, CompletionResponse, LlmProvider, ModelMetadata, StreamEvent,
@@ -27,6 +25,7 @@ impl OpenAiProvider {
         Self::new_with_name(api_key, model, base_url, "openai".into()).with_capabilities(
             OpenAiProviderCapabilities {
                 responses_websocket_policy: super::super::ResponsesWebSocketPolicy::OpenAiPlatform,
+                responses_required_for_reasoning_tools: true,
                 ..OpenAiProviderCapabilities::DEFAULT
             },
         )
@@ -263,6 +262,7 @@ impl OpenAiProvider {
                 | ReasoningEffort::High => "high",
                 ReasoningEffort::ExtraHigh => "max",
             }),
+            ReasoningEffortPolicy::KimiMax => self.reasoning_effort.map(|_| "max"),
             ReasoningEffortPolicy::OpenAi => self.reasoning_effort.map(|e| match e {
                 ReasoningEffort::Minimal => {
                     tracing::debug!(
@@ -332,6 +332,18 @@ impl OpenAiProvider {
             format!("{base}/v1/responses")
         }
     }
+
+    fn wire_api_for_request(&self, has_tools: bool) -> WireApi {
+        if matches!(self.wire_api, WireApi::Responses)
+            || (self.capabilities.responses_required_for_reasoning_tools
+                && self.reasoning_effort.is_some()
+                && has_tools)
+        {
+            WireApi::Responses
+        } else {
+            WireApi::ChatCompletions
+        }
+    }
 }
 
 fn default_capabilities_for_provider(provider_name: &str) -> OpenAiProviderCapabilities {
@@ -388,11 +400,12 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn context_window(&self) -> u32 {
-        context_window_for_model_with_config(
-            &self.model,
-            &self.context_window_global,
-            &self.context_window_provider,
-        )
+        let normalized = capability_model_id(&self.model);
+        self.context_window_provider
+            .get(normalized)
+            .or_else(|| self.context_window_global.get(normalized))
+            .copied()
+            .unwrap_or(self.model_capabilities.context_window)
     }
 
     fn supports_vision(&self) -> bool {
@@ -461,7 +474,10 @@ impl LlmProvider for OpenAiProvider {
         tools: &[serde_json::Value],
         options: &AgentToolControls,
     ) -> anyhow::Result<CompletionResponse> {
-        if matches!(self.wire_api, WireApi::Responses) {
+        if matches!(
+            self.wire_api_for_request(!tools.is_empty()),
+            WireApi::Responses
+        ) {
             return self.complete_responses(messages, tools, options).await;
         }
         self.complete_chat(messages, tools, options).await
@@ -505,7 +521,10 @@ impl LlmProvider for OpenAiProvider {
         tools: Vec<serde_json::Value>,
         options: AgentToolControls,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-        match (self.wire_api, self.stream_transport) {
+        match (
+            self.wire_api_for_request(!tools.is_empty()),
+            self.stream_transport,
+        ) {
             (WireApi::Responses, ProviderStreamTransport::Sse) => {
                 self.stream_responses_sse(messages, tools, options)
             },
@@ -652,5 +671,85 @@ mod tests {
                 .is_some(),
             "provider URLs must not enable provider-specific reasoning behavior"
         );
+    }
+
+    #[test]
+    fn openai_reasoning_with_tools_uses_responses_api() {
+        let mut provider = OpenAiProvider::new(
+            secrecy::Secret::new("test-key".to_string()),
+            "gpt-5.6-sol".to_string(),
+            "https://api.openai.com/v1".to_string(),
+        );
+        provider.reasoning_effort = Some(ReasoningEffort::High);
+
+        assert_eq!(provider.wire_api_for_request(true), WireApi::Responses);
+        assert_eq!(
+            provider.wire_api_for_request(false),
+            WireApi::ChatCompletions
+        );
+    }
+
+    #[test]
+    fn openai_tools_without_reasoning_keep_configured_chat_api() {
+        let provider = OpenAiProvider::new(
+            secrecy::Secret::new("test-key".to_string()),
+            "gpt-5.6-sol".to_string(),
+            "https://api.openai.com/v1".to_string(),
+        );
+
+        assert_eq!(
+            provider.wire_api_for_request(true),
+            WireApi::ChatCompletions
+        );
+    }
+
+    #[test]
+    fn compatible_provider_does_not_switch_wire_api_implicitly() {
+        let mut provider = OpenAiProvider::new_with_name(
+            secrecy::Secret::new("test-key".to_string()),
+            "gpt-5.6-sol".to_string(),
+            "https://example.com/v1".to_string(),
+            "custom-openai".to_string(),
+        );
+        provider.reasoning_effort = Some(ReasoningEffort::High);
+
+        assert_eq!(
+            provider.wire_api_for_request(true),
+            WireApi::ChatCompletions
+        );
+    }
+
+    #[test]
+    fn context_window_uses_discovered_capabilities_before_heuristics() {
+        let mut capabilities = ModelCapabilities::infer("custom-context-model");
+        capabilities.context_window = 321_000;
+        let provider = OpenAiProvider::new_with_name(
+            secrecy::Secret::new("test-key".to_string()),
+            "custom-context-model".to_string(),
+            "https://example.com/v1".to_string(),
+            "custom-provider".to_string(),
+        )
+        .with_model_capabilities(capabilities);
+
+        assert_eq!(provider.context_window(), 321_000);
+    }
+
+    #[test]
+    fn context_window_config_override_beats_discovered_capabilities() {
+        let mut capabilities = ModelCapabilities::infer("custom-context-model");
+        capabilities.context_window = 321_000;
+        let provider = OpenAiProvider::new_with_name(
+            secrecy::Secret::new("test-key".to_string()),
+            "custom-context-model".to_string(),
+            "https://example.com/v1".to_string(),
+            "custom-provider".to_string(),
+        )
+        .with_model_capabilities(capabilities)
+        .with_context_window_overrides(
+            std::collections::HashMap::from([("custom-context-model".to_string(), 654_000)]),
+            std::collections::HashMap::new(),
+        );
+
+        assert_eq!(provider.context_window(), 654_000);
     }
 }

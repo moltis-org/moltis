@@ -1,3 +1,8 @@
+#[path = "plugin/channel_type.rs"]
+mod channel_type;
+
+pub use self::channel_type::ChannelType;
+
 use std::sync::Arc;
 
 use {
@@ -9,291 +14,6 @@ use {
 use crate::{Error, Result, config_view::ChannelConfigView};
 
 // ── Channel type enum ───────────────────────────────────────────────────────
-
-/// Supported channel types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-#[non_exhaustive]
-pub enum ChannelType {
-    Telegram,
-    Whatsapp,
-    #[serde(rename = "msteams")]
-    MsTeams,
-    Discord,
-    Slack,
-    Matrix,
-    Nostr,
-    Signal,
-    Telephony,
-}
-
-impl ChannelType {
-    /// Returns the channel type identifier as a string slice.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Telegram => "telegram",
-            Self::Whatsapp => "whatsapp",
-            Self::MsTeams => "msteams",
-            Self::Discord => "discord",
-            Self::Slack => "slack",
-            Self::Matrix => "matrix",
-            Self::Nostr => "nostr",
-            Self::Signal => "signal",
-            Self::Telephony => "telephony",
-        }
-    }
-
-    /// Human-readable display name for UI labels.
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Self::Telegram => "Telegram",
-            Self::Whatsapp => "WhatsApp",
-            Self::MsTeams => "Microsoft Teams",
-            Self::Discord => "Discord",
-            Self::Slack => "Slack",
-            Self::Matrix => "Matrix",
-            Self::Nostr => "Nostr",
-            Self::Signal => "Signal",
-            Self::Telephony => "Phone Call",
-        }
-    }
-
-    /// Best-effort chat classification for hook and prompt context.
-    #[must_use]
-    pub fn classify_chat(&self, chat_id: &str) -> Option<String> {
-        match self {
-            Self::Telegram => {
-                if chat_id.starts_with("-100") {
-                    Some("channel_or_supergroup".to_string())
-                } else if chat_id.starts_with('-') {
-                    Some("group".to_string())
-                } else {
-                    Some("private".to_string())
-                }
-            },
-            Self::Signal => {
-                if chat_id.starts_with("group:") {
-                    Some("group".to_string())
-                } else {
-                    Some("direct".to_string())
-                }
-            },
-            Self::Nostr => Some("dm".to_string()),
-            Self::Telephony => Some("call".to_string()),
-            _ => None,
-        }
-    }
-
-    /// Top-level config fields that must be treated as persisted secrets.
-    pub fn secret_fields(&self) -> &'static [&'static str] {
-        match self {
-            Self::Telegram => &["token"],
-            Self::Whatsapp => &[],
-            Self::MsTeams => &["app_password", "webhook_secret"],
-            Self::Discord => &["token"],
-            Self::Slack => &["bot_token", "app_token", "signing_secret"],
-            Self::Matrix => &["access_token", "password"],
-            Self::Nostr => &["secret_key"],
-            Self::Signal => &[],
-            Self::Telephony => &["auth_token"],
-        }
-    }
-}
-
-impl std::fmt::Display for ChannelType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for ChannelType {
-    type Err = Error;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "telegram" => Ok(Self::Telegram),
-            "whatsapp" => Ok(Self::Whatsapp),
-            "msteams" | "microsoft_teams" | "microsoft-teams" | "teams" => Ok(Self::MsTeams),
-            "discord" => Ok(Self::Discord),
-            "slack" => Ok(Self::Slack),
-            "matrix" | "element" => Ok(Self::Matrix),
-            "nostr" => Ok(Self::Nostr),
-            "signal" => Ok(Self::Signal),
-            "telephony" | "phone" | "voice_call" | "voicecall" => Ok(Self::Telephony),
-            other => Err(Error::invalid_input(format!(
-                "unknown channel type: {other}"
-            ))),
-        }
-    }
-}
-
-impl ChannelType {
-    /// All known channel types.
-    pub const ALL: &[ChannelType] = &[
-        Self::Telegram,
-        Self::Whatsapp,
-        Self::MsTeams,
-        Self::Discord,
-        Self::Slack,
-        Self::Matrix,
-        Self::Nostr,
-        Self::Signal,
-        Self::Telephony,
-    ];
-
-    /// Returns the static descriptor for this channel type.
-    #[must_use]
-    pub fn descriptor(&self) -> ChannelDescriptor {
-        match self {
-            Self::Telegram => ChannelDescriptor {
-                channel_type: *self,
-                display_name: "Telegram",
-                capabilities: ChannelCapabilities {
-                    inbound_mode: InboundMode::Polling,
-                    supports_outbound: true,
-                    supports_streaming: true,
-                    supports_interactive: false,
-                    supports_threads: false,
-                    supports_voice_ingest: true,
-                    supports_pairing: false,
-                    supports_otp: true,
-                    supports_reactions: false,
-                    supports_location: true,
-                },
-            },
-            Self::Whatsapp => ChannelDescriptor {
-                channel_type: *self,
-                display_name: "WhatsApp",
-                capabilities: ChannelCapabilities {
-                    inbound_mode: InboundMode::GatewayLoop,
-                    supports_outbound: true,
-                    supports_streaming: true,
-                    supports_interactive: false,
-                    supports_threads: false,
-                    supports_voice_ingest: true,
-                    supports_pairing: true,
-                    supports_otp: true,
-                    supports_reactions: false,
-                    supports_location: false,
-                },
-            },
-            Self::MsTeams => ChannelDescriptor {
-                channel_type: *self,
-                display_name: "Microsoft Teams",
-                capabilities: ChannelCapabilities {
-                    inbound_mode: InboundMode::Webhook,
-                    supports_outbound: true,
-                    supports_streaming: true,
-                    supports_interactive: true,
-                    supports_threads: true,
-                    supports_voice_ingest: false,
-                    supports_pairing: false,
-                    supports_otp: false,
-                    supports_reactions: true,
-                    supports_location: true,
-                },
-            },
-            Self::Discord => ChannelDescriptor {
-                channel_type: *self,
-                display_name: "Discord",
-                capabilities: ChannelCapabilities {
-                    inbound_mode: InboundMode::GatewayLoop,
-                    supports_outbound: true,
-                    supports_streaming: true,
-                    supports_interactive: true,
-                    supports_threads: true,
-                    supports_voice_ingest: true,
-                    supports_pairing: false,
-                    supports_otp: false,
-                    supports_reactions: false,
-                    supports_location: true,
-                },
-            },
-            Self::Slack => ChannelDescriptor {
-                channel_type: *self,
-                display_name: "Slack",
-                capabilities: ChannelCapabilities {
-                    inbound_mode: InboundMode::SocketMode,
-                    supports_outbound: true,
-                    supports_streaming: true,
-                    supports_interactive: true,
-                    supports_threads: true,
-                    supports_voice_ingest: false,
-                    supports_pairing: false,
-                    supports_otp: false,
-                    supports_reactions: true,
-                    supports_location: false,
-                },
-            },
-            Self::Matrix => ChannelDescriptor {
-                channel_type: *self,
-                display_name: "Matrix",
-                capabilities: ChannelCapabilities {
-                    inbound_mode: InboundMode::GatewayLoop,
-                    supports_outbound: true,
-                    supports_streaming: true,
-                    supports_interactive: true,
-                    supports_threads: true,
-                    supports_voice_ingest: true,
-                    supports_pairing: false,
-                    supports_otp: true,
-                    supports_reactions: true,
-                    supports_location: true,
-                },
-            },
-            Self::Nostr => ChannelDescriptor {
-                channel_type: *self,
-                display_name: "Nostr",
-                capabilities: ChannelCapabilities {
-                    inbound_mode: InboundMode::GatewayLoop,
-                    supports_outbound: true,
-                    supports_streaming: false,
-                    supports_interactive: false,
-                    supports_threads: false,
-                    supports_voice_ingest: false,
-                    supports_pairing: false,
-                    supports_otp: true,
-                    supports_reactions: false,
-                    supports_location: false,
-                },
-            },
-            Self::Signal => ChannelDescriptor {
-                channel_type: *self,
-                display_name: "Signal",
-                capabilities: ChannelCapabilities {
-                    inbound_mode: InboundMode::GatewayLoop,
-                    supports_outbound: true,
-                    supports_streaming: false,
-                    supports_interactive: false,
-                    supports_threads: false,
-                    supports_voice_ingest: false,
-                    supports_pairing: false,
-                    supports_otp: true,
-                    supports_reactions: false,
-                    supports_location: false,
-                },
-            },
-            Self::Telephony => ChannelDescriptor {
-                channel_type: *self,
-                display_name: "Phone Call",
-                capabilities: ChannelCapabilities {
-                    inbound_mode: InboundMode::Webhook,
-                    supports_outbound: true,
-                    supports_streaming: false,
-                    supports_interactive: false,
-                    supports_threads: false,
-                    supports_voice_ingest: true,
-                    supports_pairing: false,
-                    supports_otp: false,
-                    supports_reactions: false,
-                    supports_location: false,
-                },
-            },
-        }
-    }
-}
-
-// ── Channel capabilities ──────────────────────────────────────────────────
 
 /// How a channel receives inbound messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
@@ -505,6 +225,7 @@ pub trait ChannelEventSink: Send + Sync {
     async fn update_location(
         &self,
         _reply_to: &ChannelReplyTarget,
+        _sender_id: Option<&str>,
         _latitude: f64,
         _longitude: f64,
     ) -> bool {
@@ -519,6 +240,7 @@ pub trait ChannelEventSink: Send + Sync {
     async fn resolve_pending_location(
         &self,
         _reply_to: &ChannelReplyTarget,
+        _sender_id: Option<&str>,
         _latitude: f64,
         _longitude: f64,
     ) -> bool {
@@ -532,6 +254,7 @@ pub trait ChannelEventSink: Send + Sync {
         &self,
         _callback_data: &str,
         _reply_to: ChannelReplyTarget,
+        _sender_id: Option<&str>,
     ) -> Result<String> {
         Err(Error::unavailable("interactions not supported"))
     }
@@ -645,9 +368,31 @@ pub struct ChannelReplyTarget {
     /// top-level chat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
+    /// Platform-specific ID of the *exact* inbound message to acknowledge with
+    /// reactions, distinct from [`Self::message_id`] (the reply/thread anchor).
+    ///
+    /// For threaded replies these differ: `message_id` points at the thread
+    /// root (so replies land in the right thread) while `ack_message_id` points
+    /// at the specific message the user just sent (so the 👀/✅/❌ reaction lands
+    /// on it). Channels set this only when the bot is directly addressed and the
+    /// channel supports acknowledgment reactions; `None` disables ack reactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ack_message_id: Option<String>,
 }
 
 impl ChannelReplyTarget {
+    /// Deterministic session key used when a channel has no explicit active
+    /// session override.
+    pub fn default_session_key(&self) -> String {
+        match &self.thread_id {
+            Some(thread_id) => format!(
+                "{}:{}:{}:{}",
+                self.channel_type, self.account_id, self.chat_id, thread_id
+            ),
+            None => format!("{}:{}:{}", self.channel_type, self.account_id, self.chat_id),
+        }
+    }
+
     /// Returns the address string for outbound sends.
     ///
     /// For Telegram forum topics this encodes both chat and thread as
@@ -748,6 +493,8 @@ pub struct InteractiveMessage {
 /// A single message from a thread conversation.
 #[derive(Debug, Clone)]
 pub struct ThreadMessage {
+    /// Stable provider identifier used for deduplication and reconciliation.
+    pub message_id: String,
     pub sender_id: String,
     pub is_bot: bool,
     pub text: String,
@@ -803,13 +550,17 @@ pub trait ChannelPlugin: Send + Sync {
     fn account_ids(&self) -> Vec<String>;
 
     /// Get the typed config view for a specific account.
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>>;
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>>;
 
     /// Update the in-memory config for an account without restarting.
     ///
     /// Accepts raw JSON because the store persists `Value`. Each plugin
     /// deserializes into its concrete config type internally.
-    fn update_account_config(&self, account_id: &str, config: serde_json::Value) -> Result<()>;
+    async fn update_account_config(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> Result<()>;
 
     /// Get a shared outbound sender for routing outside the plugin.
     fn shared_outbound(&self) -> Arc<dyn ChannelOutbound>;
@@ -821,7 +572,7 @@ pub trait ChannelPlugin: Send + Sync {
     ///
     /// Each plugin serializes its concrete config type. Returns `None` if the
     /// account is not found.
-    fn account_config_json(&self, _account_id: &str) -> Option<serde_json::Value> {
+    async fn account_config_json(&self, _account_id: &str) -> Option<serde_json::Value> {
         None
     }
 
@@ -832,6 +583,11 @@ pub trait ChannelPlugin: Send + Sync {
 
     /// Thread context provider for fetching prior thread messages.
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
+        None
+    }
+
+    /// Shared thread context handle for work that must outlive the plugin lock.
+    fn shared_thread_context(&self) -> Option<Arc<dyn ChannelThreadContext>> {
         None
     }
 
@@ -894,6 +650,47 @@ pub trait ChannelOutbound: Send + Sync {
         payload: &ReplyPayload,
         reply_to: Option<&str>,
     ) -> Result<()>;
+
+    /// Send media and report the ids of the messages it produced.
+    ///
+    /// Voice replies are often the primary assistant answer a channel user will
+    /// react to, so they need the same trace attribution as text replies.
+    /// Channels that cannot report ids inherit this fallback and lose feedback
+    /// attribution rather than losing the reply.
+    async fn send_media_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        payload: &ReplyPayload,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_media(account_id, to, payload, reply_to).await?;
+        Ok(Vec::new())
+    }
+
+    /// Send text and report the ids of the messages it produced.
+    ///
+    /// Feedback attribution needs the id of the message the user will react
+    /// to, and most channel APIs return it from the send call and then throw
+    /// it away. Returns a list rather than one id because channels split long
+    /// replies into several messages, and a reader may react to any of them —
+    /// reporting only the last would leave a thumb on an earlier chunk
+    /// unattributable.
+    ///
+    /// Channels that can report ids override this; the default delegates to
+    /// [`Self::send_text`] and reports none, so a channel that cannot loses
+    /// feedback attribution rather than losing the message.
+    async fn send_text_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_text(account_id, to, text, reply_to).await?;
+        Ok(Vec::new())
+    }
+
     /// Send a "typing" indicator. No-op by default.
     async fn send_typing(&self, _account_id: &str, _to: &str) -> Result<()> {
         Ok(())
@@ -912,6 +709,27 @@ pub trait ChannelOutbound: Send + Sync {
         let _ = suffix_html;
         self.send_text(account_id, to, text, reply_to).await
     }
+
+    /// [`Self::send_text_with_suffix`], reporting the ids of the messages it
+    /// produced.
+    ///
+    /// A reply that carries an activity logbook is still a reply someone can
+    /// react to, so it needs the same attribution as a plain one. Kept as a
+    /// separate method for the same reason as
+    /// [`Self::send_text_reporting_ids`]: channels that cannot report ids
+    /// inherit the default and lose attribution, not the message.
+    async fn send_text_with_suffix_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_text_with_suffix(account_id, to, text, suffix_html, reply_to)
+            .await?;
+        Ok(Vec::new())
+    }
     /// Send pre-formatted HTML without markdown conversion.
     ///
     /// Used for content that is already valid Telegram HTML (e.g. the activity
@@ -924,6 +742,22 @@ pub trait ChannelOutbound: Send + Sync {
         reply_to: Option<&str>,
     ) -> Result<()> {
         self.send_text(account_id, to, html, reply_to).await
+    }
+
+    /// [`Self::send_html`], reporting the ids of the messages it produced.
+    ///
+    /// The activity logbook that follows a streamed reply is delivered this
+    /// way. It belongs to the same turn, so a reaction on it should score that
+    /// turn rather than resolve to nothing.
+    async fn send_html_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.send_html(account_id, to, html, reply_to).await?;
+        Ok(Vec::new())
     }
     /// Send a text message without notification (silent). Falls back to send_text by default.
     async fn send_text_silent(
@@ -1014,13 +848,31 @@ pub struct ChannelHealthSnapshot {
     pub extra: Option<serde_json::Value>,
 }
 
-/// Stream event for edit-in-place streaming.
+/// Lifecycle state for a user-visible task in a channel stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelTaskStatus {
+    InProgress,
+    Complete,
+    Error,
+}
+
+/// A channel-neutral task update emitted while an agent uses a tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelTaskUpdate {
+    pub id: String,
+    pub title: String,
+    pub status: ChannelTaskStatus,
+}
+
+/// Stream event for incremental channel responses.
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     /// A chunk of final reply text to append.
     Delta(String),
     /// A chunk of intermediate progress text to append.
     ProgressDelta(String),
+    /// A structured task lifecycle update.
+    TaskUpdate(ChannelTaskUpdate),
     /// Stream is complete.
     Done,
     /// An error occurred.
@@ -1045,6 +897,25 @@ pub trait ChannelStreamOutbound: Send + Sync {
         stream: StreamReceiver,
     ) -> Result<()>;
 
+    /// [`Self::send_stream`], reporting the ids of the messages it left behind.
+    ///
+    /// Edit-in-place streaming delivers the final reply itself, so the normal
+    /// send path never runs and never records a trace link. Without this the
+    /// message a reader actually reacts to would have no attribution at all.
+    ///
+    /// Channels that cannot report ids inherit the default and lose feedback
+    /// attribution for streamed replies, not the reply.
+    async fn send_stream_reporting_ids(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> Result<Vec<String>> {
+        self.send_stream(account_id, to, reply_to, stream).await?;
+        Ok(Vec::new())
+    }
+
     /// Whether streaming is enabled for this account.
     async fn is_stream_enabled(&self, _account_id: &str) -> bool {
         true
@@ -1058,12 +929,25 @@ pub trait ChannelStreamOutbound: Send + Sync {
         true
     }
 
+    /// Whether any successful stream result is itself a complete delivery.
+    ///
+    /// This lets a stream retain a user-visible terminal error and suppress the
+    /// normal fallback even when no final reply delta was emitted.
+    async fn claims_stream_delivery(&self, _account_id: &str, _reply_to: Option<&str>) -> bool {
+        false
+    }
+
     /// Whether this stream consumes progress deltas separately from final text.
     ///
     /// Channels that only append streamed text should leave this disabled to
     /// avoid receiving the same pre-tool draft once as final text and again as
     /// reclassified progress.
     async fn receives_progress_deltas(&self, _account_id: &str) -> bool {
+        false
+    }
+
+    /// Whether this stream renders structured task lifecycle updates.
+    async fn receives_task_updates(&self, _account_id: &str) -> bool {
         false
     }
 }
@@ -1115,18 +999,24 @@ mod tests {
     async fn default_update_location_returns_false() {
         let sink = DummySink;
         let target = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "42".into(),
             message_id: None,
             thread_id: None,
         };
-        assert!(!sink.update_location(&target, 48.8566, 2.3522).await);
+        assert!(
+            !sink
+                .update_location(&target, Some("sender"), 48.8566, 2.3522)
+                .await
+        );
     }
 
     #[test]
     fn outbound_to_without_thread_id() {
         let target = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "12345".into(),
@@ -1139,6 +1029,7 @@ mod tests {
     #[test]
     fn outbound_to_with_thread_id() {
         let target = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "-100999".into(),
@@ -1151,6 +1042,7 @@ mod tests {
     #[test]
     fn reply_target_thread_id_serde_roundtrip() {
         let target = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "-100999".into(),
@@ -1452,6 +1344,7 @@ mod tests {
     #[test]
     fn channel_reply_target_converts_to_hook_channel_binding() {
         let target = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "-100999".into(),

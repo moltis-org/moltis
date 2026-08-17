@@ -29,6 +29,8 @@ export function NotificationsSection(): VNode {
 	const [toggling, setToggling] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [serverStatus, setServerStatus] = useState<PushServerStatus | null>(null);
+	const [testing, setTesting] = useState(false);
+	const [testResult, setTestResult] = useState<string | null>(null);
 
 	async function checkStatus(): Promise<void> {
 		setIsLoading(true);
@@ -90,6 +92,29 @@ export function NotificationsSection(): VNode {
 		rerender();
 	}
 
+	async function onSendTest(): Promise<void> {
+		setTesting(true);
+		setTestResult(null);
+		rerender();
+
+		const result = await push.sendTestNotification();
+		if (result.success) {
+			setTestResult(
+				result.sent === 0
+					? "No devices accepted the notification — check that a device is still subscribed."
+					: `Sent to ${result.sent} device${result.sent === 1 ? "" : "s"}.`,
+			);
+		} else {
+			const accepted = result.sent ? ` ${result.sent} accepted.` : "";
+			setTestResult(`${result.error || "Failed to send test notification"}.${accepted}`);
+		}
+
+		// Sending prunes endpoints rejected as expired by the push service.
+		await refreshStatus();
+		setTesting(false);
+		rerender();
+	}
+
 	if (isLoading) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
@@ -103,19 +128,9 @@ export function NotificationsSection(): VNode {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 				<SectionHeading title="Notifications" />
-				<div
-					style={{
-						maxWidth: "600px",
-						padding: "12px 16px",
-						borderRadius: "6px",
-						border: "1px solid var(--border)",
-						background: "var(--surface)",
-					}}
-				>
-					<p className="text-sm text-[var(--text)]" style={{ margin: 0 }}>
-						Push notifications are not supported in this browser.
-					</p>
-					<p className="text-xs text-[var(--muted)]" style={{ margin: "8px 0 0" }}>
+				<div className="max-w-[600px] rounded-md border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+					<p className="m-0 text-sm text-[var(--text)]">Push notifications are not supported in this browser.</p>
+					<p className="mt-2 mb-0 text-xs text-[var(--muted)]">
 						Try using Safari, Chrome, or Firefox on a device that supports web push.
 					</p>
 				</div>
@@ -127,21 +142,10 @@ export function NotificationsSection(): VNode {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 				<SectionHeading title="Notifications" />
-				<div
-					style={{
-						maxWidth: "600px",
-						padding: "12px 16px",
-						borderRadius: "6px",
-						border: "1px solid var(--border)",
-						background: "var(--surface)",
-					}}
-				>
-					<p className="text-sm text-[var(--text)]" style={{ margin: 0 }}>
-						Push notifications are not configured on the server.
-					</p>
-					<p className="text-xs text-[var(--muted)]" style={{ margin: "8px 0 0" }}>
-						The server was built without the{" "}
-						<code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>push-notifications</code> feature.
+				<div className="max-w-[600px] rounded-md border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+					<p className="m-0 text-sm text-[var(--text)]">Push notifications are not configured on the server.</p>
+					<p className="mt-2 mb-0 text-xs text-[var(--muted)]">
+						The server was built without the <code className="font-mono text-xs">push-notifications</code> feature.
 					</p>
 				</div>
 			</div>
@@ -154,17 +158,15 @@ export function NotificationsSection(): VNode {
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<SectionHeading title="Notifications" />
-			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
+			<p className="m-0 max-w-[600px] text-xs leading-relaxed text-[var(--muted)]">
 				Receive push notifications when the agent completes a task or needs your attention.
 			</p>
 
-			<div style={{ maxWidth: "600px" }}>
-				<div className="provider-item" style={{ marginBottom: 0 }}>
-					<div style={{ flex: 1, minWidth: 0 }}>
-						<div className="provider-item-name" style={{ fontSize: ".9rem" }}>
-							Push Notifications
-						</div>
-						<div style={{ fontSize: ".75rem", color: "var(--muted)", marginTop: "2px" }}>
+			<div className="max-w-[600px]">
+				<div className="provider-item mb-0">
+					<div className="min-w-0 flex-1">
+						<div className="provider-item-name text-sm">Push Notifications</div>
+						<div className="mt-0.5 text-xs text-[var(--muted)]">
 							{needsInstall
 								? "Add this app to your Dock to enable notifications."
 								: subscribed
@@ -175,30 +177,54 @@ export function NotificationsSection(): VNode {
 						</div>
 					</div>
 					<button
+						type="button"
 						className={`provider-btn ${subscribed ? "provider-btn-danger" : ""}`}
 						onClick={onToggle}
 						disabled={toggling || permission === "denied" || needsInstall}
+						aria-busy={toggling}
+						aria-label={subscribed ? "Disable push notifications" : "Enable push notifications"}
 					>
-						{toggling ? "\u2026" : subscribed ? "Disable" : "Enable"}
+						{toggling ? (subscribed ? "Disabling\u2026" : "Enabling\u2026") : subscribed ? "Disable" : "Enable"}
 					</button>
 				</div>
-				<StatusMessage error={error} className="text-xs mt-2" />
+				<div role="alert" aria-live="assertive">
+					<StatusMessage error={error} className="text-xs mt-2" />
+				</div>
+
+				{(serverStatus?.subscription_count || 0) > 0 ? (
+					<div className="provider-item mt-1.5 mb-0">
+						<div className="min-w-0 flex-1">
+							<div className="provider-item-name text-sm">Test Notification</div>
+							<div className="mt-0.5 text-xs text-[var(--muted)]">
+								Send a notification to every subscribed device to verify delivery.
+							</div>
+						</div>
+						<button
+							type="button"
+							className="provider-btn provider-btn-secondary"
+							onClick={onSendTest}
+							disabled={testing}
+							aria-busy={testing}
+							aria-label="Send test notification"
+						>
+							{testing ? "Sending\u2026" : "Send"}
+						</button>
+					</div>
+				) : null}
+				<div className="mt-2 text-xs text-[var(--muted)]" role="status" aria-live="polite" aria-atomic="true">
+					{testResult}
+				</div>
 			</div>
 
+			<p className="m-0 max-w-[600px] text-xs leading-relaxed text-[var(--muted)]">
+				Notifications are grouped per chat, so a busy conversation produces one notification rather than a stack. The
+				device you are actively reading a chat on is skipped — other devices still get notified.
+			</p>
+
 			{needsInstall ? (
-				<div
-					style={{
-						maxWidth: "600px",
-						padding: "12px 16px",
-						borderRadius: "6px",
-						border: "1px solid var(--border)",
-						background: "var(--surface)",
-					}}
-				>
-					<p className="text-sm text-[var(--text)]" style={{ margin: 0, fontWeight: 500 }}>
-						Installation required
-					</p>
-					<p className="text-xs text-[var(--muted)]" style={{ margin: "8px 0 0" }}>
+				<div className="max-w-[600px] rounded-md border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+					<p className="m-0 text-sm font-medium text-[var(--text)]">Installation required</p>
+					<p className="mt-2 mb-0 text-xs text-[var(--muted)]">
 						On Safari, push notifications are only available for installed apps. Add moltis to your Dock using{" "}
 						<strong>File {"\u2192"} Add to Dock</strong> (or Share {"\u2192"} Add to Dock on iOS), then open it from
 						there.
@@ -207,59 +233,40 @@ export function NotificationsSection(): VNode {
 			) : null}
 
 			{permission === "denied" && !needsInstall ? (
-				<div
-					style={{
-						maxWidth: "600px",
-						padding: "12px 16px",
-						borderRadius: "6px",
-						border: "1px solid var(--error)",
-						background: "color-mix(in srgb, var(--error) 5%, transparent)",
-					}}
-				>
-					<p className="text-sm" style={{ color: "var(--error)", margin: 0, fontWeight: 500 }}>
-						Notifications are blocked
-					</p>
-					<p className="text-xs text-[var(--muted)]" style={{ margin: "8px 0 0" }}>
+				<div className="max-w-[600px] rounded-md border border-[var(--error)] bg-[var(--surface)] px-4 py-3">
+					<p className="m-0 text-sm font-medium text-[var(--error)]">Notifications are blocked</p>
+					<p className="mt-2 mb-0 text-xs text-[var(--muted)]">
 						You previously blocked notifications for this site. To enable them, you'll need to update your browser's
 						site settings and allow notifications for this origin.
 					</p>
 				</div>
 			) : null}
 
-			<div style={{ maxWidth: "600px", borderTop: "1px solid var(--border)", paddingTop: "16px", marginTop: "8px" }}>
+			<div className="mt-2 max-w-[600px] border-t border-[var(--border)] pt-4">
 				<SubHeading title={`Subscribed Devices (${serverStatus?.subscription_count || 0})`} />
 				{(serverStatus?.subscriptions?.length || 0) > 0 ? (
-					<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+					<div className="flex flex-col gap-1.5">
 						{serverStatus?.subscriptions?.map((sub) => (
-							<div className="provider-item" style={{ marginBottom: 0 }} key={sub.endpoint}>
-								<div style={{ flex: 1, minWidth: 0 }}>
-									<div className="provider-item-name" style={{ fontSize: ".85rem" }}>
-										{sub.device}
-									</div>
-									<div
-										style={{
-											fontSize: ".7rem",
-											color: "var(--muted)",
-											marginTop: "2px",
-											display: "flex",
-											gap: "12px",
-											flexWrap: "wrap",
-										}}
-									>
-										{sub.ip ? <span style={{ fontFamily: "var(--font-mono)" }}>{sub.ip}</span> : null}
+							<div className="provider-item mb-0" key={sub.endpoint}>
+								<div className="min-w-0 flex-1">
+									<div className="provider-item-name text-[.85rem]">{sub.device}</div>
+									<div className="mt-0.5 flex flex-wrap gap-3 text-[.7rem] text-[var(--muted)]">
+										{sub.ip ? <span className="font-mono">{sub.ip}</span> : null}
 										<time dateTime={sub.created_at}>{new Date(sub.created_at || "").toLocaleDateString()}</time>
 									</div>
 								</div>
-								<button className="provider-btn provider-btn-danger" onClick={() => onRemoveSubscription(sub.endpoint)}>
+								<button
+									type="button"
+									className="provider-btn provider-btn-danger"
+									onClick={() => onRemoveSubscription(sub.endpoint)}
+								>
 									Remove
 								</button>
 							</div>
 						))}
 					</div>
 				) : (
-					<div className="text-xs text-[var(--muted)]" style={{ padding: "4px 0" }}>
-						No devices subscribed yet.
-					</div>
+					<div className="py-1 text-xs text-[var(--muted)]">No devices subscribed yet.</div>
 				)}
 			</div>
 		</div>

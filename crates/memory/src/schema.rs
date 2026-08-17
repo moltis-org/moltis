@@ -1,7 +1,9 @@
 //! Row types for the memory database and migration runner.
 
+use serde::{Deserialize, Serialize};
+
 /// A tracked file row.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileRow {
     pub path: String,
     pub source: String,

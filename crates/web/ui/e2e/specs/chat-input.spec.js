@@ -460,7 +460,7 @@ test.describe("Chat input and slash commands", () => {
 		const box = await dropdown.boundingBox();
 		expect(box?.width || 0).toBeGreaterThan(360);
 
-		const item = page.locator("#modelDropdownList .model-dropdown-item").first();
+		const item = page.locator("#modelDropdownList .model-dropdown-item", { hasText: displayName });
 		await expect(item).toHaveAttribute("title", fullTitle);
 		await expect(item.locator(".model-item-label")).toHaveAttribute("title", fullTitle);
 		await item.click();
@@ -503,6 +503,149 @@ test.describe("Chat input and slash commands", () => {
 		await expect(page.locator("#messages")).toContainText("Request failed");
 		await expect(sendBtn).toHaveAttribute("data-mode", "send");
 		await expect(sendBtn).toHaveAttribute("aria-label", "Send");
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("delayed chat.send response stays bound to its originating session", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var ws = stateModule.ws;
+			if (!ws) throw new Error("websocket unavailable");
+
+			window.__delayedChatSendId = null;
+			var originalSend = ws.send.bind(ws);
+			ws.send = (payload) => {
+				var parsed = JSON.parse(payload);
+				if (parsed?.method === "chat.send") {
+					window.__delayedChatSendId = parsed.id;
+					return;
+				}
+				return originalSend(payload);
+			};
+		});
+
+		const chatInput = page.getByRole("textbox", { name: "Chat input" });
+		await chatInput.fill("delayed session response");
+		await chatInput.press("Enter");
+		await expect.poll(() => page.evaluate(() => window.__delayedChatSendId)).not.toBeNull();
+
+		await page.getByRole("button", { name: "+", exact: true }).click();
+		await expect(page).toHaveURL(/\/chats\/session\/[0-9a-f-]+$/);
+
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var id = window.__delayedChatSendId;
+			var resolver = stateModule.pending?.[id];
+			if (typeof resolver !== "function") throw new Error("chat.send resolver not found");
+			delete stateModule.pending[id];
+			resolver({ ok: true, payload: { runId: "run-delayed-main" } });
+		});
+
+		await expect
+			.poll(() =>
+				page.evaluate(() => {
+					var store = window.__moltis_stores.sessionStore;
+					var activeKey = store.activeSessionKey.value;
+					return {
+						activeRunId: store.getByKey(activeKey)?.activeRunId.value || null,
+						mainRunId: store.getByKey("main")?.activeRunId.value || null,
+					};
+				}),
+			)
+			.toEqual({ activeRunId: null, mainRunId: "run-delayed-main" });
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("delayed chat.send failure remains visible in its originating session", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var ws = stateModule.ws;
+			if (!ws) throw new Error("websocket unavailable");
+
+			window.__delayedChatSendId = null;
+			var originalSend = ws.send.bind(ws);
+			ws.send = (payload) => {
+				var parsed = JSON.parse(payload);
+				if (parsed?.method === "chat.send") {
+					window.__delayedChatSendId = parsed.id;
+					return;
+				}
+				return originalSend(payload);
+			};
+		});
+
+		const failure = "Delayed send failed";
+		const chatInput = page.getByRole("textbox", { name: "Chat input" });
+		await chatInput.fill("message that will fail");
+		await chatInput.press("Enter");
+		await expect.poll(() => page.evaluate(() => window.__delayedChatSendId)).not.toBeNull();
+
+		await page.getByRole("button", { name: "+", exact: true }).click();
+		await expect(page).toHaveURL(/\/chats\/session\/[0-9a-f-]+$/);
+		await page.evaluate(async (errorMessage) => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var id = window.__delayedChatSendId;
+			var resolver = stateModule.pending?.[id];
+			if (typeof resolver !== "function") throw new Error("chat.send resolver not found");
+			delete stateModule.pending[id];
+			resolver({ ok: false, error: { message: errorMessage } });
+		}, failure);
+
+		await expect
+			.poll(() =>
+				page.evaluate(
+					(message) =>
+						window.__moltis_stores.sessionStore.getByKey("main")?.sendErrors.value.includes(message) === true,
+					failure,
+				),
+			)
+			.toBe(true);
+		const chatMessages = page.getByRole("log", { name: "Chat messages" });
+		await expect(chatMessages.getByText(failure, { exact: true })).toHaveCount(0);
+		await page.getByRole("link").and(page.locator('a[href="/chats/main"]')).click();
+		await expect(page).toHaveURL(/\/chats\/main$/);
+		const sendFailure = chatMessages.getByRole("alert").filter({ hasText: failure });
+		await expect(sendFailure).toHaveText(failure);
+
+		const failedRequestId = await page.evaluate(() => window.__delayedChatSendId);
+		await chatInput.fill("retry after failure");
+		await chatInput.press("Enter");
+		await expect.poll(() => page.evaluate(() => window.__delayedChatSendId)).not.toBe(failedRequestId);
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var id = window.__delayedChatSendId;
+			var resolver = stateModule.pending?.[id];
+			if (typeof resolver !== "function") throw new Error("retry chat.send resolver not found");
+			delete stateModule.pending[id];
+			resolver({ ok: true, payload: { runId: "run-successful-retry" } });
+		});
+
+		await expect(sendFailure).toHaveCount(0);
+		await expect
+			.poll(() => page.evaluate(() => window.__moltis_stores.sessionStore.getByKey("main")?.sendErrors.value.length))
+			.toBe(0);
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -714,6 +857,86 @@ test.describe("Chat input and slash commands", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("delayed attachment upload does not render in a newly active session", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		let releaseUpload;
+		const uploadRelease = new Promise((resolve) => {
+			releaseUpload = resolve;
+		});
+		let markUploadStarted;
+		const uploadStarted = new Promise((resolve) => {
+			markUploadStarted = resolve;
+		});
+		await page.route("**/api/sessions/main/upload", async (route) => {
+			markUploadStarted();
+			await uploadRelease;
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					ok: true,
+					url: "/api/sessions/main/media/delayed.txt",
+					filename: "delayed.txt",
+					contentType: "text/plain",
+					size: 15,
+				}),
+			});
+		});
+		await page.evaluate(() => {
+			window.__delayedUploadPayloads = [];
+			const originalSend = WebSocket.prototype.send;
+			WebSocket.prototype.send = function (data) {
+				try {
+					const request = JSON.parse(data);
+					if (request?.method === "chat.send") {
+						window.__delayedUploadPayloads.push(request.params || {});
+						return;
+					}
+				} catch {
+					// Pass non-JSON WebSocket traffic through unchanged.
+				}
+				return originalSend.call(this, data);
+			};
+		});
+
+		await page.locator("#attachInput").setInputFiles({
+			name: "delayed.txt",
+			mimeType: "text/plain",
+			buffer: Buffer.from("delayed content"),
+		});
+		const message = "attachment belongs to main";
+		const chatInput = page.getByRole("textbox", { name: "Chat input" });
+		await chatInput.fill(message);
+		await chatInput.press("Enter");
+		await uploadStarted;
+
+		await page.getByRole("button", { name: "+", exact: true }).click();
+		await expect(page).toHaveURL(/\/chats\/session\/[0-9a-f-]+$/);
+		await waitForWsConnected(page);
+		await waitForChatInputReady(page);
+		await page.locator("#attachInput").setInputFiles({
+			name: "new-session.txt",
+			mimeType: "text/plain",
+			buffer: Buffer.from("new session attachment"),
+		});
+		const newSessionAttachment = page.locator(".media-preview-item").getByText("new-session.txt", { exact: true });
+		await expect(newSessionAttachment).toBeVisible();
+		releaseUpload();
+
+		await expect
+			.poll(() => page.evaluate(() => window.__delayedUploadPayloads.at(-1) || null))
+			.toMatchObject({
+				_session_key: "main",
+				content: [{ type: "text", text: message }],
+				_document_files: [{ display_name: "delayed.txt" }],
+			});
+		const chatMessages = page.getByRole("log", { name: "Chat messages" });
+		await expect(chatMessages.getByText(message, { exact: true })).toHaveCount(0);
+		await expect(chatMessages.getByText("delayed.txt", { exact: true })).toHaveCount(0);
+		await expect(newSessionAttachment).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("preserves typed text when attachment upload fails", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.route("**/api/sessions/main/upload", async (route) => {
@@ -918,12 +1141,13 @@ test.describe("Chat input and slash commands", () => {
 		// Toggle the LLM output panel visible and immediately click copy to
 		// minimize the window for a maybeRefreshFullContext() race.
 		await llmOutputBtn.click();
+		await expect(panel.getByRole("button", { name: "Hide LLM output", exact: true })).toBeVisible();
 		const llmOutput = panel.locator("#fullContextLlmOutput");
 		await expect(llmOutput).toBeVisible();
 		const llmOutputText = (await llmOutput.textContent()) || "";
 		expect(llmOutputText).not.toBe("");
 
-		await copyBtn.click();
+		await panel.getByRole("button", { name: "Copy", exact: true }).click();
 		const copied = await page.evaluate(() => window.__copiedText);
 		expect(copied).toContain("LLM output:\n");
 		expect(copied).toContain("\n\nContext:\n");

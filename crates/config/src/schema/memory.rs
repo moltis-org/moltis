@@ -39,6 +39,9 @@ pub struct MemoryEmbeddingConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub api_key: Option<Secret<String>>,
+    /// Override the embedding vector dimension (auto-detected from provider by default).
+    #[serde(default, alias = "embedding_dimensions")]
+    pub embedding_dimension: Option<u32>,
     /// Citation mode for memory search results.
     pub citations: MemoryCitationsMode,
     /// Enable LLM reranking for hybrid search results.
@@ -55,6 +58,15 @@ pub struct MemoryEmbeddingConfig {
     /// QMD-specific configuration (only used when backend = "qmd").
     #[serde(default)]
     pub qmd: QmdConfig,
+    /// Zvec collection directory path (only used when backend = "zvec").
+    #[serde(default)]
+    pub db_path: Option<String>,
+    /// Weight for vector similarity in hybrid search (0.0–1.0, default 0.7).
+    #[serde(default = "default_vector_weight")]
+    pub vector_weight: f32,
+    /// Weight for keyword/FTS similarity in hybrid search (0.0–1.0, default 0.3).
+    #[serde(default = "default_keyword_weight")]
+    pub keyword_weight: f32,
     /// Prefetch relevant memories at the start of each turn and inject them
     /// into the system prompt as `<recalled_context>`. Default: true.
     #[serde(default = "default_true")]
@@ -84,11 +96,15 @@ impl Default for MemoryEmbeddingConfig {
             base_url: None,
             model: None,
             api_key: None,
+            embedding_dimension: None,
             citations: MemoryCitationsMode::default(),
             llm_reranking: false,
             search_merge_strategy: MemorySearchMergeStrategy::default(),
             session_export: default_session_export_mode(),
             qmd: QmdConfig::default(),
+            db_path: None,
+            vector_weight: default_vector_weight(),
+            keyword_weight: default_keyword_weight(),
             enable_prefetch: true,
             prefetch_limit: 3,
             auto_extract_interval: 5,
@@ -107,6 +123,14 @@ fn default_prefetch_limit() -> usize {
 
 fn default_auto_extract_interval() -> u32 {
     5
+}
+
+fn default_vector_weight() -> f32 {
+    0.7
+}
+
+fn default_keyword_weight() -> f32 {
+    0.3
 }
 
 /// High-level orchestration style for prompt memory and memory tools.
@@ -212,6 +236,9 @@ pub enum MemoryBackend {
     Builtin,
     /// External QMD CLI-backed index and search runtime.
     Qmd,
+    /// Zvec native vector database backend.
+    #[serde(rename = "zvec")]
+    Zvec,
 }
 
 /// How chat sessions are exported into searchable memory.

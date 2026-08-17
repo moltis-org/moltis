@@ -9,7 +9,6 @@ use crate::{
     openai_compat::{
         ResponsesStreamState, SseLineResult, StreamingToolState, finalize_responses_stream,
         finalize_stream, process_openai_sse_line, process_responses_sse_line,
-        split_responses_instructions_and_input, to_responses_api_tools,
     },
 };
 
@@ -27,33 +26,20 @@ impl OpenAiProvider {
         options: AgentToolControls,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
-            let (instructions, input) = split_responses_instructions_and_input(messages);
-            let mut body = serde_json::json!({
-                "model": self.model,
-                "input": input,
-                "stream": true,
-            });
-
-            if let Some(instructions) = instructions {
-                body["instructions"] = serde_json::Value::String(instructions);
-            }
-
-            if !tools.is_empty() {
-                body["tools"] = serde_json::Value::Array(to_responses_api_tools(&tools));
-            }
-            if let Err(error) = super::core::apply_openai_responses_tool_choice(&mut body, &options) {
-                yield StreamEvent::Error(error.to_string());
-                return;
-            }
-
-            self.apply_reasoning_effort_responses(&mut body);
+            let body = match self.prepare_responses_sse_body(messages, &tools, &options) {
+                Ok(body) => body,
+                Err(error) => {
+                    yield StreamEvent::Error(error.to_string());
+                    return;
+                },
+            };
 
             debug!(
                 model = %self.model,
                 tools_count = tools.len(),
                 "openai stream_responses_sse request"
             );
-            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai responses stream request body");
+            trace!(body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()), "openai responses stream request body prepared");
 
             let url = self.responses_sse_url();
             let resp = match self
@@ -195,7 +181,7 @@ impl OpenAiProvider {
                 reasoning_effort = ?self.reasoning_effort,
                 "openai stream_with_tools request (sse)"
             );
-            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai stream request body (sse)");
+            trace!(body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()), "openai stream request body prepared");
 
             let resp = match self.send_chat_completions_request(&body).await {
                 Ok(r) => {

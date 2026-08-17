@@ -82,6 +82,7 @@ offered = ["telegram", "discord"]
 | `mention_mode` | no | `"mention"` | When the bot responds in guilds: `"always"`, `"mention"` (only when @mentioned), or `"none"` |
 | `allowlist` | no | `[]` | Discord usernames allowed to DM the bot (when `dm_policy = "allowlist"`) |
 | `guild_allowlist` | no | `[]` | Guild (server) IDs allowed to interact with the bot |
+| `operators` | no | `[]` | Exact sender IDs eligible for privileged channel commands. Empty means nobody. Discord currently fails closed as shared even in DMs; see [Operators](./channels.md#operators-privileged-senders) |
 | `model` | no | — | Override the default model for this channel |
 | `model_provider` | no | — | Provider for the overridden model |
 | `agent_id` | no | — | Default agent ID for this Discord bot |
@@ -104,8 +105,10 @@ token = "MTIzNDU2Nzg5.example.bot-token"
 dm_policy = "allowlist"
 group_policy = "open"
 mention_mode = "mention"
-allowlist = ["alice", "bob"]
+allowlist = ["111111111111111111", "222222222222222222"]
 guild_allowlist = ["123456789012345678"]
+# Records operator identity for future proven-direct topology support.
+operators = ["111111111111111111"]
 reply_to_message = true
 ack_reaction = "👀"
 model = "gpt-4o"
@@ -213,6 +216,11 @@ Slash commands appear in Discord's command palette (type `/` in any channel wher
 the bot is present). Responses are ephemeral — only visible to the user who
 invoked the command.
 
+Commands that require an operator direct chat, including `/context`,
+`/sessions`, and `/agent`, currently fail closed on Discord because the gateway
+cannot yet prove Discord conversation topology from its channel ID. Use the
+authenticated web UI for those commands.
+
 ```admonish note
 Text-based `/` commands (e.g. typing `/model` as a regular message) continue to
 work alongside native slash commands. The native commands provide autocomplete and
@@ -270,6 +278,10 @@ If `dm_policy` is set to `"allowlist"` (the default), make sure your Discord
 username is listed in the `allowlist` array — otherwise the bot will ignore your
 DMs. Set `dm_policy = "open"` to allow anyone to DM the bot.
 ```
+
+Discord DMs currently support normal tool-free chat only. Privileged commands,
+agent tools, private owner context, and `/sh` fail closed until direct-chat
+topology is carried into the gateway.
 
 ### Without a Shared Server
 

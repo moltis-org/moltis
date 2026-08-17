@@ -66,6 +66,9 @@ export default {
 		wasmTip: "目前使用 WASM 沙盒搭配檔案系統隔離。如需容器等級的隔離，請安裝 Docker 或 Apple Container。",
 	},
 
+	// ── Memory backends ─────────────────────────────────────
+	zvec: "Zvec（快速向量）",
+
 	// ── Alert labels ───────────────────────────────────────
 	alertWarning: "警告：",
 	alertTip: "提示：",

@@ -122,13 +122,50 @@ interact with the agent.
 UI: Settings > Channels > Pending Senders
 ```
 
-### Per-Channel Permissions
+### Operators vs. Allowed Senders
 
-Each channel can have different permission levels:
+Being allowed to message the bot is **not** permission to run commands on the
+host. Shell access is gated separately by each account's `operators` list:
 
-- **Read-only**: Sender can ask questions, agent responds
-- **Execute**: Sender can trigger actions (with approval still required)
-- **Admin**: Full access including configuration changes
+| | Guest | Operator in proven DM | Operator in shared/unknown chat |
+|---|---|---|---|
+| Chat with the agent | yes | yes | yes |
+| Room-local slash commands | yes | yes | yes |
+| Privileged slash commands | no | yes | no |
+| `/sh`, shell command mode | no | yes | no |
+| Agent tools and external agents | no | yes | no |
+| Owner memory, profile, project context | no | yes | no |
+
+Denial is enforced before command dispatch, before shell command-mode rewrite,
+and with a deny-all request policy. Host-owned tool audience metadata provides
+an additional ceiling, and name-based configuration cannot widen the deny-all
+channel policy. Untrusted turns also omit private prompt and memory context.
+
+With no `operators` list, **no one** has privileged channel access. Configure it under
+**Settings → Channels → Edit → Operators**, or see
+[Channels → Operators](./channels.md#operators-privileged-senders).
+
+```admonish danger title="Public channels"
+On a public Discord guild or any shared group chat, every member may clear the
+access gate. Every turn therefore runs without tools or owner-private context,
+even when an operator sends it. `/sh` and privileged commands are also denied;
+move privileged work to an operator DM or the authenticated web UI. Adapters
+that cannot prove a chat is direct treat it as shared.
+```
+
+Discord, Microsoft Teams, and Matrix currently fall into that conservative
+category even for actual DMs. Their normal chat remains available, but tools,
+private context, `/sh`, location updates, and privileged commands are denied.
+
+Telephony is in that category permanently: a call's only identifier is the
+caller number, and caller ID is spoofable, so it can never authenticate an
+operator. Adding a phone number to `operators` grants nothing.
+
+Sessions bound to a chat — including a working session an operator moved there
+with `/attach` — are untrusted for *every* non-gateway caller, so cron jobs,
+webhooks, and `sessions_send` also run tool-free against them. Release the
+binding to restore full access; see
+[Channels → Channel-bound sessions](./channels.md#channel-bound-sessions).
 
 ### Channel Isolation
 

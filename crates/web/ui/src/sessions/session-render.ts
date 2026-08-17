@@ -106,6 +106,15 @@ interface AgentInfo {
 	emoji?: string;
 }
 
+interface ExternalAgentInfo {
+	installed?: boolean;
+	isAcp?: boolean;
+}
+
+const installedExternalAgents = new Set<string>();
+let externalAgentsLoaded = false;
+let externalAgentsLoadingPromise: Promise<void> | null = null;
+
 /** History message with an optional seq field, used for resuming chat sequence counters. */
 interface SeqHistoryMessage extends HistoryMessage {
 	seq?: number;
@@ -260,6 +269,8 @@ function renderHistoryAssistantMessage(msg: AssistantMsg): HTMLElement | null {
 		const footer = createModelFooter(msg);
 		el.appendChild(footer);
 		upsertTtsProviderFooter(el, msg.tts_provider);
+	}
+	if (el) {
 		appendMessageActions({
 			messageEl: el,
 			sessionKey: S.activeSessionKey,
@@ -362,7 +373,8 @@ export function appendLastMessageTimestamp(epochMs: number): void {
 	if (!footer) {
 		footer = document.createElement("div");
 		footer.className = "msg-model-footer";
-		lastMsg.appendChild(footer);
+		const actionBar = lastMsg.querySelector(".msg-action-bar");
+		lastMsg.insertBefore(footer, actionBar || null);
 	}
 	const timeEl = document.createElement("time");
 	timeEl.className = "msg-footer-time";
@@ -517,11 +529,40 @@ export function renderWelcomeAgentPicker(
 	});
 }
 
+function hasInstalledExternalAgent(): boolean {
+	if (externalAgentsLoaded) return installedExternalAgents.size > 0;
+	if (!externalAgentsLoadingPromise) {
+		externalAgentsLoadingPromise = refreshExternalAgentAvailability().finally(() => {
+			externalAgentsLoadingPromise = null;
+		});
+	}
+	return false;
+}
+
+function refreshExternalAgentAvailability(): Promise<void> {
+	return sendRpc("external_agents.list", {})
+		.then((res) => {
+			if (!res?.ok) return;
+			installedExternalAgents.clear();
+			const agents = Array.isArray(res.payload) ? (res.payload as ExternalAgentInfo[]) : [];
+			for (const agent of agents) {
+				if (agent?.installed) installedExternalAgents.add(String(agent.isAcp ? "acp" : "external"));
+			}
+			externalAgentsLoaded = true;
+			refreshWelcomeCardIfNeeded();
+		})
+		.catch(() => {});
+}
+
+function hasChatBackend(): boolean {
+	return modelStore.models.value.length > 0 || hasInstalledExternalAgent();
+}
+
 function showWelcomeCard(): void {
 	if (!S.chatMsgBox) return;
 	S.chatMsgBox.classList.add("chat-messages-empty");
 
-	if (modelStore.models.value.length === 0) {
+	if (!hasChatBackend()) {
 		const noProvTpl = S.$<HTMLTemplateElement>("tpl-no-providers-card");
 		if (!noProvTpl) return;
 		const noProvCard = (noProvTpl.content.cloneNode(true) as DocumentFragment).firstElementChild as HTMLElement;
@@ -557,12 +598,12 @@ export function refreshWelcomeCardIfNeeded(): void {
 	if (!S.chatMsgBox) return;
 	const welcomeCard = S.chatMsgBox.querySelector("#welcomeCard");
 	const noProvCard = S.chatMsgBox.querySelector("#noProvidersCard");
-	const hasModels = modelStore.models.value.length > 0;
+	const chatBackendAvailable = hasChatBackend();
 
-	if (hasModels && noProvCard) {
+	if (chatBackendAvailable && noProvCard) {
 		noProvCard.remove();
 		showWelcomeCard();
-	} else if (!hasModels && welcomeCard) {
+	} else if (!chatBackendAvailable && welcomeCard) {
 		welcomeCard.remove();
 		showWelcomeCard();
 	}
@@ -637,6 +678,10 @@ export function renderHistory(
 		const lastMsg = history[history.length - 1];
 		const ts = (lastMsg as SeqHistoryMessage).created_at;
 		if (ts) appendLastMessageTimestamp(ts);
+	}
+	for (const error of sessionStore.getByKey(key)?.sendErrors.value || []) {
+		const element = chatAddMsg("error", error);
+		element?.setAttribute("data-chat-send-error", "true");
 	}
 	postHistoryLoadActions(key, searchContext, msgEls, thinkingText, skipAutoScroll === true);
 }

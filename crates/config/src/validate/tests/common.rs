@@ -141,6 +141,23 @@ rate_limit_max = 10
 }
 
 #[test]
+fn chat_context_command_is_known_field() {
+    let toml = r#"
+[chat]
+context_command = "echo context"
+"#;
+    let result = validate_toml_str(toml);
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.category == "unknown-field" && d.path == "chat.context_command"),
+        "chat.context_command should be accepted, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn schema_drift_guard() {
     let config = MoltisConfig::default();
     let toml_value = toml::Value::try_from(&config).expect("serialize default config");

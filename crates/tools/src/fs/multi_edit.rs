@@ -316,7 +316,9 @@ impl AgentTool for MultiEditTool {
         "Apply multiple sequential edits to a single file as one atomic \
          operation. Each edit sees the output of previous edits. Either all \
          edits succeed or none are applied (full rollback on any failure). \
-         Each edit follows the same uniqueness rules as `Edit`."
+         Each edit follows the same uniqueness rules as `Edit`. In sandboxed \
+         sessions, use absolute workspace/data paths or `/home/sandbox/...` \
+         paths; both are read and written through the sandbox when needed."
     }
 
     fn parameters_schema(&self) -> Value {

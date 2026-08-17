@@ -6,6 +6,21 @@
 // typed use `unknown` as a placeholder -- callers can narrow with
 // `as` casts until we refine the type here.
 
+import type {
+	AvailableConnectorsResponse,
+	ConnectorAccount,
+	ConnectorAccountsResponse,
+	ConnectorAccountTestResponse,
+	ConnectorChannelSourcesResponse,
+	ConnectorDataset,
+	ConnectorDatasetCompileResponse,
+	ConnectorDatasetsResponse,
+	ConnectorItemsResponse,
+	ConnectorRemovedResponse,
+	ConnectorRun,
+	ConnectorRunsResponse,
+} from "./connector";
+import type { ExternalAgentInfo } from "./external-agent";
 import type { ModelInfo } from "./model";
 import type { SessionMeta } from "./session";
 
@@ -35,6 +50,23 @@ export interface RpcMethodMap {
 	"channels.status": unknown;
 	"channels.update": unknown;
 
+	// ── Connectors ──────────────────────────────────────────────
+	"connectors.available": AvailableConnectorsResponse;
+	"connectors.accounts.list": ConnectorAccountsResponse;
+	"connectors.accounts.add": ConnectorAccount;
+	"connectors.accounts.update": ConnectorAccount;
+	"connectors.accounts.remove": ConnectorRemovedResponse;
+	"connectors.accounts.test": ConnectorAccountTestResponse;
+	"connectors.channel_sources.list": ConnectorChannelSourcesResponse;
+	"connectors.datasets.list": ConnectorDatasetsResponse;
+	"connectors.datasets.compile": ConnectorDatasetCompileResponse;
+	"connectors.datasets.add": ConnectorDataset;
+	"connectors.datasets.update": ConnectorDataset;
+	"connectors.datasets.remove": ConnectorRemovedResponse;
+	"connectors.datasets.sync": ConnectorRun;
+	"connectors.runs.list": ConnectorRunsResponse;
+	"connectors.items.query": ConnectorItemsResponse;
+
 	// ── Chat ────────────────────────────────────────────────────
 	"chat.abort": unknown;
 	"chat.cancel_queued": unknown;
@@ -59,8 +91,13 @@ export interface RpcMethodMap {
 
 	// ── Exec ────────────────────────────────────────────────────
 	"exec.approval.resolve": unknown;
+
+	// ── Feedback ────────────────────────────────────────────────
+	"feedback.status": unknown;
+	"feedback.submit": unknown;
+
 	"external_agents.bind": unknown;
-	"external_agents.list": unknown;
+	"external_agents.list": ExternalAgentInfo[];
 	"external_agents.status": unknown;
 	"external_agents.unbind": unknown;
 
@@ -78,6 +115,10 @@ export interface RpcMethodMap {
 	"hooks.list": unknown;
 	"hooks.reload": unknown;
 	"hooks.save": unknown;
+
+	// ── Instrumentation ─────────────────────────────────────────
+	"instrumentation.status": unknown;
+	"instrumentation.test": unknown;
 
 	// ── Location ────────────────────────────────────────────────
 	"location.result": unknown;

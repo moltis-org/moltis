@@ -18,8 +18,8 @@ use crate::{
 
 use super::{
     super::{
-        ApprovalListResponse, format_pending_approvals_list, is_sender_on_allowlist,
-        parse_numbered_selection,
+        ApprovalListResponse, format_pending_approvals_list, is_sender_authorized_for_target,
+        operator_denied_message, parse_numbered_selection,
     },
     formatting::{format_model_list, unique_providers},
 };
@@ -75,14 +75,11 @@ pub(in crate::channel_events) async fn handle_approve_deny(
     cmd: &str,
     args: &str,
 ) -> ChannelResult<String> {
-    let authorized = match sender_id {
-        Some(sid) => is_sender_on_allowlist(state, &reply_to.account_id, sid).await,
-        None => false,
-    };
-    if !authorized {
-        return Err(ChannelError::invalid_input(
-            "You are not authorized to manage approvals. Only users on this bot's allowlist can use /approve and /deny.",
-        ));
+    if !is_sender_authorized_for_target(state, reply_to, sender_id).await {
+        return Err(ChannelError::invalid_input(operator_denied_message(
+            "Managing exec approvals",
+            sender_id,
+        )));
     }
     if args.is_empty() {
         return Err(ChannelError::invalid_input(format!(
@@ -814,8 +811,20 @@ pub(in crate::channel_events) async fn handle_sandbox(
 pub(in crate::channel_events) async fn handle_sh(
     state: &Arc<GatewayState>,
     session_key: &str,
+    reply_to: &ChannelReplyTarget,
+    sender_id: Option<&str>,
     args: &str,
 ) -> ChannelResult<String> {
+    // `/sh` toggles a mode that turns every later message in this chat into a
+    // shell command. Only operators in proven direct chats may touch it,
+    // including the read-only `status` form.
+    if !is_sender_authorized_for_target(state, reply_to, sender_id).await {
+        return Err(ChannelError::invalid_input(operator_denied_message(
+            "Shell access",
+            sender_id,
+        )));
+    }
+
     let route = if let Some(ref router) = state.sandbox_router {
         if router.is_sandboxed(session_key).await {
             "sandboxed"
@@ -883,15 +892,11 @@ pub(in crate::channel_events) async fn handle_update(
     sender_id: Option<&str>,
     args: &str,
 ) -> ChannelResult<String> {
-    // Owner-only: same allowlist check as approve/deny.
-    let authorized = match sender_id {
-        Some(sid) => is_sender_on_allowlist(state, &reply_to.account_id, sid).await,
-        None => false,
-    };
-    if !authorized {
-        return Err(ChannelError::invalid_input(
-            "You are not authorized to update moltis. Only users on this bot's allowlist can use /update.",
-        ));
+    // Operator direct-chat only: same check as approve/deny.
+    if !is_sender_authorized_for_target(state, reply_to, sender_id).await {
+        return Err(ChannelError::invalid_input(operator_denied_message(
+            "/update", sender_id,
+        )));
     }
 
     let requested_version = if args.is_empty() {
@@ -983,6 +988,25 @@ pub(in crate::channel_events) async fn handle_peek(
 /// - `/tts persona` — list all personas and show active
 /// - `/tts persona <id>` — set active persona
 /// - `/tts persona off|none` — deactivate persona
+#[cfg(feature = "voice")]
+async fn active_voice_persona_line(state: &GatewayState) -> String {
+    if let Some(ref store) = state.services.voice_persona_store
+        && let Ok(Some(active)) = store.get_active().await
+    {
+        format!(
+            "\nPersona: {} ({})",
+            active.persona.label, active.persona.id
+        )
+    } else {
+        "\nPersona: none".to_string()
+    }
+}
+
+#[cfg(not(feature = "voice"))]
+async fn active_voice_persona_line(_state: &GatewayState) -> String {
+    "\nPersona: none".to_string()
+}
+
 pub(in crate::channel_events) async fn handle_tts(
     state: &Arc<GatewayState>,
     session_key: &str,
@@ -1012,16 +1036,7 @@ pub(in crate::channel_events) async fn handle_tts(
                 .and_then(|v| v.as_str())
                 .unwrap_or("none");
 
-            let persona_line = if let Some(ref store) = state.services.voice_persona_store
-                && let Ok(Some(active)) = store.get_active().await
-            {
-                format!(
-                    "\nPersona: {} ({})",
-                    active.persona.label, active.persona.id
-                )
-            } else {
-                "\nPersona: none".to_string()
-            };
+            let persona_line = active_voice_persona_line(state).await;
 
             Ok(format!(
                 "TTS: {}\nProvider: {provider}{persona_line}",
@@ -1039,6 +1054,7 @@ pub(in crate::channel_events) async fn handle_tts(
     }
 }
 
+#[cfg(feature = "voice")]
 async fn handle_tts_persona(state: &Arc<GatewayState>, args: &str) -> ChannelResult<String> {
     let Some(ref store) = state.services.voice_persona_store else {
         return Err(ChannelError::unavailable("voice personas not available"));
@@ -1108,6 +1124,11 @@ async fn handle_tts_persona(state: &Arc<GatewayState>, args: &str) -> ChannelRes
             }
         },
     }
+}
+
+#[cfg(not(feature = "voice"))]
+async fn handle_tts_persona(_state: &Arc<GatewayState>, _args: &str) -> ChannelResult<String> {
+    Err(ChannelError::unavailable("voice personas not available"))
 }
 
 /// Handle `/tts provider [<id>]` — list or set the preferred TTS provider.

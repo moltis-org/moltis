@@ -143,6 +143,28 @@ pub async fn broadcast(
             continue;
         }
 
+        if let Some(session_key) = client.session_filter.as_deref()
+            && frame
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("sessionKey"))
+                .and_then(serde_json::Value::as_str)
+                != Some(session_key)
+        {
+            continue;
+        }
+
+        if let Some(states) = client.payload_state_filter.as_ref()
+            && !frame
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("state"))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|state| states.contains(state))
+        {
+            continue;
+        }
+
         // Channel filter (v4): if event is scoped to a channel, skip clients
         // that haven't joined it.
         if let Some(ref ch) = opts.channel

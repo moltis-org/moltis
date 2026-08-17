@@ -46,7 +46,7 @@ password auth.
 | Voice and audio messages | Supported | Matrix audio is downloaded and sent through the normal transcription pipeline |
 | Interactive actions | Supported | Short action lists are sent as native Matrix polls |
 | Reactions | Supported | Ack reactions and normal reaction flows work |
-| Location | Supported | Inbound location shares update user location and outbound location sends are supported |
+| Location | Partial | Outbound location sends are supported. Inbound shares do not update owner location while Matrix topology fails closed as shared |
 | OTP sender approval | Supported | Unknown DM senders can self-approve through the shared OTP flow |
 | Model routing overrides | Supported | Per-room and per-user model/provider overrides |
 
@@ -57,6 +57,9 @@ The main remaining Matrix-specific limitations are:
 - Matrix interactive actions are poll-based, not arbitrary button/select UIs
 - older encrypted history may remain unreadable until the missing room keys are shared with the Moltis device
 - arbitrary remote-media fetch and reupload for outbound URLs is still limited
+- privileged commands, tools, private owner context, and inbound location
+  updates fail closed because Matrix room topology is not yet carried into the
+  gateway, including for actual DMs
 
 ## How It Works
 
@@ -291,7 +294,8 @@ picker list from `moltis.toml`.
 | `mention_mode` | no | `"mention"` | When the bot responds in rooms: `"always"`, `"mention"`, or `"none"` |
 | `room_allowlist` | no | `[]` | Matrix room IDs or aliases allowed to interact with the bot |
 | `user_allowlist` | no | `[]` | Matrix user IDs allowed to DM the bot |
-| `auto_join` | no | `"always"` | Invite handling: `"always"`, `"allowlist"`, or `"off"` |
+| `operators` | no | `[]` | Exact sender IDs eligible for privileged access. Matrix currently fails closed as shared even in DMs |
+| `auto_join` | no | `"always"` | Invite handling: `"always"`, `"allowlist"`, or `"off"`. With `"allowlist"`, invites are accepted only when the inviter is on `user_allowlist` or the room is on `room_allowlist`; empty allowlists deny all invites |
 | `model` | no | — | Override the default model for this account |
 | `model_provider` | no | — | Provider for the overridden model |
 | `stream_mode` | no | `"edit_in_place"` | How streaming replies are sent: `"edit_in_place"` or `"off"` |

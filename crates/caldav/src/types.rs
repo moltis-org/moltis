@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Information about a discovered calendar collection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CalendarInfo {
     /// Server-relative href path to the calendar.
     pub href: String,
@@ -13,6 +13,43 @@ pub struct CalendarInfo {
     pub color: Option<String>,
     /// Optional description text.
     pub description: Option<String>,
+    /// ETag for the calendar collection, when advertised by the server.
+    #[serde(default)]
+    pub collection_etag: Option<String>,
+    /// Whether the collection advertises RFC 6578 sync support.
+    #[serde(default)]
+    pub supports_sync: bool,
+}
+
+/// Metadata for a VEVENT resource in a calendar collection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalendarResourceMetadata {
+    /// Server-relative href path to the calendar object.
+    pub href: String,
+    /// ETag for change detection, when supplied by the server.
+    pub etag: Option<String>,
+}
+
+/// A fetched calendar object. The raw iCalendar data is canonical.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalendarObject {
+    /// Server-relative href path to the calendar object.
+    pub href: String,
+    /// ETag for change detection, when supplied by the server.
+    pub etag: Option<String>,
+    /// Unmodified iCalendar resource data.
+    pub ical: String,
+}
+
+/// Per-resource result from a calendar multiget request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CalendarObjectResult {
+    /// The resource was fetched successfully.
+    Found(CalendarObject),
+    /// The resource no longer exists.
+    NotFound { href: String },
+    /// The server failed to return this resource.
+    Failed { href: String, status: u16 },
 }
 
 /// Summary of a single calendar event (returned by `list_events`).
@@ -101,11 +138,26 @@ mod tests {
             display_name: Some("Work".into()),
             color: Some("#FF5733".into()),
             description: None,
+            collection_etag: Some("\"collection-1\"".into()),
+            supports_sync: true,
         };
         let json = serde_json::to_string(&info).unwrap();
         let parsed: CalendarInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.href, "/dav/calendars/work");
         assert_eq!(parsed.display_name.as_deref(), Some("Work"));
+        assert_eq!(parsed.collection_etag.as_deref(), Some("\"collection-1\""));
+        assert!(parsed.supports_sync);
+    }
+
+    #[test]
+    fn calendar_info_new_fields_default_when_absent() {
+        let parsed: CalendarInfo = serde_json::from_str(
+            r#"{"href":"/dav/calendars/work","display_name":null,"color":null,"description":null}"#,
+        )
+        .unwrap();
+
+        assert!(parsed.collection_etag.is_none());
+        assert!(!parsed.supports_sync);
     }
 
     #[test]

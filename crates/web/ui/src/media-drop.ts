@@ -265,9 +265,10 @@ export function getPendingAttachments(): PendingAttachment[] {
 	return pendingAttachments;
 }
 
-/** Clear pending attachments and hide preview strip. */
-export function clearPendingAttachments(): void {
-	pendingAttachments = [];
+/** Remove attachments consumed by a send without discarding newer selections. */
+export function removePendingAttachments(attachments: readonly PendingAttachment[]): void {
+	const consumed = new Set(attachments);
+	pendingAttachments = pendingAttachments.filter((attachment) => !consumed.has(attachment));
 	renderPreview();
 }
 

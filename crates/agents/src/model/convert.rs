@@ -1,4 +1,4 @@
-use crate::multimodal::parse_data_uri;
+use crate::{multimodal::parse_data_uri, runner::sanitize_tool_result};
 
 use super::{
     chat::{ChatMessage, ContentPart, UserContent},
@@ -56,7 +56,16 @@ fn document_absolute_path_from_media_ref(media_ref: &str) -> String {
 /// `outputTokens`, `channel`) are silently dropped — they only exist in
 /// the persisted JSON, not in `ChatMessage`.
 pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage> {
-    values_to_chat_messages_inner(values, true)
+    values_to_chat_messages_inner(values, true, None)
+}
+
+/// Convert persisted JSON messages (from session store) to typed `ChatMessage`s,
+/// sanitizing tool results before they are sent back to an LLM provider.
+pub fn values_to_chat_messages_with_tool_result_limit(
+    values: &[serde_json::Value],
+    max_tool_result_bytes: usize,
+) -> Vec<ChatMessage> {
+    values_to_chat_messages_inner(values, true, Some(max_tool_result_bytes))
 }
 
 /// Convert provider-format JSON messages to typed `ChatMessage`s without
@@ -65,12 +74,22 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
 /// Hook-modified LLM payloads are already provider-bound, so preserve their
 /// tool messages exactly instead of applying session-store orphan filtering.
 pub fn provider_values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage> {
-    values_to_chat_messages_inner(values, false)
+    values_to_chat_messages_inner(values, false, None)
+}
+
+fn maybe_limit_tool_result_content(
+    content: String,
+    max_tool_result_bytes: Option<usize>,
+) -> String {
+    max_tool_result_bytes
+        .map(|max_bytes| sanitize_tool_result(&content, max_bytes))
+        .unwrap_or(content)
 }
 
 fn values_to_chat_messages_inner(
     values: &[serde_json::Value],
     filter_orphan_tool_results: bool,
+    max_tool_result_bytes: Option<usize>,
 ) -> Vec<ChatMessage> {
     let mut messages = Vec::with_capacity(values.len());
     // Track tool_call IDs emitted by assistant messages so we only include
@@ -237,6 +256,7 @@ fn values_to_chat_messages_inner(
                 } else {
                     val["content"].to_string()
                 };
+                let content = maybe_limit_tool_result_content(content, max_tool_result_bytes);
                 messages.push(ChatMessage::tool(tool_call_id, content));
             },
             // tool_result entries are persisted tool execution output; convert
@@ -269,6 +289,7 @@ fn values_to_chat_messages_inner(
                 } else {
                     String::new()
                 };
+                let content = maybe_limit_tool_result_content(content, max_tool_result_bytes);
                 messages.push(ChatMessage::tool(tool_call_id, content));
             },
             // notice entries are UI-only informational messages.

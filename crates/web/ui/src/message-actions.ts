@@ -1,6 +1,6 @@
 // ── Message action bar (copy, voice, retry, fork) ────────────
 //
-// Appended below each finalized assistant message footer.
+// Appended to each finalized assistant message.
 // The retry button opens a popover with "Try again", "Add details",
 // and "More concise" options.
 // Icons use CSS mask-image classes (icon-*) backed by SVG files on disk.
@@ -8,6 +8,7 @@
 import { isChatAtBottom, scrollChatToBottom } from "./chat-ui";
 import * as gon from "./gon";
 import { sendRpc } from "./helpers";
+import { buildFeedbackButtons, feedbackStatus } from "./message-feedback";
 import { renderPersistedAudio } from "./message-voice";
 import { copyToClipboard, showToast } from "./ui";
 
@@ -68,16 +69,17 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 	bar.className = "msg-action-bar";
 
 	// ── Copy button ──────────────────────────────────────────
-	const copyBtn = actionButton("icon-copy", "Copy");
+	const copyTitle = "Copy as Markdown";
+	const copyBtn = actionButton("icon-copy", copyTitle);
 	copyBtn.addEventListener("click", () => {
-		const text = extractPlainText(messageEl);
+		const text = ctx.text?.trim() ? ctx.text : extractPlainText(messageEl);
 		copyToClipboard(text, "", "Failed to copy to clipboard").then((ok) => {
 			if (!ok) return;
 			copyBtn.replaceChildren(iconSpan("icon-checkmark"));
-			copyBtn.title = "Copied";
+			copyBtn.title = "Copied as Markdown";
 			setTimeout(() => {
 				copyBtn.replaceChildren(iconSpan("icon-copy"));
-				copyBtn.title = "Copy";
+				copyBtn.title = copyTitle;
 			}, 1500);
 		});
 	});
@@ -138,13 +140,24 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 		bar.appendChild(voiceBtn);
 	}
 
+	// ── Feedback thumbs ──────────────────────────────────────
+	// Appended asynchronously: availability depends on whether any backend is
+	// collecting scores, and the action bar must not wait on that check.
+	void feedbackStatus().then((status) => {
+		if (!(status?.enabled && status.instrumentation_active)) return;
+		if (!bar.isConnected) return;
+		const buttons = buildFeedbackButtons({ sessionKey, runId: ctx.runId }, actionButton);
+		if (!buttons) return;
+		for (const button of buttons) bar.appendChild(button);
+	});
+
 	// ── Fork button ──────────────────────────────────────────
 	const forkBtn = actionButton("icon-git-fork", "Fork into new session");
 	forkBtn.addEventListener("click", () => {
 		const forkPoint = Number.isInteger(ctx.messageIndex) ? (ctx.messageIndex as number) + 1 : undefined;
 		sendRpc("sessions.fork", {
 			key: sessionKey,
-			...(forkPoint !== undefined ? { forkPoint } : {}),
+			...(forkPoint === undefined ? {} : { forkPoint }),
 		}).then((res) => {
 			if (res.ok) {
 				showToast("Forked into new session", "success");
