@@ -14,6 +14,7 @@ use {
     moltis_connector_caldav::{CalDavAccountConfig, CalDavConnector, CalDavDatasetConfig},
     moltis_connector_gmail::{GmailAccountConfig, GmailConnector, GmailDatasetConfig},
     moltis_connector_himalaya::{HimalayaAccountConfig, HimalayaConnector, HimalayaDatasetConfig},
+    moltis_connector_tesla::{TeslaAccountConfig, TeslaConnector, TeslaDatasetConfig},
     moltis_connectors::{
         Account, AccountCreate, AccountUpdate, ConnectorError, ConnectorItem, ConnectorKind,
         ConnectorReader, Dataset, DatasetCreate, DatasetUpdate, ItemQuery, MAX_QUERY_LIMIT,
@@ -35,6 +36,8 @@ use helpers::*;
 mod channel_history;
 #[path = "connectors_maintenance.rs"]
 mod maintenance;
+#[path = "connectors_secrets.rs"]
+mod secrets;
 use maintenance::{ActiveSyncGuard, SyncTrigger};
 #[path = "connectors_models.rs"]
 mod models;
@@ -54,8 +57,10 @@ use {
     moltis_vault::VaultStatus,
 };
 
+/// Config fields holding a credential. Missing fields are skipped, so one list
+/// covers every connector kind.
 #[cfg(feature = "vault")]
-const PASSWORD_FIELD: &[&str] = &["password"];
+const SECRET_FIELDS: &[&str] = &["password", "refreshToken"];
 const REDACTED_PASSWORD: &str = "[REDACTED]";
 const SCHEDULER_INTERVAL: StdDuration = StdDuration::from_secs(30);
 const PROJECTION_MAINTENANCE_INTERVAL: StdDuration = StdDuration::from_secs(300);
@@ -81,6 +86,8 @@ pub enum ConnectorManagerError {
     GmailProvider(#[source] moltis_connector_gmail::GmailConnectorError),
     #[error("Himalaya connector operation failed")]
     HimalayaProvider(#[source] moltis_connector_himalaya::HimalayaConnectorError),
+    #[error("Tesla connector operation failed")]
+    TeslaProvider(#[source] moltis_connector_tesla::TeslaConnectorError),
     #[error("channel history operation failed")]
     Channel(#[source] moltis_channels::Error),
     #[error("internal connector operation failed")]
@@ -225,6 +232,10 @@ impl ConnectorManager {
                 kind: ConnectorKind::Himalaya,
                 display_name: "Himalaya email",
             },
+            ConnectorDescriptor {
+                kind: ConnectorKind::Tesla,
+                display_name: "Tesla",
+            },
         ]
     }
 
@@ -311,6 +322,29 @@ impl ConnectorManager {
                 serde_json::to_value(config)
                     .map_err(|error| internal(error, "serialize Himalaya connector account"))?
             },
+            ConnectorKind::Tesla => {
+                let refresh_token = request.tesla_refresh_token.ok_or_else(|| {
+                    ConnectorManagerError::InvalidInput(
+                        "teslaRefreshToken is required for Tesla".to_owned(),
+                    )
+                })?;
+                validate_password_replacement(refresh_token.expose_secret())?;
+                let config = TeslaAccountConfig {
+                    schema_version: 1,
+                    region: request.tesla_region.unwrap_or_default(),
+                    client_id: request.tesla_client_id.ok_or_else(|| {
+                        ConnectorManagerError::InvalidInput(
+                            "teslaClientId is required for Tesla".to_owned(),
+                        )
+                    })?,
+                    refresh_token,
+                };
+                config.validate().map_err(invalid_tesla)?;
+                let mut config = serde_json::to_value(config)
+                    .map_err(|error| internal(error, "serialize Tesla connector account"))?;
+                self.prepare_secret_for_storage(&id, &mut config).await?;
+                config
+            },
         };
         let account = self
             .store
@@ -364,6 +398,48 @@ impl ConnectorManager {
                 .update_account(id, AccountUpdate {
                     name: request.name,
                     config: existing.config,
+                    enabled: request.enabled,
+                })
+                .await
+                .map_err(ConnectorManagerError::from)?;
+            mutation.revision = mutation.revision.wrapping_add(1);
+            return account_view(account);
+        }
+        if existing.kind == ConnectorKind::Tesla {
+            let stored: TeslaStoredAccountConfig = serde_json::from_value(existing.config.clone())
+                .map_err(|error| internal(error, "deserialize Tesla connector account"))?;
+            // A redacted placeholder round-tripped from the UI must never
+            // overwrite the stored refresh token.
+            let replacement = request
+                .tesla_refresh_token
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str)
+                .filter(|token| *token != REDACTED_PASSWORD);
+            if let Some(token) = replacement {
+                validate_password_replacement(token)?;
+            }
+            let client_id = request
+                .tesla_client_id
+                .clone()
+                .unwrap_or_else(|| stored.client_id.clone());
+            TeslaAccountConfig::validate_client_id(&client_id).map_err(invalid_tesla)?;
+            let refresh_token = match replacement {
+                Some(token) => Value::String(token.to_owned()),
+                None => stored_secret_field(&existing.config, "refreshToken")?.clone(),
+            };
+            let mut config = serde_json::json!({
+                "schemaVersion": 1,
+                "region": request.tesla_region.unwrap_or(stored.region),
+                "clientId": client_id,
+                "refreshToken": refresh_token,
+            });
+            self.prepare_secret_for_storage(id, &mut config).await?;
+            let account = self
+                .store
+                .update_account(id, AccountUpdate {
+                    name: request.name,
+                    config,
                     enabled: request.enabled,
                 })
                 .await
@@ -529,6 +605,24 @@ impl ConnectorManager {
                     email_ready: true,
                     email_address: None,
                     mailboxes,
+                });
+            },
+            ConnectorKind::Tesla => {
+                let config = self.tesla_account_config(id).await?;
+                let vehicles = TeslaConnector::new(&config)
+                    .map_err(ConnectorManagerError::TeslaProvider)?
+                    .test_connection(&config)
+                    .await
+                    .map_err(ConnectorManagerError::TeslaProvider)?;
+                return Ok(AccountTestView::Vehicles {
+                    vehicles: vehicles
+                        .into_iter()
+                        .map(|vehicle| TeslaVehicleView {
+                            vin: vehicle.vin,
+                            display_name: vehicle.display_name,
+                            state: vehicle.state,
+                        })
+                        .collect(),
                 });
             },
             ConnectorKind::Caldav => {},
@@ -964,97 +1058,6 @@ impl ConnectorManager {
         }
     }
 
-    #[cfg(feature = "vault")]
-    pub async fn migrate_plaintext_credentials(&self) -> Result<usize> {
-        if !crate::vault_lifecycle::is_vault_encryption_runtime_enabled() {
-            return Ok(0);
-        }
-        let Some(vault) = self.vault.as_ref() else {
-            return Ok(0);
-        };
-        if !vault.is_unsealed().await {
-            return Ok(0);
-        }
-
-        let mut mutation = self.account_mutations.lock().await;
-        let mut changed = 0;
-        for account in self
-            .store
-            .list_accounts()
-            .await
-            .map_err(ConnectorManagerError::from)?
-        {
-            let mut config = account.config.clone();
-            if !has_plaintext_secret_fields(&config, PASSWORD_FIELD)
-                .map_err(|error| internal(error, "inspect connector password"))?
-            {
-                continue;
-            }
-            encrypt_secret_fields(
-                &mut config,
-                PASSWORD_FIELD,
-                &secret_aad_scope(&account.id),
-                vault.as_ref(),
-            )
-            .await
-            .map_err(|error| internal(error, "encrypt connector password"))?;
-            self.store
-                .update_account(&account.id, AccountUpdate {
-                    name: account.name,
-                    config,
-                    enabled: account.enabled,
-                })
-                .await
-                .map_err(ConnectorManagerError::from)?;
-            changed += 1;
-        }
-        mutation.revision = mutation
-            .revision
-            .wrapping_add(u64::try_from(changed).unwrap_or(u64::MAX));
-        Ok(changed)
-    }
-
-    #[cfg(feature = "vault")]
-    pub async fn decrypt_credentials_and_disable_vault(
-        &self,
-        vault: &moltis_vault::Vault,
-    ) -> Result<usize> {
-        let mut mutation = self.account_mutations.lock().await;
-        let changed = decrypt_credentials(&self.store, vault).await?;
-        moltis_config::update_config(|config| {
-            config.auth.vault_enabled = false;
-        })
-        .map_err(|error| internal(error, "persist disabled connector vault encryption"))?;
-        crate::vault_lifecycle::set_vault_encryption_runtime_enabled(false);
-        mutation.revision = mutation
-            .revision
-            .wrapping_add(u64::try_from(changed).unwrap_or(u64::MAX));
-        Ok(changed)
-    }
-
-    #[cfg(feature = "vault")]
-    pub async fn decrypt_all_credentials_at(
-        data_dir: &Path,
-        vault: &moltis_vault::Vault,
-    ) -> Result<usize> {
-        let db_path = data_dir.join("connectors.db");
-        if !db_path.exists() {
-            return Ok(0);
-        }
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(
-                SqliteConnectOptions::new()
-                    .filename(&db_path)
-                    .foreign_keys(true)
-                    .busy_timeout(StdDuration::from_secs(5)),
-            )
-            .await
-            .map_err(|error| internal(error, "open connector database for vault disable"))?;
-        let store = SqliteConnectorStore::new(pool);
-        decrypt_credentials(&store, vault).await
-    }
-
     async fn account_required(&self, id: &str) -> Result<Account> {
         self.store
             .get_account(id)
@@ -1118,6 +1121,12 @@ impl ConnectorManager {
                 serde_json::to_value(config)
                     .map_err(|error| internal(error, "serialize Himalaya dataset config"))
             },
+            (ConnectorKind::Tesla, ConnectorDatasetConfigView::Tesla(config)) => {
+                config.validate().map_err(invalid_tesla)?;
+                validate_schedule(schedule_minutes)?;
+                serde_json::to_value(config)
+                    .map_err(|error| internal(error, "serialize Tesla dataset config"))
+            },
             _ => Err(ConnectorManagerError::InvalidInput(
                 "dataset config does not match connector kind".to_owned(),
             )),
@@ -1142,6 +1151,22 @@ impl ConnectorManager {
         let config: CalDavAccountConfig = serde_json::from_value(config)
             .map_err(|error| internal(error, "deserialize stored CalDAV account config"))?;
         config.validate().map_err(invalid_caldav)?;
+        Ok(config)
+    }
+
+    /// Loads a Tesla account, decrypting its stored refresh token for use.
+    async fn tesla_account_config(&self, id: &str) -> Result<TeslaAccountConfig> {
+        let account = self.account_required(id).await?;
+        if account.kind != ConnectorKind::Tesla {
+            return Err(ConnectorManagerError::InvalidInput(
+                "operation is only available for Tesla connectors".to_owned(),
+            ));
+        }
+        let mut config = account.config;
+        self.decrypt_secret_for_runtime(id, &mut config).await?;
+        let config: TeslaAccountConfig = serde_json::from_value(config)
+            .map_err(|error| internal(error, "deserialize stored Tesla account config"))?;
+        config.validate().map_err(invalid_tesla)?;
         Ok(config)
     }
 
@@ -1217,6 +1242,31 @@ impl ConnectorManager {
                     .map_err(ConnectorManagerError::HimalayaProvider)?;
                 (snapshot.items, snapshot.source_observations)
             },
+            ConnectorKind::Tesla => {
+                let account_config = self.tesla_account_config(&account.id).await?;
+                let dataset_config: TeslaDatasetConfig =
+                    serde_json::from_value(dataset.config.clone()).map_err(|error| {
+                        internal(error, "deserialize stored Tesla dataset config")
+                    })?;
+                let snapshot = TeslaConnector::new(&account_config)
+                    .map_err(ConnectorManagerError::TeslaProvider)?
+                    .sync_dataset(
+                        &account_config,
+                        &dataset_config,
+                        existing,
+                        dataset.plan_revision,
+                    )
+                    .await
+                    .map_err(ConnectorManagerError::TeslaProvider)?;
+                if !snapshot.skipped_unreachable.is_empty() {
+                    tracing::info!(
+                        dataset_id = %dataset.id,
+                        skipped = snapshot.skipped_unreachable.len(),
+                        "Tesla vehicles were not online and were not woken to be sampled"
+                    );
+                }
+                (snapshot.items, snapshot.source_observations)
+            },
             ConnectorKind::ChannelHistory => {
                 return Err(internal(
                     anyhow::anyhow!("channel history sync reached provider dispatch"),
@@ -1267,136 +1317,6 @@ impl ConnectorManager {
     pub fn reader(&self) -> Arc<dyn ConnectorReader> {
         self.store.clone()
     }
-
-    #[cfg(feature = "vault")]
-    async fn prepare_secret_for_storage(&self, id: &str, config: &mut Value) -> Result<()> {
-        if !crate::vault_lifecycle::is_vault_encryption_runtime_enabled() {
-            return Ok(());
-        }
-        let Some(vault) = self.vault.as_ref() else {
-            return Err(ConnectorManagerError::Unavailable(
-                "vault encryption is enabled, but the vault is unavailable".to_owned(),
-            ));
-        };
-        if vault.is_unsealed().await {
-            encrypt_secret_fields(
-                config,
-                PASSWORD_FIELD,
-                &secret_aad_scope(id),
-                vault.as_ref(),
-            )
-            .await
-            .map_err(|error| internal(error, "encrypt connector password"))?;
-            return Ok(());
-        }
-        let status = vault
-            .status()
-            .await
-            .map_err(|error| internal(error, "check connector vault status"))?;
-        if matches!(status, VaultStatus::Uninitialized) {
-            return Ok(());
-        }
-        if has_plaintext_secret_fields(config, PASSWORD_FIELD)
-            .map_err(|error| internal(error, "inspect connector password"))?
-        {
-            return Err(ConnectorManagerError::Unavailable(
-                "vault is sealed; connector passwords cannot be persisted".to_owned(),
-            ));
-        }
-        Ok(())
-    }
-
-    #[cfg(not(feature = "vault"))]
-    async fn prepare_secret_for_storage(&self, _id: &str, _config: &mut Value) -> Result<()> {
-        Ok(())
-    }
-
-    #[cfg(feature = "vault")]
-    async fn decrypt_secret_for_runtime(&self, id: &str, config: &mut Value) -> Result<()> {
-        if crate::vault_lifecycle::is_vault_encryption_runtime_enabled() {
-            let Some(vault) = self.vault.as_ref() else {
-                return Err(ConnectorManagerError::Unavailable(
-                    "vault encryption is enabled, but the vault is unavailable".to_owned(),
-                ));
-            };
-            let status = vault
-                .status()
-                .await
-                .map_err(|error| internal(error, "check connector vault status"))?;
-            if matches!(status, VaultStatus::Sealed) {
-                return Err(ConnectorManagerError::Unavailable(
-                    "vault is sealed; connector passwords are unavailable".to_owned(),
-                ));
-            }
-        }
-        if !has_encrypted_secret_fields(config, PASSWORD_FIELD)
-            .map_err(|error| internal(error, "inspect encrypted connector password"))?
-        {
-            return Ok(());
-        }
-        let Some(vault) = self.vault.as_ref() else {
-            return Err(ConnectorManagerError::Unavailable(
-                "encrypted connector passwords require the vault".to_owned(),
-            ));
-        };
-        if !vault.is_unsealed().await {
-            return Err(ConnectorManagerError::Unavailable(
-                "vault is sealed; connector passwords are unavailable".to_owned(),
-            ));
-        }
-        decrypt_secret_fields(
-            config,
-            PASSWORD_FIELD,
-            &secret_aad_scope(id),
-            vault.as_ref(),
-        )
-        .await
-        .map_err(|error| internal(error, "decrypt connector password"))?;
-        Ok(())
-    }
-
-    #[cfg(not(feature = "vault"))]
-    async fn decrypt_secret_for_runtime(&self, _id: &str, _config: &mut Value) -> Result<()> {
-        Ok(())
-    }
-}
-
-#[cfg(feature = "vault")]
-async fn decrypt_credentials(
-    store: &SqliteConnectorStore,
-    vault: &moltis_vault::Vault,
-) -> Result<usize> {
-    let mut changed = 0;
-    for account in store
-        .list_accounts()
-        .await
-        .map_err(ConnectorManagerError::from)?
-    {
-        let mut config = account.config.clone();
-        if !has_encrypted_secret_fields(&config, PASSWORD_FIELD)
-            .map_err(|error| internal(error, "inspect connector secret"))?
-        {
-            continue;
-        }
-        decrypt_secret_fields(
-            &mut config,
-            PASSWORD_FIELD,
-            &secret_aad_scope(&account.id),
-            vault,
-        )
-        .await
-        .map_err(|error| internal(error, "decrypt connector secret"))?;
-        store
-            .update_account(&account.id, AccountUpdate {
-                name: account.name,
-                config,
-                enabled: account.enabled,
-            })
-            .await
-            .map_err(ConnectorManagerError::from)?;
-        changed += 1;
-    }
-    Ok(changed)
 }
 
 fn safe_sync_error(error: &ConnectorManagerError) -> &'static str {
@@ -1420,6 +1340,7 @@ fn safe_sync_error(error: &ConnectorManagerError) -> &'static str {
         },
         ConnectorManagerError::Provider(_) => "CalDAV server synchronization failed",
         ConnectorManagerError::GmailProvider(_) => "Gmail synchronization failed",
+        ConnectorManagerError::TeslaProvider(_) => "Tesla synchronization failed",
         ConnectorManagerError::HimalayaProvider(_) => "Himalaya email synchronization failed",
         ConnectorManagerError::Unavailable(_) => {
             "Connector credentials are unavailable while the vault is sealed"

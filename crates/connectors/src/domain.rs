@@ -14,6 +14,7 @@ pub enum ConnectorKind {
     ChannelHistory,
     Gmail,
     Himalaya,
+    Tesla,
 }
 
 impl ConnectorKind {
@@ -24,6 +25,7 @@ impl ConnectorKind {
             Self::ChannelHistory => "channel_history",
             Self::Gmail => "gmail",
             Self::Himalaya => "himalaya",
+            Self::Tesla => "tesla",
         }
     }
 }
@@ -43,6 +45,7 @@ impl TryFrom<&str> for ConnectorKind {
             "channel_history" => Ok(Self::ChannelHistory),
             "gmail" => Ok(Self::Gmail),
             "himalaya" => Ok(Self::Himalaya),
+            "tesla" => Ok(Self::Tesla),
             other => Err(ConnectorError::UnknownConnectorKind(other.to_owned())),
         }
     }

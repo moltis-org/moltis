@@ -195,7 +195,10 @@ impl AgentTool for ConnectorsTool {
 }
 
 const fn legacy_tool_allows(kind: ConnectorKind) -> bool {
-    !matches!(kind, ConnectorKind::Gmail | ConnectorKind::Himalaya)
+    !matches!(
+        kind,
+        ConnectorKind::Gmail | ConnectorKind::Himalaya | ConnectorKind::Tesla
+    )
 }
 
 async fn require_legacy_dataset(manager: &ConnectorManager, dataset_id: &str) -> Result<()> {
@@ -483,6 +486,7 @@ mod tests {
         assert!(legacy_tool_allows(ConnectorKind::Caldav));
         assert!(legacy_tool_allows(ConnectorKind::ChannelHistory));
         assert!(!legacy_tool_allows(ConnectorKind::Gmail));
+        assert!(!legacy_tool_allows(ConnectorKind::Tesla));
         assert!(!legacy_tool_allows(ConnectorKind::Himalaya));
     }
 

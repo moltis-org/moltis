@@ -828,6 +828,9 @@ mod tests {
             .unwrap();
             manager
                 .add_account(crate::connectors::AccountCreateRequest {
+                    tesla_region: None,
+                    tesla_client_id: None,
+                    tesla_refresh_token: None,
                     kind: moltis_connectors::ConnectorKind::Caldav,
                     channel_type: None,
                     channel_account_id: None,

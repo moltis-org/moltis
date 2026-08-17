@@ -9,6 +9,8 @@ use {
 
 #[path = "connectors_tests/channel_history.rs"]
 mod channel_history;
+#[path = "connectors_tests/tesla.rs"]
+mod tesla;
 
 fn configured_caldav(
     name: &str,
@@ -53,6 +55,9 @@ async fn manager() -> (tempfile::TempDir, ConnectorManager) {
 
 fn create_request() -> AccountCreateRequest {
     AccountCreateRequest {
+        tesla_region: None,
+        tesla_client_id: None,
+        tesla_refresh_token: None,
         kind: ConnectorKind::Caldav,
         channel_type: None,
         channel_account_id: None,
@@ -111,6 +116,9 @@ async fn account_views_redact_password_and_redacted_updates_preserve_it() {
 
     let updated = manager
         .update_account(&created.id, AccountUpdateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             name: "Work calendar".to_owned(),
             server_url: created.server_url.clone(),
             username: created.username.clone(),
@@ -140,6 +148,9 @@ async fn account_authority_changes_require_a_password_and_managed_fields_reject_
     let manual = manager.add_account(create_request()).await.unwrap();
     let manual_error = manager
         .update_account(&manual.id, AccountUpdateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             name: manual.name.clone(),
             server_url: "https://other.example.com".to_owned(),
             username: manual.username.clone(),
@@ -177,6 +188,9 @@ async fn account_authority_changes_require_a_password_and_managed_fields_reject_
         .unwrap();
     let managed_error = manager
         .update_account(&managed.id, AccountUpdateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             name: managed.name.clone(),
             server_url: "https://attacker.example.com".to_owned(),
             username: managed.username.clone(),
@@ -250,6 +264,9 @@ async fn configured_caldav_accounts_import_once_and_reconcile_changes() {
 
     manager
         .update_account(&account_id, AccountUpdateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             name: accounts[0].name.clone(),
             server_url: accounts[0].server_url.clone(),
             username: accounts[0].username.clone(),
@@ -547,6 +564,9 @@ async fn email_accounts_and_datasets_keep_provider_owned_configs() {
 
     let gmail = manager
         .add_account(AccountCreateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             kind: ConnectorKind::Gmail,
             name: "Primary Gmail".to_owned(),
             server_url: String::new(),
@@ -589,6 +609,9 @@ async fn email_accounts_and_datasets_keep_provider_owned_configs() {
 
     let himalaya = manager
         .add_account(AccountCreateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             kind: ConnectorKind::Himalaya,
             name: "Archive mail".to_owned(),
             server_url: String::new(),
@@ -656,6 +679,9 @@ async fn draft_validation_checks_instruction_config_and_dataset_account_scope() 
     let account = manager.add_account(create_request()).await.unwrap();
     let other_account = manager
         .add_account(AccountCreateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             name: "Other calendar".to_owned(),
             ..create_request()
         })
@@ -732,6 +758,9 @@ async fn account_and_dataset_mutations_reject_active_syncs() {
 
     let account_error = manager
         .update_account(&account.id, AccountUpdateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             name: account.name,
             server_url: account.server_url,
             username: account.username,
@@ -849,6 +878,9 @@ async fn scheduled_sync_rechecks_account_eligibility_when_claimed() {
         .unwrap();
     manager
         .update_account(&account.id, AccountUpdateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             name: account.name,
             server_url: account.server_url,
             username: account.username,
@@ -920,6 +952,9 @@ async fn manual_sync_rejects_disabled_datasets_and_accounts() {
         .unwrap();
     manager
         .update_account(&account.id, AccountUpdateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             name: account.name,
             server_url: account.server_url,
             username: account.username,
@@ -1321,6 +1356,9 @@ async fn sealed_vault_preserves_encrypted_password_on_redacted_update() {
 
     manager
         .update_account(&created.id, AccountUpdateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             name: created.name,
             server_url: created.server_url,
             username: created.username,

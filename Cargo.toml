@@ -20,6 +20,7 @@ default-members = [
   "crates/connector-caldav",
   "crates/connector-gmail",
   "crates/connector-himalaya",
+  "crates/connector-tesla",
   "crates/connectors",
   "crates/cron",
   "crates/ctl",
@@ -98,6 +99,7 @@ members = [
   "crates/connector-caldav",
   "crates/connector-gmail",
   "crates/connector-himalaya",
+  "crates/connector-tesla",
   "crates/connectors",
   "crates/cron",
   "crates/ctl",
@@ -418,6 +420,7 @@ moltis-config           = { path = "crates/config" }
 moltis-connector-caldav = { path = "crates/connector-caldav" }
 moltis-connector-gmail  = { path = "crates/connector-gmail" }
 moltis-connector-himalaya = { path = "crates/connector-himalaya" }
+moltis-connector-tesla  = { path = "crates/connector-tesla" }
 moltis-connectors       = { path = "crates/connectors" }
 moltis-cron             = { path = "crates/cron" }
 moltis-discord          = { path = "crates/discord" }

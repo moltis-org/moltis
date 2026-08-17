@@ -18,12 +18,14 @@ import type {
 	ConnectorAccount,
 	ConnectorCalendar,
 	ConnectorChannelSource,
+	ConnectorVehicle,
 	GmailConnectorAccount,
 	HimalayaBackend,
 	HimalayaConnectorAccount,
 } from "../../types/connector";
 import { ConfirmDialog, Modal, requestConfirm, showToast } from "../../ui";
 import { connectorRpc } from "./rpc";
+import { TeslaConnectionFormModal } from "./TeslaConnectionForm";
 
 interface ConnectionsTabProps {
 	accounts: ConnectorAccount[];
@@ -31,6 +33,7 @@ interface ConnectionsTabProps {
 	channelHistoryAvailable: boolean;
 	gmailAvailable: boolean;
 	himalayaAvailable: boolean;
+	teslaAvailable: boolean;
 	channelSources: ConnectorChannelSource[];
 	onChanged: () => Promise<void>;
 }
@@ -497,6 +500,7 @@ function TestConnectionModal({ account, onClose }: TestConnectionModalProps): VN
 	const [emailReady, setEmailReady] = useState(false);
 	const [emailAddress, setEmailAddress] = useState<string | undefined>();
 	const [mailboxes, setMailboxes] = useState<Array<{ id: string; displayName?: string }>>([]);
+	const [vehicles, setVehicles] = useState<ConnectorVehicle[] | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -505,6 +509,7 @@ function TestConnectionModal({ account, onClose }: TestConnectionModalProps): VN
 			.then((payload) => {
 				if (!active) return;
 				if ("calendars" in payload) setCalendars(payload.calendars);
+				else if ("vehicles" in payload) setVehicles(payload.vehicles);
 				else if ("channelReady" in payload) setChannelReady(payload.channelReady);
 				else {
 					setEmailReady(payload.emailReady);
@@ -529,12 +534,32 @@ function TestConnectionModal({ account, onClose }: TestConnectionModalProps): VN
 					? t("connections.testTitle")
 					: account.kind === "channel_history"
 						? t("connections.testChannelTitle")
-						: t("connections.testEmailTitle")
+						: account.kind === "tesla"
+							? t("connections.testTeslaTitle")
+							: t("connections.testEmailTitle")
 			}
 		>
 			<div className="flex flex-col gap-3">
 				<div className="text-xs text-[var(--muted)]">{account.name}</div>
-				{calendars || channelReady || emailReady || error ? null : <Loading message={t("connections.testing")} />}
+				{calendars || vehicles || channelReady || emailReady || error ? null : (
+					<Loading message={t("connections.testing")} />
+				)}
+				{vehicles?.length === 0 ? <StatusMessage error={t("connections.teslaNoVehicles")} /> : null}
+				{vehicles?.map((vehicle) => (
+					<div
+						key={vehicle.vin}
+						className="rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-sm text-[var(--text)]"
+					>
+						<div className="flex flex-wrap items-center gap-2">
+							<span className="font-medium">{vehicle.displayName || vehicle.vin}</span>
+							<Badge
+								label={t(`connections.vehicleState.${vehicle.state}`)}
+								variant={vehicle.state === "online" ? "configured" : "muted"}
+							/>
+						</div>
+						<div className="mt-1 break-all text-xs text-[var(--muted)]">{vehicle.vin}</div>
+					</div>
+				))}
 				<StatusMessage error={error} />
 				{channelReady ? <StatusMessage success={t("connections.channelReady")} /> : null}
 				{emailReady ? (
@@ -580,13 +605,14 @@ export function ConnectionsTab({
 	channelHistoryAvailable,
 	gmailAvailable,
 	himalayaAvailable,
+	teslaAvailable,
 	channelSources,
 	onChanged,
 }: ConnectionsTabProps): VNode {
 	const { t } = useTranslation("connectors");
-	const [editing, setEditing] = useState<ConnectorAccount | "caldav" | "channel_history" | "gmail" | "himalaya" | null>(
-		null,
-	);
+	const [editing, setEditing] = useState<
+		ConnectorAccount | "caldav" | "channel_history" | "gmail" | "himalaya" | "tesla" | null
+	>(null);
 	const [testing, setTesting] = useState<ConnectorAccount | null>(null);
 
 	async function remove(account: ConnectorAccount): Promise<void> {
@@ -631,6 +657,9 @@ export function ConnectionsTab({
 				>
 					{t("connections.addHimalaya")}
 				</button>
+				<button type="button" className="provider-btn" disabled={!teslaAvailable} onClick={() => setEditing("tesla")}>
+					{t("connections.addTesla")}
+				</button>
 			</div>
 			{caldavAvailable ? null : <StatusMessage error={t("connections.unavailable")} />}
 			{channelHistoryAvailable && channelSources.length === 0 ? (
@@ -655,6 +684,11 @@ export function ConnectionsTab({
 									/>
 								) : account.kind === "channel_history" ? (
 									<Badge label={t("connections.channelHistory")} variant="configured" />
+								) : account.kind === "tesla" ? (
+									<Badge
+										label={account.hasPassword ? t("connections.teslaTokenStored") : t("connections.teslaTokenMissing")}
+										variant={account.hasPassword ? "configured" : "warning"}
+									/>
 								) : (
 									<Badge label={account.kind === "gmail" ? "Gmail" : "Himalaya"} variant="configured" />
 								)}
@@ -669,6 +703,10 @@ export function ConnectionsTab({
 							) : account.kind === "channel_history" ? (
 								<div className="mt-2 text-xs text-[var(--muted)]">
 									{account.channelType} · {account.channelAccountId}
+								</div>
+							) : account.kind === "tesla" ? (
+								<div className="mt-2 text-xs text-[var(--muted)]">
+									{t(`connections.teslaRegions.${account.teslaRegion}`)} · {account.teslaClientId}
 								</div>
 							) : (
 								<div className="mt-2 text-xs text-[var(--muted)]">
@@ -690,7 +728,12 @@ export function ConnectionsTab({
 							<button
 								type="button"
 								className="provider-btn provider-btn-secondary"
-								disabled={!(account.enabled && (account.kind !== "caldav" || account.hasPassword))}
+								disabled={
+									!(
+										account.enabled &&
+										(account.kind === "caldav" || account.kind === "tesla" ? account.hasPassword : true)
+									)
+								}
 								onClick={() => setTesting(account)}
 							>
 								{t("connections.test")}
@@ -737,6 +780,14 @@ export function ConnectionsTab({
 					key={editing === "channel_history" ? "new-channel" : editing.id}
 					account={editing === "channel_history" ? null : editing}
 					sources={channelSources}
+					onClose={() => setEditing(null)}
+					onSaved={onChanged}
+				/>
+			) : null}
+			{editing && (editing === "tesla" || (typeof editing === "object" && editing.kind === "tesla")) ? (
+				<TeslaConnectionFormModal
+					key={editing === "tesla" ? "new-tesla" : editing.id}
+					account={editing === "tesla" ? null : editing}
 					onClose={() => setEditing(null)}
 					onSaved={onChanged}
 				/>

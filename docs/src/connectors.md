@@ -19,6 +19,19 @@ connector database. Email uses provider-owned schemas and the trusted-only
 See [Email connectors](email-connectors.md) for setup, provider limits, Himalaya
 v2 commands, storage, and security details.
 
+## Tesla
+
+Moltis can keep a local copy of Tesla vehicle data through Tesla's Fleet API,
+either as current state (one row per vehicle, replaced each sync) or as retained
+history (one row per reading). The connector is read-only and never wakes a
+sleeping vehicle: a car that is not already online is skipped and its last
+stored reading is kept unchanged.
+
+Using it requires your own registered Tesla developer application, including a
+public key hosted on a domain you control, because Fleet API rejects
+unregistered clients. See [Tesla](tesla.md) for setup, dataset shapes, polling
+guidance, and storage details.
+
 ## Channel message history
 
 Moltis can reuse existing **Slack**, **Discord**, **Matrix**, and **Microsoft

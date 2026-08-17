@@ -155,6 +155,26 @@ pub(super) fn ensure_caldav(kind: ConnectorKind) -> Result<()> {
     }
 }
 
+pub(super) fn invalid_tesla(
+    error: moltis_connector_tesla::TeslaConnectorError,
+) -> ConnectorManagerError {
+    ConnectorManagerError::InvalidInput(error.to_string())
+}
+
+/// Reads a stored credential field without interpreting it, so a vault-encrypted
+/// envelope survives an edit that does not replace the credential.
+pub(super) fn stored_secret_field<'a>(config: &'a Value, field: &str) -> Result<&'a Value> {
+    config
+        .as_object()
+        .and_then(|config| config.get(field))
+        .ok_or_else(|| {
+            internal(
+                anyhow::anyhow!("missing {field} field"),
+                "read stored connector credential",
+            )
+        })
+}
+
 pub(super) fn invalid_caldav(
     error: moltis_connector_caldav::CalDavConnectorError,
 ) -> ConnectorManagerError {

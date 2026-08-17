@@ -7653,6 +7653,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-connector-tesla"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "metrics 0.24.3",
+ "moltis-agents",
+ "moltis-common",
+ "moltis-connectors",
+ "moltis-oauth",
+ "reqwest 0.13.2",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "moltis-connectors"
 version = "0.1.0"
 dependencies = [
@@ -7805,6 +7829,7 @@ dependencies = [
  "moltis-connector-caldav",
  "moltis-connector-gmail",
  "moltis-connector-himalaya",
+ "moltis-connector-tesla",
  "moltis-connectors",
  "moltis-cron",
  "moltis-discord",

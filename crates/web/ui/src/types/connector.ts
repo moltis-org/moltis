@@ -1,7 +1,18 @@
-export type ConnectorKind = "caldav" | "channel_history" | "gmail" | "himalaya";
+export type ConnectorKind = "caldav" | "channel_history" | "gmail" | "himalaya" | "tesla";
 
 export type ChannelType = "slack" | "discord" | "matrix" | "msteams";
 export type HimalayaBackend = "imap" | "jmap" | "gmail" | "msgraph" | "maildir" | "m2dir";
+export type TeslaRegion = "north_america" | "europe" | "china";
+export type TeslaDatasetMode = "state" | "history";
+export type TeslaVehicleEndpoint =
+	| "charge_state"
+	| "climate_state"
+	| "drive_state"
+	| "location_data"
+	| "vehicle_state"
+	| "vehicle_config"
+	| "gui_settings";
+export type TeslaVehicleOnlineState = "online" | "asleep" | "offline" | "waking" | "unknown";
 
 export interface ConnectorDescriptor {
 	kind: ConnectorKind;
@@ -45,11 +56,26 @@ export interface HimalayaConnectorAccount extends ConnectorAccountBase {
 	credentialSource: "himalaya";
 }
 
+export interface TeslaConnectorAccount extends ConnectorAccountBase {
+	kind: "tesla";
+	teslaRegion: TeslaRegion;
+	teslaClientId: string;
+	hasPassword: boolean;
+	credentialSource: "tesla_fleet_api";
+}
+
 export type ConnectorAccount =
 	| CalDavConnectorAccount
 	| ChannelHistoryConnectorAccount
 	| GmailConnectorAccount
-	| HimalayaConnectorAccount;
+	| HimalayaConnectorAccount
+	| TeslaConnectorAccount;
+
+export interface ConnectorVehicle {
+	vin: string;
+	displayName?: string;
+	state: TeslaVehicleOnlineState;
+}
 
 export interface ConnectorChannelSource {
 	channelType: ChannelType;
@@ -102,11 +128,20 @@ export interface HimalayaConnectorDatasetConfig {
 	includeBodies: boolean;
 }
 
+export interface TeslaConnectorDatasetConfig {
+	schemaVersion: number;
+	mode: TeslaDatasetMode;
+	vins: string[];
+	endpoints: TeslaVehicleEndpoint[];
+	maxSamples: number;
+}
+
 export type ConnectorDatasetConfig =
 	| CalDavConnectorDatasetConfig
 	| ChannelHistoryConnectorDatasetConfig
 	| GmailConnectorDatasetConfig
-	| HimalayaConnectorDatasetConfig;
+	| HimalayaConnectorDatasetConfig
+	| TeslaConnectorDatasetConfig;
 
 export interface ConnectorProjections {
 	jsonl: boolean;
@@ -151,11 +186,17 @@ export interface HimalayaConnectorDataset extends ConnectorDatasetBase {
 	config: HimalayaConnectorDatasetConfig;
 }
 
+export interface TeslaConnectorDataset extends ConnectorDatasetBase {
+	kind: "tesla";
+	config: TeslaConnectorDatasetConfig;
+}
+
 export type ConnectorDataset =
 	| CalDavConnectorDataset
 	| ChannelHistoryConnectorDataset
 	| GmailConnectorDataset
-	| HimalayaConnectorDataset;
+	| HimalayaConnectorDataset
+	| TeslaConnectorDataset;
 
 export interface ConnectorDatasetDraft {
 	name: string;
@@ -224,10 +265,15 @@ export interface ConnectorEmailReadyResponse {
 	mailboxes?: Array<{ id: string; displayName?: string }>;
 }
 
+export interface ConnectorVehiclesResponse {
+	vehicles: ConnectorVehicle[];
+}
+
 export type ConnectorAccountTestResponse =
 	| ConnectorCalendarsResponse
 	| ConnectorChannelReadyResponse
-	| ConnectorEmailReadyResponse;
+	| ConnectorEmailReadyResponse
+	| ConnectorVehiclesResponse;
 
 export interface ConnectorChannelSourcesResponse {
 	sources: ConnectorChannelSource[];
