@@ -357,6 +357,7 @@ Exact commands (must match `local-validate.sh`):
 
 Required sections: `## Summary`, `## Validation` (checkboxes, split into `### Completed` / `### Remaining`
 with exact commands), `## Manual QA`. Include concrete test steps.
+- Add a Mermaid diagram when architecture, control flow, data flow, or cross-component interactions benefit from a visual explanation.
 - Do not prefix GitHub PR titles with `[codex]`.
 - Prefer normal human-readable PR titles, ideally aligned with the conventional-commit summary.
 
