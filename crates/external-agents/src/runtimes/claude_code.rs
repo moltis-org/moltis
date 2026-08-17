@@ -242,8 +242,11 @@ fn has_resume_arg(args: &[String]) -> bool {
 }
 
 fn has_model_arg(args: &[String]) -> bool {
-    args.iter()
-        .any(|arg| matches!(arg.as_str(), "--model" | "-m") || arg.starts_with("--model="))
+    args.iter().any(|arg| {
+        matches!(arg.as_str(), "--model" | "-m")
+            || arg.starts_with("--model=")
+            || arg.starts_with("-m=")
+    })
 }
 
 fn has_effort_arg(args: &[String]) -> bool {
@@ -407,8 +410,9 @@ printf '%s\n' '{"result":"ok","session_id":"sid-1"}'
 
     #[test]
     fn has_model_arg_detects_equals_form() {
-        let args = vec!["--model=opus".to_string()];
-        assert!(has_model_arg(&args));
+        for arg in ["--model=opus", "-m=opus"] {
+            assert!(has_model_arg(&[arg.to_string()]));
+        }
     }
 
     #[test]

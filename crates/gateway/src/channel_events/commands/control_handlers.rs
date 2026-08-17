@@ -568,6 +568,9 @@ async fn external_agent_model_entries(
                 .filter_map(|value| value.as_str())
                 .filter(|effort| !effort.trim().is_empty())
                 .collect::<Vec<_>>();
+            if models.is_empty() {
+                entries.extend(effort_only_external_agent_model_entries(kind, &efforts));
+            }
             for model in models {
                 if efforts.is_empty() {
                     entries.push(serde_json::json!({
@@ -624,6 +627,26 @@ async fn unbind_external_agent_if_bound(
     Ok(())
 }
 
+fn effort_only_external_agent_model_entries(
+    kind: &str,
+    efforts: &[&str],
+) -> Vec<serde_json::Value> {
+    efforts
+        .iter()
+        .map(|effort| {
+            serde_json::json!({
+                "id": external_agent_model_id(kind, None, Some(effort)),
+                "provider": external_agent_provider(kind),
+                "displayName": format!(
+                    "{}: default ({effort})",
+                    external_agent_display_name(kind)
+                ),
+                "externalAgentKind": kind,
+                "externalAgentEffort": effort,
+            })
+        })
+        .collect()
+}
 
 fn external_agent_provider(kind: &str) -> String {
     format!("{EXTERNAL_AGENT_PROVIDER}/{kind}")
@@ -1231,5 +1254,20 @@ async fn handle_tts_chat(
         other => Err(ChannelError::invalid_input(format!(
             "unknown /tts chat mode: {other}\nUsage: /tts chat [on|off|default]"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effort_only_external_agent_selection_uses_default_model() {
+        let entries = effort_only_external_agent_model_entries("codex", &["high"]);
+        let entry = &entries[0];
+
+        assert_eq!(entry["id"], "external-agent::codex::default::high");
+        assert_eq!(entry["externalAgentEffort"], "high");
+        assert!(entry.get("externalAgentModel").is_none());
     }
 }

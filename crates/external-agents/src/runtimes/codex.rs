@@ -424,7 +424,10 @@ fn args_with_model_and_effort(
 fn has_model_arg(args: &[String]) -> bool {
     let mut iter = args.iter().peekable();
     while let Some(arg) = iter.next() {
-        if matches!(arg.as_str(), "--model" | "-m") || arg.starts_with("--model=") {
+        if matches!(arg.as_str(), "--model" | "-m")
+            || arg.starts_with("--model=")
+            || arg.starts_with("-m=")
+        {
             return true;
         }
         if matches!(arg.as_str(), "--config" | "-c")
@@ -639,8 +642,9 @@ done
 
     #[test]
     fn has_model_arg_detects_equals_form() {
-        let args = vec!["--model=gpt-4".to_string()];
-        assert!(has_model_arg(&args));
+        for arg in ["--model=gpt-4", "-m=gpt-4"] {
+            assert!(has_model_arg(&[arg.to_string()]));
+        }
     }
 
     #[test]
