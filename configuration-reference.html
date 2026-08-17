@@ -107,6 +107,8 @@
 <li><a href="#mcp"><code>mcp</code></a></li>
 <li><a href="#mcpserversname"><code>mcp.servers.&#x3C;name></code></a></li>
 <li><a href="#mcpserversnameoauth"><code>mcp.servers.&#x3C;name>.oauth</code></a></li>
+<li><a href="#external-agents"><code>external_agents</code></a></li>
+<li><a href="#external-agentsagentskind"><code>external_agents.agents.&#x3C;kind></code></a></li>
 </ul>
 </li>
 <li><strong>Memory</strong>
@@ -2169,6 +2171,95 @@ not create chat agents, change memory, or affect <code>spawn_agent</code> preset
 
 <table><thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>client_id</code></td><td>string</td><td><em>(required)</em></td><td>The OAuth client ID.</td></tr><tr><td><code>client_secret</code></td><td>optional string</td><td><code>None</code></td><td>Optional OAuth client secret sent to the token endpoint.</td></tr><tr><td><code>auth_url</code></td><td>string</td><td><em>(required)</em></td><td>The authorization endpoint URL.</td></tr><tr><td><code>token_url</code></td><td>string</td><td><em>(required)</em></td><td>The token endpoint URL.</td></tr><tr><td><code>scopes</code></td><td>array of string</td><td><code>[]</code></td><td>OAuth scopes to request.</td></tr></tbody></table>
 <hr>
+<hr>
+<h3 id="external_agents"><code>external_agents</code></h3>
+<p><strong>Struct:</strong> <code>ExternalAgentsConfig</code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>enabled</code></td><td>bool</td><td><code>false</code></td><td>Enable the external CLI agent bridge.</td></tr><tr><td><code>agents</code></td><td>map</td><td><code>{}</code></td><td>Per-agent configuration keyed by agent kind, such as <code>claude-code</code> or <code>codex</code>.</td></tr></tbody></table>
+<h3 id="external_agentsagentskind"><code>external_agents.agents.&#x3C;kind></code></h3>
+<p><strong>Struct:</strong> <code>ExternalAgentConfig</code></p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>binary</code></td><td>optional string</td><td><code>null</code></td><td>Override the CLI binary path.</td></tr><tr><td><code>args</code></td><td>array of strings</td><td><code>[]</code></td><td>Override CLI arguments for the external agent runtime.</td></tr><tr><td><code>models</code></td><td>array of strings</td><td><code>[]</code></td><td>Optional model choices shown in <code>/model</code>; selected values are passed to the external CLI runtime.</td></tr><tr><td><code>efforts</code></td><td>array of strings</td><td><code>[]</code></td><td>Optional thinking/reasoning effort choices shown in <code>/model</code>; selected values are passed to runtimes that support effort.</td></tr><tr><td><code>env</code></td><td>map</td><td><code>{}</code></td><td>Environment variables for this external agent runtime.</td></tr><tr><td><code>working_dir</code></td><td>optional string</td><td><code>null</code></td><td>Working directory for this external agent runtime.</td></tr><tr><td><code>timeout_secs</code></td><td>optional integer</td><td><code>null</code></td><td>Timeout for external agent startup or turns.</td></tr><tr><td><code>use_tmux</code></td><td>optional bool</td><td><code>null</code></td><td>Force tmux-backed runtime when supported.</td></tr></tbody></table>
 <hr>
 <h2 id="memory">Memory</h2>
 <h3 id="memory-1"><code>memory</code></h3>
