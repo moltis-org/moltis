@@ -42,6 +42,39 @@ async fn prepare_chat_send_params(ctx: &MethodContext) -> serde_json::Value {
     params
 }
 
+/// Overlay `patch` onto `base`, recursing into objects so a partial nested
+/// object updates the keys it carries instead of replacing the whole thing.
+fn overlay_json(base: &mut serde_json::Value, patch: &serde_json::Value) {
+    match (base, patch) {
+        (serde_json::Value::Object(base), serde_json::Value::Object(patch)) => {
+            for (key, value) in patch {
+                overlay_json(
+                    base.entry(key.clone()).or_insert(serde_json::Value::Null),
+                    value,
+                );
+            }
+        },
+        (base, patch) => *base = patch.clone(),
+    }
+}
+
+/// Apply a `heartbeat.update` payload to the configuration already in effect.
+///
+/// [`HeartbeatConfig`](moltis_config::schema::HeartbeatConfig) is
+/// `#[serde(default)]`, so deserializing a payload on its own turns every key
+/// the caller left out into that key's default. The settings form only sends
+/// the fields it renders — it has no input for `wake_cooldown` or `agent_id` —
+/// so treating the payload as a whole config quietly rewrites the rest. An
+/// explicit `null` still clears an optional field.
+fn apply_heartbeat_patch(
+    current: &moltis_config::schema::HeartbeatConfig,
+    patch: &serde_json::Value,
+) -> Result<moltis_config::schema::HeartbeatConfig, serde_json::Error> {
+    let mut merged = serde_json::to_value(current)?;
+    overlay_json(&mut merged, patch);
+    serde_json::from_value(merged)
+}
+
 pub(super) fn register(reg: &mut MethodRegistry) {
     // Config
     reg.register(
@@ -376,14 +409,18 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "heartbeat.update",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let patch: moltis_config::schema::HeartbeatConfig =
-                        serde_json::from_value(ctx.params.clone()).map_err(|e| {
-                            ErrorShape::new(
-                                error_codes::INVALID_REQUEST,
-                                format!("invalid heartbeat config: {e}"),
-                            )
-                        })?;
-                    ctx.state.inner.write().await.heartbeat_config = patch.clone();
+                    let patch = {
+                        let mut state = ctx.state.inner.write().await;
+                        let patch = apply_heartbeat_patch(&state.heartbeat_config, &ctx.params)
+                            .map_err(|e| {
+                                ErrorShape::new(
+                                    error_codes::INVALID_REQUEST,
+                                    format!("invalid heartbeat config: {e}"),
+                                )
+                            })?;
+                        state.heartbeat_config = patch.clone();
+                        patch
+                    };
 
                     // Persist to moltis.toml so the config survives restarts.
                     if let Err(e) = moltis_config::update_config(|cfg| {
@@ -1408,5 +1445,68 @@ mod tests {
         assert_eq!(params["_tool_audience"], "public");
         assert_eq!(params["_tool_policy"]["deny"][0], "*");
         assert_eq!(params["_private_context"], false);
+    }
+
+    #[test]
+    fn a_heartbeat_update_leaves_fields_the_payload_omits_alone() -> anyhow::Result<()> {
+        let current = moltis_config::schema::HeartbeatConfig {
+            wake_cooldown: "1h".into(),
+            agent_id: Some("night-shift".into()),
+            ..Default::default()
+        };
+
+        // What the settings form sends. It has no input for `wake_cooldown` or
+        // `agent_id`, so neither key is in the payload.
+        let saved = apply_heartbeat_patch(
+            &current,
+            &serde_json::json!({
+                "enabled": true,
+                "every": "15m",
+                "ack_max_chars": 300,
+                "deliver": false,
+                "sandbox_enabled": true,
+                "active_hours": {"start": "07:00", "end": "23:00", "timezone": "local"},
+            }),
+        )?;
+
+        assert_eq!(saved.every, "15m");
+        assert_eq!(saved.wake_cooldown, "1h");
+        assert_eq!(saved.agent_id.as_deref(), Some("night-shift"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_partial_active_hours_moves_only_the_keys_it_carries() -> anyhow::Result<()> {
+        let current = moltis_config::schema::HeartbeatConfig {
+            active_hours: moltis_config::schema::ActiveHoursConfig {
+                start: "09:00".into(),
+                end: "21:00".into(),
+                timezone: "UTC".into(),
+            },
+            ..Default::default()
+        };
+
+        let saved = apply_heartbeat_patch(
+            &current,
+            &serde_json::json!({"active_hours": {"start": "07:00"}}),
+        )?;
+
+        assert_eq!(saved.active_hours.start, "07:00");
+        assert_eq!(saved.active_hours.end, "21:00");
+        assert_eq!(saved.active_hours.timezone, "UTC");
+        Ok(())
+    }
+
+    #[test]
+    fn an_explicit_null_still_clears_an_optional_field() -> anyhow::Result<()> {
+        let current = moltis_config::schema::HeartbeatConfig {
+            model: Some("anthropic/claude-sonnet-4".into()),
+            ..Default::default()
+        };
+
+        let saved = apply_heartbeat_patch(&current, &serde_json::json!({"model": null}))?;
+
+        assert!(saved.model.is_none());
+        Ok(())
     }
 }
