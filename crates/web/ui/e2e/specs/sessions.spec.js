@@ -4,6 +4,7 @@ const {
 	expectPageContentMounted,
 	expectRpcOk,
 	navigateAndWait,
+	sendRpcFromPage,
 	waitForChatSessionReady,
 	waitForWsConnected,
 	watchPageErrors,
@@ -538,7 +539,7 @@ test.describe("Session management", () => {
 		await mainItem.click();
 		await expect.poll(() => page.url(), { timeout: 10_000 }).not.toBe(createdUrl);
 
-		const deleteBtn = page.locator('button[title="Delete session"]');
+		const deleteBtn = page.getByRole("button", { name: "Delete", exact: true });
 		await expect(deleteBtn).toBeVisible({ timeout: 10_000 });
 		await deleteBtn.click();
 
@@ -546,10 +547,20 @@ test.describe("Session management", () => {
 		// view to another session.
 		await expect.poll(() => page.url(), { timeout: 10_000 }).not.toMatch(/\/chats\/main$/);
 		await expect(mainItem).toHaveCount(0);
+		await expect
+			.poll(async () => {
+				const response = await sendRpcFromPage(page, "sessions.list", {});
+				if (!response?.ok) throw new Error(response?.error?.message || "sessions.list failed");
+				const payload = response.payload;
+				const sessions = Array.isArray(payload) ? payload : Array.isArray(payload?.sessions) ? payload.sessions : [];
+				return sessions.some((session) => session?.key === "main");
+			})
+			.toBe(false);
 
 		// Opening main again recreates it lazily rather than erroring.
 		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
+		await waitForChatSessionReady(page);
 		await expect(mainItem).toBeVisible({ timeout: 10_000 });
 
 		expect(pageErrors).toEqual([]);
