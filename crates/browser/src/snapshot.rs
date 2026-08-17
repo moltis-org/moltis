@@ -13,7 +13,48 @@ use crate::{
     types::{DomSnapshot, ElementBounds, ElementRef, ScrollDimensions, ViewportSize},
 };
 
-/// JavaScript to extract interactive elements from the DOM.
+/// JS helper defining `__mDeepFind(sel)` — like `document.querySelector` but it
+/// also descends into open shadow roots, so elements rendered inside web
+/// components (e.g. Salesforce Lightning login fields) are reachable. Closed
+/// shadow roots (`mode: 'closed'`) cannot be pierced from page script and are
+/// skipped. Prepend to any snippet that resolves an element by ref.
+pub(crate) const DEEP_FIND_FN: &str = r#"
+window.__mDeepFind = window.__mDeepFind || ((sel) => {
+  const visit = (root) => {
+    let el = null;
+    try { el = root.querySelector(sel); } catch (e) { el = null; }
+    if (el) return el;
+    let all = [];
+    try { all = root.querySelectorAll('*'); } catch (e) { all = []; }
+    for (const h of all) {
+      if (h.shadowRoot) { const f = visit(h.shadowRoot); if (f) return f; }
+    }
+    return null;
+  };
+  return visit(document);
+});
+"#;
+
+/// JS helper defining `__mDeepCollect(sel)` — like `document.querySelectorAll`
+/// but also descends into open shadow roots. Returns a flat array of matches.
+pub(crate) const DEEP_COLLECT_FN: &str = r#"
+window.__mDeepCollect = window.__mDeepCollect || ((sel) => {
+  const out = [];
+  const visit = (root) => {
+    let matches = [];
+    try { matches = root.querySelectorAll(sel); } catch (e) { matches = []; }
+    for (const m of matches) out.push(m);
+    let all = [];
+    try { all = root.querySelectorAll('*'); } catch (e) { all = []; }
+    for (const el of all) { if (el.shadowRoot) visit(el.shadowRoot); }
+  };
+  visit(document);
+  return out;
+});
+"#;
+
+/// JavaScript to extract interactive elements from the DOM (including those
+/// inside open shadow roots, via `__mDeepCollect`).
 const EXTRACT_ELEMENTS_JS: &str = r#"
 (() => {
     const interactive = [
@@ -25,7 +66,7 @@ const EXTRACT_ELEMENTS_JS: &str = r#"
     ];
 
     const selector = interactive.join(', ');
-    const elements = document.querySelectorAll(selector);
+    const elements = __mDeepCollect(selector);
     const results = [];
 
     function isVisible(el) {
@@ -145,7 +186,7 @@ const EXTRACT_ELEMENTS_JS: &str = r#"
 /// JavaScript to find an element by its ref number.
 const FIND_BY_REF_JS: &str = r#"
 ((ref) => {
-    const el = document.querySelector(`[data-moltis-ref="${ref}"]`);
+    const el = __mDeepFind(`[data-moltis-ref="${ref}"]`);
     if (!el) return null;
     const rect = el.getBoundingClientRect();
     return {
@@ -171,8 +212,9 @@ pub async fn extract_snapshot(page: &Page) -> Result<DomSnapshot, Error> {
         .map_err(|e| Error::Cdp(e.to_string()))?
         .unwrap_or_default();
 
+    let extract_js = format!("{DEEP_COLLECT_FN}{EXTRACT_ELEMENTS_JS}");
     let result: Value = page
-        .evaluate(EXTRACT_ELEMENTS_JS)
+        .evaluate(extract_js.as_str())
         .await
         .map_err(|e| Error::JsEvalFailed(e.to_string()))?
         .into_value()
@@ -206,7 +248,7 @@ pub async fn extract_snapshot(page: &Page) -> Result<DomSnapshot, Error> {
 
 /// Find an element's center coordinates by its ref number.
 pub async fn find_element_by_ref(page: &Page, ref_: u32) -> Result<(f64, f64), Error> {
-    let js = format!("({FIND_BY_REF_JS})({ref_})");
+    let js = format!("{DEEP_FIND_FN}({FIND_BY_REF_JS})({ref_})");
 
     let result: Value = page
         .evaluate(js.as_str())
@@ -231,14 +273,15 @@ pub async fn find_element_by_ref(page: &Page, ref_: u32) -> Result<(f64, f64), E
 
 /// Focus an input element by its ref number.
 pub async fn focus_element_by_ref(page: &Page, ref_: u32) -> Result<(), Error> {
-    let js = format!(
+    let body = format!(
         r#"(() => {{
-            const el = document.querySelector(`[data-moltis-ref="{ref_}"]`);
+            const el = __mDeepFind(`[data-moltis-ref="{ref_}"]`);
             if (!el) return false;
             el.focus();
             return true;
         }})()"#
     );
+    let js = format!("{DEEP_FIND_FN}{body}");
 
     let result: Value = page
         .evaluate(js.as_str())
@@ -256,14 +299,15 @@ pub async fn focus_element_by_ref(page: &Page, ref_: u32) -> Result<(), Error> {
 
 /// Scroll an element into view by its ref number.
 pub async fn scroll_element_into_view(page: &Page, ref_: u32) -> Result<(), Error> {
-    let js = format!(
+    let body = format!(
         r#"(() => {{
-            const el = document.querySelector(`[data-moltis-ref="{ref_}"]`);
+            const el = __mDeepFind(`[data-moltis-ref="{ref_}"]`);
             if (!el) return false;
             el.scrollIntoView({{ behavior: 'instant', block: 'center' }});
             return true;
         }})()"#
     );
+    let js = format!("{DEEP_FIND_FN}{body}");
 
     let result: Value = page
         .evaluate(js.as_str())
@@ -335,6 +379,28 @@ fn parse_scroll(result: &Value) -> Result<ScrollDimensions, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deep_helpers_traverse_shadow_roots_and_are_idempotent() {
+        // Must recurse into open shadow roots so elements inside web components
+        // (e.g. Salesforce Lightning) are reachable.
+        assert!(DEEP_FIND_FN.contains("shadowRoot"));
+        assert!(DEEP_COLLECT_FN.contains("shadowRoot"));
+        // Defined via `window.x = window.x || (...)` so repeated injection into
+        // the global eval scope does not throw a redeclaration error.
+        assert!(DEEP_FIND_FN.contains("window.__mDeepFind = window.__mDeepFind ||"));
+        assert!(DEEP_COLLECT_FN.contains("window.__mDeepCollect = window.__mDeepCollect ||"));
+    }
+
+    #[test]
+    fn snapshot_js_uses_shadow_piercing_helpers_not_flat_queries() {
+        // Element collection must go through the deep collector.
+        assert!(EXTRACT_ELEMENTS_JS.contains("__mDeepCollect(selector)"));
+        assert!(!EXTRACT_ELEMENTS_JS.contains("document.querySelectorAll(selector)"));
+        // Ref resolution must go through the deep finder.
+        assert!(FIND_BY_REF_JS.contains("__mDeepFind("));
+        assert!(!FIND_BY_REF_JS.contains("document.querySelector("));
+    }
 
     #[test]
     fn test_parse_elements_empty() {
