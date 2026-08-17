@@ -1263,11 +1263,13 @@ mod tests {
 
     #[test]
     fn effort_only_external_agent_selection_uses_default_model() {
-        let entries = effort_only_external_agent_model_entries("codex", &["high"]);
+        let entries = effort_only_external_agent_model_entries("codex", &["high", "xhigh"]);
         let entry = &entries[0];
 
+        assert_eq!(entries.len(), 2);
         assert_eq!(entry["id"], "external-agent::codex::default::high");
         assert_eq!(entry["externalAgentEffort"], "high");
         assert!(entry.get("externalAgentModel").is_none());
+        assert_eq!(entries[1]["id"], "external-agent::codex::default::xhigh");
     }
 }
