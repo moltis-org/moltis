@@ -912,6 +912,10 @@ fn session_key_param(params: &Value) -> Option<String> {
 }
 
 #[cfg(test)]
+#[path = "external_agents/registry_tests.rs"]
+mod registry_tests;
+
+#[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use std::{pin::Pin, sync::atomic::Ordering};
@@ -1109,29 +1113,6 @@ mod tests {
             session_store,
             metadata,
         )
-    }
-
-    #[tokio::test]
-    async fn default_registry_includes_minimax_code_acp() {
-        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
-        let service = GatewayExternalAgentService::new(
-            ExternalAgentsConfig::default(),
-            metadata,
-            Arc::new(ApprovalManager::default()),
-        );
-
-        assert!(
-            service
-                .registry
-                .has_kind(AgentTransportKind::AcpMinimaxCode)
-        );
-        let agents = service.registry.list_agents().await;
-        let minimax_code = agents
-            .iter()
-            .find(|agent| agent.kind == AgentTransportKind::AcpMinimaxCode)
-            .expect("MiniMax Code ACP transport should be registered");
-        assert_eq!(minimax_code.name, "ACP: MiniMax Code");
-        assert!(minimax_code.is_acp);
     }
 
     #[tokio::test]
