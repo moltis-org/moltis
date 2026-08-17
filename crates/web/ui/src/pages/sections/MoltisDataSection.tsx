@@ -1,7 +1,7 @@
 // ── Moltis data import/export section ─────────────────────────
 
 import type { VNode } from "preact";
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { CheckboxField, Loading, SectionHeading, StatusMessage, SubHeading } from "../../components/forms";
 import { rerender } from "./_shared";
 
@@ -23,6 +23,11 @@ interface ImportPreview {
 			has_memory_db: boolean;
 			session_files: string[];
 			media_files: string[];
+			managed_files: {
+				files: string[];
+				directories: string[];
+				total_bytes: number;
+			};
 		};
 	};
 	imported: ImportedItem[];
@@ -45,6 +50,7 @@ export function MoltisDataSection(): VNode {
 function ExportSection(): VNode {
 	const [includeKeys, setIncludeKeys] = useState(true);
 	const [includeMedia, setIncludeMedia] = useState(false);
+	const [includeFiles, setIncludeFiles] = useState(false);
 	const [exporting, setExporting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -54,29 +60,20 @@ function ExportSection(): VNode {
 		const params = new URLSearchParams();
 		params.set("include_provider_keys", String(includeKeys));
 		params.set("include_media", String(includeMedia));
+		params.set("include_files", String(includeFiles));
 
-		fetch(`/api/data/export?${params.toString()}`)
-			.then((res) => {
-				if (!res.ok) throw new Error(`Export failed: ${res.statusText}`);
-				return res.blob().then((blob) => {
-					const disposition = res.headers.get("content-disposition") || "";
-					const match = /filename="?([^"]+)"?/.exec(disposition);
-					const filename = match?.[1] || "moltis-backup.tar.gz";
-					const url = URL.createObjectURL(blob);
-					const a = document.createElement("a");
-					a.href = url;
-					a.download = filename;
-					a.click();
-					URL.revokeObjectURL(url);
-				});
-			})
-			.catch((e: Error) => {
-				setError(e.message);
-			})
-			.finally(() => {
-				setExporting(false);
-				rerender();
-			});
+		const frame = document.createElement("iframe");
+		frame.className = "hidden";
+		frame.title = "Backup download";
+		frame.addEventListener("load", () => {
+			if (frame.contentWindow?.location.href === "about:blank") return;
+			const responseText = frame.contentDocument?.body.textContent?.trim();
+			if (responseText) setError(responseText.slice(0, 500));
+			frame.remove();
+		});
+		frame.src = `/api/data/export?${params.toString()}`;
+		document.body.append(frame);
+		requestAnimationFrame(() => setExporting(false));
 	}
 
 	return (
@@ -102,6 +99,17 @@ function ExportSection(): VNode {
 						rerender();
 					}}
 				/>
+				<CheckboxField
+					label="Include Files"
+					checked={includeFiles}
+					onChange={(checked) => {
+						setIncludeFiles(checked);
+						rerender();
+					}}
+				/>
+				<p className="text-xs text-gray-500">
+					Managed Files are excluded by default and may significantly increase archive size.
+				</p>
 			</div>
 			<div>
 				<button type="button" className="provider-btn" disabled={exporting} onClick={doExport}>
@@ -124,58 +132,80 @@ function ImportDataSection(): VNode {
 	const [error, setError] = useState<string | null>(null);
 	const [selectedFile, setSelectedFile] = useState<File | null>(null);
 	const fileRef = useRef<HTMLInputElement>(null);
+	const previewController = useRef<AbortController | null>(null);
+	const previewGeneration = useRef(0);
+	const previewedFile = useRef<File | null>(null);
+	const previewedConflict = useRef<"skip" | "overwrite" | null>(null);
+
+	useEffect(() => () => previewController.current?.abort(), []);
 
 	function onFileSelect(file: File | null): void {
+		previewController.current?.abort();
+		previewGeneration.current += 1;
+		previewedFile.current = null;
+		previewedConflict.current = null;
 		setSelectedFile(file);
 		setPreview(null);
 		setResult(null);
 		setError(null);
 		if (file) {
-			doPreview(file);
+			doPreview(file, conflict);
 		}
 		rerender();
 	}
 
-	function doPreview(file: File): void {
+	function doPreview(file: File, strategy: "skip" | "overwrite"): void {
+		previewController.current?.abort();
+		const controller = new AbortController();
+		previewController.current = controller;
+		const generation = previewGeneration.current + 1;
+		previewGeneration.current = generation;
+		previewedFile.current = null;
+		previewedConflict.current = null;
+		setPreview(null);
 		setUploading(true);
 		setError(null);
-		file
-			.arrayBuffer()
-			.then((buf) =>
-				fetch(`/api/data/import/preview?conflict=${conflict}`, {
-					method: "POST",
-					headers: { "Content-Type": "application/gzip" },
-					body: buf,
-				}),
-			)
+		fetch(`/api/data/import/preview?conflict=${strategy}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/gzip" },
+			body: file,
+			signal: controller.signal,
+		})
 			.then((res) => res.json())
 			.then((data: ImportPreview & { ok?: boolean; error?: string }) => {
+				if (controller.signal.aborted || previewGeneration.current !== generation) return;
 				if (data.ok === false) {
 					setError(data.error || "Preview failed");
 				} else {
 					setPreview(data);
+					previewedFile.current = file;
+					previewedConflict.current = strategy;
 				}
 			})
-			.catch((e: Error) => setError(e.message))
+			.catch((e: Error) => {
+				if (e.name !== "AbortError" && previewGeneration.current === generation) setError(e.message);
+			})
 			.finally(() => {
-				setUploading(false);
-				rerender();
+				if (previewGeneration.current === generation) {
+					setUploading(false);
+					rerender();
+				}
 			});
 	}
 
 	function doApply(): void {
 		if (!selectedFile) return;
+		if (previewedFile.current !== selectedFile || previewedConflict.current !== conflict) {
+			setError("Preview this archive with the selected conflict policy before importing it.");
+			return;
+		}
 		setApplying(true);
 		setError(null);
-		selectedFile
-			.arrayBuffer()
-			.then((buf) =>
-				fetch(`/api/data/import?conflict=${conflict}`, {
-					method: "POST",
-					headers: { "Content-Type": "application/gzip" },
-					body: buf,
-				}),
-			)
+		fetch(`/api/data/import?conflict=${conflict}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/gzip" },
+			body: selectedFile,
+		})
 			.then((res) => res.json())
 			.then((data: ImportPreview & { ok?: boolean; error?: string }) => {
 				if (data.ok === false) {
@@ -195,7 +225,9 @@ function ImportDataSection(): VNode {
 	return (
 		<div className="flex flex-col gap-3">
 			<SectionHeading title="Import" />
-			<p className="text-sm text-gray-400">Restore from a previously exported Moltis backup archive.</p>
+			<p className="text-sm text-gray-400">
+				Restore from a previously exported Moltis backup archive. Compressed archives are limited to 2 GB.
+			</p>
 
 			{/* Conflict strategy */}
 			<div className="flex flex-col gap-1">
@@ -208,6 +240,8 @@ function ImportDataSection(): VNode {
 							checked={conflict === "skip"}
 							onChange={() => {
 								setConflict("skip");
+								setPreview(null);
+								if (selectedFile) doPreview(selectedFile, "skip");
 								rerender();
 							}}
 						/>
@@ -220,6 +254,8 @@ function ImportDataSection(): VNode {
 							checked={conflict === "overwrite"}
 							onChange={() => {
 								setConflict("overwrite");
+								setPreview(null);
+								if (selectedFile) doPreview(selectedFile, "overwrite");
 								rerender();
 							}}
 						/>
@@ -281,6 +317,18 @@ interface PreviewTableProps {
 
 function PreviewTable({ preview, onApply, applying }: PreviewTableProps): VNode {
 	const inv = preview.manifest.inventory;
+	const filesSkipped = preview.skipped.filter(
+		(item) => item.category === "files" && item.action === "would skip (exists)",
+	).length;
+	const filesOverwritten = preview.skipped.filter(
+		(item) => item.category === "files" && item.action === "would overwrite",
+	).length;
+	const collisionSummary = [
+		filesSkipped > 0 ? `${filesSkipped} will be skipped` : null,
+		filesOverwritten > 0 ? `${filesOverwritten} will be overwritten` : null,
+	]
+		.filter((value): value is string => value !== null)
+		.join(", ");
 	return (
 		<div className="flex flex-col gap-3 p-3 bg-gray-800 rounded-lg">
 			<SubHeading title="Archive preview" />
@@ -295,6 +343,11 @@ function PreviewTable({ preview, onApply, applying }: PreviewTableProps): VNode 
 					<Row label="memory.db" value={inv.has_memory_db ? "Yes" : "No"} />
 					<Row label="Sessions" value={inv.session_files.filter((f) => f.endsWith(".jsonl")).length} />
 					<Row label="Media files" value={inv.media_files.length} />
+					<Row
+						label="Managed Files"
+						value={`${inv.managed_files.files.length} files, ${formatBytes(inv.managed_files.total_bytes)}`}
+					/>
+					{collisionSummary ? <Row label="Files collisions" value={collisionSummary} /> : null}
 				</tbody>
 			</table>
 			{preview.warnings.length > 0 ? (
@@ -360,4 +413,11 @@ function Row({ label, value }: { label: string; value: string | number }): VNode
 			<td className="py-0.5">{value}</td>
 		</tr>
 	);
+}
+
+function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+	return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }

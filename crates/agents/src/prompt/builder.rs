@@ -29,10 +29,12 @@ const EXEC_ROUTING_GUIDANCE_SANDBOX: &str = "Execution routing:\n\
 - In sandbox mode, `~` and relative paths resolve under `Sandbox(exec): home=...` (usually `/home/sandbox`).\n\
 - Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n\
 - With `workspace_mount=ro`, sandbox commands may read mounted files but cannot modify them.\n\
+- Managed Files use `Sandbox(exec): files_path=...`; `files_mount` reports unavailable, read-only, or read-write access.\n\
 - For durable long-term memory mutations, prefer `memory_save`, `memory_forget`, or `memory_delete` over shell writes to `MEMORY.md` or `memory/*.md`.\n";
 const EXEC_ROUTING_SANDBOX_CLOSING: &str = "- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n";
 const EXEC_ROUTING_GUIDANCE_HOST_ONLY: &str = "Execution routing:\n\
-- `exec` runs on the host and may require approval.\n";
+- `exec` runs on the host and may require approval.\n\
+- Managed Files are available at `Host: files_dir=...` and through `$MOLTIS_FILES_DIR`.\n";
 const EXEC_ROUTING_SUDO_HINT: &str =
     "- `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n";
 const TOOL_GUIDELINES: &str = concat!(

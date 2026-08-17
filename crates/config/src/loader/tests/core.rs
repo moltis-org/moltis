@@ -296,6 +296,15 @@ fn data_dir_override_works() {
 }
 
 #[test]
+fn managed_files_dir_is_below_data_dir() {
+    let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+    let path = PathBuf::from("/tmp/test-managed-files-dir");
+    set_data_dir(path.clone());
+    assert_eq!(managed_files_dir(), path.join("files"));
+    clear_data_dir();
+}
+
+#[test]
 fn save_and_load_identity_frontmatter() {
     let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().expect("tempdir");

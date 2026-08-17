@@ -49,6 +49,7 @@ test.describe("Settings navigation", () => {
 				return null;
 			};
 			return {
+				files: readRuleMask('.settings-nav-item[data-section="files"]::before'),
 				nodes: readRuleMask('.settings-nav-item[data-section="nodes"]::before'),
 				ssh: readRuleMask('.settings-nav-item[data-section="ssh"]::before'),
 				tools: readRuleMask('.settings-nav-item[data-section="tools"]::before'),
@@ -69,6 +70,7 @@ test.describe("Settings navigation", () => {
 		if (masks.nodes !== null) {
 			expect(hasMask(masks.nodes)).toBeTruthy();
 		}
+		expect(hasMask(masks.files)).toBeTruthy();
 		expect(hasMask(masks.ssh)).toBeTruthy();
 		expect(hasMask(masks.tools)).toBeTruthy();
 		expect(hasMask(masks.remoteAccess)).toBeTruthy();
@@ -77,6 +79,8 @@ test.describe("Settings navigation", () => {
 		expect(hasMask(masks.mcp)).toBeTruthy();
 		expect(hasMask(masks.connectors)).toBeTruthy();
 		expect(masks.remoteAccess).not.toBe(masks.networkAudit);
+		const generalNavLabels = await page.locator(".settings-sidebar-nav .settings-nav-item").allTextContents();
+		expect(generalNavLabels.indexOf("Files")).toBe(generalNavLabels.indexOf("Projects") + 1);
 
 		// Import appears only when OpenClaw is detected in this run.
 		if (masks.openclawImport !== null) {
@@ -107,6 +111,7 @@ test.describe("Settings navigation", () => {
 		{ id: "hooks", heading: "Hooks" },
 		{ id: "skills", heading: "Skills" },
 		{ id: "projects", heading: "Repositories" },
+		{ id: "files", heading: "Files" },
 		{ id: "sandboxes", heading: "Sandboxes" },
 		{ id: "monitoring", heading: "Monitoring" },
 		{ id: "logs", heading: "Logs" },
@@ -116,6 +121,9 @@ test.describe("Settings navigation", () => {
 	for (const section of settingsSections) {
 		test(`settings/${section.id} loads without errors`, async ({ page }) => {
 			const pageErrors = watchPageErrors(page);
+			if (section.id === "files") {
+				await page.route("**/api/files/entries", (route) => route.fulfill({ json: { path: "", entries: [] } }));
+			}
 			await navigateAndWait(page, `/settings/${section.id}`);
 			await waitForWsConnected(page);
 
@@ -651,6 +659,7 @@ test.describe("Settings navigation", () => {
 			"Agents",
 			"Nodes",
 			"Projects",
+			"Files",
 			"Environment",
 			"Memory",
 			"Notifications",

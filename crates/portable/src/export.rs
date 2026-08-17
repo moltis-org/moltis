@@ -1,19 +1,63 @@
 //! Export Moltis data into a `.tar.gz` archive.
 
 use std::{
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
 use {
+    cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt},
+    cap_std::fs::{Dir, OpenOptions},
     flate2::{Compression, write::GzEncoder},
     sha2::{Digest, Sha256},
     tar::{Builder, Header},
-    tracing::{debug, info},
+    tracing::{debug, info, warn},
     walkdir::WalkDir,
 };
 
-use crate::manifest::{ArchiveInventory, ExportManifest, FORMAT_VERSION};
+use crate::manifest::{
+    ArchiveInventory, ExportManifest, FORMAT_VERSION, MAX_ARCHIVE_ENTRIES,
+    MAX_COMPRESSED_ARCHIVE_BYTES, MAX_MANAGED_ENTRIES, MAX_MANAGED_FILE_BYTES,
+    MAX_MANAGED_TOTAL_BYTES, MAX_MANAGED_TOTAL_PATH_BYTES, MAX_UNCOMPRESSED_ARCHIVE_BYTES,
+};
+
+struct LimitedWriter<W> {
+    inner: W,
+    remaining: u64,
+    description: &'static str,
+}
+
+impl<W> LimitedWriter<W> {
+    fn new(inner: W, limit: u64, description: &'static str) -> Self {
+        Self {
+            inner,
+            remaining: limit,
+            description,
+        }
+    }
+
+    fn into_inner(self) -> W {
+        self.inner
+    }
+}
+
+impl<W: Write> Write for LimitedWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if buffer.len() as u64 > self.remaining {
+            return Err(io::Error::other(format!(
+                "{} export limit exceeded",
+                self.description
+            )));
+        }
+        let written = self.inner.write(buffer)?;
+        self.remaining -= written as u64;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
 
 /// Drop guard that removes a temporary file when it goes out of scope,
 /// ensuring cleanup even on early `?` returns.
@@ -32,6 +76,8 @@ pub struct ExportOptions {
     pub include_provider_keys: bool,
     /// Include session media (audio, images). Default: false.
     pub include_media: bool,
+    /// Include files managed by the Files service. Default: false.
+    pub include_files: bool,
 }
 
 impl Default for ExportOptions {
@@ -39,6 +85,7 @@ impl Default for ExportOptions {
         Self {
             include_provider_keys: true,
             include_media: false,
+            include_files: false,
         }
     }
 }
@@ -62,8 +109,29 @@ pub async fn export_archive<W: Write>(
     opts: &ExportOptions,
     writer: W,
 ) -> anyhow::Result<ExportManifest> {
-    let encoder = GzEncoder::new(writer, Compression::default());
-    let mut builder = Builder::new(encoder);
+    let managed_files_dir = data_dir.join("files");
+    export_archive_from_dirs(config_dir, data_dir, &managed_files_dir, opts, writer).await
+}
+
+pub(crate) async fn export_archive_from_dirs<W: Write>(
+    config_dir: &Path,
+    data_dir: &Path,
+    managed_files_dir: &Path,
+    opts: &ExportOptions,
+    writer: W,
+) -> anyhow::Result<ExportManifest> {
+    let compressed_writer = LimitedWriter::new(
+        writer,
+        MAX_COMPRESSED_ARCHIVE_BYTES,
+        "2 GiB compressed archive",
+    );
+    let encoder = GzEncoder::new(compressed_writer, Compression::default());
+    let archive_writer = LimitedWriter::new(
+        encoder,
+        MAX_UNCOMPRESSED_ARCHIVE_BYTES,
+        "16 GiB uncompressed archive",
+    );
+    let mut builder = Builder::new(archive_writer);
     let mut inventory = ArchiveInventory::default();
 
     let prefix = archive_prefix();
@@ -179,6 +247,32 @@ pub async fn export_archive<W: Write>(
         }
     }
 
+    // ── Managed Files ────────────────────────────────────────────────
+    if opts.include_files {
+        add_managed_files(&mut builder, managed_files_dir, &prefix, &mut inventory)?;
+    }
+
+    let entries_for = |category: &str, paths: &[String]| {
+        paths
+            .iter()
+            .map(|path| tar_member_count(&format!("{prefix}/{category}/{path}")))
+            .sum::<usize>()
+    };
+    let entry_count = entries_for("config", &inventory.config_files)
+        + entries_for("workspace", &inventory.workspace_files)
+        + entries_for("sessions", &inventory.session_files)
+        + entries_for("sessions", &inventory.media_files)
+        + entries_for("files", &inventory.managed_files.files)
+        + entries_for("files", &inventory.managed_files.directories)
+        + usize::from(inventory.has_moltis_db)
+            * tar_member_count(&format!("{prefix}/db/moltis.db"))
+        + usize::from(inventory.has_memory_db)
+            * tar_member_count(&format!("{prefix}/db/memory.db"))
+        + tar_member_count(&format!("{prefix}/manifest.json"));
+    if entry_count > MAX_ARCHIVE_ENTRIES {
+        anyhow::bail!("export exceeds the {MAX_ARCHIVE_ENTRIES} archive entry limit");
+    }
+
     // ── Manifest (written last so it has the full inventory) ─────────
     let now = time::OffsetDateTime::now_utc();
     let created_at = now
@@ -206,13 +300,246 @@ pub async fn export_archive<W: Write>(
         manifest_json.as_slice(),
     )?;
 
-    builder.into_inner()?.finish()?;
+    let archive_writer = builder.into_inner()?;
+    archive_writer.into_inner().finish()?;
     info!(
         sessions = manifest.inventory.session_count(),
         media = manifest.inventory.media_count(),
+        files = manifest.inventory.managed_files.files.len(),
+        files_bytes = manifest.inventory.managed_files.total_bytes,
         "export complete"
     );
     Ok(manifest)
+}
+
+const MAX_MANAGED_PATH_DEPTH: usize = 64;
+const MAX_MANAGED_PATH_BYTES: usize = 4096;
+const MAX_MANAGED_COMPONENT_BYTES: usize = 255;
+const MANAGED_TEMP_PREFIX: &str = ".moltis-upload-";
+
+fn add_managed_files<W: Write>(
+    builder: &mut Builder<W>,
+    root_path: &Path,
+    prefix: &str,
+    inventory: &mut ArchiveInventory,
+) -> anyhow::Result<()> {
+    let Some(root) = open_managed_root(root_path)? else {
+        return Ok(());
+    };
+    let mut total_path_bytes = 0usize;
+    add_managed_directory(
+        builder,
+        &root,
+        Path::new(""),
+        prefix,
+        inventory,
+        &mut total_path_bytes,
+        0,
+    )
+}
+
+fn open_managed_root(root_path: &Path) -> anyhow::Result<Option<Dir>> {
+    let parent = root_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("managed Files root has no parent"))?;
+    let name = root_path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("managed Files root has no directory name"))?;
+    let parent = match Dir::open_ambient_dir(parent, cap_std::ambient_authority()) {
+        Ok(parent) => parent,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let metadata = match parent.symlink_metadata(name) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.is_symlink() || !metadata.is_dir() {
+        anyhow::bail!("managed Files root must be a directory and cannot be a symlink");
+    }
+    Ok(Some(parent.open_dir_nofollow(name)?))
+}
+
+fn add_managed_directory<W: Write>(
+    builder: &mut Builder<W>,
+    directory: &Dir,
+    relative: &Path,
+    prefix: &str,
+    inventory: &mut ArchiveInventory,
+    total_path_bytes: &mut usize,
+    depth: usize,
+) -> anyhow::Result<()> {
+    if depth > MAX_MANAGED_PATH_DEPTH {
+        anyhow::bail!(
+            "managed Files path exceeds maximum depth of {MAX_MANAGED_PATH_DEPTH}: {}",
+            relative.display()
+        );
+    }
+
+    let mut names = directory
+        .entries()?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<Result<Vec<_>, _>>()?;
+    names.sort();
+
+    for name in names {
+        let name = name
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("managed Files path is not valid UTF-8"))?;
+        if name.starts_with(MANAGED_TEMP_PREFIX) {
+            warn!(
+                name,
+                "skipping internal managed Files staging entry during export"
+            );
+            continue;
+        }
+        validate_managed_component(&name)?;
+        let child_relative = relative.join(&name);
+        validate_managed_relative_path(&child_relative)?;
+        let metadata = directory.symlink_metadata(&name)?;
+        if metadata.is_symlink() {
+            anyhow::bail!(
+                "managed Files export does not allow symlinks: {}",
+                child_relative.display()
+            );
+        }
+
+        let relative_string = managed_relative_string(&child_relative)?;
+        *total_path_bytes = total_path_bytes
+            .checked_add(relative_string.len())
+            .ok_or_else(|| anyhow::anyhow!("managed Files path data exceeds supported range"))?;
+        if *total_path_bytes > MAX_MANAGED_TOTAL_PATH_BYTES {
+            anyhow::bail!("managed Files export exceeds the 16 MiB path metadata limit");
+        }
+        if inventory.managed_files.files.len() + inventory.managed_files.directories.len()
+            >= MAX_MANAGED_ENTRIES
+        {
+            anyhow::bail!("managed Files export exceeds the {MAX_MANAGED_ENTRIES} entry limit");
+        }
+        let archive_path = format!("{prefix}/files/{relative_string}");
+        if metadata.is_dir() {
+            let child = directory.open_dir_nofollow(&name)?;
+            add_directory_to_tar(builder, &archive_path)?;
+            inventory.managed_files.directories.push(relative_string);
+            add_managed_directory(
+                builder,
+                &child,
+                &child_relative,
+                prefix,
+                inventory,
+                total_path_bytes,
+                depth + 1,
+            )?;
+            continue;
+        }
+        if !metadata.is_file() {
+            anyhow::bail!(
+                "managed Files export only supports regular files and directories: {}",
+                child_relative.display()
+            );
+        }
+
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        let file = directory.open_with(&name, &options)?;
+        let opened_metadata = file.metadata()?;
+        if !opened_metadata.is_file() {
+            anyhow::bail!(
+                "managed Files entry changed while exporting: {}",
+                child_relative.display()
+            );
+        }
+        if opened_metadata.len() > MAX_MANAGED_FILE_BYTES {
+            anyhow::bail!(
+                "managed Files entry exceeds the 1 GiB export limit: {}",
+                child_relative.display()
+            );
+        }
+        let next_total = inventory
+            .managed_files
+            .total_bytes
+            .checked_add(opened_metadata.len())
+            .ok_or_else(|| anyhow::anyhow!("managed Files size exceeds supported range"))?;
+        if next_total > MAX_MANAGED_TOTAL_BYTES {
+            anyhow::bail!("managed Files export exceeds the 8 GiB total size limit");
+        }
+        add_open_file_to_tar(
+            builder,
+            file.into_std(),
+            opened_metadata.len(),
+            &archive_path,
+        )?;
+        inventory.managed_files.files.push(relative_string);
+        inventory.managed_files.total_bytes = next_total;
+    }
+    Ok(())
+}
+
+fn validate_managed_component(component: &str) -> anyhow::Result<()> {
+    let invalid = component.is_empty()
+        || component == "."
+        || component == ".."
+        || component.contains(['\\', '\0'])
+        || component.len() > MAX_MANAGED_COMPONENT_BYTES
+        || component.starts_with(MANAGED_TEMP_PREFIX)
+        || looks_like_windows_prefix(component);
+    if invalid {
+        anyhow::bail!("invalid managed Files path component: {component:?}");
+    }
+    Ok(())
+}
+
+fn validate_managed_relative_path(path: &Path) -> anyhow::Result<()> {
+    if path.as_os_str().len() > MAX_MANAGED_PATH_BYTES
+        || path.components().count() > MAX_MANAGED_PATH_DEPTH
+        || !super::import::is_safe_path(path)
+    {
+        anyhow::bail!("invalid managed Files path: {}", path.display());
+    }
+    Ok(())
+}
+
+fn managed_relative_string(path: &Path) -> anyhow::Result<String> {
+    path.to_str()
+        .map(|path| path.replace('\\', "/"))
+        .ok_or_else(|| anyhow::anyhow!("managed Files path is not valid UTF-8"))
+}
+
+fn looks_like_windows_prefix(component: &str) -> bool {
+    let bytes = component.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+fn add_directory_to_tar<W: Write>(
+    builder: &mut Builder<W>,
+    archive_path: &str,
+) -> anyhow::Result<()> {
+    let mut header = Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Directory);
+    header.set_size(0);
+    header.set_mode(0o755);
+    header.set_cksum();
+    builder.append_data(&mut header, archive_path, io::empty())?;
+    Ok(())
+}
+
+fn tar_member_count(path: &str) -> usize {
+    1 + usize::from(path.len() >= 100)
+}
+
+fn add_open_file_to_tar<W: Write>(
+    builder: &mut Builder<W>,
+    file: std::fs::File,
+    size: u64,
+    archive_path: &str,
+) -> anyhow::Result<()> {
+    let mut header = Header::new_gnu();
+    header.set_size(size);
+    header.set_mode(0o644);
+    header.set_cksum();
+    builder.append_data(&mut header, archive_path, file)?;
+    Ok(())
 }
 
 /// Generate a timestamped archive prefix.
@@ -348,6 +675,7 @@ fn sha256_file(path: &Path) -> anyhow::Result<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -357,5 +685,20 @@ mod tests {
         assert!(prefix.starts_with("moltis-backup-"));
         // e.g. moltis-backup-20260501-143022
         assert_eq!(prefix.len(), "moltis-backup-YYYYMMDD-HHMMSS".len());
+    }
+
+    #[test]
+    fn limited_writer_rejects_a_write_past_its_limit() {
+        let mut writer = LimitedWriter::new(Vec::new(), 4, "test");
+        writer.write_all(b"four").unwrap();
+        let error = writer.write_all(b"!").unwrap_err();
+        assert!(error.to_string().contains("test export limit exceeded"));
+        assert_eq!(writer.into_inner(), b"four");
+    }
+
+    #[test]
+    fn long_paths_count_their_gnu_metadata_member() {
+        assert_eq!(tar_member_count(&"a".repeat(99)), 1);
+        assert_eq!(tar_member_count(&"a".repeat(100)), 2);
     }
 }

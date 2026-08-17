@@ -450,6 +450,7 @@ port = {port}                           # Port number (auto-generated for this i
 # mode = "all"                      # "off" | "non-main" | "all" (recommended)
 # scope = "session"                 # "command" | "session" (recommended) | "global"
 # workspace_mount = "ro"            # "ro" | "rw" | "none"
+# managed_files_mount = "ro"        # Managed Files: "ro" | "rw" | "none"
 # home_persistence = "shared"       # "off" | "session" | "shared"
 # backend = "auto"                  # "auto" | "docker" | "apple-container"
 # no_network = true                 # Disable network access in sandbox

@@ -2,6 +2,7 @@
 
 use {
     async_trait::async_trait,
+    sha2::{Digest, Sha256},
     std::{
         collections::{HashMap, HashSet},
         sync::{Arc, OnceLock},
@@ -9,6 +10,8 @@ use {
     tokio::sync::{Mutex, Semaphore},
     tracing::{debug, info, warn},
 };
+
+const MANAGED_FILES_POLICY_LABEL: &str = "org.moltis.managed-files-mount";
 
 use {
     super::{
@@ -18,13 +21,15 @@ use {
         },
         host::provision_packages,
         paths::{
+            ManagedFilesPath, ensure_managed_files_host_dir,
             ensure_sandbox_home_persistence_host_dir, host_visible_data_dir,
-            resolve_home_persistence_guest_path_on_host, resolve_workspace_guest_path_on_host,
+            host_visible_managed_files_dir, resolve_home_persistence_guest_path_on_host,
+            resolve_managed_files_guest_path_on_host, resolve_workspace_guest_path_on_host,
         },
         types::{
-            BuildImageResult, DEFAULT_SANDBOX_IMAGE, NetworkPolicy, SANDBOX_HOME_DIR, Sandbox,
-            SandboxConfig, SandboxId, WorkspaceMount, canonical_sandbox_packages, tail_lines,
-            truncate_output_for_display,
+            BuildImageResult, DEFAULT_SANDBOX_IMAGE, ManagedFilesMount, NetworkPolicy,
+            SANDBOX_FILES_DIR, SANDBOX_HOME_DIR, Sandbox, SandboxConfig, SandboxId, WorkspaceMount,
+            canonical_sandbox_packages, tail_lines, truncate_output_for_display,
         },
     },
     crate::{
@@ -34,7 +39,7 @@ use {
             SandboxListFilesResult, SandboxReadResult, native_host_list_files,
             native_host_list_files_strict, native_host_read_file, native_host_write_file,
             oci_container_list_files, oci_container_read_file, oci_container_write_file,
-            remap_host_list_result_to_guest,
+            permission_denied_payload, remap_host_list_result_to_guest,
         },
     },
 };
@@ -159,6 +164,47 @@ impl DockerSandbox {
         String::from_utf8_lossy(&output.stdout).trim() == "true"
     }
 
+    async fn remove_container_checked(&self, name: &str) -> Result<()> {
+        let output = tokio::process::Command::new(self.cli)
+            .args(["rm", "-f", name])
+            .output()
+            .await?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(Error::message(format!(
+            "{} failed to remove stale container '{}': {}",
+            self.cli,
+            name,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
+    }
+
+    async fn managed_files_policy_matches(&self, name: &str) -> bool {
+        let format = format!("{{{{ index .Config.Labels \"{MANAGED_FILES_POLICY_LABEL}\" }}}}");
+        let Ok(output) = tokio::process::Command::new(self.cli)
+            .args(["inspect", "--format", &format, name])
+            .output()
+            .await
+        else {
+            return false;
+        };
+        output.status.success()
+            && String::from_utf8_lossy(&output.stdout).trim()
+                == self.managed_files_policy_fingerprint()
+    }
+
+    pub(crate) fn managed_files_policy_fingerprint(&self) -> String {
+        let source = host_visible_managed_files_dir(&self.config, Some(self.cli));
+        let input = format!(
+            "{}\0{}\0{}",
+            self.config.managed_files_mount,
+            self.config.workspace_mount,
+            source.display()
+        );
+        format!("{:x}", Sha256::digest(input.as_bytes()))
+    }
+
     fn mounted_host_path(&self, id: &SandboxId, guest_path: &str) -> Option<std::path::PathBuf> {
         let guest_path = std::path::Path::new(guest_path);
         resolve_workspace_guest_path_on_host(&self.config, Some(self.cli), guest_path).or_else(
@@ -170,6 +216,14 @@ impl DockerSandbox {
                     guest_path,
                 )
             },
+        )
+    }
+
+    fn managed_files_path(&self, guest_path: &str) -> ManagedFilesPath {
+        resolve_managed_files_guest_path_on_host(
+            &self.config,
+            Some(self.cli),
+            std::path::Path::new(guest_path),
         )
     }
 
@@ -351,6 +405,45 @@ impl DockerSandbox {
         Ok(vec!["-v".to_string(), volume])
     }
 
+    pub(crate) fn managed_files_args(&self) -> Result<Vec<String>> {
+        let legacy_guest_dir = moltis_config::managed_files_dir();
+        if self.config.managed_files_mount == ManagedFilesMount::None {
+            let _host_dir = ensure_managed_files_host_dir(&self.config, Some(self.cli))?;
+            let mut args = vec![
+                "--tmpfs".to_string(),
+                format!("{SANDBOX_FILES_DIR}:ro,nosuid,nodev,noexec,size=64k"),
+            ];
+            if self.config.workspace_mount != WorkspaceMount::None {
+                args.extend([
+                    "--tmpfs".to_string(),
+                    format!(
+                        "{}:ro,nosuid,nodev,noexec,size=64k",
+                        legacy_guest_dir.display()
+                    ),
+                ]);
+            }
+            return Ok(args);
+        }
+
+        let host_dir = ensure_managed_files_host_dir(&self.config, Some(self.cli))?;
+        let mode = self.config.managed_files_mount.to_string();
+        let mut args = vec![
+            "-v".to_string(),
+            format!("{}:{SANDBOX_FILES_DIR}:{mode}", host_dir.display()),
+        ];
+        if self.config.workspace_mount != WorkspaceMount::None {
+            args.extend([
+                "-v".to_string(),
+                format!(
+                    "{}:{}:{mode}",
+                    host_dir.display(),
+                    legacy_guest_dir.display()
+                ),
+            ]);
+        }
+        Ok(args)
+    }
+
     async fn resolve_local_image(&self, requested_image: &str) -> Result<String> {
         if sandbox_image_exists(self.cli, requested_image).await {
             debug!(image = requested_image, "sandbox image found locally");
@@ -470,9 +563,15 @@ impl DockerSandbox {
     ) -> Result<()> {
         let name = self.container_name(id);
 
-        if self.is_container_running(&name).await {
+        if self.is_container_running(&name).await && self.managed_files_policy_matches(&name).await
+        {
             debug!(container = %name, "sandbox container already running");
             return Ok(());
+        }
+        if self.is_container_running(&name).await {
+            warn!(container = %name, "recreating sandbox after managed Files mount policy changed");
+            self.remove_container_checked(&name).await?;
+            self.provisioned.lock().await.remove(&name);
         }
 
         // Resolve image first so we know whether it's prebuilt (affects hardening).
@@ -488,6 +587,11 @@ impl DockerSandbox {
             "-d".to_string(),
             "--name".to_string(),
             name.clone(),
+            "--label".to_string(),
+            format!(
+                "{MANAGED_FILES_POLICY_LABEL}={}",
+                self.managed_files_policy_fingerprint()
+            ),
         ];
 
         args.extend(self.network_run_args());
@@ -500,6 +604,7 @@ impl DockerSandbox {
         args.extend(Self::hardening_args(is_prebuilt, self.kind));
         args.extend(self.workspace_args());
         args.extend(self.home_persistence_args(id)?);
+        args.extend(self.managed_files_args()?);
         args.extend(Self::moltis_ctl_mount_args());
 
         args.push(image);
@@ -513,7 +618,9 @@ impl DockerSandbox {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if is_container_name_conflict(&stderr) {
-                if self.is_container_running(&name).await {
+                if self.is_container_running(&name).await
+                    && self.managed_files_policy_matches(&name).await
+                {
                     debug!(
                         container = %name,
                         "{} run reported a name conflict, existing container is running",
@@ -528,10 +635,7 @@ impl DockerSandbox {
                     self.cli
                 );
                 self.provisioned.lock().await.remove(&name);
-                let _ = tokio::process::Command::new(self.cli)
-                    .args(["rm", "-f", &name])
-                    .output()
-                    .await;
+                self.remove_container_checked(&name).await?;
 
                 let retry_output = tokio::process::Command::new(self.cli)
                     .args(&args)
@@ -592,6 +696,10 @@ impl Sandbox for DockerSandbox {
 
     fn provides_fs_isolation(&self) -> bool {
         true
+    }
+
+    fn exposes_managed_files(&self) -> bool {
+        self.config.managed_files_mount != ManagedFilesMount::None
     }
 
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
@@ -759,6 +867,16 @@ impl Sandbox for DockerSandbox {
         file_path: &str,
         max_bytes: u64,
     ) -> Result<SandboxReadResult> {
+        match self.managed_files_path(file_path) {
+            ManagedFilesPath::Unavailable => return Ok(SandboxReadResult::PermissionDenied),
+            ManagedFilesPath::ReadOnly(_) | ManagedFilesPath::ReadWrite(_) => {
+                let container_name = self.container_name(id);
+                return oci_container_read_file(self.cli, &container_name, file_path, max_bytes)
+                    .await;
+            },
+            ManagedFilesPath::Unmanaged => {},
+        }
+
         let Some(host_path) = self.mounted_host_path(id, file_path) else {
             let container_name = self.container_name(id);
             return oci_container_read_file(self.cli, &container_name, file_path, max_bytes).await;
@@ -800,6 +918,27 @@ impl Sandbox for DockerSandbox {
         file_path: &str,
         content: &[u8],
     ) -> Result<Option<serde_json::Value>> {
+        match self.managed_files_path(file_path) {
+            ManagedFilesPath::Unavailable => {
+                return Ok(Some(permission_denied_payload(
+                    file_path,
+                    "managed Files are disabled in this sandbox",
+                )));
+            },
+            ManagedFilesPath::ReadOnly(_) => {
+                return Ok(Some(permission_denied_payload(
+                    file_path,
+                    "managed Files are mounted read-only in this sandbox",
+                )));
+            },
+            ManagedFilesPath::ReadWrite(_) => {
+                let container_name = self.container_name(id);
+                return oci_container_write_file(self.cli, &container_name, file_path, content)
+                    .await;
+            },
+            ManagedFilesPath::Unmanaged => {},
+        }
+
         if let Some(host_path) = self.mounted_host_path(id, file_path) {
             let host_result = match host_path.to_str() {
                 Some(host_path) => native_host_write_file(host_path, content).await,
@@ -823,6 +962,17 @@ impl Sandbox for DockerSandbox {
     }
 
     async fn list_files(&self, id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
+        match self.managed_files_path(root) {
+            ManagedFilesPath::Unavailable => {
+                return Err(Error::message("managed Files are disabled in this sandbox"));
+            },
+            ManagedFilesPath::ReadOnly(_) | ManagedFilesPath::ReadWrite(_) => {
+                let container_name = self.container_name(id);
+                return oci_container_list_files(self.cli, &container_name, root).await;
+            },
+            ManagedFilesPath::Unmanaged => {},
+        }
+
         if let Some(host_path) = self.mounted_host_path(id, root) {
             let host_result = match host_path.to_str() {
                 Some(host_path) => native_host_list_files_strict(host_path).await,

@@ -423,6 +423,9 @@ pub async fn prepare_gateway_core_with_profile(
             data_dir.display()
         )
     });
+    services.files = Some(Arc::new(crate::files::LocalFilesService::new(
+        moltis_config::managed_files_dir(),
+    )?));
 
     let config_dir_resolved =
         moltis_config::config_dir().unwrap_or_else(|| PathBuf::from(".moltis"));

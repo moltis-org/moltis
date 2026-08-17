@@ -28,6 +28,7 @@
 - [Memory](memory.md)
   - [Memory Surfaces](memory-surfaces.md)
   - [Moltis vs OpenClaw](memory-comparison.md)
+- [Managed Files](managed-files.md)
 - [Hooks](hooks.md)
 - [Local LLMs](local-llm.md)
 - [Sandbox](sandbox.md)

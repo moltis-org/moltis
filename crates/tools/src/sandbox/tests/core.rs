@@ -188,8 +188,21 @@ fn test_sandbox_config_serde() {
     let config: SandboxConfig = serde_json::from_str(json).unwrap();
     assert_eq!(config.mode, SandboxMode::All);
     assert_eq!(config.workspace_mount, WorkspaceMount::Rw);
+    assert_eq!(config.managed_files_mount, ManagedFilesMount::Ro);
     assert!(config.no_network);
     assert_eq!(config.resource_limits.memory_limit.as_deref(), Some("1G"));
+}
+
+#[test]
+fn test_runtime_sandbox_config_converts_managed_files_mount() {
+    let config = moltis_config::schema::SandboxConfig {
+        managed_files_mount: moltis_config::schema::ManagedFilesMountConfig::Rw,
+        ..Default::default()
+    };
+
+    let runtime = SandboxConfig::from(&config);
+
+    assert_eq!(runtime.managed_files_mount, ManagedFilesMount::Rw);
 }
 
 #[test]
@@ -290,6 +303,120 @@ fn test_docker_workspace_args_none() {
     };
     let docker = DockerSandbox::new(config);
     assert!(docker.workspace_args().is_empty());
+}
+
+#[test]
+fn test_docker_managed_files_args_ro_with_legacy_override() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    let args = docker.managed_files_args().unwrap();
+    let files_dir = moltis_config::managed_files_dir();
+
+    assert_eq!(args, vec![
+        "-v",
+        &format!("{}:{SANDBOX_FILES_DIR}:ro", files_dir.display()),
+        "-v",
+        &format!("{}:{}:ro", files_dir.display(), files_dir.display()),
+    ]);
+}
+
+#[test]
+fn test_docker_managed_files_args_rw_uses_host_data_dir_override() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let host_data_dir = temp_dir.path().join("host-moltis-data");
+    let docker = DockerSandbox::new(SandboxConfig {
+        managed_files_mount: ManagedFilesMount::Rw,
+        host_data_dir: Some(host_data_dir.clone()),
+        ..Default::default()
+    });
+    let args = docker.managed_files_args().unwrap();
+    let host_files = host_data_dir.join("files");
+
+    assert_eq!(args, vec![
+        "-v",
+        &format!("{}:{SANDBOX_FILES_DIR}:rw", host_files.display()),
+        "-v",
+        &format!(
+            "{}:{}:rw",
+            host_files.display(),
+            moltis_config::managed_files_dir().display()
+        ),
+    ]);
+}
+
+#[test]
+fn test_docker_managed_files_policy_changes_with_source_or_mode() {
+    let first = DockerSandbox::new(SandboxConfig {
+        host_data_dir: Some(PathBuf::from("/host/one")),
+        managed_files_mount: ManagedFilesMount::Ro,
+        ..Default::default()
+    });
+    let changed_source = DockerSandbox::new(SandboxConfig {
+        host_data_dir: Some(PathBuf::from("/host/two")),
+        managed_files_mount: ManagedFilesMount::Ro,
+        ..Default::default()
+    });
+    let changed_mode = DockerSandbox::new(SandboxConfig {
+        host_data_dir: Some(PathBuf::from("/host/one")),
+        managed_files_mount: ManagedFilesMount::Rw,
+        ..Default::default()
+    });
+    let changed_workspace_mount = DockerSandbox::new(SandboxConfig {
+        host_data_dir: Some(PathBuf::from("/host/one")),
+        managed_files_mount: ManagedFilesMount::Ro,
+        workspace_mount: WorkspaceMount::None,
+        ..Default::default()
+    });
+
+    assert_ne!(
+        first.managed_files_policy_fingerprint(),
+        changed_source.managed_files_policy_fingerprint()
+    );
+    assert_ne!(
+        first.managed_files_policy_fingerprint(),
+        changed_mode.managed_files_policy_fingerprint()
+    );
+    assert_ne!(
+        first.managed_files_policy_fingerprint(),
+        changed_workspace_mount.managed_files_policy_fingerprint()
+    );
+    assert!(first.exposes_managed_files());
+    assert!(
+        !DockerSandbox::new(SandboxConfig {
+            managed_files_mount: ManagedFilesMount::None,
+            ..Default::default()
+        })
+        .exposes_managed_files()
+    );
+}
+
+#[test]
+fn test_docker_managed_files_args_none_masks_canonical_and_legacy_paths() {
+    let docker = DockerSandbox::new(SandboxConfig {
+        managed_files_mount: ManagedFilesMount::None,
+        workspace_mount: WorkspaceMount::Rw,
+        ..Default::default()
+    });
+
+    assert_eq!(docker.managed_files_args().unwrap(), vec![
+        "--tmpfs",
+        &format!("{SANDBOX_FILES_DIR}:ro,nosuid,nodev,noexec,size=64k"),
+        "--tmpfs",
+        &format!(
+            "{}:ro,nosuid,nodev,noexec,size=64k",
+            moltis_config::managed_files_dir().display()
+        ),
+    ]);
+}
+
+#[test]
+fn test_docker_managed_files_args_omits_legacy_path_without_workspace_mount() {
+    let docker = DockerSandbox::new(SandboxConfig {
+        managed_files_mount: ManagedFilesMount::Ro,
+        workspace_mount: WorkspaceMount::None,
+        ..Default::default()
+    });
+
+    assert_eq!(docker.managed_files_args().unwrap().len(), 2);
 }
 
 #[test]
@@ -496,6 +623,71 @@ fn test_resolve_workspace_guest_path_on_host_uses_host_override() {
         resolve_workspace_guest_path_on_host(&config, Some("docker"), &guest_file).unwrap();
 
     assert_eq!(resolved, host_data_dir.join("notes/todo.txt"));
+}
+
+#[test]
+fn test_resolve_managed_files_path_precedes_canonical_and_legacy_mappings() {
+    let host_data_dir = PathBuf::from("/host/moltis-data");
+    let config = SandboxConfig {
+        managed_files_mount: ManagedFilesMount::Ro,
+        workspace_mount: WorkspaceMount::Rw,
+        host_data_dir: Some(host_data_dir.clone()),
+        ..Default::default()
+    };
+
+    for guest_file in [
+        PathBuf::from(SANDBOX_FILES_DIR).join("nested/note.txt"),
+        moltis_config::managed_files_dir().join("nested/note.txt"),
+        PathBuf::from("/home/sandbox/other/../files/nested/note.txt"),
+    ] {
+        assert_eq!(
+            resolve_managed_files_guest_path_on_host(&config, Some("docker"), &guest_file),
+            ManagedFilesPath::ReadOnly(host_data_dir.join("files/nested/note.txt"))
+        );
+    }
+}
+
+#[test]
+fn test_resolve_managed_files_path_none_is_unavailable_for_legacy_alias() {
+    let config = SandboxConfig {
+        managed_files_mount: ManagedFilesMount::None,
+        workspace_mount: WorkspaceMount::Rw,
+        ..Default::default()
+    };
+
+    assert_eq!(
+        resolve_managed_files_guest_path_on_host(
+            &config,
+            Some("docker"),
+            &moltis_config::managed_files_dir().join("private.txt"),
+        ),
+        ManagedFilesPath::Unavailable
+    );
+}
+
+#[tokio::test]
+async fn test_docker_managed_files_ro_rejects_canonical_and_legacy_writes() {
+    let docker = DockerSandbox::new(SandboxConfig {
+        managed_files_mount: ManagedFilesMount::Ro,
+        workspace_mount: WorkspaceMount::Rw,
+        ..Default::default()
+    });
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "managed-ro".into(),
+    };
+
+    for guest_file in [
+        PathBuf::from(SANDBOX_FILES_DIR).join("note.txt"),
+        moltis_config::managed_files_dir().join("note.txt"),
+    ] {
+        let payload = docker
+            .write_file(&id, &guest_file.display().to_string(), b"blocked")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(payload["kind"], "permission_denied");
+    }
 }
 
 #[test]

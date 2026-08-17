@@ -409,6 +409,7 @@ not create chat agents, change memory, or affect `spawn_agent` presets.
 | `mode` | string | `"all"` | When sandboxing is active (`"all"`, `"auto"`, `"off"`). |
 | `scope` | string | `"session"` | Container lifetime (`"session"` or `"per-command"`). |
 | `workspace_mount` | string | `"ro"` | Workspace mount mode (`"ro"`, `"rw"`, `"none"`). |
+| `managed_files_mount` | enum: `"none"`, `"ro"`, `"rw"` | `"ro"` | Access to Managed Files at `/home/sandbox/files` in supported local container sandboxes. `none` disables the mount, `ro` allows reads, and `rw` allows mutations. Initially supported by Docker, Podman, and Apple Container; not yet by WASM or remote backends. |
 | `host_data_dir` | optional string | `null` | Host-visible path for Moltis `data_dir()` when creating sandbox or browser containers from inside another container. |
 | `home_persistence` | enum: `"off"`, `"session"`, `"shared"` | `"shared"` | Persistence strategy for `/home/sandbox` in sandbox containers. |
 | `shared_home_dir` | optional string | `null` | Host directory for shared `/home/sandbox` persistence. Relative paths resolved against `data_dir()`. |

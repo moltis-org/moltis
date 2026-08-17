@@ -87,6 +87,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ("mode", Leaf),
             ("scope", Leaf),
             ("workspace_mount", Leaf),
+            ("managed_files_mount", Leaf),
             ("host_data_dir", Leaf),
             ("home_persistence", Leaf),
             ("shared_home_dir", Leaf),

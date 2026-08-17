@@ -13,6 +13,7 @@ pub mod channel_webhook_middleware;
 pub mod data_routes;
 pub mod env_routes;
 pub mod error;
+pub mod files_routes;
 pub mod login_guard;
 pub mod request_throttle;
 pub mod server;

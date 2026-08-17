@@ -185,7 +185,7 @@ fn test_apple_container_bootstrap_command_uses_portable_sleep() {
 
 #[test]
 fn test_apple_container_run_args_pin_workdir_and_bootstrap_home() {
-    let args = apple_container_run_args("moltis-sandbox-test", "ubuntu:25.10", Some("UTC"), None);
+    let args = apple_container_run_args("moltis-sandbox-test", "ubuntu:25.10", Some("UTC"), &[]);
     let expected = vec![
         "run",
         "-d",
@@ -208,12 +208,9 @@ fn test_apple_container_run_args_pin_workdir_and_bootstrap_home() {
 
 #[test]
 fn test_apple_container_run_args_with_home_volume() {
-    let args = apple_container_run_args(
-        "moltis-sandbox-test",
-        "ubuntu:25.10",
-        Some("UTC"),
-        Some("/tmp/home:/home/sandbox"),
-    );
+    let args = apple_container_run_args("moltis-sandbox-test", "ubuntu:25.10", Some("UTC"), &[
+        "/tmp/home:/home/sandbox".to_string(),
+    ]);
     let expected = vec![
         "run",
         "-d",
@@ -234,6 +231,53 @@ fn test_apple_container_run_args_with_home_volume() {
     .map(str::to_string)
     .collect::<Vec<_>>();
     assert_eq!(args, expected);
+}
+
+#[test]
+fn test_apple_container_run_args_with_multiple_volumes() {
+    let volumes = vec![
+        "/tmp/home:/home/sandbox".to_string(),
+        "/tmp/files:/home/sandbox/files:ro".to_string(),
+    ];
+    let args = apple_container_run_args("moltis-sandbox-test", "ubuntu:25.10", None, &volumes);
+
+    assert_eq!(
+        args.windows(2)
+            .filter(|window| window[0] == "--volume")
+            .map(|window| window[1].as_str())
+            .collect::<Vec<_>>(),
+        volumes.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn test_apple_container_managed_files_mount_coexists_with_home_persistence() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let host_data_dir = temp_dir.path().join("moltis-data");
+    let sandbox = AppleContainerSandbox::new(SandboxConfig {
+        host_data_dir: Some(host_data_dir.clone()),
+        home_persistence: HomePersistence::Session,
+        managed_files_mount: ManagedFilesMount::Rw,
+        ..Default::default()
+    });
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "apple-volumes".into(),
+    };
+
+    assert_eq!(sandbox.volumes(&id).unwrap(), vec![
+        format!(
+            "{}:/home/sandbox",
+            host_data_dir
+                .join("sandbox/home/session/apple-volumes")
+                .display()
+        ),
+        format!(
+            "{}:{SANDBOX_FILES_DIR}:rw",
+            host_data_dir.join("files").display()
+        ),
+    ]);
 }
 
 #[test]

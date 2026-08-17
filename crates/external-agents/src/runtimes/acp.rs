@@ -22,6 +22,7 @@ use {
 };
 
 use crate::{
+    runtimes::env::inject_managed_files_dir,
     transport::{ExternalAgentSession, ExternalAgentTransport},
     types::{
         AcpPermissionHandler, AcpPermissionOption, AcpPermissionOptionKind, AcpPermissionRequest,
@@ -304,6 +305,7 @@ impl acp::Client for AcpClient {
             command.current_dir(cwd);
         }
         command.envs(args.env.iter().map(|env| (&env.name, &env.value)));
+        inject_managed_files_dir(&mut command);
         command.stdin(Stdio::null());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
@@ -580,6 +582,7 @@ async fn run_acp_controller(
             command.current_dir(working_dir);
         }
         command.envs(&spec.env);
+        inject_managed_files_dir(&mut command);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());

@@ -512,7 +512,7 @@ fn path_denied_payload(file_path: &str, detail: &str) -> Value {
     })
 }
 
-fn permission_denied_payload(file_path: &str, detail: &str) -> Value {
+pub(crate) fn permission_denied_payload(file_path: &str, detail: &str) -> Value {
     json!({
         "kind": "permission_denied",
         "file_path": file_path,
