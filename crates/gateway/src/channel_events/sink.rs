@@ -14,11 +14,50 @@ impl GatewayChannelEventSink {
     }
 }
 
+/// Route a reaction change into the feedback pipeline.
+///
+/// Runs before the broadcast so a slow WebSocket client cannot delay scoring.
+async fn handle_reaction_feedback(state: &Arc<GatewayState>, event: &ChannelEvent) {
+    let ChannelEvent::ReactionChange {
+        channel_type,
+        account_id,
+        chat_id,
+        message_id,
+        user_id,
+        emoji,
+        added,
+    } = event
+    else {
+        return;
+    };
+
+    let outcome = state
+        .feedback
+        .on_reaction(
+            channel_type.as_str(),
+            account_id,
+            chat_id,
+            message_id,
+            emoji,
+            user_id,
+            *added,
+            state.instrumentation.scores_available(),
+        )
+        .await;
+    debug!(
+        channel = channel_type.as_str(),
+        ?outcome,
+        "reaction feedback handled"
+    );
+}
+
 pub(super) async fn emit(
     state: &Arc<tokio::sync::OnceCell<Arc<GatewayState>>>,
     event: ChannelEvent,
 ) {
     if let Some(state) = state.get() {
+        handle_reaction_feedback(state, &event).await;
+
         let payload = match serde_json::to_value(&event) {
             Ok(v) => v,
             Err(e) => {

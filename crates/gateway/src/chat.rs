@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use {async_trait::async_trait, serde_json::Value};
 
-use {moltis_channels::ChannelReplyTarget, moltis_tools::sandbox::SandboxRouter};
+use {
+    moltis_channels::{ChannelActivity, ChannelReplyTarget},
+    moltis_tools::sandbox::SandboxRouter,
+};
 
 use crate::state::GatewayState;
 
@@ -39,6 +42,10 @@ impl ChatRuntime for GatewayChatRuntime {
         .await;
     }
 
+    fn feedback(&self) -> Option<Arc<moltis_channels::FeedbackService>> {
+        Some(Arc::clone(&self.state.feedback))
+    }
+
     // ── Channel reply queue ─────────────────────────────────────────────────
 
     async fn push_channel_reply(&self, session_key: &str, target: ChannelReplyTarget) {
@@ -51,6 +58,49 @@ impl ChatRuntime for GatewayChatRuntime {
 
     async fn peek_channel_replies(&self, session_key: &str) -> Vec<ChannelReplyTarget> {
         self.state.peek_channel_replies(session_key).await
+    }
+
+    // ── Channel acknowledgment reactions ────────────────────────────────────
+
+    async fn note_channel_activity(&self, activity_id: &str, activity: ChannelActivity) {
+        self.state
+            .channel_reaction_controllers
+            .note(activity_id, activity)
+            .await;
+    }
+
+    async fn activate_channel_acks(
+        &self,
+        activity_id: &str,
+        session_key: &str,
+        ack_keys: Vec<String>,
+    ) {
+        self.state
+            .channel_reaction_controllers
+            .activate(activity_id, session_key, ack_keys)
+            .await;
+    }
+
+    async fn finalize_active_channel_acks(
+        &self,
+        activity_id: &str,
+        outcome: moltis_channels::ChannelAckOutcome,
+    ) {
+        self.state
+            .channel_reaction_controllers
+            .finalize_active(activity_id, outcome)
+            .await;
+    }
+
+    async fn finalize_channel_acks(
+        &self,
+        ack_keys: Vec<String>,
+        outcome: moltis_channels::ChannelAckOutcome,
+    ) {
+        self.state
+            .channel_reaction_controllers
+            .finalize_keys(&ack_keys, outcome)
+            .await;
     }
 
     // ── Channel status log ──────────────────────────────────────────────────
@@ -172,6 +222,11 @@ impl ChatRuntime for GatewayChatRuntime {
 
     // ── Push notifications ──────────────────────────────────────────────────
 
+    async fn session_label(&self, session_key: &str) -> Option<String> {
+        let metadata = self.state.services.session_metadata.as_ref()?;
+        metadata.get(session_key).await?.label
+    }
+
     async fn send_push_notification(
         &self,
         title: &str,
@@ -194,6 +249,33 @@ impl ChatRuntime for GatewayChatRuntime {
             }
         }
         let _ = (title, body, url, session_key);
+        Ok(0)
+    }
+
+    async fn send_ordered_push_notification(
+        &self,
+        title: &str,
+        body: &str,
+        url: Option<&str>,
+        session_key: Option<&str>,
+        order: u64,
+    ) -> error::Result<usize> {
+        #[cfg(feature = "push-notifications")]
+        {
+            if let Some(push_service) = self.state.get_push_service().await {
+                return crate::push::send_ordered_push_notification(
+                    &push_service,
+                    title,
+                    body,
+                    url,
+                    session_key,
+                    order,
+                )
+                .await
+                .map_err(|source| error::Error::message(source.to_string()));
+            }
+        }
+        let _ = (title, body, url, session_key, order);
         Ok(0)
     }
 
@@ -266,5 +348,39 @@ impl ChatRuntime for GatewayChatRuntime {
         tokio::spawn(async move {
             crate::session::title::generate_title_if_needed(&state, &key).await;
         });
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn runtime() -> GatewayChatRuntime {
+        GatewayChatRuntime {
+            state: GatewayState::new(
+                crate::auth::resolve_auth(None, None),
+                crate::services::GatewayServices::noop(),
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_and_ordered_chat_runtime_push_apis_are_available() {
+        let runtime = runtime();
+        assert_eq!(
+            runtime
+                .send_push_notification("title", "body", None, Some("main"))
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            runtime
+                .send_ordered_push_notification("title", "body", None, Some("main"), 9)
+                .await
+                .unwrap(),
+            0
+        );
     }
 }

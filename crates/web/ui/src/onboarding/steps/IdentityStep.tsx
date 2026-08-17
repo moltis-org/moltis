@@ -101,7 +101,7 @@ export function IdentityStep({ onNext, onBack }: { onNext: () => void; onBack?: 
 							className="provider-key-input w-full"
 							value={theme}
 							onInput={(e) => setTheme(targetValue(e))}
-							placeholder="wise owl, chill fox, witty robot{'\u2026'}"
+							placeholder="wise owl, chill fox, witty robot..."
 						/>
 					</div>
 				</div>

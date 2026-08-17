@@ -210,10 +210,10 @@ export function upsertSessionHistoryMessage(
 	}
 	const next = normalizeMessage(message, historyIndex);
 	const idx = messageHistoryIndex(next);
-	if (idx !== null) {
-		upsertByIndex(list, next, idx);
-	} else {
+	if (idx === null) {
 		upsertWithoutIndex(list, next);
+	} else {
+		upsertByIndex(list, next, idx);
 	}
 	bumpRevision(key);
 	enforceHistoryBudgets(key);

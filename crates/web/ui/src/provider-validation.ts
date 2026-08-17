@@ -53,7 +53,7 @@ export function providerBaseUrlError(baseUrl: string | null | undefined): string
 	if (!trimmed) return null;
 	try {
 		const parsed = new URL(trimmed);
-		if (!(parsed.protocol === "http:" || parsed.protocol === "https:") || !parsed.hostname) {
+		if (!((parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.hostname)) {
 			return "Endpoint URL must include an http:// or https:// scheme and a host.";
 		}
 	} catch {

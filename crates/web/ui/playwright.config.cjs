@@ -287,6 +287,7 @@ if (includeProject("remote-sandbox-live")) {
 	projects.push({
 		name: "remote-sandbox-live",
 		testMatch: /remote-sandbox-live\.spec/,
+		timeout: 120_000,
 	});
 }
 

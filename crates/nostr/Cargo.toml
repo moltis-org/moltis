@@ -24,7 +24,8 @@ default = []
 metrics = ["dep:moltis-metrics"]
 
 [dev-dependencies]
-tokio = { workspace = true }
+nostr-relay-builder = { workspace = true }
+tokio               = { workspace = true }
 
 [lints]
 workspace = true

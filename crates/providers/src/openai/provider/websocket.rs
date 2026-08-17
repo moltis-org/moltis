@@ -151,7 +151,7 @@ impl OpenAiProvider {
                 reasoning_effort = ?self.reasoning_effort,
                 "openai stream_with_tools request (websocket)"
             );
-            trace!(event = %create_event, "openai websocket create event");
+            trace!(event_bytes = create_event.to_string().len(), "openai websocket create event");
 
             if let Err(err) = ws_stream
                 .send(Message::Text(create_event.to_string().into()))
@@ -192,7 +192,11 @@ impl OpenAiProvider {
                 let Ok(evt) = serde_json::from_str::<serde_json::Value>(&text) else {
                     continue;
                 };
-                trace!(event = %evt, "openai websocket event");
+                trace!(
+                    event_type = evt["type"].as_str().unwrap_or(""),
+                    event_bytes = text.len(),
+                    "openai websocket event"
+                );
 
                 match evt["type"].as_str().unwrap_or("") {
                     "response.output_text.delta" => {

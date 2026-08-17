@@ -84,7 +84,11 @@ if ! gh release view "$VERSION" --repo "$REPO" --json tagName >/dev/null 2>&1; t
   exit 1
 fi
 
-# Verify GPG key is available
+# Verify GPG key is available.
+# GPG_SIGN_ARGS stays empty when no --key/GPG_KEY_ID is given (GPG picks its own
+# default key), so every expansion below needs the `"${arr[@]+...}"` guard:
+# bash 3.2 (the default /bin/bash on macOS) treats a plain `"${arr[@]}"` on an
+# empty array as an unbound variable under `set -u`.
 GPG_SIGN_ARGS=()
 if [[ -n "$KEY_ID" ]]; then
   GPG_SIGN_ARGS+=(--local-user "$KEY_ID")
@@ -103,7 +107,7 @@ fi
 # is accessible (prompts for YubiKey PIN/touch if needed early).
 PROBE="$(mktemp)"
 echo "gpg-sign-release probe" > "$PROBE"
-if ! gpg --batch "${GPG_SIGN_ARGS[@]}" --armor --detach-sign "$PROBE" 2>/dev/null; then
+if ! gpg --batch "${GPG_SIGN_ARGS[@]+"${GPG_SIGN_ARGS[@]}"}" --armor --detach-sign "$PROBE" 2>/dev/null; then
   rm -f "$PROBE" "${PROBE}.asc"
   echo "error: GPG signing failed. Is your YubiKey inserted and unlocked?" >&2
   exit 1
@@ -189,7 +193,7 @@ for file in "${ARTIFACTS[@]}"; do
     echo "  WARNING: no SHA256 checksum found for $name — skipping integrity check" >&2
   fi
 
-  gpg --batch "${GPG_SIGN_ARGS[@]}" --armor --detach-sign "$file"
+  gpg --batch "${GPG_SIGN_ARGS[@]+"${GPG_SIGN_ARGS[@]}"}" --armor --detach-sign "$file"
   ASC_FILES+=("${file}.asc")
   echo "  Created: ${name}.asc"
 done

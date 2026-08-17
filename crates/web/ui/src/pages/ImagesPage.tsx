@@ -490,6 +490,14 @@ function truncateHash(str: string): string {
 	return str;
 }
 
+function truncateContainerName(name: string): string {
+	const match = name.match(/^(.*-)([0-9a-f]{16,})$/i);
+	if (match) {
+		return `${match[1]}...${match[2].slice(-6)}`;
+	}
+	return truncateHash(name);
+}
+
 function ContainerRow({
 	container: c,
 	sandboxAvailable,
@@ -508,7 +516,7 @@ function ContainerRow({
 		<div className="provider-item flex-col gap-1 mb-1" style={{ alignItems: "stretch" }}>
 			<div className="flex items-center justify-between gap-2 w-full min-w-0">
 				<span className="font-mono text-xs truncate flex-1 text-[var(--text-strong)]" title={c.name}>
-					{truncateHash(c.name)}
+					{truncateContainerName(c.name)}
 				</span>
 				<span
 					className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full shrink-0"
@@ -680,6 +688,8 @@ interface AvailableBackendInfo {
 	label: string;
 	kind: string;
 	available: boolean;
+	installHint?: string;
+	installCommand?: string;
 }
 const availableBackendsList = signal<AvailableBackendInfo[]>([]);
 const defaultBackendId = signal("auto");
@@ -724,25 +734,35 @@ function SandboxBanner(): VNode | null {
 				<div className="flex flex-wrap gap-2" style={{ marginBottom: "12px" }}>
 					{backends.map((b) => {
 						const isDefault =
-							b.id === defaultBackendId.value || (defaultBackendId.value === "auto" && b.id === info.backend);
+							b.available &&
+							(b.id === defaultBackendId.value || (defaultBackendId.value === "auto" && b.id === info.backend));
+						const title = b.available
+							? isDefault
+								? "Active default backend"
+								: `Set ${b.label} as default`
+							: b.installHint || `${b.label} is not installed`;
 						return (
 							<button
 								type="button"
 								key={b.id}
-								className="rounded-md border px-3 py-1.5 text-xs cursor-pointer bg-transparent transition-colors"
+								className={`rounded-md border px-3 py-1.5 text-xs bg-transparent transition-colors ${b.available ? "cursor-pointer" : "cursor-not-allowed"}`}
 								style={{
 									borderColor: isDefault ? "var(--accent)" : "var(--border)",
-									color: isDefault ? "var(--accent)" : "var(--text)",
+									color: b.available ? (isDefault ? "var(--accent)" : "var(--text)") : "var(--muted)",
 									fontFamily: "var(--font-mono)",
 									fontWeight: isDefault ? "600" : "400",
+									opacity: b.available ? 1 : 0.7,
 								}}
-								onClick={() => changeDefault(b.id)}
-								disabled={backendSaving.value}
-								title={isDefault ? "Active default backend" : `Set ${b.label} as default`}
+								onClick={() => {
+									if (b.available) changeDefault(b.id);
+								}}
+								disabled={backendSaving.value || !b.available}
+								title={title}
 							>
 								{b.label}
 								{b.kind === "remote" && <span style={{ marginLeft: "4px", opacity: 0.6 }}>{"\u2601"}</span>}
 								{isDefault && <span style={{ marginLeft: "6px", fontSize: "0.6rem", opacity: 0.7 }}>(default)</span>}
+								{!b.available && <span style={{ marginLeft: "6px", fontSize: "0.6rem", opacity: 0.8 }}>(install)</span>}
 							</button>
 						);
 					})}
@@ -761,6 +781,19 @@ function SandboxBanner(): VNode | null {
 					{rec.text}
 				</div>
 			)}
+			{backends
+				.filter((b) => !b.available && (b.installHint || b.installCommand))
+				.map((b) => (
+					<div key={`${b.id}-install`} className="alert-info-text" style={{ marginTop: "8px" }}>
+						<span className="alert-label-info">Recommended: </span>
+						{b.installHint}
+						{b.installCommand && (
+							<code className="ml-1 rounded border border-[var(--border)] px-1 py-0.5 text-[10px]">
+								{b.installCommand}
+							</code>
+						)}
+					</div>
+				))}
 		</div>
 	);
 }
@@ -907,8 +940,8 @@ function SharedHomeSection(): VNode {
 }
 
 function ImageRow({ image: img, sandboxAvailable }: { image: CachedImage; sandboxAvailable: boolean }): VNode {
-	const kindLabel = img.kind === "sandbox" ? "sandbox" : "tool";
-	const kindColor = img.kind === "sandbox" ? "var(--accent)" : "var(--muted)";
+	const kindLabel = img.kind === "sandbox" ? "sandbox" : img.kind === "browser" ? "browser" : "tool";
+	const kindColor = img.kind === "sandbox" || img.kind === "browser" ? "var(--accent)" : "var(--muted)";
 	return (
 		<div className="provider-item" style={{ marginBottom: "4px" }}>
 			<div style={{ flex: 1, minWidth: 0 }}>

@@ -83,10 +83,14 @@ pub(in crate::channel_events) async fn save_channel_attachment(
     let store = state.services.session_store.as_ref()?;
     match store.save_media(&session_key, filename, file_data).await {
         Ok(media_ref) => {
-            let absolute_path = store
-                .media_path_for(&session_key, filename)
-                .to_string_lossy()
-                .to_string();
+            let Ok(absolute_path) = store.media_path_for(&session_key, filename) else {
+                warn!(
+                    session_key,
+                    filename, "invalid saved channel attachment path"
+                );
+                return None;
+            };
+            let absolute_path = absolute_path.to_string_lossy().to_string();
             debug!(
                 session_key,
                 filename, media_ref, absolute_path, "saved channel attachment to session media"

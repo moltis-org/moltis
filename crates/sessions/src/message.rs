@@ -305,7 +305,13 @@ impl PersistedMessage {
         }
     }
 
-    /// Create a tool execution result message.
+    /// Create a tool execution result message with no run ID.
+    ///
+    /// Prefer [`Self::tool_result_with_run_id`]. A message without a `run_id`
+    /// cannot be attributed to a run, so run-scoped history filtering (see
+    /// `filter_public_history` in `moltis-chat`) drops it — which would orphan
+    /// the paired assistant `tool_calls` entry and make the history invalid for
+    /// most providers.
     pub fn tool_result(
         tool_call_id: impl Into<String>,
         tool_name: impl Into<String>,
@@ -327,7 +333,9 @@ impl PersistedMessage {
         }
     }
 
-    /// Create a tool execution result message with reasoning text.
+    /// Create a tool execution result message with reasoning text and no run ID.
+    ///
+    /// Carries the same caveat as [`Self::tool_result`].
     pub fn tool_result_with_reasoning(
         tool_call_id: impl Into<String>,
         tool_name: impl Into<String>,

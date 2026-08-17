@@ -43,7 +43,10 @@ export function TabBar({ tabs, active, onChange, className }: TabBarProps): VNod
 						{tab.icon}
 						{tab.label}
 						{tab.badge != null && (
-							<span className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]">
+							<span
+								aria-hidden="true"
+								className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]"
+							>
 								{tab.badge}
 							</span>
 						)}

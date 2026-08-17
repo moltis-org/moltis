@@ -1,0 +1,40 @@
+import connectors from "../en/connectors";
+
+export default {
+	...connectors,
+	connections: {
+		...connectors.connections,
+		addGmail: "添加 Gmail 连接",
+		addHimalaya: "添加 Himalaya 连接",
+		addGmailTitle: "Gmail 连接",
+		addHimalayaTitle: "Himalaya 电子邮件连接",
+		emailNamePlaceholder: "工作邮箱",
+		himalayaAccount: "Himalaya 帐户名称",
+		himalayaBackend: "存储后端",
+		gmailCredentialHelp:
+			"使用 Moltis 中现有的 Google Workspace 授权。仅引用 Gmail 凭据，不会将其复制到连接器数据库中。",
+		emailRequired: "请输入连接名称，并在适用时输入已配置的 Himalaya 帐户名称。",
+		googleWorkspaceCredentials: "Google Workspace 凭据",
+		testEmailTitle: "电子邮件连接就绪状态",
+		emailReady: "电子邮件帐户已准备好进行同步。",
+		emailReadyAddress: "Gmail 已为 {{email}} 准备就绪。",
+	},
+	datasets: {
+		...connectors.datasets,
+		addEmailTitle: "添加电子邮件数据集",
+		editEmailTitle: "编辑电子邮件数据集",
+		emailHelp: "电子邮件同步为只读且有范围限制。邮件内容会作为不受信任的外部数据存储在本地；附件仅以元数据表示。",
+		mailboxes: "邮箱",
+		mailboxesHelp: "每行一个 Himalaya 邮箱 ID，最多 32 个。",
+		emailQuery: "搜索查询",
+		emailQueryHelp: "可选的提供商搜索条件。留空则获取所选范围内的最新邮件。",
+		emailLimit: "邮件数量上限",
+		includeBodies: "存储有长度限制的邮件正文",
+		emailRequired: "请选择电子邮件连接并输入数据集名称。",
+		emailLimitInvalid: "邮件数量上限必须是 1 到 1000 之间的整数。",
+		mailboxesInvalid: "请输入 1 到 32 个以逗号分隔的邮箱 ID。",
+		gmailScope: "Gmail 查询 {{query}} · 最多 {{limit}} 封邮件",
+		himalayaScope: "邮箱 {{mailboxes}} · 最多 {{limit}} 封邮件",
+		allMail: "所有邮件",
+	},
+};

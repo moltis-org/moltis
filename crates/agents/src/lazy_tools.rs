@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use {anyhow::Result, async_trait::async_trait, tracing::debug};
 
-use crate::tool_registry::{ActivatedTools, AgentTool, ToolEntry, ToolRegistry, ToolSource};
+use crate::tool_registry::{
+    ActivatedTools, AgentTool, ToolAudience, ToolEntry, ToolRegistry, ToolSource,
+};
 
 /// Maximum number of results returned by a keyword search.
 const MAX_SEARCH_RESULTS: usize = 15;
@@ -73,13 +75,21 @@ impl ToolSearchTool {
             .full_registry
             .get_source(name)
             .unwrap_or(ToolSource::Builtin);
+        let audience = self
+            .full_registry
+            .get_audience(name)
+            .unwrap_or(ToolAudience::Trusted);
 
         let schema = tool.parameters_schema();
         let description = tool.description().to_string();
 
         // Insert into activated map, preserving the original source metadata.
         let mut activated = self.activated.lock().unwrap_or_else(|e| e.into_inner());
-        activated.insert(name.to_string(), ToolEntry { tool, source });
+        activated.insert(name.to_string(), ToolEntry {
+            tool,
+            source,
+            audience,
+        });
 
         debug!(tool = name, "tool activated via tool_search");
 
@@ -192,9 +202,13 @@ impl AgentTool for ToolSearchTool {
 /// Wrap a full tool registry for lazy mode.
 ///
 /// Returns a new registry containing only `tool_search`. The model discovers
-/// and activates tools from `full` via that meta-tool. Activated tools
-/// appear in `list_schemas()` on the next runner iteration.
+/// and activates tools from `full` via that meta-tool. Activated tools appear
+/// in `list_schemas()` on the next runner iteration. An empty input stays empty
+/// so a deny-all request cannot regain a meta-tool after policy filtering.
 pub fn wrap_registry_lazy(full: ToolRegistry) -> ToolRegistry {
+    if full.is_empty() {
+        return full;
+    }
     let full = Arc::new(full);
     let mut lazy_registry = ToolRegistry::new();
 
@@ -205,7 +219,9 @@ pub fn wrap_registry_lazy(full: ToolRegistry) -> ToolRegistry {
         full_registry: full,
         activated,
     };
-    lazy_registry.register(Box::new(search_tool));
+    // The full registry has already been filtered for this run. Searching it
+    // cannot discover or activate a tool above the caller's audience ceiling.
+    lazy_registry.register_public(Box::new(search_tool));
     lazy_registry
 }
 
@@ -298,6 +314,12 @@ mod tests {
         let names = lazy.list_names();
         assert_eq!(names.len(), 1);
         assert!(names.contains(&"tool_search".to_string()));
+    }
+
+    #[test]
+    fn wrap_registry_lazy_keeps_deny_all_registry_empty() {
+        let lazy = wrap_registry_lazy(ToolRegistry::new());
+        assert!(lazy.list_names().is_empty());
     }
 
     #[tokio::test]

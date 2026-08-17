@@ -33,5 +33,6 @@ pub use {
     registry::{McpOAuthConfig, McpRegistry, McpServerConfig, TransportType},
     tool_bridge::{McpAgentTool, McpToolBridge},
     traits::{McpClientTrait, McpTransport},
+    transport::StdioLaunchOptions,
     types::{McpManagerError, McpTransportError},
 };

@@ -31,6 +31,56 @@ impl SlackChannelWebhookVerifier {
     }
 }
 
+/// Read one field out of an `application/x-www-form-urlencoded` body.
+///
+/// Slack posts slash commands and interactions as form bodies, so `+` means
+/// space and values are percent-encoded — decoding is delegated to
+/// `form_urlencoded` rather than hand-rolled.
+fn form_value(body: &[u8], name: &str) -> Option<String> {
+    form_urlencoded::parse(body)
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.into_owned())
+}
+
+/// Whether a decoded value is usable as a Slack trigger id.
+///
+/// `form_urlencoded` decodes leniently, so a body that did not decode cleanly
+/// still yields a value: a malformed escape like `%GG` survives verbatim, and
+/// invalid UTF-8 becomes U+FFFD. Real trigger ids are dot-separated
+/// alphanumerics (`13345224609.738474920.8088930838d88f008e0`) and contain
+/// neither, so their presence means the value is decode garbage. Admitting
+/// garbage as a dedupe key would let unrelated callbacks collide on it and be
+/// dropped as duplicates; rejecting it only means this callback is never
+/// deduplicated, which is the safe direction.
+fn is_trigger_id(value: &str) -> bool {
+    !value.is_empty() && !value.contains(['%', char::REPLACEMENT_CHARACTER])
+}
+
+/// Derive a dedupe key for a Slack callback.
+///
+/// Each endpoint carries its own unique id, in decreasing order of specificity:
+/// Events API envelopes have `event_id` (JSON), slash commands have a top-level
+/// `trigger_id` (form), and interactions nest `trigger_id` inside the JSON
+/// `payload` field (form). Returning `None` means the callback cannot be
+/// deduplicated and will be admitted on every delivery.
+fn idempotency_key(body: &[u8]) -> Option<String> {
+    if let Some(event_id) = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value["event_id"].as_str().map(ToOwned::to_owned))
+    {
+        return Some(event_id);
+    }
+
+    if let Some(trigger_id) = form_value(body, "trigger_id").filter(|value| is_trigger_id(value)) {
+        return Some(trigger_id);
+    }
+
+    form_value(body, "payload")
+        .and_then(|payload| serde_json::from_str::<serde_json::Value>(&payload).ok())
+        .and_then(|value| value["trigger_id"].as_str().map(ToOwned::to_owned))
+        .filter(|value| is_trigger_id(value))
+}
+
 impl ChannelWebhookVerifier for SlackChannelWebhookVerifier {
     fn verify(
         &self,
@@ -49,6 +99,10 @@ impl ChannelWebhookVerifier for SlackChannelWebhookVerifier {
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| ChannelWebhookRejection::MissingHeaders("x-slack-signature".into()))?;
 
+        let timestamp_epoch = timestamp.parse::<i64>().map_err(|_| {
+            ChannelWebhookRejection::BadSignature("invalid Slack request timestamp".into())
+        })?;
+
         if !verify_signature(
             self.signing_secret.expose_secret(),
             timestamp,
@@ -60,24 +114,17 @@ impl ChannelWebhookVerifier for SlackChannelWebhookVerifier {
             ));
         }
 
-        // Extract idempotency key from JSON `event_id` field (Events API).
-        let idempotency_key = serde_json::from_slice::<serde_json::Value>(body)
-            .ok()
-            .and_then(|v| v.get("event_id").and_then(|e| e.as_str()).map(String::from));
-
-        let timestamp_epoch = timestamp.parse::<i64>().ok();
-
         Ok(VerifiedChannelWebhook {
-            idempotency_key,
+            idempotency_key: idempotency_key(body),
             body: Bytes::copy_from_slice(body),
-            timestamp_epoch,
+            timestamp_epoch: Some(timestamp_epoch),
         })
     }
 
     fn rate_policy(&self) -> moltis_channels::ChannelWebhookRatePolicy {
         moltis_channels::ChannelWebhookRatePolicy {
-            max_requests_per_minute: 30,
-            burst: 10,
+            max_requests_per_minute: 600,
+            burst: 200,
         }
     }
 
@@ -176,6 +223,18 @@ mod tests {
     }
 
     #[test]
+    fn malformed_timestamp_rejects_even_with_matching_signature() {
+        let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
+        let body = b"body";
+        let headers = make_signed_headers(TEST_SECRET, "not-an-epoch", body);
+
+        assert!(matches!(
+            verifier.verify(&headers, body),
+            Err(ChannelWebhookRejection::BadSignature(_))
+        ));
+    }
+
+    #[test]
     fn no_event_id_yields_none_idempotency_key() {
         let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
         let body = br#"{"type":"url_verification","challenge":"abc"}"#;
@@ -187,17 +246,61 @@ mod tests {
     }
 
     #[test]
+    fn command_trigger_id_is_used_for_idempotency() {
+        let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
+        let body = b"command=%2Fmoltis&trigger_id=1337.42.command&text=hello+world";
+        let headers = make_signed_headers(TEST_SECRET, "1700000000", body);
+
+        let envelope = verifier.verify(&headers, body).unwrap();
+        assert_eq!(envelope.idempotency_key.as_deref(), Some("1337.42.command"));
+    }
+
+    #[test]
+    fn interaction_payload_trigger_id_is_used_for_idempotency() {
+        let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
+        let body = b"payload=%7B%22type%22%3A%22block_actions%22%2C%22trigger_id%22%3A%221337.42.interaction%22%7D";
+        let headers = make_signed_headers(TEST_SECRET, "1700000000", body);
+
+        let envelope = verifier.verify(&headers, body).unwrap();
+        assert_eq!(
+            envelope.idempotency_key.as_deref(),
+            Some("1337.42.interaction")
+        );
+    }
+
+    #[test]
+    fn malformed_form_value_does_not_create_idempotency_key() {
+        let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
+        let body = b"trigger_id=%GG";
+        let headers = make_signed_headers(TEST_SECRET, "1700000000", body);
+
+        let envelope = verifier.verify(&headers, body).unwrap();
+        assert!(envelope.idempotency_key.is_none());
+    }
+
+    #[test]
+    fn form_values_decode_plus_as_space_and_percent_escapes() {
+        // Slack posts commands as application/x-www-form-urlencoded, where a
+        // space is `+` — not `%20`. Treating `+` literally would corrupt every
+        // multi-word slash command argument.
+        let body = b"command=%2Fmoltis&text=hello+world%21&trigger_id=1.2.abc";
+        assert_eq!(form_value(body, "command").as_deref(), Some("/moltis"));
+        assert_eq!(form_value(body, "text").as_deref(), Some("hello world!"));
+        assert_eq!(form_value(body, "missing"), None);
+    }
+
+    #[test]
     fn channel_type_is_slack() {
         let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
         assert_eq!(verifier.channel_type(), ChannelType::Slack);
     }
 
     #[test]
-    fn rate_policy_is_30_per_minute() {
+    fn rate_policy_has_callback_headroom() {
         let verifier = SlackChannelWebhookVerifier::new(Secret::new(TEST_SECRET.into()));
         let policy = verifier.rate_policy();
-        assert_eq!(policy.max_requests_per_minute, 30);
-        assert_eq!(policy.burst, 10);
+        assert_eq!(policy.max_requests_per_minute, 600);
+        assert_eq!(policy.burst, 200);
     }
 
     // ── Contract tests ──────────────────────────────────────────────────────

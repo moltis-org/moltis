@@ -46,3 +46,36 @@ fn telephony_webhook_url_prefers_account_webhook_base() {
         "https://phone.example.com/base/api/channels/telephony/default/answer"
     );
 }
+
+#[test]
+fn inbound_call_rejected_denies_empty_allowlist() {
+    use moltis_channels::gating::DmPolicy;
+
+    use super::inbound_call_rejected;
+
+    // An empty allowlist with an explicit Allowlist policy denies everyone.
+    assert!(inbound_call_rejected(
+        DmPolicy::Allowlist,
+        "+15551234567",
+        &[]
+    ));
+
+    let allowlist = vec!["+15551234567".to_string()];
+    assert!(!inbound_call_rejected(
+        DmPolicy::Allowlist,
+        "+15551234567",
+        &allowlist
+    ));
+    assert!(inbound_call_rejected(
+        DmPolicy::Allowlist,
+        "+15559999999",
+        &allowlist
+    ));
+
+    assert!(inbound_call_rejected(
+        DmPolicy::Disabled,
+        "+15551234567",
+        &allowlist
+    ));
+    assert!(!inbound_call_rejected(DmPolicy::Open, "+15559999999", &[]));
+}

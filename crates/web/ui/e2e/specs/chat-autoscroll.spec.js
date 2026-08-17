@@ -31,6 +31,17 @@ async function getModulePrefix(page) {
 	});
 }
 
+async function setAutoScrollMode(page, mode) {
+	await page.evaluate(async (nextMode) => {
+		var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+		if (!appScript) throw new Error("app module script not found");
+		var appUrl = new URL(appScript.src, window.location.origin);
+		var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+		var state = await import(`${prefix}js/state.js`);
+		state.setAutoScrollMode(nextMode);
+	}, mode);
+}
+
 async function injectScrollableMessages(page, count) {
 	await expect
 		.poll(
@@ -48,7 +59,7 @@ async function injectScrollableMessages(page, count) {
 					while (fixtures.length > msgCount) {
 						fixtures.pop()?.remove();
 					}
-					while (fixtures.length < msgCount) {
+					while (fixtures.length < msgCount || box.scrollHeight - box.clientHeight <= 320) {
 						var el = document.createElement("div");
 						el.className = "msg assistant";
 						el.style.flex = "0 0 48px";
@@ -57,15 +68,16 @@ async function injectScrollableMessages(page, count) {
 						el.textContent = "M".repeat(200);
 						box.appendChild(el);
 						fixtures.push(el);
+						if (fixtures.length > msgCount + 40) break;
 					}
 
 					box.querySelector(".new-content-indicator")?.remove();
 					box.scrollTop = box.scrollHeight;
-					return fixtures.length;
+					return box.scrollHeight - box.clientHeight;
 				}, count),
 			{ timeout: 10_000 },
 		)
-		.toBeGreaterThanOrEqual(count);
+		.toBeGreaterThan(60);
 	// Ensure welcome/empty-state cards are gone (they overlap #messages)
 	await expect(page.locator("#welcomeCard")).toHaveCount(0, { timeout: 5_000 });
 	await expect(page.locator("#messages .empty-state")).toHaveCount(0, { timeout: 2_000 });
@@ -94,33 +106,73 @@ async function getScrollState(page) {
 }
 
 async function scrollMessagesAwayFromBottom(page) {
-	await page.evaluate(() => {
-		var box = document.getElementById("messages");
-		if (!box) return;
-
-		// A late render can replace injected fixtures after setup in CI. If the
-		// container is no longer scrollable, add enough inert fixtures to restore
-		// the intended user-scrolled-up state for this test.
-		for (let i = 0; i < 20 && box.scrollHeight - box.clientHeight <= 80; i += 1) {
-			var el = document.createElement("div");
-			el.className = "msg assistant";
-			el.style.flex = "0 0 96px";
-			el.style.minHeight = "96px";
-			el.dataset.e2eAutoscrollFixture = "true";
-			el.textContent = "M".repeat(200);
-			box.appendChild(el);
-		}
-
-		// Stay away from the top edge so this helper does not trigger history
-		// autoload, which temporarily disables chatAddMsg() auto-scroll handling.
-		box.scrollTop = Math.max(0, box.scrollHeight - box.clientHeight - 200);
-	});
 	await expect
 		.poll(async () => {
-			const s = await getScrollState(page);
-			return s.scrollHeight - s.scrollTop - s.clientHeight;
+			return await page.evaluate(() => {
+				var box = document.getElementById("messages");
+				if (!box) return 0;
+
+				// Late renders can replace injected fixtures or snap back to bottom in
+				// CI. Re-establish overflow and the scrolled-up position in the same
+				// browser task that the poll verifies.
+				for (let i = 0; i < 20 && box.scrollHeight - box.clientHeight <= 220; i += 1) {
+					var el = document.createElement("div");
+					el.className = "msg assistant";
+					el.style.flex = "0 0 96px";
+					el.style.minHeight = "96px";
+					el.dataset.e2eAutoscrollFixture = "true";
+					el.textContent = "M".repeat(200);
+					box.appendChild(el);
+				}
+
+				// Stay away from the top edge so this helper does not trigger history
+				// autoload, which temporarily disables chatAddMsg() auto-scroll handling.
+				box.scrollTop = Math.max(0, box.scrollHeight - box.clientHeight - 200);
+				return box.scrollHeight - box.scrollTop - box.clientHeight;
+			});
 		})
 		.toBeGreaterThan(60);
+}
+
+async function addAssistantMessageWhileScrolledUp(page, text, minHeight = 80) {
+	const result = await page.evaluate(
+		async ({ messageText, messageMinHeight }) => {
+			var box = document.getElementById("messages");
+			if (!box) throw new Error("messages container not found");
+
+			// Recreate enough overflow in the same browser task that triggers
+			// smart-scroll. CI can otherwise run a late render between helper calls,
+			// leaving the chat close enough to bottom that no indicator is expected.
+			for (let i = 0; i < 30 && box.scrollHeight - box.clientHeight <= 320; i += 1) {
+				var fixture = document.createElement("div");
+				fixture.className = "msg assistant";
+				fixture.style.flex = "0 0 96px";
+				fixture.style.minHeight = "96px";
+				fixture.dataset.e2eAutoscrollFixture = "true";
+				fixture.textContent = "M".repeat(200);
+				box.appendChild(fixture);
+			}
+
+			box.scrollTop = Math.max(0, box.scrollHeight - box.clientHeight - 240);
+			const distanceBefore = box.scrollHeight - box.scrollTop - box.clientHeight;
+			if (distanceBefore <= 60) {
+				throw new Error(`chat was not scrolled away from bottom before message: ${distanceBefore}`);
+			}
+
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var chatUi = await import(`${prefix}js/chat-ui.js`);
+			var el = chatUi.chatAddMsg("assistant", messageText);
+			if (el) el.style.minHeight = `${messageMinHeight}px`;
+
+			return {
+				distanceBefore,
+			};
+		},
+		{ messageText: text, messageMinHeight: minHeight },
+	);
+	expect(result.distanceBefore).toBeGreaterThan(60);
 }
 
 test.describe("Smart auto-scroll", () => {
@@ -133,6 +185,7 @@ test.describe("Smart auto-scroll", () => {
 		// overwrite injected DOM elements during the test.
 		await createSession(page);
 		await waitForSessionReady(page);
+		await setAutoScrollMode(page, "smart");
 		// Extra settle time for CI — the session switch may trigger
 		// deferred renders that overwrite injected DOM.
 		await page.waitForTimeout(500);
@@ -150,14 +203,7 @@ test.describe("Smart auto-scroll", () => {
 		await scrollMessagesAwayFromBottom(page);
 
 		// Add a new assistant message via the smart scroll path
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var chatUi = await import(`${prefix}js/chat-ui.js`);
-			var el = chatUi.chatAddMsg("assistant", "New message while scrolled up");
-			if (el) el.style.minHeight = "80px";
-		});
+		await addAssistantMessageWhileScrolledUp(page, "New message while scrolled up");
 
 		// The indicator should be visible
 		const indicator = page.locator(".new-content-indicator");
@@ -178,14 +224,7 @@ test.describe("Smart auto-scroll", () => {
 
 		// Scroll up, then add a message to trigger the indicator
 		await scrollMessagesAwayFromBottom(page);
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var chatUi = await import(`${prefix}js/chat-ui.js`);
-			var el = chatUi.chatAddMsg("assistant", "Trigger indicator");
-			if (el) el.style.minHeight = "80px";
-		});
+		await addAssistantMessageWhileScrolledUp(page, "Trigger indicator");
 
 		const indicator = page.locator(".new-content-indicator");
 		await expect(indicator).toBeVisible({ timeout: 10_000 });
@@ -221,14 +260,7 @@ test.describe("Smart auto-scroll", () => {
 
 		// Scroll up, add message to trigger indicator
 		await scrollMessagesAwayFromBottom(page);
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var chatUi = await import(`${prefix}js/chat-ui.js`);
-			var el = chatUi.chatAddMsg("assistant", "Trigger indicator again");
-			if (el) el.style.minHeight = "80px";
-		});
+		await addAssistantMessageWhileScrolledUp(page, "Trigger indicator again");
 
 		const indicator = page.locator(".new-content-indicator");
 		await expect(indicator).toBeVisible({ timeout: 5_000 });
@@ -520,13 +552,7 @@ test.describe("Smart auto-scroll", () => {
 		const pageErrors = watchPageErrors(page);
 
 		// Set the mode to "always"
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var state = await import(`${prefix}js/state.js`);
-			state.setAutoScrollMode("always");
-		});
+		await setAutoScrollMode(page, "always");
 
 		await injectScrollableMessages(page, 40);
 
@@ -557,13 +583,7 @@ test.describe("Smart auto-scroll", () => {
 		await expect(indicator).toHaveCount(0);
 
 		// Reset to default so other tests aren't affected
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var state = await import(`${prefix}js/state.js`);
-			state.setAutoScrollMode("smart");
-		});
+		await setAutoScrollMode(page, "smart");
 
 		expect(pageErrors).toEqual([]);
 	});

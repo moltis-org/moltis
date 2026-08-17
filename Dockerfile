@@ -116,12 +116,13 @@ COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_calc.wasm /u
 COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm /usr/share/moltis/wasm/
 COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_web_search.wasm /usr/share/moltis/wasm/
 
-# Create config and data directories
+# Create config and data directories.
+# Persistent state lives under these paths; mount a volume or bind mount at
+# runtime (see deployment compose). Intentionally NOT declared as VOLUME -- an
+# anonymous VOLUME on a nested path shadows a parent bind mount and seeds stub
+# data over real data, which silently sends the app through onboarding again.
 RUN mkdir -p /home/moltis/.config/moltis /home/moltis/.moltis /home/moltis/.npm && \
     chown -R moltis:moltis /home/moltis/.config /home/moltis/.moltis /home/moltis/.npm
-
-# Volume mount points for persistence and container runtime
-VOLUME ["/home/moltis/.config/moltis", "/home/moltis/.moltis", "/home/moltis/.npm", "/var/run/docker.sock"]
 
 USER moltis
 WORKDIR /home/moltis

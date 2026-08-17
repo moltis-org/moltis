@@ -890,6 +890,232 @@ async fn sandbox_write_via_registry_sends_base64_to_bridge() {
 }
 
 #[tokio::test]
+async fn sandbox_write_home_path_via_registry_uses_bridge_not_host_parent_resolution() {
+    use {
+        crate::{
+            exec::ExecResult,
+            fs::sandbox_bridge::test_helpers::MockSandbox,
+            sandbox::{Sandbox, SandboxConfig, SandboxRouter},
+        },
+        base64::{Engine as _, engine::general_purpose::STANDARD as BASE64},
+        std::sync::Arc,
+    };
+
+    let mock = MockSandbox::new(vec![ExecResult {
+        stdout: String::new(),
+        stderr: String::new(),
+        exit_code: 0,
+    }]);
+    let backend: Arc<dyn Sandbox> = mock.clone();
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig::default(),
+        backend,
+    ));
+    router.set_override("sandboxed", true).await;
+
+    let mut registry = ToolRegistry::new();
+    register_fs_tools(&mut registry, FsToolsContext {
+        sandbox_router: Some(router),
+        ..FsToolsContext::default()
+    });
+
+    let write = registry.get("Write").unwrap();
+    let value = write
+        .execute(json!({
+            "file_path": "/home/sandbox/write_probe.txt",
+            "content": "sandbox home write",
+            "_session_key": "sandboxed",
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(value["bytes_written"], 18);
+    let cmd = mock.last_command().unwrap();
+    assert!(cmd.contains("/home/sandbox/write_probe.txt"));
+    assert!(cmd.contains(&BASE64.encode(b"sandbox home write")));
+}
+
+#[tokio::test]
+async fn sandbox_read_and_write_workspace_paths_via_registry_use_bridge() {
+    use {
+        crate::{
+            exec::ExecResult,
+            fs::sandbox_bridge::test_helpers::MockSandbox,
+            sandbox::{Sandbox, SandboxConfig, SandboxRouter},
+        },
+        base64::{Engine as _, engine::general_purpose::STANDARD as BASE64},
+        std::sync::Arc,
+    };
+
+    let workspace_file = moltis_config::data_dir().join("notes/workspace_probe.txt");
+    let workspace_file = workspace_file.display().to_string();
+    let mock = MockSandbox::new(vec![
+        ExecResult {
+            stdout: BASE64.encode(b"workspace read"),
+            stderr: String::new(),
+            exit_code: 0,
+        },
+        ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+        },
+    ]);
+    let backend: Arc<dyn Sandbox> = mock.clone();
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig::default(),
+        backend,
+    ));
+    router.set_override("sandboxed", true).await;
+
+    let mut registry = ToolRegistry::new();
+    register_fs_tools(&mut registry, FsToolsContext {
+        sandbox_router: Some(router),
+        ..FsToolsContext::default()
+    });
+
+    let read = registry.get("Read").unwrap();
+    let value = read
+        .execute(json!({
+            "file_path": workspace_file,
+            "_session_key": "sandboxed",
+        }))
+        .await
+        .unwrap();
+    assert!(
+        value["content"]
+            .as_str()
+            .unwrap()
+            .contains("workspace read")
+    );
+
+    let write = registry.get("Write").unwrap();
+    let value = write
+        .execute(json!({
+            "file_path": workspace_file,
+            "content": "workspace write",
+            "_session_key": "sandboxed",
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(value["bytes_written"], 15);
+    let cmd = mock.last_command().unwrap();
+    assert!(cmd.contains("notes/workspace_probe.txt"));
+    assert!(cmd.contains(&BASE64.encode(b"workspace write")));
+}
+
+#[tokio::test]
+async fn sandbox_edit_home_path_via_registry_reads_and_writes_through_bridge() {
+    use {
+        crate::{
+            exec::ExecResult,
+            fs::sandbox_bridge::test_helpers::MockSandbox,
+            sandbox::{Sandbox, SandboxConfig, SandboxRouter},
+        },
+        base64::{Engine as _, engine::general_purpose::STANDARD as BASE64},
+        std::sync::Arc,
+    };
+
+    let mock = MockSandbox::new(vec![
+        ExecResult {
+            stdout: BASE64.encode(b"before\n"),
+            stderr: String::new(),
+            exit_code: 0,
+        },
+        ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+        },
+    ]);
+    let backend: Arc<dyn Sandbox> = mock.clone();
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig::default(),
+        backend,
+    ));
+    router.set_override("sandboxed", true).await;
+
+    let mut registry = ToolRegistry::new();
+    register_fs_tools(&mut registry, FsToolsContext {
+        sandbox_router: Some(router),
+        ..FsToolsContext::default()
+    });
+
+    let edit = registry.get("Edit").unwrap();
+    let value = edit
+        .execute(json!({
+            "file_path": "/home/sandbox/edit_probe.txt",
+            "old_string": "before",
+            "new_string": "after",
+            "_session_key": "sandboxed",
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(value["replacements"], 1);
+    let cmd = mock.last_command().unwrap();
+    assert!(cmd.contains("/home/sandbox/edit_probe.txt"));
+    assert!(cmd.contains(&BASE64.encode(b"after\n")));
+}
+
+#[tokio::test]
+async fn sandbox_multi_edit_home_path_via_registry_reads_and_writes_through_bridge() {
+    use {
+        crate::{
+            exec::ExecResult,
+            fs::sandbox_bridge::test_helpers::MockSandbox,
+            sandbox::{Sandbox, SandboxConfig, SandboxRouter},
+        },
+        base64::{Engine as _, engine::general_purpose::STANDARD as BASE64},
+        std::sync::Arc,
+    };
+
+    let mock = MockSandbox::new(vec![
+        ExecResult {
+            stdout: BASE64.encode(b"alpha beta\n"),
+            stderr: String::new(),
+            exit_code: 0,
+        },
+        ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+        },
+    ]);
+    let backend: Arc<dyn Sandbox> = mock.clone();
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig::default(),
+        backend,
+    ));
+    router.set_override("sandboxed", true).await;
+
+    let mut registry = ToolRegistry::new();
+    register_fs_tools(&mut registry, FsToolsContext {
+        sandbox_router: Some(router),
+        ..FsToolsContext::default()
+    });
+
+    let multi_edit = registry.get("MultiEdit").unwrap();
+    let value = multi_edit
+        .execute(json!({
+            "file_path": "/home/sandbox/multi_probe.txt",
+            "edits": [
+                { "old_string": "alpha", "new_string": "ALPHA" },
+                { "old_string": "beta", "new_string": "BETA" }
+            ],
+            "_session_key": "sandboxed",
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(value["edits_applied"], 2);
+    let cmd = mock.last_command().unwrap();
+    assert!(cmd.contains("/home/sandbox/multi_probe.txt"));
+    assert!(cmd.contains(&BASE64.encode(b"ALPHA BETA\n")));
+}
+
+#[tokio::test]
 async fn sandbox_write_serializes_same_file_mutations_via_registry() {
     let probe = ConcurrentExecProbeSandbox::new();
     let backend: Arc<dyn Sandbox> = probe.clone();

@@ -160,7 +160,12 @@ export function AddDiscordModal(): VNode {
 						<span className="text-xs text-[var(--muted)]">
 							Open this link to add the bot (Send Messages, Attach Files, Read Message History):
 						</span>
-						<a href={inviteUrl} target="_blank" className="text-xs text-[var(--accent)] underline break-all">
+						<a
+							href={inviteUrl}
+							target="_blank"
+							className="text-xs text-[var(--accent)] underline break-all"
+							rel="noopener"
+						>
 							{inviteUrl}
 						</a>
 					</div>

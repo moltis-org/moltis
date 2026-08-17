@@ -5,7 +5,7 @@ import type { VNode } from "preact";
 
 import { addChannel, parseChannelConfigPatch } from "../../../channel-utils";
 import { models as modelsSig } from "../../../stores/model-store";
-import { targetValue } from "../../../typed-events";
+import { targetChecked, targetValue } from "../../../typed-events";
 import { ChannelType } from "../../../types";
 import { Modal, ModelSelect } from "../../../ui";
 import { type ChannelConfig, ConnectionModeHint, loadChannels, showAddNostr } from "../../ChannelsPage";
@@ -19,6 +19,10 @@ export function AddNostrModal(): VNode {
 	const accountDraft = useSignal("");
 	const secretKeyDraft = useSignal("");
 	const relaysDraft = useSignal("wss://relay.damus.io, wss://relay.nostr.band, wss://nos.lol");
+	const groupsDraft = useSignal("");
+	const groupMentionMode = useSignal("mention");
+	const groupMessageKind = useSignal("nip29");
+	const groupAckReactions = useSignal(true);
 	const advancedConfigPatch = useSignal("");
 
 	function onSubmit(e: Event): void {
@@ -51,6 +55,19 @@ export function AddNostrModal(): VNode {
 			dm_policy: (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement).value,
 			allowed_pubkeys: allowlistItems.value,
 		};
+		const groups = groupsDraft.value
+			.split(",")
+			.map((g) => g.trim())
+			.filter(Boolean);
+		if (groups.length > 0) {
+			// NIP-29 group chat (Buzz channels). Left empty keeps DM-only mode.
+			// `groups` is both the join list and the allowlist, so there is no
+			// separate group policy to send.
+			addConfig.groups = groups;
+			addConfig.group_mention_mode = groupMentionMode.value;
+			addConfig.group_message_kind = groupMessageKind.value;
+			addConfig.group_ack_reactions = groupAckReactions.value;
+		}
 		if (addModel.value) {
 			addConfig.model = addModel.value;
 			const found = modelsSig.value.find((x) => x.id === addModel.value);
@@ -67,6 +84,10 @@ export function AddNostrModal(): VNode {
 				accountDraft.value = "";
 				secretKeyDraft.value = "";
 				relaysDraft.value = "wss://relay.damus.io, wss://relay.nostr.band, wss://nos.lol";
+				groupsDraft.value = "";
+				groupMentionMode.value = "mention";
+				groupMessageKind.value = "nip29";
+				groupAckReactions.value = true;
 				advancedConfigPatch.value = "";
 				loadChannels();
 			} else {
@@ -159,6 +180,60 @@ export function AddNostrModal(): VNode {
 						allowlistItems.value = v;
 					}}
 				/>
+				<label className="text-xs text-[var(--muted)]">Buzz / NIP-29 Groups (comma-separated, optional)</label>
+				<input
+					data-field="groups"
+					type="text"
+					placeholder="buzz-general, buzz-dev"
+					value={groupsDraft.value}
+					onInput={(e) => {
+						groupsDraft.value = targetValue(e);
+					}}
+					className="channel-input"
+				/>
+				<div className="text-xs text-[var(--muted)]">
+					NIP-29 group ids to join on a Buzz-style relay. Leave empty for DM-only.
+				</div>
+				<label className="text-xs text-[var(--muted)]">Group Mention Mode</label>
+				<select
+					data-field="groupMentionMode"
+					className="channel-select"
+					value={groupMentionMode.value}
+					onChange={(e) => {
+						groupMentionMode.value = targetValue(e);
+					}}
+				>
+					<option value="mention">Mention only (@-tagged)</option>
+					<option value="always">Always respond</option>
+					<option value="none">Never respond</option>
+				</select>
+				<label className="text-xs text-[var(--muted)]">Group Message Kind</label>
+				<select
+					data-field="groupMessageKind"
+					className="channel-select"
+					value={groupMessageKind.value}
+					onChange={(e) => {
+						groupMessageKind.value = targetValue(e);
+					}}
+				>
+					<option value="nip29">Standard NIP-29 (kind 9)</option>
+					<option value="buzz_v2">Buzz (kind 40002)</option>
+				</select>
+				<div className="text-xs text-[var(--muted)]">
+					Both kinds are always read and replies match the message they answer. This only sets the kind for messages the
+					bot starts itself.
+				</div>
+				<label className="flex items-center gap-2 text-xs text-[var(--muted)]">
+					<input
+						data-field="groupAckReactions"
+						type="checkbox"
+						checked={groupAckReactions.value}
+						onChange={(e) => {
+							groupAckReactions.value = targetChecked(e);
+						}}
+					/>
+					Acknowledge group messages with reactions
+				</label>
 				<AdvancedConfigPatchField
 					value={advancedConfigPatch.value}
 					onInput={(value) => {

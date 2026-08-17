@@ -22,8 +22,9 @@ tracing               = { workspace = true }
 url                   = { workspace = true }
 
 [features]
-local-llm = []
-vault     = ["dep:moltis-vault"]
+local-llm               = []
+provider-github-copilot = ["moltis-providers/provider-github-copilot"]
+vault                   = ["dep:moltis-vault"]
 
 [dev-dependencies]
 axum     = { workspace = true }

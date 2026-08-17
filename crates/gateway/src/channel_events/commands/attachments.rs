@@ -10,7 +10,8 @@ use crate::{
 };
 
 use super::super::{
-    default_channel_session_key, resolve_channel_agent_id, resolve_channel_session,
+    apply_untrusted_channel_context, default_channel_session_key, is_trusted_channel_turn,
+    resolve_channel_agent_id, resolve_channel_session, resolve_sender_role,
     start_channel_typing_loop,
 };
 
@@ -139,10 +140,19 @@ pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
         "_session_key": &session_key,
         // Defer reply-target registration until chat.send() actually
         // starts executing this message (after semaphore acquire).
-        "_channel_reply_target": &reply_to,
+        moltis_chat::params::CHANNEL_REPLY_TARGET: &reply_to,
+        "_native_channel_request": true,
     });
     if let Some(ref documents) = meta.documents {
         params["_document_files"] = serde_json::json!(documents);
+    }
+
+    // Same privilege gate as the text path: an image or voice note from a
+    // guest must not hand the agent host-reaching tools either.
+    let sender_role =
+        resolve_sender_role(state, &reply_to.account_id, meta.sender_id.as_deref()).await;
+    if !is_trusted_channel_turn(sender_role, &reply_to) {
+        apply_untrusted_channel_context(&mut params);
     }
 
     // Forward the channel's default model if configured

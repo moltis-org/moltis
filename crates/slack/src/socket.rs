@@ -6,26 +6,44 @@ use {
     tracing::{debug, info, warn},
 };
 
+mod callbacks;
+#[cfg(test)]
+mod tests;
+
 use moltis_channels::{
     config_view::ChannelConfigView,
     gating::{DmPolicy, GroupPolicy, is_allowed},
     message_log::MessageLogEntry,
+    otp::{
+        OTP_TTL, OtpInitResult, OtpVerifyResult, approve_sender_via_otp, emit_otp_challenge,
+        emit_otp_resolution,
+    },
     plugin::{
-        ChannelEvent, ChannelMessageKind, ChannelMessageMeta, ChannelReplyTarget, ChannelType,
+        ChannelEvent, ChannelEventSink, ChannelMessageKind, ChannelMessageMeta, ChannelOutbound,
+        ChannelReplyTarget, ChannelType,
     },
 };
 
 use crate::{
+    callback_worker::{CallbackAdmissionError, CallbackQueue},
+    client::validated_slack_client_for_base_url,
     config::SlackAccountConfig,
     markdown::strip_mentions,
-    state::{AccountState, AccountStateMap},
+    outbound::SlackOutbound,
+    socket_reconnect::{RECONNECT_INITIAL_BACKOFF, RECONNECT_STABLE_AFTER, backoff_sleep},
+    state::{AccountState, AccountStateMap, StreamRecipient},
 };
+
+use callbacks::{command_events_callback, interaction_events_callback, push_events_callback};
+
+const OTP_CHALLENGE_MSG: &str = "To use this bot, please enter the verification code.\n\nAsk the bot owner for the code; it is visible in the web UI under Channels > Senders.\n\nThe code expires in 5 minutes.";
 
 /// State stored in the Socket Mode listener for callback access.
 #[derive(Clone)]
 struct ListenerState {
     account_id: String,
     accounts: AccountStateMap,
+    callback_queue: CallbackQueue,
 }
 
 /// Start Socket Mode for a single account.
@@ -37,7 +55,7 @@ pub async fn start_socket_mode(
     config: SlackAccountConfig,
     accounts: AccountStateMap,
     message_log: Option<Arc<dyn moltis_channels::message_log::MessageLog>>,
-    event_sink: Option<Arc<dyn moltis_channels::ChannelEventSink>>,
+    event_sink: Option<Arc<dyn ChannelEventSink>>,
 ) -> moltis_channels::Result<()> {
     let bot_token_str = config.bot_token.expose_secret().clone();
     let app_token_str = config.app_token.expose_secret().clone();
@@ -53,9 +71,7 @@ pub async fn start_socket_mode(
         ));
     }
 
-    let client = Arc::new(SlackClient::new(SlackClientHyperConnector::new().map_err(
-        |e| moltis_channels::Error::unavailable(format!("hyper connector: {e}")),
-    )?));
+    let client = Arc::new(validated_slack_client_for_base_url(&config.api_base_url).await?);
 
     // Verify the bot token and get the bot user ID.
     let bot_token = SlackApiToken::new(SlackApiTokenValue::from(bot_token_str));
@@ -70,6 +86,8 @@ pub async fn start_socket_mode(
 
     let cancel = tokio_util::sync::CancellationToken::new();
 
+    let otp_cooldown_secs = config.otp_cooldown_secs;
+
     {
         let mut accts = accounts.write().unwrap_or_else(|e| e.into_inner());
         accts.insert(account_id.to_string(), AccountState {
@@ -79,7 +97,9 @@ pub async fn start_socket_mode(
             event_sink,
             cancel: cancel.clone(),
             bot_user_id: Some(bot_user_id),
-            pending_threads: std::collections::HashMap::new(),
+            stream_recipients: Default::default(),
+            otp: std::sync::Mutex::new(moltis_channels::otp::OtpState::new(otp_cooldown_secs)),
+            dedup: std::sync::Mutex::new(crate::state::EventDedup::default()),
         });
     }
 
@@ -109,7 +129,13 @@ pub async fn start_socket_mode(
     Ok(())
 }
 
-/// Run the Socket Mode listener until cancelled.
+/// Run the Socket Mode listener until cancelled, reconnecting on disconnect.
+///
+/// slack-morphism's `serve()` returns when the socket drops; on its own that
+/// silently kills inbound delivery. This supervises the connection: on any
+/// unexpected exit (or a failed `listen_for`) it rebuilds the listener and
+/// retries with exponential backoff + jitter, resetting the backoff after a
+/// healthy connection. Cancellation always wins the race and shuts down cleanly.
 async fn run_socket_listener(
     account_id: &str,
     client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
@@ -117,38 +143,65 @@ async fn run_socket_listener(
     accounts: AccountStateMap,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let listener_state = ListenerState {
-        account_id: account_id.to_string(),
-        accounts,
-    };
+    let mut backoff = RECONNECT_INITIAL_BACKOFF;
+    let callback_queue = CallbackQueue::start(cancel.clone());
 
-    // Socket Mode callbacks — must be function pointers, so we use user state.
-    let callbacks = SlackSocketModeListenerCallbacks::new()
-        .with_push_events(push_events_callback)
-        .with_command_events(command_events_callback)
-        .with_interaction_events(interaction_events_callback);
+    while !cancel.is_cancelled() {
+        let listener_state = ListenerState {
+            account_id: account_id.to_string(),
+            accounts: accounts.clone(),
+            callback_queue: callback_queue.clone(),
+        };
 
-    let listener_environment = Arc::new(
-        SlackClientEventsListenerEnvironment::new(Arc::clone(&client))
-            .with_error_handler(error_handler)
-            .with_user_state(listener_state),
-    );
+        // Callbacks must be function pointers, so per-account data rides on the
+        // listener environment's user state.
+        let callbacks = SlackSocketModeListenerCallbacks::new()
+            .with_push_events(push_events_callback)
+            .with_command_events(command_events_callback)
+            .with_interaction_events(interaction_events_callback);
 
-    let config = SlackClientSocketModeConfig::new();
-    let socket_listener =
-        SlackClientSocketModeListener::new(&config, listener_environment, callbacks);
+        let listener_environment = Arc::new(
+            SlackClientEventsListenerEnvironment::new(Arc::clone(&client))
+                .with_error_handler(error_handler)
+                .with_user_state(listener_state),
+        );
 
-    socket_listener.listen_for(&app_token).await?;
+        let config = SlackClientSocketModeConfig::new();
+        let socket_listener =
+            SlackClientSocketModeListener::new(&config, listener_environment, callbacks);
 
-    info!(account_id, "slack socket mode listener started");
-
-    tokio::select! {
-        () = cancel.cancelled() => {
-            info!(account_id, "slack socket mode shutting down");
-            socket_listener.shutdown().await;
+        if let Err(e) = socket_listener.listen_for(&app_token).await {
+            warn!(account_id, "slack socket mode connect failed: {e}");
+            if !backoff_sleep(&cancel, &mut backoff).await {
+                break;
+            }
+            continue;
         }
-        _code = socket_listener.serve() => {
-            warn!(account_id, "slack socket mode listener unexpectedly stopped");
+
+        info!(account_id, "slack socket mode listener started");
+        let connected_at = tokio::time::Instant::now();
+
+        tokio::select! {
+            () = cancel.cancelled() => {
+                info!(account_id, "slack socket mode shutting down");
+                socket_listener.shutdown().await;
+                break;
+            }
+            _code = socket_listener.serve() => {
+                socket_listener.shutdown().await;
+                // A connection that lasted a while was healthy; reset backoff.
+                if connected_at.elapsed() >= RECONNECT_STABLE_AFTER {
+                    backoff = RECONNECT_INITIAL_BACKOFF;
+                }
+                warn!(
+                    account_id,
+                    backoff_secs = backoff.as_secs(),
+                    "slack socket mode disconnected; reconnecting"
+                );
+                if !backoff_sleep(&cancel, &mut backoff).await {
+                    break;
+                }
+            }
         }
     }
 
@@ -162,30 +215,23 @@ fn error_handler(
     _states: SlackClientEventsUserState,
 ) -> HttpStatusCode {
     warn!("slack socket mode error: {err}");
-    HttpStatusCode::OK
+    if err.downcast_ref::<CallbackAdmissionError>().is_some() {
+        HttpStatusCode::SERVICE_UNAVAILABLE
+    } else {
+        HttpStatusCode::OK
+    }
 }
 
-/// Push events callback (messages, app_mention, etc.).
-async fn push_events_callback(
+/// Handle a push event body. Runs off the Socket Mode acknowledgment path.
+pub(crate) async fn handle_push_event(
     event: SlackPushEventCallback,
-    _client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
-    states: SlackClientEventsUserState,
-) -> UserCallbackResult<()> {
-    let guard = states.read().await;
-    let listener_state = match guard.get_user_state::<ListenerState>() {
-        Some(s) => s.clone(),
-        None => return Ok(()),
-    };
-    drop(guard);
-
+    account_id: &str,
+    accounts: &AccountStateMap,
+) {
+    let team_id = event.team_id.to_string();
     match event.event {
         SlackEventCallbackBody::Message(msg_event) => {
-            handle_message_event(
-                &listener_state.account_id,
-                msg_event,
-                &listener_state.accounts,
-            )
-            .await;
+            handle_message_event(account_id, msg_event, Some(team_id), accounts).await;
         },
         SlackEventCallbackBody::AppMention(mention_event) => {
             let channel = mention_event.channel.to_string();
@@ -197,37 +243,45 @@ async fn push_events_callback(
                 .as_ref()
                 .map(|ts| ts.to_string());
 
+            let message_ts = Some(mention_event.origin.ts.to_string());
+
             handle_inbound(
-                &listener_state.account_id,
+                account_id,
                 &channel,
                 &user,
                 text,
                 thread_ts,
+                message_ts,
+                Some(team_id),
                 None,
                 true, // is_mention
-                &listener_state.accounts,
+                accounts,
             )
             .await;
         },
         SlackEventCallbackBody::ReactionAdded(reaction_event) => {
             handle_reaction_event(
-                &listener_state.account_id,
+                account_id,
                 reaction_event.user.as_ref(),
                 reaction_event.reaction.as_ref(),
                 &reaction_event.item,
+                reaction_event.item_user.as_ref().map(|u| u.to_string()),
+                Some(team_id),
                 true,
-                &listener_state.accounts,
+                accounts,
             )
             .await;
         },
         SlackEventCallbackBody::ReactionRemoved(reaction_event) => {
             handle_reaction_event(
-                &listener_state.account_id,
+                account_id,
                 reaction_event.user.as_ref(),
                 reaction_event.reaction.as_ref(),
                 &reaction_event.item,
+                reaction_event.item_user.as_ref().map(|u| u.to_string()),
+                Some(team_id),
                 false,
-                &listener_state.accounts,
+                accounts,
             )
             .await;
         },
@@ -235,133 +289,13 @@ async fn push_events_callback(
             debug!("unhandled slack push event");
         },
     }
-
-    Ok(())
-}
-
-/// Command events callback (slash commands).
-async fn command_events_callback(
-    event: SlackCommandEvent,
-    _client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
-    states: SlackClientEventsUserState,
-) -> UserCallbackResult<SlackCommandEventResponse> {
-    let guard = states.read().await;
-    let listener_state = match guard.get_user_state::<ListenerState>() {
-        Some(s) => s.clone(),
-        None => {
-            return Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_text("Not configured".to_string()),
-            ));
-        },
-    };
-    drop(guard);
-
-    let account_id = &listener_state.account_id;
-    let command_text = event.command.to_string();
-    let text = event.text.unwrap_or_default();
-    let full_command = format!("{command_text} {text}").trim().to_string();
-    let sender_id = event.user_id.to_string();
-
-    let event_sink = {
-        let accts = listener_state
-            .accounts
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
-        accts.get(account_id).and_then(|s| s.event_sink.clone())
-    };
-
-    if let Some(sink) = event_sink {
-        let reply_to = ChannelReplyTarget {
-            channel_type: ChannelType::Slack,
-            account_id: account_id.to_string(),
-            chat_id: event.channel_id.to_string(),
-            message_id: None,
-            thread_id: None,
-        };
-        match sink
-            .dispatch_command(&full_command, reply_to, Some(&sender_id))
-            .await
-        {
-            Ok(response_text) => Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_text(response_text),
-            )),
-            Err(e) => Ok(SlackCommandEventResponse::new(
-                SlackMessageContent::new().with_text(format!("Error: {e}")),
-            )),
-        }
-    } else {
-        Ok(SlackCommandEventResponse::new(
-            SlackMessageContent::new().with_text("Channel not configured".to_string()),
-        ))
-    }
-}
-
-/// Interaction events callback (block actions / button clicks).
-async fn interaction_events_callback(
-    event: SlackInteractionEvent,
-    _client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
-    states: SlackClientEventsUserState,
-) -> UserCallbackResult<()> {
-    let guard = states.read().await;
-    let listener_state = match guard.get_user_state::<ListenerState>() {
-        Some(s) => s.clone(),
-        None => return Ok(()),
-    };
-    drop(guard);
-
-    // Extract the action_id from block_actions interaction type.
-    let (action_id, channel_id) = match &event {
-        SlackInteractionEvent::BlockActions(ba) => {
-            let action = ba.actions.as_ref().and_then(|a| a.first());
-            let channel = ba.channel.as_ref().map(|c| c.id.to_string());
-            match (action, channel) {
-                (Some(act), Some(ch)) => (act.action_id.to_string(), ch),
-                _ => {
-                    debug!("block_actions missing action or channel");
-                    return Ok(());
-                },
-            }
-        },
-        _ => {
-            debug!("unhandled interaction event type");
-            return Ok(());
-        },
-    };
-
-    let account_id = &listener_state.account_id;
-    let event_sink = {
-        let accts = listener_state
-            .accounts
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
-        accts.get(account_id).and_then(|s| s.event_sink.clone())
-    };
-
-    if let Some(sink) = event_sink {
-        let reply_to = ChannelReplyTarget {
-            channel_type: ChannelType::Slack,
-            account_id: account_id.to_string(),
-            chat_id: channel_id,
-            message_id: None,
-            thread_id: None,
-        };
-        match sink.dispatch_interaction(&action_id, reply_to).await {
-            Ok(_response) => {
-                // Response already sent by the gateway.
-            },
-            Err(e) => {
-                debug!(account_id, action_id, "interaction dispatch failed: {e}");
-            },
-        }
-    }
-
-    Ok(())
 }
 
 /// Handle a Slack message event.
 pub(crate) async fn handle_message_event(
     account_id: &str,
     event: SlackMessageEvent,
+    team_id: Option<String>,
     accounts: &AccountStateMap,
 ) {
     // Skip message subtypes (edits, deletes, bot messages, etc.).
@@ -399,8 +333,8 @@ pub(crate) async fn handle_message_event(
         .unwrap_or("");
 
     let thread_ts = event.origin.thread_ts.as_ref().map(|ts| ts.to_string());
-    // Use thread_ts if available, otherwise use the message ts for threading.
-    let reply_thread = thread_ts.or_else(|| Some(event.origin.ts.to_string()));
+    let message_ts = event.origin.ts.to_string();
+    let reply_thread = thread_ts.or_else(|| Some(message_ts.clone()));
 
     // Detect if this is a mention.
     let bot_user_id = {
@@ -417,6 +351,8 @@ pub(crate) async fn handle_message_event(
         &user_id,
         text,
         reply_thread,
+        Some(message_ts),
+        team_id,
         event.sender.username.clone(),
         is_mention,
         accounts,
@@ -434,6 +370,8 @@ pub(crate) async fn handle_inbound(
     user_id: &str,
     text: &str,
     thread_ts: Option<String>,
+    message_ts: Option<String>,
+    team_id: Option<String>,
     username: Option<String>,
     is_mention: bool,
     accounts: &AccountStateMap,
@@ -451,11 +389,7 @@ pub(crate) async fn handle_inbound(
         }
     };
 
-    // Determine if this is a DM or channel message.
-    // Slack DM channel IDs start with 'D'.
     let is_dm = channel_id.starts_with('D');
-
-    // Access control check.
     let access_granted = check_access(
         is_dm,
         user_id,
@@ -513,6 +447,18 @@ pub(crate) async fn handle_inbound(
             account_id,
             user_id, channel_id, "slack message denied by access control"
         );
+        if is_dm && config.dm_policy == DmPolicy::Allowlist && config.otp_self_approval {
+            handle_otp_flow(
+                accounts,
+                account_id,
+                user_id,
+                username.as_deref(),
+                text,
+                channel_id,
+                event_sink.as_deref(),
+            )
+            .await;
+        }
         return;
     }
 
@@ -541,22 +487,31 @@ pub(crate) async fn handle_inbound(
         return;
     }
 
-    // Store thread_ts for reply threading.
-    if let Some(ts) = &thread_ts {
-        let thread_key = format!("{channel_id}:{user_id}");
+    let thread_root = thread_ts.or_else(|| message_ts.clone());
+
+    if let (Some(thread_root), Some(team_id)) = (&thread_root, team_id) {
         let mut accts = accounts.write().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accts.get_mut(account_id) {
-            state.pending_threads.insert(thread_key, ts.clone());
+            state.note_stream_recipient(channel_id, thread_root, StreamRecipient {
+                user_id: user_id.to_string(),
+                team_id,
+            });
         }
     }
+
+    // Acknowledge with reactions only when the bot is directly addressed
+    // (DM or @mention) — never on general channel chatter — and the account
+    // has ack reactions enabled.
+    let ack_message_id = ack_reaction_target(config.ack_reactions, is_dm, is_mention, message_ts);
 
     // Dispatch to chat.
     if let Some(sink) = &event_sink {
         let reply_to = ChannelReplyTarget {
+            ack_message_id,
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),
             chat_id: channel_id.to_string(),
-            message_id: thread_ts,
+            message_id: thread_root,
             thread_id: None,
         };
 
@@ -585,12 +540,36 @@ pub(crate) async fn handle_inbound(
     }
 }
 
+pub(crate) fn account_access_allowed(
+    accounts: &AccountStateMap,
+    account_id: &str,
+    user_id: &str,
+    channel_id: &str,
+) -> bool {
+    let accounts = accounts.read().unwrap_or_else(|error| error.into_inner());
+    let Some(state) = accounts.get(account_id) else {
+        return false;
+    };
+    check_access(
+        channel_id.starts_with('D'),
+        user_id,
+        channel_id,
+        &state.config.dm_policy,
+        &state.config.group_policy,
+        &state.config.allowlist,
+        &state.config.channel_allowlist,
+    )
+}
+
 /// Handle a reaction_added or reaction_removed event.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_reaction_event(
     account_id: &str,
     user_id: &str,
     emoji: &str,
     item: &SlackReactionsItem,
+    item_user: Option<String>,
+    team_id: Option<String>,
     added: bool,
     accounts: &AccountStateMap,
 ) {
@@ -606,23 +585,184 @@ pub(crate) async fn handle_reaction_event(
         },
         _ => return,
     };
+    dispatch_reaction(
+        account_id, user_id, emoji, channel_id, message_ts, item_user, team_id, added, accounts,
+    )
+    .await;
+}
 
-    let event_sink = {
+/// Core reaction handling shared by Socket Mode and the Events API.
+/// Always emits a [`ChannelEvent::ReactionChange`] for observers; additionally
+/// routes the reaction into the agent as a synthetic message when
+/// `reaction_triggers` is enabled and the reaction is eligible.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn dispatch_reaction(
+    account_id: &str,
+    user_id: &str,
+    emoji: &str,
+    channel_id: String,
+    message_ts: String,
+    item_user: Option<String>,
+    team_id: Option<String>,
+    added: bool,
+    accounts: &AccountStateMap,
+) {
+    let (config, event_sink, bot_user_id) = {
         let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
-        accts.get(account_id).and_then(|s| s.event_sink.clone())
+        match accts.get(account_id) {
+            Some(state) => (
+                state.config.clone(),
+                state.event_sink.clone(),
+                state.bot_user_id.clone(),
+            ),
+            None => return,
+        }
     };
 
-    if let Some(sink) = event_sink {
-        sink.emit(ChannelEvent::ReactionChange {
-            channel_type: ChannelType::Slack,
-            account_id: account_id.to_string(),
-            chat_id: channel_id,
-            message_id: message_ts,
-            user_id: user_id.to_string(),
-            emoji: emoji.to_string(),
-            added,
-        })
-        .await;
+    let Some(sink) = event_sink else {
+        return;
+    };
+
+    // Always surface the raw reaction change to observers (web UI, hooks).
+    sink.emit(ChannelEvent::ReactionChange {
+        channel_type: ChannelType::Slack,
+        account_id: account_id.to_string(),
+        chat_id: channel_id.clone(),
+        message_id: message_ts.clone(),
+        user_id: user_id.to_string(),
+        emoji: emoji.to_string(),
+        added,
+    })
+    .await;
+
+    // Optionally route the reaction into the agent as a message. The bot's own
+    // acknowledgment reactions (👀/✅/❌) are always ignored to avoid loops.
+    //
+    // Fail closed: if the bot user id is unknown we cannot distinguish the bot's
+    // own reactions, so treat the reactor as "self" and skip. Triggering here
+    // would let the bot's own ACK reactions fire agent turns and loop.
+    let is_self = match bot_user_id.as_deref() {
+        Some(bot_id) => bot_id == user_id,
+        None => {
+            debug!(
+                account_id,
+                user_id, "slack reaction trigger skipped: bot_user_id unknown"
+            );
+            true
+        },
+    };
+    // Only reactions on the bot's *own* messages drive the agent. Without this
+    // any member could point the agent at an arbitrary third party's message
+    // simply by reacting to it. Fail closed when authorship is unknown.
+    let target_is_bot = match (bot_user_id.as_deref(), item_user.as_deref()) {
+        (Some(bot_id), Some(author)) => bot_id == author,
+        _ => false,
+    };
+    if !reaction_should_trigger(
+        config.reaction_triggers,
+        added,
+        is_self,
+        target_is_bot,
+        emoji,
+        &config.reaction_trigger_emojis,
+    ) {
+        return;
+    }
+
+    let is_dm = channel_id.starts_with('D');
+    let access_granted = check_access(
+        is_dm,
+        user_id,
+        &channel_id,
+        &config.dm_policy,
+        &config.group_policy,
+        &config.allowlist,
+        &config.channel_allowlist,
+    );
+    if !access_granted {
+        debug!(
+            account_id,
+            user_id, "slack reaction trigger denied by access control"
+        );
+        return;
+    }
+    if let Some(team_id) = team_id {
+        let mut accts = accounts.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = accts.get_mut(account_id) {
+            state.note_stream_recipient(&channel_id, &message_ts, StreamRecipient {
+                user_id: user_id.to_string(),
+                team_id,
+            });
+        }
+    }
+    // Thread the synthetic message under the reacted message so the agent sees
+    // the original content as thread context (dispatch fetches thread history).
+    let reply_to = ChannelReplyTarget {
+        channel_type: ChannelType::Slack,
+        account_id: account_id.to_string(),
+        chat_id: channel_id,
+        message_id: Some(message_ts),
+        thread_id: None,
+        // Never acknowledge a reaction trigger with another reaction.
+        ack_message_id: None,
+    };
+
+    let meta = ChannelMessageMeta {
+        channel_type: ChannelType::Slack,
+        sender_name: None,
+        username: None,
+        sender_id: Some(user_id.to_string()),
+        message_kind: Some(ChannelMessageKind::Text),
+        model: config
+            .resolve_model(&reply_to.chat_id, user_id)
+            .map(String::from),
+        agent_id: config
+            .resolve_agent_id(&reply_to.chat_id, user_id)
+            .map(String::from),
+        audio_filename: None,
+        documents: None,
+    };
+
+    let synthetic = format!("<@{user_id}> reacted :{emoji}: to this message.");
+    sink.dispatch_to_chat(&synthetic, reply_to, meta).await;
+}
+
+/// Decide whether an inbound reaction should be routed to the agent.
+///
+/// Triggers only when: the feature is enabled, the reaction was *added* (not
+/// removed), it is not the bot's own reaction, the reacted-to message was
+/// authored by the bot, and — if an emoji allowlist is configured — the emoji
+/// is on it. An empty allowlist matches any emoji.
+fn reaction_should_trigger(
+    enabled: bool,
+    added: bool,
+    is_self: bool,
+    target_is_bot: bool,
+    emoji: &str,
+    allowlist: &[String],
+) -> bool {
+    enabled
+        && added
+        && !is_self
+        && target_is_bot
+        && (allowlist.is_empty() || allowlist.iter().any(|e| e == emoji))
+}
+
+/// Decide which inbound message (if any) to acknowledge with reactions.
+///
+/// Returns the message ts only when acknowledgment reactions are enabled for
+/// the account and the bot was directly addressed — a 1:1 DM or an @mention.
+/// General channel chatter never earns a reaction (avoids emoji noise).
+fn ack_reaction_target(
+    ack_reactions_enabled: bool,
+    is_dm: bool,
+    is_mention: bool,
+    message_ts: Option<String>,
+) -> Option<String> {
+    if ack_reactions_enabled && (is_dm || is_mention) {
+        message_ts
+    } else {
+        None
     }
 }
 
@@ -639,115 +779,205 @@ pub(crate) fn check_access(
     if is_dm {
         match dm_policy {
             DmPolicy::Open => true,
-            DmPolicy::Allowlist => is_allowed(user_id, user_allowlist),
+            DmPolicy::Allowlist => {
+                !user_allowlist.is_empty() && is_allowed(user_id, user_allowlist)
+            },
             DmPolicy::Disabled => false,
         }
     } else {
         match group_policy {
             GroupPolicy::Open => true,
-            GroupPolicy::Allowlist => is_allowed(channel_id, channel_allowlist),
+            GroupPolicy::Allowlist => {
+                !channel_allowlist.is_empty() && is_allowed(channel_id, channel_allowlist)
+            },
             GroupPolicy::Disabled => false,
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+async fn handle_otp_flow(
+    accounts: &AccountStateMap,
+    account_id: &str,
+    user_id: &str,
+    username: Option<&str>,
+    text: &str,
+    channel_id: &str,
+    event_sink: Option<&dyn ChannelEventSink>,
+) {
+    let has_pending = {
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+        accts
+            .get(account_id)
+            .map(|s| {
+                let otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                otp.has_pending(user_id)
+            })
+            .unwrap_or(false)
+    };
 
-    #[test]
-    fn dm_open_allows_anyone() {
-        assert!(check_access(
-            true,
-            "U123",
-            "D456",
-            &DmPolicy::Open,
-            &GroupPolicy::Open,
-            &[],
-            &[],
-        ));
+    if has_pending {
+        let body = text.trim();
+        let is_code = body.len() == 6 && body.chars().all(|c| c.is_ascii_digit());
+        if !is_code {
+            return;
+        }
+
+        let result = {
+            let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+            match accts.get(account_id) {
+                Some(s) => {
+                    let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                    otp.verify(user_id, body)
+                },
+                None => return,
+            }
+        };
+
+        #[cfg(feature = "metrics")]
+        record_otp_verification(&result);
+
+        match result {
+            OtpVerifyResult::Approved => {
+                approve_sender_via_otp(
+                    event_sink,
+                    ChannelType::Slack,
+                    account_id,
+                    user_id,
+                    user_id,
+                    username,
+                )
+                .await;
+                send_otp_status(
+                    accounts,
+                    account_id,
+                    channel_id,
+                    "Verified! You now have access to this bot.",
+                )
+                .await;
+            },
+            OtpVerifyResult::WrongCode { attempts_left } => {
+                let msg = format!(
+                    "Incorrect code. {attempts_left} attempt{} remaining.",
+                    if attempts_left == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                );
+                send_otp_status(accounts, account_id, channel_id, &msg).await;
+            },
+            OtpVerifyResult::LockedOut => {
+                send_otp_status(
+                    accounts,
+                    account_id,
+                    channel_id,
+                    "Too many failed attempts. Please try again later.",
+                )
+                .await;
+                emit_otp_resolution(
+                    event_sink,
+                    ChannelType::Slack,
+                    account_id,
+                    user_id,
+                    username,
+                    "locked_out",
+                )
+                .await;
+            },
+            OtpVerifyResult::Expired => {
+                send_otp_status(
+                    accounts,
+                    account_id,
+                    channel_id,
+                    "Your code has expired. Send any message to get a new one.",
+                )
+                .await;
+                emit_otp_resolution(
+                    event_sink,
+                    ChannelType::Slack,
+                    account_id,
+                    user_id,
+                    username,
+                    "expired",
+                )
+                .await;
+            },
+            OtpVerifyResult::NoPending => {},
+        }
+        return;
     }
 
-    #[test]
-    fn dm_allowlist_requires_user() {
-        assert!(!check_access(
-            true,
-            "U999",
-            "D456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Open,
-            &["U123".to_string()],
-            &[],
-        ));
-        assert!(check_access(
-            true,
-            "U123",
-            "D456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Open,
-            &["U123".to_string()],
-            &[],
-        ));
-    }
+    let init_result = {
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+        match accts.get(account_id) {
+            Some(s) => {
+                let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
+                otp.initiate(user_id, username.map(String::from), None)
+            },
+            None => return,
+        }
+    };
 
-    #[test]
-    fn dm_disabled_denies_all() {
-        assert!(!check_access(
-            true,
-            "U123",
-            "D456",
-            &DmPolicy::Disabled,
-            &GroupPolicy::Open,
-            &[],
-            &[],
-        ));
+    match init_result {
+        OtpInitResult::Created(code) => {
+            #[cfg(feature = "metrics")]
+            moltis_metrics::counter!(
+                moltis_metrics::channels::OTP_CHALLENGES_TOTAL,
+                moltis_metrics::labels::CHANNEL => "slack"
+            )
+            .increment(1);
+            send_otp_status(accounts, account_id, channel_id, OTP_CHALLENGE_MSG).await;
+            let expires_at = std::time::SystemTime::now()
+                .checked_add(OTP_TTL)
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or_default();
+            emit_otp_challenge(
+                event_sink,
+                ChannelType::Slack,
+                account_id,
+                user_id,
+                username,
+                None,
+                code,
+                expires_at,
+            )
+            .await;
+        },
+        OtpInitResult::AlreadyPending | OtpInitResult::LockedOut => {},
     }
+}
 
-    #[test]
-    fn channel_open_allows_any() {
-        assert!(check_access(
-            false,
-            "U123",
-            "C456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Open,
-            &[],
-            &[],
-        ));
-    }
+#[cfg(feature = "metrics")]
+fn record_otp_verification(result: &OtpVerifyResult) {
+    let label = match result {
+        OtpVerifyResult::Approved => "approved",
+        OtpVerifyResult::WrongCode { .. } => "wrong_code",
+        OtpVerifyResult::LockedOut => "locked_out",
+        OtpVerifyResult::Expired => "expired",
+        OtpVerifyResult::NoPending => return,
+    };
+    moltis_metrics::counter!(
+        moltis_metrics::channels::OTP_VERIFICATIONS_TOTAL,
+        moltis_metrics::labels::CHANNEL => "slack",
+        "result" => label
+    )
+    .increment(1);
+}
 
-    #[test]
-    fn channel_allowlist_requires_channel() {
-        assert!(!check_access(
-            false,
-            "U123",
-            "C999",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Allowlist,
-            &[],
-            &["C456".to_string()],
-        ));
-        assert!(check_access(
-            false,
-            "U123",
-            "C456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Allowlist,
-            &[],
-            &["C456".to_string()],
-        ));
-    }
-
-    #[test]
-    fn channel_disabled_denies_all() {
-        assert!(!check_access(
-            false,
-            "U123",
-            "C456",
-            &DmPolicy::Allowlist,
-            &GroupPolicy::Disabled,
-            &[],
-            &[],
-        ));
+async fn send_otp_status(
+    accounts: &AccountStateMap,
+    account_id: &str,
+    channel_id: &str,
+    text: &str,
+) {
+    let outbound = SlackOutbound {
+        accounts: Arc::clone(accounts),
+    };
+    if let Err(e) = outbound.send_text(account_id, channel_id, text, None).await {
+        warn!(
+            account_id,
+            channel_id, "failed to send slack OTP status: {e}"
+        );
     }
 }

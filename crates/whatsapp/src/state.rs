@@ -123,14 +123,14 @@ impl AccountState {
         mut msg: waproto::whatsapp::Message,
     ) -> crate::Result<()> {
         watermark_message(&mut msg);
-        let msg_id =
-            self.client
-                .send_message(to, msg)
-                .await
-                .map_err(|e| crate::Error::Whatsapp {
-                    message: e.to_string(),
-                })?;
-        self.record_sent_id(&msg_id);
+        let sent = self
+            .client
+            .send_message(to, msg)
+            .await
+            .map_err(|e| crate::Error::Whatsapp {
+                message: e.to_string(),
+            })?;
+        self.record_sent_id(&sent.message_id);
         Ok(())
     }
 }

@@ -18,14 +18,12 @@ use {
 };
 
 const FIREWORKS_BASE_URL: &str = "https://api.fireworks.ai/inference/v1";
-const TEST_MODEL: &str = "accounts/fireworks/models/glm-5p1";
+const TEST_MODEL: &str = "accounts/fireworks/models/gpt-oss-120b";
 
 /// Known Fireworks models we catalog. Keep in sync with `FIREWORKS_MODELS` in
 /// `crates/providers/src/model_catalogs.rs`.
 const KNOWN_MODELS: &[&str] = &[
-    "accounts/fireworks/models/kimi-k2p5",
     "accounts/fireworks/models/kimi-k2p6",
-    "accounts/fireworks/models/glm-5p1",
     "accounts/fireworks/models/gpt-oss-120b",
     "accounts/fireworks/models/deepseek-v4-pro",
 ];
@@ -53,8 +51,8 @@ fn make_named_provider(model: &str, provider_name: &str) -> OpenAiProvider {
         provider_name.to_string(),
     );
 
-    // Mirror `is_fireworks_kimi_router` from model_catalogs.rs (issue #810).
-    if provider_name == "fireworks" && model.contains("/routers/") && model.contains("kimi") {
+    // Mirror Fireworks Kimi compatibility handling from model_catalogs.rs (issue #810).
+    if provider_name == "fireworks" && model.contains("/fireworks/") && model.contains("kimi") {
         p = p.with_strict_tools(false).with_reasoning_content(true);
     }
 
@@ -338,16 +336,16 @@ async fn catalog_models_are_live() {
     eprintln!("=====================================\n");
 
     assert!(
-        alive.contains(&TEST_MODEL),
-        "{TEST_MODEL} should be reachable"
+        dead.is_empty(),
+        "catalog contains unreachable models: {dead:?}"
     );
 }
 
-// ── Fireworks Kimi K2.5 regression coverage (issue #810) ────────────────────
+// ── Fireworks Kimi K2.6 regression coverage (issue #810) ────────────────────
 
-const KIMI_MODEL: &str = "accounts/fireworks/models/kimi-k2p5";
+const KIMI_MODEL: &str = "accounts/fireworks/models/kimi-k2p6";
 
-/// Basic completion via Fireworks Kimi K2.5 must succeed.
+/// Basic completion via Fireworks Kimi K2.6 must succeed.
 /// Regression test for issue #810 where strict mode schemas caused 400 errors.
 #[tokio::test]
 #[ignore]
@@ -360,13 +358,13 @@ async fn kimi_router_basic_completion() {
     let response = p
         .complete(&messages, &[])
         .await
-        .expect("Kimi K2.5 via Fireworks should succeed (issue #810)");
+        .expect("Kimi K2.6 via Fireworks should succeed (issue #810)");
 
     let text = response.text.expect("should have text response");
     assert!(text.contains('4'), "expected '4' in response: {text:?}");
 }
 
-/// Tool calling via Fireworks Kimi K2.5 must not return 400.
+/// Tool calling via Fireworks Kimi K2.6 must not return 400.
 /// This was the primary regression in issue #810: strict tool schemas were
 /// sent to a backend that doesn't support them.
 #[tokio::test]
@@ -381,7 +379,7 @@ async fn kimi_router_tool_call_no_400() {
     let response = p
         .complete(&messages, &tools)
         .await
-        .expect("Kimi K2.5 via Fireworks tool call should not 400 (issue #810)");
+        .expect("Kimi K2.6 via Fireworks tool call should not 400 (issue #810)");
 
     assert!(
         !response.tool_calls.is_empty(),

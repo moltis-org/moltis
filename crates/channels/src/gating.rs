@@ -13,15 +13,35 @@ pub fn is_allowed(peer_id: &str, allowlist: &[String]) -> bool {
     allowlist.iter().any(|pattern| {
         let pat = pattern.to_lowercase();
         if pat.contains('*') {
-            glob_match(&pat, &peer_lower)
+            glob_match_lower(&pat, &peer_lower)
         } else {
             pat == peer_lower
         }
     })
 }
 
+/// Whether a message sender matches an allowlist, by identifier text.
+///
+/// Sits on top of [`is_allowed`] and additionally tries the user part of an
+/// `@`-qualified id, because some channels report a fully qualified address
+/// where the allowlist holds the bare user (WhatsApp JIDs are e.g.
+/// `15551234567@s.whatsapp.net` against an allowlist of plain phone numbers).
+///
+/// This is the textual fallback. A channel whose identifiers have more than one
+/// valid spelling should override
+/// [`ChannelConfigView::sender_on_allowlist`](crate::config_view::ChannelConfigView::sender_on_allowlist)
+/// and compare parsed identities instead.
+pub fn sender_matches_allowlist(sender_id: &str, allowlist: &[String]) -> bool {
+    is_allowed(sender_id, allowlist)
+        || sender_id
+            .split_once('@')
+            .is_some_and(|(user, _)| is_allowed(user, allowlist))
+}
+
 /// Simple glob matching supporting `*` as a wildcard for any sequence of chars.
-fn glob_match(pattern: &str, text: &str) -> bool {
+///
+/// Both arguments must already be lowercased by the caller.
+fn glob_match_lower(pattern: &str, text: &str) -> bool {
     let parts: Vec<&str> = pattern.split('*').collect();
     if parts.len() == 1 {
         return pattern == text;
@@ -126,5 +146,25 @@ mod tests {
         let list = vec!["user_*_admin".into()];
         assert!(is_allowed("user_123_admin", &list));
         assert!(!is_allowed("user_123_mod", &list));
+    }
+
+    /// WhatsApp reports the sender as a JID; allowlists hold the bare number.
+    #[test]
+    fn sender_match_falls_back_to_the_user_part_of_a_jid() {
+        let list = vec!["15551234567".to_string()];
+        assert!(sender_matches_allowlist(
+            "15551234567@s.whatsapp.net",
+            &list
+        ));
+        assert!(!sender_matches_allowlist(
+            "15559999999@s.whatsapp.net",
+            &list
+        ));
+    }
+
+    #[test]
+    fn sender_match_accepts_the_full_id_too() {
+        let list = vec!["user@example.com".to_string()];
+        assert!(sender_matches_allowlist("user@example.com", &list));
     }
 }

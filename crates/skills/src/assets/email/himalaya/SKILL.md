@@ -1,6 +1,6 @@
 ---
 name: himalaya
-description: CLI to manage emails via IMAP/SMTP. Use himalaya to list, read, write, reply, forward, search, and organize emails from the terminal. Supports multiple accounts and message composition with MML (MIME Meta Language).
+description: Himalaya v2 CLI for reading and managing email through IMAP, JMAP, Gmail, Microsoft Graph, Maildir, M2dir, and SMTP send operations.
 origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
@@ -15,270 +15,128 @@ requires:
     - kind: cargo
       package: himalaya
       bins: [himalaya]
-      label: "Install Himalaya (CLI email)"
+      label: "Install Himalaya v2 (CLI email)"
 ---
 
-# Himalaya Email CLI
+# Himalaya v2 Email CLI
 
-Himalaya is a CLI email client that lets you manage emails from the terminal using IMAP, SMTP, Notmuch, or Sendmail backends.
+Use this skill only with Himalaya major version 2. Its command and configuration
+syntax differs from v1.
 
 ## References
 
-- `references/configuration.md` (config file setup + IMAP/SMTP authentication)
-- `references/message-composition.md` (MML syntax for composing emails)
+- `references/configuration.md` for v2 config paths, accounts, and backends.
+- `references/message-composition.md` for v2 compose and send flows.
 
-## Prerequisites
+## Install and configure
 
-1. Himalaya CLI installed (`himalaya --version` to verify)
-2. A configuration file at `~/.config/himalaya/config.toml`
-3. IMAP/SMTP credentials configured (password stored securely)
-
-### Installation
+Install a v2 build and verify it before continuing:
 
 ```bash
-# Pre-built binary (Linux/macOS — recommended)
-curl -sSL https://raw.githubusercontent.com/pimalaya/himalaya/master/install.sh | PREFIX=~/.local sh
+himalaya --version
+```
 
-# macOS via Homebrew
+Official installation options include Homebrew and the current Git repository:
+
+```bash
 brew install himalaya
-
-# Or via cargo (any platform with Rust)
-cargo install himalaya --locked
+cargo install --locked --git https://github.com/pimalaya/himalaya.git
 ```
 
-## Configuration Setup
-
-Run the interactive wizard to set up an account:
+If the package manager installs v1, use a v2 release or the Git installation.
+Run the v2 setup wizard with no subcommand:
 
 ```bash
-himalaya account configure
+himalaya
 ```
 
-Or create `~/.config/himalaya/config.toml` manually:
-
-```toml
-[accounts.personal]
-email = "you@example.com"
-display-name = "Your Name"
-default = true
-
-backend.type = "imap"
-backend.host = "imap.example.com"
-backend.port = 993
-backend.encryption.type = "tls"
-backend.login = "you@example.com"
-backend.auth.type = "password"
-backend.auth.cmd = "pass show email/imap"  # or use keyring
-
-message.send.backend.type = "smtp"
-message.send.backend.host = "smtp.example.com"
-message.send.backend.port = 587
-message.send.backend.encryption.type = "start-tls"
-message.send.backend.login = "you@example.com"
-message.send.backend.auth.type = "password"
-message.send.backend.auth.cmd = "pass show email/smtp"
-```
-
-## Integration Notes
-
-- **Reading, listing, searching, moving, deleting** all work directly through the terminal tool
-- **Composing/replying/forwarding** — piped input (`cat << EOF | himalaya template send`) is recommended for reliability. Interactive `$EDITOR` mode works with `pty=true` + background + process tool, but requires knowing the editor and its commands
-- Use `--output json` for structured output that's easier to parse programmatically
-- The `himalaya account configure` wizard requires interactive input — use PTY mode: `terminal(command="himalaya account configure", pty=true)`
-
-## Common Operations
-
-### List Folders
+The wizard prints TOML that can be saved or merged into the config. There is no
+v2 `account configure` command. Check the result with:
 
 ```bash
-himalaya folder list
+himalaya --json account list
+himalaya --account=work account check
 ```
 
-### List Emails
+## Command conventions
 
-List emails in INBOX (default):
+Use v2's global account and backend selectors before the subcommand. Mailbox
+selectors belong to the leaf command:
 
 ```bash
-himalaya envelope list
+himalaya --json --account=work --backend=imap envelope list --mailbox=INBOX
 ```
 
-List emails in a specific folder:
+- `--json` selects structured output; v2 does not use `--output json`.
+- `--account` and `--backend` are global selectors. `--mailbox` is a leaf-command
+  option; these can also be written as `-a`, `-b`, and `-m`.
+- Shared read backends are `imap`, `jmap`, `gmail`, `msgraph`, `maildir`, and
+  `m2dir`. SMTP sends messages; it does not fetch them.
+- Message IDs are mailbox-relative for some backends. Re-list after moving mail
+  or changing mailboxes.
+
+## Read operations
+
+List mailboxes and envelopes:
 
 ```bash
-himalaya envelope list --folder "Sent"
+himalaya --json --account=work --backend=imap mailbox list
+himalaya --json --account=work --backend=imap \
+  envelope list --mailbox=INBOX --page=1 --page-size=20
 ```
 
-List with pagination:
+Search with the v2 shared query language:
 
 ```bash
-himalaya envelope list --page 1 --page-size 20
+himalaya --json --account=work --backend=imap \
+  envelope search --mailbox=INBOX -- \
+  from alice@example.com and subject meeting order by date desc
 ```
 
-### Search Emails
+Read a rendered message or raw RFC 5322/MIME:
 
 ```bash
-himalaya envelope list from john@example.com subject meeting
+himalaya --account=work --backend=imap message read --mailbox=INBOX -- 42
+himalaya --account=work --backend=imap message read --mailbox=INBOX --raw -- 42
 ```
 
-### Read an Email
-
-Read email by ID (shows plain text):
+The shared `envelope search` query language is not implemented by the v2 Gmail
+or Microsoft Graph backends. Use their protocol-specific APIs when native
+search is required:
 
 ```bash
-himalaya message read 42
+himalaya --json --account=work gmail messages list -q "from:alice is:unread"
+himalaya --json --account=work msgraph mail-folder list
 ```
 
-Export raw MIME:
+## Manage messages
+
+Use explicit source and destination mailboxes for copy or move operations:
 
 ```bash
-himalaya message export 42 --full
+himalaya --account=work --backend=imap message copy --from=INBOX --to=Archives -- 42
+himalaya --account=work --backend=imap message move --from=INBOX --to=Archives -- 42
 ```
 
-### Reply to an Email
+The shared message command in Himalaya v2.0.0 has no delete operation. Use a
+backend-specific command when deletion is required.
 
-To reply non-interactively from Moltis, read the original message, compose a reply, and pipe it:
-
-```bash
-# Get the reply template, edit it, and send
-himalaya template reply 42 | sed 's/^$/\nYour reply text here\n/' | himalaya template send
-```
-
-Or build the reply manually:
+Manage flags and attachments:
 
 ```bash
-cat << 'EOF' | himalaya template send
-From: you@example.com
-To: sender@example.com
-Subject: Re: Original Subject
-In-Reply-To: <original-message-id>
-
-Your reply here.
-EOF
-```
-
-Reply-all (interactive — needs $EDITOR, use template approach above instead):
-
-```bash
-himalaya message reply 42 --all
-```
-
-### Forward an Email
-
-```bash
-# Get forward template and pipe with modifications
-himalaya template forward 42 | sed 's/^To:.*/To: newrecipient@example.com/' | himalaya template send
-```
-
-### Write a New Email
-
-**Non-interactive (use this from Moltis)** — pipe the message via stdin:
-
-```bash
-cat << 'EOF' | himalaya template send
-From: you@example.com
-To: recipient@example.com
-Subject: Test Message
-
-Hello from Himalaya!
-EOF
-```
-
-Or with headers flag:
-
-```bash
-himalaya message write -H "To:recipient@example.com" -H "Subject:Test" "Message body here"
-```
-
-Note: `himalaya message write` without piped input opens `$EDITOR`. This works with `pty=true` + background mode, but piping is simpler and more reliable.
-
-### Move/Copy Emails
-
-Move to folder:
-
-```bash
-himalaya message move 42 "Archive"
-```
-
-Copy to folder:
-
-```bash
-himalaya message copy 42 "Important"
-```
-
-### Delete an Email
-
-```bash
-himalaya message delete 42
-```
-
-### Manage Flags
-
-Add flag:
-
-```bash
-himalaya flag add 42 --flag seen
-```
-
-Remove flag:
-
-```bash
-himalaya flag remove 42 --flag seen
-```
-
-## Multiple Accounts
-
-List accounts:
-
-```bash
-himalaya account list
-```
-
-Use a specific account:
-
-```bash
-himalaya --account work envelope list
-```
-
-## Attachments
-
-Save attachments from a message:
-
-```bash
-himalaya attachment download 42
-```
-
-Save to specific directory:
-
-```bash
-himalaya attachment download 42 --dir ~/Downloads
-```
-
-## Output Formats
-
-Most commands support `--output` for structured output:
-
-```bash
-himalaya envelope list --output json
-himalaya envelope list --output plain
+himalaya --account=work --backend=imap flag add --mailbox=INBOX --flag=seen -- 42
+himalaya --account=work --backend=imap flag remove --mailbox=INBOX --flag=seen -- 42
+himalaya --account=work --backend=imap attachment list --mailbox=INBOX -- 42
+himalaya --account=work --backend=imap attachment download --mailbox=INBOX -- 42
 ```
 
 ## Debugging
 
-Enable debug logging:
+Every command provides v2-specific help. Use logging on stderr when needed:
 
 ```bash
-RUST_LOG=debug himalaya envelope list
+himalaya envelope search --help
+himalaya --log=debug --account=work --backend=imap mailbox list
+himalaya --log=trace --log-file=/tmp/himalaya.log \
+  --account=work --backend=imap mailbox list
 ```
-
-Full trace with backtrace:
-
-```bash
-RUST_LOG=trace RUST_BACKTRACE=1 himalaya envelope list
-```
-
-## Tips
-
-- Use `himalaya --help` or `himalaya <command> --help` for detailed usage.
-- Message IDs are relative to the current folder; re-list after folder changes.
-- For composing rich emails with attachments, use MML syntax (see `references/message-composition.md`).
-- Store passwords securely using `pass`, system keyring, or a command that outputs the password.

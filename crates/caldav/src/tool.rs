@@ -97,11 +97,7 @@ impl CalDavTool {
         })?;
 
         #[cfg(feature = "tracing")]
-        tracing::info!(
-            account = account_name,
-            url = %base_url,
-            "connecting to CalDAV server"
-        );
+        tracing::info!(account = account_name, "connecting to CalDAV server");
 
         let client: SharedCalDavClient =
             Arc::new(LibDavCalDavClient::connect(&base_url, username, password).await?);
@@ -123,7 +119,8 @@ impl AgentTool for CalDavTool {
         "Manage calendar events via CalDAV. Supports multiple accounts (Fastmail, iCloud, generic).\n\n\
          Operations:\n\
          - list_calendars: List available calendars. Returns href, display_name, color, description.\n\
-         - list_events: List events in a calendar. Params: calendar (href, required), start/end (ISO 8601, optional).\n\
+         - list_events: List events in a calendar. Params: calendar (href, required), start/end (ISO 8601, optional). \
+           Provide BOTH start and end to filter server-side to that window; passing only one is ignored and returns every event.\n\
          - create_event: Create a new event. Params: calendar (href), summary, start (ISO 8601), end (optional), \
            all_day (bool), location, description.\n\
          - update_event: Update an existing event. Params: event_href, etag (required for concurrency), \
@@ -165,11 +162,11 @@ impl AgentTool for CalDavTool {
                 },
                 "start": {
                     "type": "string",
-                    "description": "Start date/time in ISO 8601 format (e.g. 2025-06-15T10:00:00 or 2025-06-15 for all-day)"
+                    "description": "Start date/time in ISO 8601 format (e.g. 2025-06-15T10:00:00 or 2025-06-15 for all-day). For list_events, filtering only applies when both start and end are set."
                 },
                 "end": {
                     "type": "string",
-                    "description": "End date/time in ISO 8601 format"
+                    "description": "End date/time in ISO 8601 format. For list_events, filtering only applies when both start and end are set."
                 },
                 "all_day": {
                     "type": "boolean",
@@ -341,14 +338,34 @@ impl crate::client::CalDavClient for MockCalDavClient {
     async fn list_events(
         &self,
         _calendar_href: &str,
-        _range: Option<TimeRange>,
+        range: Option<TimeRange>,
     ) -> crate::error::Result<Vec<crate::types::EventSummary>> {
         let events = self
             .events
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        Ok(events)
+        // Same range semantics as the real client's server-side query, so
+        // tests exercise the filtering logic.
+        Ok(match range {
+            Some(ref r) => crate::time_filter::filter_events(events, r),
+            None => events,
+        })
+    }
+
+    async fn list_event_resources(
+        &self,
+        _calendar_href: &str,
+    ) -> crate::error::Result<Vec<crate::types::CalendarResourceMetadata>> {
+        Ok(Vec::new())
+    }
+
+    async fn fetch_event_resources(
+        &self,
+        _calendar_href: &str,
+        _hrefs: &[String],
+    ) -> crate::error::Result<Vec<crate::types::CalendarObjectResult>> {
+        Ok(Vec::new())
     }
 
     async fn create_event(
@@ -485,6 +502,120 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("calendar"));
+    }
+
+    fn mock_event(
+        uid: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        all_day: bool,
+    ) -> crate::types::EventSummary {
+        crate::types::EventSummary {
+            href: format!("/cal/{uid}.ics"),
+            etag: "\"etag\"".into(),
+            uid: Some(uid.into()),
+            summary: Some(uid.into()),
+            start: start.map(String::from),
+            end: end.map(String::from),
+            all_day,
+            location: None,
+        }
+    }
+
+    fn mock_client_with_events() -> MockCalDavClient {
+        MockCalDavClient {
+            calendars: vec![],
+            events: std::sync::Mutex::new(vec![
+                mock_event(
+                    "before",
+                    Some("2026-01-10T10:00:00"),
+                    Some("2026-01-10T11:00:00"),
+                    false,
+                ),
+                mock_event(
+                    "overlaps-start",
+                    Some("2026-01-31T23:00:00"),
+                    Some("2026-02-01T01:00:00"),
+                    false,
+                ),
+                mock_event(
+                    "inside",
+                    Some("2026-02-15T10:00:00"),
+                    Some("2026-02-15T11:00:00"),
+                    false,
+                ),
+                mock_event(
+                    "overlaps-end",
+                    Some("2026-02-28T23:00:00"),
+                    Some("2026-03-01T01:00:00"),
+                    false,
+                ),
+                mock_event(
+                    "after",
+                    Some("2026-04-01T10:00:00"),
+                    Some("2026-04-01T11:00:00"),
+                    false,
+                ),
+                mock_event("all-day-inside", Some("2026-02-10"), None, true),
+                mock_event("no-dtend-inside", Some("2026-02-20T09:00:00"), None, false),
+            ]),
+        }
+    }
+
+    fn february() -> TimeRange {
+        TimeRange {
+            start: "2026-02-01T00:00:00".into(),
+            end: "2026-03-01T00:00:00".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_list_events_excludes_events_outside_range() {
+        use crate::client::CalDavClient;
+        let client = mock_client_with_events();
+        let events = client.list_events("/cal/", Some(february())).await.unwrap();
+        let uids: Vec<&str> = events.iter().filter_map(|e| e.uid.as_deref()).collect();
+        assert!(!uids.contains(&"before"));
+        assert!(!uids.contains(&"after"));
+    }
+
+    #[tokio::test]
+    async fn mock_list_events_includes_boundary_overlapping_events() {
+        use crate::client::CalDavClient;
+        let client = mock_client_with_events();
+        let events = client.list_events("/cal/", Some(february())).await.unwrap();
+        let uids: Vec<&str> = events.iter().filter_map(|e| e.uid.as_deref()).collect();
+        assert!(uids.contains(&"overlaps-start"));
+        assert!(uids.contains(&"inside"));
+        assert!(uids.contains(&"overlaps-end"));
+    }
+
+    #[tokio::test]
+    async fn mock_list_events_handles_all_day_and_missing_dtend() {
+        use crate::client::CalDavClient;
+        let client = mock_client_with_events();
+        let events = client.list_events("/cal/", Some(february())).await.unwrap();
+        let uids: Vec<&str> = events.iter().filter_map(|e| e.uid.as_deref()).collect();
+        assert!(uids.contains(&"all-day-inside"));
+        assert!(uids.contains(&"no-dtend-inside"));
+
+        // A range after the all-day event's day excludes it.
+        let march = TimeRange {
+            start: "2026-03-05T00:00:00".into(),
+            end: "2026-03-10T00:00:00".into(),
+        };
+        let events = client.list_events("/cal/", Some(march)).await.unwrap();
+        let uids: Vec<&str> = events.iter().filter_map(|e| e.uid.as_deref()).collect();
+        assert!(!uids.contains(&"all-day-inside"));
+        assert!(!uids.contains(&"no-dtend-inside"));
+    }
+
+    #[tokio::test]
+    async fn mock_list_events_without_range_returns_everything() {
+        use crate::client::CalDavClient;
+        let client = mock_client_with_events();
+        let events = client.list_events("/cal/", None).await.unwrap();
+        assert_eq!(events.len(), 7);
     }
 
     #[tokio::test]

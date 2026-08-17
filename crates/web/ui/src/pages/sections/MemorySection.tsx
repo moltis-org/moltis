@@ -13,6 +13,8 @@ interface MemoryStatus {
 	total_chunks?: number;
 	embedding_model?: string;
 	db_size_display?: string;
+	backend_type?: string;
+	hnsw_percent?: number | null;
 }
 
 interface MemoryConfig {
@@ -27,6 +29,7 @@ interface MemoryConfig {
 	session_export?: string;
 	prompt_memory_mode?: string;
 	qmd_feature_enabled?: boolean;
+	zvec_feature_enabled?: boolean;
 	enable_prefetch?: boolean;
 	prefetch_limit?: number;
 	auto_extract_interval?: number;
@@ -143,6 +146,7 @@ export function MemorySection(): VNode {
 	}
 
 	const qmdFeatureEnabled = memConfig?.qmd_feature_enabled !== false;
+	const zvecFeatureEnabled = memConfig?.zvec_feature_enabled !== false;
 	const qmdAvailable = qmdStatus?.available === true;
 
 	return (
@@ -164,6 +168,31 @@ export function MemorySection(): VNode {
 					}}
 				>
 					<SubHeading title="Status" />
+					<div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+						<span className="text-xs text-[var(--muted)]">Backend:</span>
+						<span
+							style={{
+								fontSize: ".7rem",
+								fontWeight: 600,
+								padding: "2px 8px",
+								borderRadius: "4px",
+								background:
+									memStatus.backend_type === "zvec"
+										? "var(--accent)"
+										: memStatus.backend_type === "qmd"
+											? "var(--warning)"
+											: "var(--surface)",
+								color:
+									memStatus.backend_type === "zvec" || memStatus.backend_type === "qmd" ? "var(--bg)" : "var(--text)",
+								textTransform: "uppercase",
+							}}
+						>
+							{memStatus.backend_type || "builtin"}
+						</span>
+						{memStatus.hnsw_percent == null ? null : (
+							<span className="text-xs text-[var(--muted)]">HNSW: {memStatus.hnsw_percent}%</span>
+						)}
+					</div>
 					<div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: "8px 16px", fontSize: ".8rem" }}>
 						<div>
 							<span className="text-[var(--muted)]">Files:</span>
@@ -241,6 +270,9 @@ export function MemorySection(): VNode {
 										Built-in
 									</th>
 									<th style={{ textAlign: "center", padding: "4px 8px 8px", color: "var(--muted)", fontWeight: 500 }}>
+										Zvec
+									</th>
+									<th style={{ textAlign: "center", padding: "4px 8px 8px", color: "var(--muted)", fontWeight: 500 }}>
 										QMD
 									</th>
 								</tr>
@@ -248,41 +280,58 @@ export function MemorySection(): VNode {
 							<tbody>
 								<tr>
 									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>Search type</td>
-									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>FTS5 + vector</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>
+										FTS5 + vector (brute-force)
+									</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>
+										HNSW + FTS (native)
+									</td>
 									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>
 										BM25 + vector + LLM
 									</td>
 								</tr>
 								<tr>
-									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>External dependency</td>
+									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>External dep</td>
 									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--accent)" }}>None</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>C++ zvec library</td>
 									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>Node.js/Bun</td>
 								</tr>
 								<tr>
 									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>Embedding cache</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>SQLite</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>redb (LSM-tree)</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>{"\u2717"}</td>
+								</tr>
+								<tr>
+									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>Batch operations</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--accent)" }}>{"\u2713"}</td>
 									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--accent)" }}>{"\u2713"}</td>
 									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>{"\u2717"}</td>
 								</tr>
 								<tr>
-									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>OpenAI batch API</td>
+									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>Graceful fallback</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>N/A</td>
 									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--accent)" }}>
-										{"\u2713"} (50% cheaper)
+										{"\u2713"} ({"\u2192"} SQLite)
 									</td>
-									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>{"\u2717"}</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--accent)" }}>
+										{"\u2713"} ({"\u2192"} SQLite)
+									</td>
 								</tr>
 								<tr>
-									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>Provider fallback</td>
+									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>Reranking</td>
 									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--accent)" }}>{"\u2713"}</td>
-									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>{"\u2717"}</td>
-								</tr>
-								<tr>
-									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>LLM reranking</td>
-									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>Optional</td>
-									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--accent)" }}>Built-in</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--accent)" }}>
+										{"\u2713"} (RRF + Weighted)
+									</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--accent)" }}>{"\u2713"} (LLM)</td>
 								</tr>
 								<tr>
 									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>Best for</td>
 									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>Most users</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>
+										Vector-native workloads
+									</td>
 									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>Power users</td>
 								</tr>
 							</tbody>
@@ -302,6 +351,17 @@ export function MemorySection(): VNode {
 						</button>
 						<button
 							type="button"
+							className={`provider-btn ${backend === "zvec" ? "" : "provider-btn-secondary"}`}
+							disabled={!zvecFeatureEnabled}
+							onClick={() => {
+								setBackend("zvec");
+								rerender();
+							}}
+						>
+							Zvec (Experimental)
+						</button>
+						<button
+							type="button"
 							className={`provider-btn ${backend === "qmd" ? "" : "provider-btn-secondary"}`}
 							disabled={!qmdFeatureEnabled}
 							onClick={() => {
@@ -317,6 +377,12 @@ export function MemorySection(): VNode {
 						<div className="text-xs text-[var(--error)]" style={{ marginTop: "8px" }}>
 							QMD feature is not enabled. Rebuild moltis with{" "}
 							<code style={{ fontFamily: "var(--font-mono)", fontSize: ".7rem" }}>--features qmd</code>
+						</div>
+					)}
+					{zvecFeatureEnabled ? null : (
+						<div className="text-xs text-[var(--error)]" style={{ marginTop: "8px" }}>
+							Zvec feature is not enabled. Rebuild moltis with{" "}
+							<code style={{ fontFamily: "var(--font-mono)", fontSize: ".7rem" }}>--features zvec</code>
 						</div>
 					)}
 

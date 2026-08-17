@@ -1,16 +1,20 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, atomic::Ordering},
-};
-
 use {
-    secrecy::{ExposeSecret, Secret},
+    super::feedback::install_feedback,
+    anyhow::Context as _,
+    secrecy::Secret,
+    std::{
+        path::PathBuf,
+        sync::{Arc, atomic::Ordering},
+    },
     tracing::{debug, info, warn},
 };
-
 mod credential_env;
+mod webauthn;
+mod webhook_security;
 
-use credential_env::{CredentialEnvVarProvider, ensure_sandbox_api_key};
+use credential_env::{
+    CredentialEnvVarProvider, ensure_sandbox_api_key, gateway_credentials_allowed,
+};
 
 use {
     moltis_providers::{PendingDiscoveries, ProviderRegistry},
@@ -37,10 +41,12 @@ use crate::{
 use crate::tailscale::{TailscaleMode, validate_tailscale_config};
 
 use crate::server::{
-    helpers::{StartupMemProbe, env_flag_enabled, instance_slug, restore_saved_local_llm_models},
+    helpers::{StartupMemProbe, env_flag_enabled, restore_saved_local_llm_models},
     prepared::PreparedGatewayCore,
     startup::deferred_openclaw_status,
 };
+
+use webauthn::build_webauthn_registry;
 
 #[cfg(feature = "wasm")]
 use crate::server::helpers::env_value_with_overrides;
@@ -52,6 +58,7 @@ use crate::server::helpers::fs_tools_host_warning_message;
 use crate::server::helpers::start_skill_hot_reload_watcher;
 
 pub(super) struct PostStateInputs {
+    pub profile: crate::server::CoreStartupProfile,
     pub bind: String,
     pub port: u16,
     pub config: moltis_config::MoltisConfig,
@@ -112,136 +119,12 @@ pub(super) struct PostStateInputs {
     pub tailscale_reset_on_exit_override: Option<bool>,
 }
 
-async fn build_webauthn_registry(
-    config: &moltis_config::MoltisConfig,
-    port: u16,
-) -> anyhow::Result<Option<crate::auth_webauthn::SharedWebAuthnRegistry>> {
-    let default_scheme = if config.tls.enabled {
-        "https"
-    } else {
-        "http"
-    };
-
-    // Derive RP ID and origin from server.external_url / MOLTIS_EXTERNAL_URL
-    // when available, before falling back to fine-grained env vars.
-    let (external_rp_id, external_origin) = if let Some(ref ext_url) =
-        config.server.effective_external_url()
-    {
-        match url::Url::parse(ext_url) {
-            Ok(parsed) => {
-                let host = parsed.host_str().unwrap_or_default().to_string();
-                if host.is_empty() {
-                    warn!(
-                        "server.external_url '{ext_url}' parsed successfully but has no hostname; ignoring"
-                    );
-                    (None, None)
-                } else {
-                    (Some(host), Some(ext_url.clone()))
-                }
-            },
-            Err(e) => {
-                warn!("invalid server.external_url '{ext_url}': {e}");
-                (None, None)
-            },
-        }
-    } else {
-        (None, None)
-    };
-
-    let explicit_rp_id = external_rp_id
-        .or_else(|| std::env::var("MOLTIS_WEBAUTHN_RP_ID").ok())
-        .or_else(|| std::env::var("APP_DOMAIN").ok())
-        .or_else(|| std::env::var("RENDER_EXTERNAL_HOSTNAME").ok())
-        .or_else(|| {
-            std::env::var("FLY_APP_NAME")
-                .ok()
-                .map(|name| format!("{name}.fly.dev"))
-        })
-        .or_else(|| std::env::var("RAILWAY_PUBLIC_DOMAIN").ok());
-    let explicit_origin = external_origin
-        .or_else(|| std::env::var("MOLTIS_WEBAUTHN_ORIGIN").ok())
-        .or_else(|| std::env::var("APP_URL").ok())
-        .or_else(|| std::env::var("RENDER_EXTERNAL_URL").ok());
-
-    let mut wa_registry = crate::auth_webauthn::WebAuthnRegistry::new();
-    let mut any_ok = false;
-
-    let mut try_add = |rp_id: &str, origin_str: &str, extras: &[webauthn_rs::prelude::Url]| {
-        let rp_id = crate::auth_webauthn::normalize_host(rp_id);
-        if rp_id.is_empty() || wa_registry.contains_host(&rp_id) {
-            return;
-        }
-        let Ok(origin_url) = webauthn_rs::prelude::Url::parse(origin_str) else {
-            tracing::warn!("invalid WebAuthn origin URL '{origin_str}'");
-            return;
-        };
-        match crate::auth_webauthn::WebAuthnState::new(&rp_id, &origin_url, extras) {
-            Ok(wa) => {
-                info!(rp_id = %rp_id, origins = ?wa.get_allowed_origins(), "WebAuthn RP registered");
-                wa_registry.add(rp_id.clone(), wa);
-                any_ok = true;
-            },
-            Err(e) => tracing::warn!(rp_id = %rp_id, "failed to init WebAuthn: {e}"),
-        }
-    };
-
-    if let Some(ref rp_id) = explicit_rp_id {
-        let origin = explicit_origin
-            .clone()
-            .unwrap_or_else(|| format!("https://{rp_id}"));
-        try_add(rp_id, &origin, &[]);
-    } else {
-        let localhost_origin = format!("{default_scheme}://localhost:{port}");
-        let moltis_localhost: Vec<webauthn_rs::prelude::Url> = webauthn_rs::prelude::Url::parse(
-            &format!("{default_scheme}://moltis.localhost:{port}"),
-        )
-        .into_iter()
-        .collect();
-        try_add("localhost", &localhost_origin, &moltis_localhost);
-
-        let instance_slug_value = instance_slug(config);
-        if instance_slug_value != "localhost" {
-            let bot_origin = format!("{default_scheme}://{instance_slug_value}:{port}");
-            try_add(&instance_slug_value, &bot_origin, &[]);
-
-            let bot_local = format!("{instance_slug_value}.local");
-            let bot_local_origin = format!("{default_scheme}://{bot_local}:{port}");
-            try_add(&bot_local, &bot_local_origin, &[]);
-        }
-
-        if let Ok(hn) = hostname::get() {
-            let hn_str = hn.to_string_lossy();
-            if hn_str != "localhost" {
-                let local_name = if hn_str.ends_with(".local") {
-                    hn_str.to_string()
-                } else {
-                    format!("{hn_str}.local")
-                };
-                let local_origin = format!("{default_scheme}://{local_name}:{port}");
-                try_add(&local_name, &local_origin, &[]);
-
-                let bare = hn_str.strip_suffix(".local").unwrap_or(&hn_str);
-                if bare != local_name {
-                    let bare_origin = format!("{default_scheme}://{bare}:{port}");
-                    try_add(bare, &bare_origin, &[]);
-                }
-            }
-        }
-    }
-
-    if any_ok {
-        info!(origins = ?wa_registry.get_all_origins(), "WebAuthn passkeys enabled");
-        Ok(Some(Arc::new(tokio::sync::RwLock::new(wa_registry))))
-    } else {
-        Ok(None)
-    }
-}
-
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub(super) async fn complete_startup(
     inputs: PostStateInputs,
 ) -> anyhow::Result<PreparedGatewayCore> {
     let PostStateInputs {
+        profile,
         bind,
         port,
         config,
@@ -350,6 +233,28 @@ pub(super) async fn complete_startup(
     };
 
     let browser_for_lifecycle = Arc::clone(&services.browser);
+    #[cfg(feature = "connectors")]
+    let connector_manager = Arc::new(
+        crate::connectors::ConnectorManager::open(
+            &data_dir,
+            config.server.db_pool_max_connections,
+            #[cfg(feature = "vault")]
+            vault.clone(),
+        )
+        .await
+        .map_err(anyhow::Error::new)
+        .context("failed to initialize connector manager")?,
+    );
+    #[cfg(feature = "connectors")]
+    connector_manager
+        .configure_planner(Arc::clone(&registry))
+        .context("failed to initialize connector planner")?;
+    #[cfg(feature = "connectors")]
+    if let Some(channel_registry) = services.channel_registry.as_ref() {
+        connector_manager
+            .configure_channel_registry(Arc::clone(channel_registry))
+            .context("failed to initialize connector channel registry")?;
+    }
     let pairing_store = Arc::new(crate::pairing::PairingStore::new(db_pool.clone()));
     #[cfg(feature = "tls")]
     let tls_enabled_for_gateway = config.tls.enabled;
@@ -405,7 +310,68 @@ pub(super) async fn complete_startup(
         vault.clone(),
     );
 
+    #[cfg(feature = "connectors")]
     {
+        state
+            .connector_manager
+            .set(Arc::clone(&connector_manager))
+            .map_err(|_| anyhow::anyhow!("connector manager was initialized more than once"))?;
+        #[cfg(feature = "vault")]
+        connector_manager
+            .migrate_plaintext_credentials()
+            .await
+            .map_err(anyhow::Error::new)
+            .context("failed to migrate connector credentials into the vault")?;
+        match connector_manager
+            .reconcile_configured_caldav_accounts(&config.caldav)
+            .await
+        {
+            Ok(report) => {
+                info!(
+                    created = report.created,
+                    adopted = report.adopted,
+                    updated = report.updated,
+                    unchanged = report.unchanged,
+                    disabled = report.disabled,
+                    deferred = report.deferred,
+                    invalid = report.invalid,
+                    ambiguous = report.ambiguous,
+                    "reconciled configured CalDAV accounts into connectors"
+                );
+            },
+            Err(error) => {
+                warn!(?error, "configured CalDAV connector reconciliation failed");
+            },
+        }
+        connector_manager.start_projection_maintenance().await;
+        if !profile.is_headless() {
+            connector_manager.start_scheduler().await;
+        }
+    }
+
+    // ── Agent instrumentation ─────────────────────────────────────────────
+    // Applied on the state's own instance so RPC and lifecycle callers observe
+    // the same backends that were installed here. Runs before any agent can be
+    // invoked, so the first turn is traced.
+    {
+        let status = state
+            .instrumentation
+            .apply(&state.config.instrumentation, &state.version);
+        if status.active {
+            tracing::info!(backends = ?status.backends, "agent instrumentation enabled");
+        }
+        for skipped in &status.skipped {
+            tracing::warn!(
+                backend = %skipped.name,
+                reason = %skipped.reason,
+                "instrumentation backend could not start"
+            );
+        }
+    }
+
+    install_feedback(&state, &db_pool);
+
+    if !profile.is_headless() {
         let (webhook_tx, webhook_rx) = tokio::sync::mpsc::channel::<i64>(256);
         let webhook_store: Arc<dyn moltis_webhooks::store::WebhookStore> = {
             let inner: Arc<dyn moltis_webhooks::store::WebhookStore> = Arc::new(
@@ -438,6 +404,8 @@ pub(super) async fn complete_startup(
                     let mut params = serde_json::json!({
                         "text": req.message,
                         "_session_key": req.session_key,
+                        "_private_context": false,
+                        "_tool_audience": "public",
                     });
                     if let Some(ref model) = req.model {
                         params["model"] = serde_json::Value::String(model.clone());
@@ -445,10 +413,8 @@ pub(super) async fn complete_startup(
                     if let Some(ref agent_id) = req.agent_id {
                         params["agent_id"] = serde_json::Value::String(agent_id.clone());
                     }
-                    if let Some(ref tool_policy) = req.tool_policy {
-                        params["_tool_policy"] = serde_json::to_value(tool_policy)
-                            .map_err(|error| anyhow::anyhow!(error))?;
-                    }
+                    params["_tool_policy"] =
+                        webhook_security::request_tool_policy(req.tool_policy.as_ref())?;
                     let result = chat
                         .send_sync(params)
                         .await
@@ -484,7 +450,9 @@ pub(super) async fn complete_startup(
             .or_else(|| config.providers.get("local-llm"))
             .and_then(|e| e.idle_timeout_secs);
         svc.populate_lifecycle(global_timeout).await;
-        svc.lifecycle().spawn_idle_checker();
+        if !profile.is_headless() {
+            svc.lifecycle().spawn_idle_checker();
+        }
     }
 
     provider_setup_service.set_broadcaster(Arc::new(crate::provider_setup::GatewayBroadcaster {
@@ -558,7 +526,7 @@ pub(super) async fn complete_startup(
             .get("local")
             .or_else(|| config.providers.get("local-llm"))
             .and_then(|e| e.idle_timeout_secs);
-        tokio::spawn(async move {
+        let discovery = async move {
             let startup_discovery_started = std::time::Instant::now();
             let prefetched = match tokio::task::spawn_blocking(move || {
                 ProviderRegistry::collect_discoveries(startup_discovery_pending)
@@ -634,7 +602,12 @@ pub(super) async fn complete_startup(
                 BroadcastOpts::default(),
             )
             .await;
-        });
+        };
+        if profile.is_headless() {
+            discovery.await;
+        } else {
+            tokio::spawn(discovery);
+        }
     }
 
     {
@@ -645,17 +618,15 @@ pub(super) async fn complete_startup(
     #[cfg(feature = "graphql")]
     state.set_graphql_enabled(config.graphql.enabled);
 
-    {
+    let live_chat = {
         let broadcaster: Arc<dyn moltis_tools::exec::ApprovalBroadcaster> =
             Arc::new(GatewayApprovalBroadcaster::new(Arc::clone(&state)));
         // Build gateway URL for sandbox-to-gateway communication.
         // Only inject when the sandbox network policy allows host access
         // (Trusted or Bypass). With NetworkPolicy::Blocked the container
         // has --network=none and host.docker.internal won't resolve.
-        let sandbox_network_allows_host = !matches!(
-            sandbox_router.config().network,
-            moltis_tools::sandbox::NetworkPolicy::Blocked
-        );
+        let sandbox_network_allows_host =
+            gateway_credentials_allowed(profile, &sandbox_router.config().network);
         let sandbox_gateway_url = if sandbox_network_allows_host {
             let scheme = if tls_enabled_for_gateway {
                 "https"
@@ -726,7 +697,7 @@ pub(super) async fn complete_startup(
             .with_sandbox_router(Arc::clone(&sandbox_router));
 
         tool_registry.register(Box::new(exec_tool));
-        tool_registry.register(Box::new(moltis_tools::calc::CalcTool::new()));
+        tool_registry.register_public(Box::new(moltis_tools::calc::CalcTool::new()));
         #[cfg(feature = "fs-tools")]
         {
             use moltis_config::schema::FsBinaryPolicy;
@@ -788,6 +759,8 @@ pub(super) async fn complete_startup(
         }
         #[cfg(feature = "wasm")]
         {
+            use secrecy::ExposeSecret;
+
             let wasm_limits = sandbox_router
                 .config()
                 .wasm_tool_limits
@@ -899,13 +872,15 @@ pub(super) async fn complete_startup(
         ) {
             #[cfg(feature = "firecrawl")]
             let t = t.with_firecrawl_config(&config.tools.web.firecrawl);
-            tool_registry.register(Box::new(t.with_env_provider(Arc::clone(&env_provider))));
+            tool_registry.register_public(Box::new(t.with_env_provider(Arc::clone(&env_provider))));
         }
         if let Some(t) = moltis_tools::web_fetch::WebFetchTool::from_config(&config.tools.web.fetch)
         {
             #[cfg(feature = "firecrawl")]
             let t = t.with_firecrawl(&config.tools.web.firecrawl);
-            tool_registry.register(Box::new(t));
+            #[cfg(feature = "trusted-network")]
+            let t = super::apply_web_fetch_network_policy(t, profile, sandbox_router.config());
+            tool_registry.register_public(Box::new(t));
         }
         #[cfg(feature = "firecrawl")]
         if let Some(t) =
@@ -1163,15 +1138,18 @@ pub(super) async fn complete_startup(
         tool_registry.register(Box::new(moltis_tools::task_list::TaskListTool::new(
             &data_dir,
         )));
-        let mut speak_tool =
-            crate::voice_agent_tools::SpeakTool::new(Arc::clone(&state.services.tts));
-        if let Some(ref vps) = state.services.voice_persona_store {
-            speak_tool = speak_tool.with_voice_persona_store(Arc::clone(vps));
+        #[cfg(feature = "voice")]
+        {
+            let mut speak_tool =
+                crate::voice_agent_tools::SpeakTool::new(Arc::clone(&state.services.tts));
+            if let Some(ref vps) = state.services.voice_persona_store {
+                speak_tool = speak_tool.with_voice_persona_store(Arc::clone(vps));
+            }
+            tool_registry.register(Box::new(speak_tool));
+            tool_registry.register(Box::new(crate::voice_agent_tools::TranscribeTool::new(
+                Arc::clone(&state.services.stt),
+            )));
         }
-        tool_registry.register(Box::new(speak_tool));
-        tool_registry.register(Box::new(crate::voice_agent_tools::TranscribeTool::new(
-            Arc::clone(&state.services.stt),
-        )));
 
         {
             use moltis_skills::{discover::FsSkillDiscoverer, usage::SkillUsageStore};
@@ -1327,6 +1305,22 @@ pub(super) async fn complete_startup(
             tool_registry.register(Box::new(spawn_tool));
         }
 
+        // Register after spawn_agent snapshots its tools so a narrowed parent
+        // policy cannot regain private connector data through a sub-agent.
+        #[cfg(feature = "connectors")]
+        {
+            tool_registry.register(Box::new(crate::connector_agent_tools::ConnectorsTool::new(
+                Arc::clone(&connector_manager),
+            )));
+            let reader = connector_manager.reader();
+            tool_registry.register(Box::new(moltis_connector_gmail::GmailConnectorTool::new(
+                Arc::clone(&reader),
+            )));
+            tool_registry.register(Box::new(
+                moltis_connector_himalaya::HimalayaConnectorTool::new(reader),
+            ));
+        }
+
         let shared_tool_registry = Arc::new(tokio::sync::RwLock::new(tool_registry));
         let mut chat_service = LiveChatService::new(
             Arc::clone(&registry),
@@ -1345,8 +1339,9 @@ pub(super) async fn complete_startup(
         }
 
         let live_chat = Arc::new(chat_service);
+        let inner_chat: Arc<dyn moltis_service_traits::ChatService> = live_chat.clone();
         let chat_with_external_agents = Arc::new(ExternalAgentChatService::new(
-            live_chat,
+            inner_chat,
             external_agent_service,
             Arc::clone(&state),
             Arc::clone(&session_store),
@@ -1357,15 +1352,22 @@ pub(super) async fn complete_startup(
         live_mcp
             .set_tool_registry(Arc::clone(&shared_tool_registry))
             .await;
+        if profile.is_headless() {
+            let started = live_mcp.manager().start_enabled().await;
+            if !started.is_empty() {
+                info!(servers = ?started, "headless MCP servers started");
+            }
+        }
         crate::mcp_service::sync_mcp_tools(live_mcp.manager(), &shared_tool_registry).await;
 
         let schemas = shared_tool_registry.read().await.list_schemas();
         let tool_names: Vec<&str> = schemas.iter().filter_map(|s| s["name"].as_str()).collect();
         info!(tools = ?tool_names, "agent tools registered");
-    }
+        live_chat
+    };
 
     #[cfg(feature = "file-watcher")]
-    {
+    if !profile.is_headless() {
         let watcher_state = Arc::clone(&state);
         tokio::spawn(async move {
             let (mut watcher, mut rx) = match start_skill_hot_reload_watcher().await {
@@ -1419,7 +1421,9 @@ pub(super) async fn complete_startup(
     let methods = Arc::new(MethodRegistry::new());
 
     #[cfg(feature = "push-notifications")]
-    let push_service: Option<Arc<crate::push::PushService>> = {
+    let push_service: Option<Arc<crate::push::PushService>> = if profile.is_headless() {
+        None
+    } else {
         match crate::push::PushService::new(&data_dir).await {
             Ok(svc) => {
                 info!("push notification service initialized");
@@ -1437,6 +1441,8 @@ pub(super) async fn complete_startup(
 
     Ok(PreparedGatewayCore {
         state: Arc::clone(&state),
+        live_chat,
+        mcp_manager: Arc::clone(live_mcp.manager()),
         methods: Arc::clone(&methods),
         webauthn_registry,
         #[cfg(feature = "msteams")]

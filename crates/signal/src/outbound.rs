@@ -205,6 +205,7 @@ impl ChannelStreamOutbound for SignalOutbound {
                 StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk) => {
                     buffer.push_str(&chunk)
                 },
+                StreamEvent::TaskUpdate(_) => {},
                 StreamEvent::Done => break,
                 StreamEvent::Error(e) => {
                     tracing::warn!(account_id, "Signal stream error: {e}");

@@ -41,7 +41,7 @@ image                 = { workspace = true }
 ipnet                 = { workspace = true }
 moltis-agents         = { workspace = true }
 moltis-browser        = { workspace = true }
-moltis-common         = { workspace = true }
+moltis-common         = { features = ["process"], workspace = true }
 moltis-config         = { workspace = true }
 moltis-cron           = { workspace = true }
 moltis-media          = { workspace = true }

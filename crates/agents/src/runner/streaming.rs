@@ -16,11 +16,12 @@ use moltis_common::hooks::{HookAction, HookPayload, HookRegistry};
 
 use crate::{
     model::{
-        AgentToolControls, ChatMessage, LlmProvider, StreamEvent, ToolCall, ToolChoice, Usage,
-        UserContent, decode_tool_call_arguments_from_str, push_capped_provider_raw_event,
+        AgentToolControls, ChatMessage, LlmProvider, ProviderAttemptEvent, ProviderIdentity,
+        StreamEvent, ToolCall, ToolChoice, TrackedStreamEvent, Usage, UserContent,
+        decode_tool_call_arguments_from_str, push_capped_provider_raw_event,
     },
     response_sanitizer::{clean_response, recover_tool_calls_from_content},
-    tool_arg_validator::validate_tool_args,
+    tool_arg_validator::{coerce_scalar_args, validate_tool_args},
     tool_loop_detector::ToolCallFingerprint,
     tool_parsing::{
         looks_like_failed_tool_call, new_synthetic_tool_call_id, parse_tool_calls_from_text,
@@ -35,14 +36,14 @@ use super::{
     channel_binding_from_tool_context, dispatch_after_llm_call_hook,
     dispatch_before_agent_start_hook, empty_tool_name_retry_prompt,
     explicit_shell_command_from_user_content, find_empty_tool_name_call, finish_agent_run,
-    has_named_tool_call, is_substantive_answer_text, log_tool_argument_diagnostic,
+    has_named_tool_call, instrumentation, is_substantive_answer_text, log_tool_argument_diagnostic,
     resolve_tool_lookup,
     retry::{
         RATE_LIMIT_MAX_RETRIES, is_context_window_error, next_retry_delay_ms,
         resolve_agent_max_iterations,
     },
     sanitize_tool_name, streaming_tool_call_message_content,
-    tool_result::sanitize_tool_result,
+    tool_result::{sanitize_tool_result, tool_result_failure},
 };
 
 use crate::tool_loop_detector::ToolLoopDetector;
@@ -144,9 +145,28 @@ pub async fn run_agent_loop_streaming_with_limits(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let trace_correlation_key = tool_context
+        .as_ref()
+        .and_then(|ctx| ctx.get("_trace_correlation_key"))
+        .and_then(|value| value.as_str());
     let channel_for_hooks =
         channel_binding_from_tool_context(&session_key_for_hooks, tool_context.as_ref());
 
+    // Instrumentation. `None` when no backend is configured or the turn was
+    // not sampled, in which case every call below is skipped.
+    let turn_recorder = Arc::new(instrumentation::begin_turn(
+        &session_key_for_hooks,
+        trace_correlation_key,
+        channel_for_hooks.as_ref(),
+        provider.name(),
+        provider.id(),
+        user_content,
+        instrumentation::recorder_settings(&config.instrumentation),
+        config.instrumentation.environment.clone(),
+        instrumentation::release(&config.instrumentation),
+    ));
+
+    let result: std::result::Result<AgentRunResult, AgentRunError> = async {
     dispatch_before_agent_start_hook(
         hook_registry.as_ref(),
         &session_key_for_hooks,
@@ -251,7 +271,11 @@ pub async fn run_agent_loop_streaming_with_limits(
             messages_count = messages.len(),
             "calling LLM (streaming)"
         );
-        trace!(iteration = iterations, messages = ?messages, "LLM request messages");
+        trace!(
+            iteration = iterations,
+            messages_count = messages.len(),
+            "LLM request prepared"
+        );
 
         // Dispatch BeforeLLMCall hook — may block the LLM call.
         if let Some(ref hooks) = hook_registry {
@@ -289,7 +313,10 @@ pub async fn run_agent_loop_streaming_with_limits(
         // Use streaming API.
         #[cfg(feature = "metrics")]
         let iter_start = std::time::Instant::now();
-        let mut stream = provider.stream_with_tools_and_options(
+        let mut generation_step = None;
+        let mut selected_identity: Option<ProviderIdentity> = None;
+
+        let mut stream = provider.stream_with_tools_and_options_tracked(
             messages.clone(),
             schemas_for_api.clone(),
             tool_controls.clone(),
@@ -310,31 +337,82 @@ pub async fn run_agent_loop_streaming_with_limits(
             std::collections::HashMap::new();
         let mut request_usage = Usage::default();
         let mut stream_error: Option<String> = None;
+        let mut finish_reason: Option<String> = None;
+        let mut reasoning_tokens: u32 = 0;
 
         while let Some(event) = stream.next().await {
             match event {
-                StreamEvent::Delta(text) => {
+                TrackedStreamEvent::Attempt(ProviderAttemptEvent::Started(identity)) => {
+                    if let Some(recorder) = turn_recorder.as_ref().as_ref() {
+                        recorder.set_metadata(
+                            "provider",
+                            serde_json::Value::String(identity.provider.clone()),
+                        );
+                        recorder.set_metadata(
+                            "model",
+                            serde_json::Value::String(identity.model.clone()),
+                        );
+                    }
+                    generation_step = instrumentation::begin_generation_step(
+                        turn_recorder.as_ref().as_ref(),
+                        &identity,
+                        provider.as_ref(),
+                        &tool_controls,
+                        iterations,
+                        schemas_for_api.len(),
+                        &messages,
+                    );
+                    selected_identity = Some(identity);
+                },
+                TrackedStreamEvent::Attempt(ProviderAttemptEvent::Failed { error, .. }) => {
+                    if let Some(mut step) = generation_step.take() {
+                        step.fail(error);
+                        let mut usage = instrumentation::to_token_usage(&request_usage);
+                        usage.reasoning = reasoning_tokens;
+                        step.set_usage(usage);
+                        step.finish();
+                    }
+                    request_usage = Usage::default();
+                    finish_reason = None;
+                    reasoning_tokens = 0;
+                },
+                TrackedStreamEvent::Event(StreamEvent::Delta(text)) => {
+                    if let Some(step) = generation_step.as_mut() {
+                        step.mark_first_token();
+                    }
                     accumulated_text.push_str(&text);
                     if let Some(cb) = on_event {
                         cb(RunnerEvent::TextDelta(text.clone()));
                         cb(RunnerEvent::FinalText(text));
                     }
                 },
-                StreamEvent::ProviderRaw(raw) => {
+                TrackedStreamEvent::Event(StreamEvent::ProviderRaw(raw)) => {
+                    if let Some(reason) = instrumentation::finish_reason(&raw) {
+                        finish_reason = Some(reason);
+                    }
+                    if let Some(tokens) = instrumentation::reasoning_tokens(&raw) {
+                        reasoning_tokens = tokens;
+                    }
                     push_capped_provider_raw_event(&mut raw_llm_responses, raw);
                 },
-                StreamEvent::ReasoningDelta(text) => {
+                TrackedStreamEvent::Event(StreamEvent::ReasoningDelta(text)) => {
+                    if let Some(step) = generation_step.as_mut() {
+                        step.mark_first_token();
+                    }
                     accumulated_reasoning.push_str(&text);
                     if let Some(cb) = on_event {
                         cb(RunnerEvent::ThinkingText(accumulated_reasoning.clone()));
                     }
                 },
-                StreamEvent::ToolCallStart {
+                TrackedStreamEvent::Event(StreamEvent::ToolCallStart {
                     id,
                     name,
                     index,
                     metadata,
-                } => {
+                }) => {
+                    if let Some(step) = generation_step.as_mut() {
+                        step.mark_first_token();
+                    }
                     let vec_pos = tool_calls.len();
                     debug!(tool = %name, id = %id, stream_index = index, vec_pos, "tool call started in stream");
                     tool_calls.push(ToolCall {
@@ -347,17 +425,23 @@ pub async fn run_agent_loop_streaming_with_limits(
                     stream_idx_to_vec_pos.insert(index, vec_pos);
                     tool_call_args.insert(index, String::new());
                 },
-                StreamEvent::ToolCallArgumentsDelta { index, delta } => {
+                TrackedStreamEvent::Event(StreamEvent::ToolCallArgumentsDelta {
+                    index,
+                    delta,
+                }) => {
+                    if let Some(step) = generation_step.as_mut() {
+                        step.mark_first_token();
+                    }
                     if let Some(args) = tool_call_args.get_mut(&index) {
                         args.push_str(&delta);
                     }
                 },
-                StreamEvent::ToolCallComplete { index } => {
+                TrackedStreamEvent::Event(StreamEvent::ToolCallComplete { index }) => {
                     // Arguments are finalized after stream completes.
                     // Just log for now - we'll parse accumulated args later.
                     debug!(index, "tool call arguments complete");
                 },
-                StreamEvent::Done(usage) => {
+                TrackedStreamEvent::Event(StreamEvent::Done(usage)) => {
                     request_usage = usage.clone();
                     debug!(
                         input_tokens = request_usage.input_tokens,
@@ -369,8 +453,12 @@ pub async fn run_agent_loop_streaming_with_limits(
 
                     #[cfg(feature = "metrics")]
                     {
-                        let provider_name = provider.name().to_string();
-                        let model_id = provider.id().to_string();
+                        let provider_name = selected_identity
+                            .as_ref()
+                            .map_or_else(|| provider.name().to_string(), |id| id.provider.clone());
+                        let model_id = selected_identity
+                            .as_ref()
+                            .map_or_else(|| provider.id().to_string(), |id| id.model.clone());
                         let duration = iter_start.elapsed().as_secs_f64();
                         counter!(
                             llm_metrics::COMPLETIONS_TOTAL,
@@ -410,7 +498,7 @@ pub async fn run_agent_loop_streaming_with_limits(
                         .record(duration);
                     }
                 },
-                StreamEvent::Error(msg) => {
+                TrackedStreamEvent::Event(StreamEvent::Error(msg)) => {
                     stream_error = Some(msg);
                     break;
                 },
@@ -423,6 +511,16 @@ pub async fn run_agent_loop_streaming_with_limits(
 
         // Handle stream errors — retry on transient failures/rate limits.
         if let Some(err) = stream_error {
+            // Close the generation as failed before any early return, so a
+            // failed call is visible in the backend rather than silently
+            // ending as a span with no error on it.
+            if let Some(mut step) = generation_step.take() {
+                step.fail(err.clone());
+                let mut usage = instrumentation::to_token_usage(&request_usage);
+                usage.reasoning = reasoning_tokens;
+                step.set_usage(usage);
+                step.finish();
+            }
             if is_context_window_error(&err) {
                 return Err(AgentRunError::ContextWindowExceeded(err));
             }
@@ -453,18 +551,36 @@ pub async fn run_agent_loop_streaming_with_limits(
             return Err(AgentRunError::Other(anyhow::anyhow!(err)));
         }
 
+        if let Some(mut step) = generation_step.take() {
+            let mut usage = instrumentation::to_token_usage(&request_usage);
+            usage.reasoning = reasoning_tokens;
+            step.set_usage(usage);
+            step.set_output(serde_json::json!({
+                "text": accumulated_text,
+                "reasoning": accumulated_reasoning,
+                "tool_calls": tool_calls.iter().map(|call| serde_json::json!({
+                    "id": call.id,
+                    "name": call.name,
+                })).collect::<Vec<_>>(),
+            }));
+            if !tool_calls.is_empty() {
+                step.set_metadata("tool_calls", serde_json::json!(tool_calls.len()));
+            }
+            if let Some(reason) = finish_reason {
+                step.set_metadata("finish_reason", serde_json::Value::String(reason));
+            }
+            step.finish();
+        }
+
         usage_accumulator.record_request(request_usage.clone());
 
         // Finalize tool call arguments from accumulated strings.
         // Use stream_idx_to_vec_pos to map streaming indices (which may not
         // start at 0) to the actual position in the tool_calls vec.
         for (stream_idx, args_str) in &tool_call_args {
-            // Emit raw accumulated string at debug level so future variants of
-            // "default to {} because no deltas arrived" can be diagnosed
-            // without a repro (issue #658).
             debug!(
                 stream_idx,
-                args_str = %args_str,
+                argument_bytes = args_str.len(),
                 "finalizing tool call args"
             );
             if let Some(&vec_pos) = stream_idx_to_vec_pos.get(stream_idx)
@@ -537,7 +653,10 @@ pub async fn run_agent_loop_streaming_with_limits(
             && let Some(command) = explicit_shell_command.as_ref()
             && tools.get("exec").is_some()
         {
-            info!(command = %command, "forcing exec tool call from explicit /sh command");
+            info!(
+                command_bytes = command.len(),
+                "forcing exec tool call from explicit /sh command"
+            );
             // Preserve streamed reasoning/planning text on the assistant tool
             // message so providers that validate thinking history accept the
             // next iteration.
@@ -689,6 +808,7 @@ pub async fn run_agent_loop_streaming_with_limits(
         let tool_futures: Vec<_> = tool_calls
             .iter()
             .map(|tc| {
+                let tool_turn_recorder = Arc::clone(&turn_recorder);
                 let sanitized = sanitize_tool_name(&tc.name);
                 if *sanitized != tc.name {
                     debug!(original = %tc.name, sanitized = %sanitized, "sanitized mangled tool name");
@@ -731,6 +851,7 @@ pub async fn run_agent_loop_streaming_with_limits(
                     Some(reason)
                 } else if let Some(ref t) = tool {
                     let schema = t.parameters_schema();
+                    coerce_scalar_args(&schema, &mut args);
                     match validate_tool_args(&schema, &args) {
                         Ok(()) => None,
                         Err(e) => {
@@ -764,13 +885,26 @@ pub async fn run_agent_loop_streaming_with_limits(
                 }
 
                 async move {
+                    let mut tool_step = tool_turn_recorder.as_ref().as_ref().map(|recorder| {
+                        recorder.step(
+                            instrumentation::tool_observation_kind(&tc_name),
+                            tc_name.clone(),
+                        )
+                    });
                     if let Some(err_msg) = validation_error {
+                        if let Some(step) = tool_step.as_mut() {
+                            step.set_input(args);
+                        }
                         return (
                             false,
                             serde_json::json!({ "error": err_msg.clone() }),
                             Some(err_msg),
                             true,
+                            tool_step,
                         );
+                    }
+                    if let Some(step) = tool_step.as_mut() {
+                        step.set_input(args.clone());
                     }
                     // Run BeforeToolCall hook.
                     if let Some(ref hooks) = hook_registry {
@@ -789,12 +923,14 @@ pub async fn run_agent_loop_streaming_with_limits(
                                     serde_json::json!({ "error": err_str }),
                                     Some(err_str),
                                     false,
+                                    tool_step,
                                 );
                             }
                             Ok(HookAction::ModifyPayload(v)) => {
                                 args = v;
                                 if let Some(ref tool) = tool {
                                     let schema = tool.parameters_schema();
+                                    coerce_scalar_args(&schema, &mut args);
                                     if let Err(e) = validate_tool_args(&schema, &args) {
                                         let err_str = e.to_llm_error_message(&tc_name);
                                         warn!(
@@ -807,6 +943,7 @@ pub async fn run_agent_loop_streaming_with_limits(
                                             serde_json::json!({ "error": err_str.clone() }),
                                             Some(err_str),
                                             false,
+                                            tool_step,
                                         );
                                     }
                                 }
@@ -818,26 +955,20 @@ pub async fn run_agent_loop_streaming_with_limits(
                         }
                     }
 
+                    if let Some(step) = tool_step.as_mut() {
+                        step.set_input(args.clone());
+                    }
+
                     if let Some(tool) = tool {
                         match tool.execute(args).await {
                             Ok(val) => {
-                                // Check if the result indicates a logical failure
-                                // (e.g., BrowserResponse with success: false)
-                                let has_error = val.get("error").is_some()
-                                    || val.get("success") == Some(&serde_json::json!(false));
-                                let error_msg = if has_error {
-                                    val.get("error")
-                                        .and_then(|e| e.as_str())
-                                        .map(String::from)
-                                } else {
-                                    None
-                                };
-
+                                let error = tool_result_failure(&val);
+                                let success = error.is_none();
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
                                         tool_name: tc_name.clone(),
-                                        success: !has_error,
+                                        success,
                                         result: Some(val.clone()),
                                         channel: channel_for_hooks.clone(),
                                     };
@@ -846,11 +977,13 @@ pub async fn run_agent_loop_streaming_with_limits(
                                     }
                                 }
 
-                                if has_error {
-                                    (false, serde_json::json!({ "result": val }), error_msg, false)
-                                } else {
-                                    (true, serde_json::json!({ "result": val }), None, false)
-                                }
+                                (
+                                    success,
+                                    serde_json::json!({ "result": val }),
+                                    error,
+                                    false,
+                                    tool_step,
+                                )
                             }
                             Err(e) => {
                                 let err_str = e.to_string();
@@ -871,6 +1004,7 @@ pub async fn run_agent_loop_streaming_with_limits(
                                     serde_json::json!({ "error": err_str }),
                                     Some(err_str),
                                     false,
+                                    tool_step,
                                 )
                             }
                         }
@@ -881,6 +1015,7 @@ pub async fn run_agent_loop_streaming_with_limits(
                             serde_json::json!({ "error": err_str }),
                             Some(err_str),
                             false,
+                            tool_step,
                         )
                     }
                 }
@@ -894,10 +1029,12 @@ pub async fn run_agent_loop_streaming_with_limits(
         // Intervention is derived from the detector's post-batch state
         // via `consume_pending_action()` below — see the non-streaming
         // path for the rationale (issue #658).
-        for (tc, (success, mut result, error, rejected)) in tool_calls.iter().zip(results) {
+        for (tc, (success, mut result, error, rejected, mut tool_step)) in
+            tool_calls.iter().zip(results)
+        {
             if success {
                 info!(tool = %tc.name, id = %tc.id, "tool execution succeeded");
-                trace!(tool = %tc.name, result = %result, "tool result");
+                trace!(tool = %tc.name, "tool result available");
             } else if rejected {
                 warn!(
                     tool = %tc.name,
@@ -905,7 +1042,7 @@ pub async fn run_agent_loop_streaming_with_limits(
                     "tool call rejected before execution by pre-dispatch validation"
                 );
             } else {
-                warn!(tool = %tc.name, id = %tc.id, error = %error.as_deref().unwrap_or(""), "tool execution failed");
+                warn!(tool = %tc.name, id = %tc.id, has_error = error.is_some(), "tool execution failed");
             }
 
             // Record outcome in the loop detector (issue #658).
@@ -931,7 +1068,7 @@ pub async fn run_agent_loop_streaming_with_limits(
                         id: tc.id.clone(),
                         name: tc.name.clone(),
                         success,
-                        error,
+                        error: error.clone(),
                         result: if success {
                             result.get("result").cloned()
                         } else {
@@ -976,13 +1113,20 @@ pub async fn run_agent_loop_streaming_with_limits(
             // multimodal content in tool results. Images are stripped but the UI
             // still receives them via ToolCallEnd event.
             let tool_result_str = sanitize_tool_result(&result.to_string(), max_tool_result_bytes);
+            instrumentation::finish_tool_step(
+                tool_step.take(),
+                &tool_result_str,
+                success,
+                error.as_deref(),
+                &result,
+            );
             debug!(
                 tool = %tc.name,
                 id = %tc.id,
                 result_len = tool_result_str.len(),
                 "appending tool result to messages"
             );
-            trace!(tool = %tc.name, content = %tool_result_str, "tool result message content");
+            trace!(tool = %tc.name, content_bytes = tool_result_str.len(), "tool result message prepared");
 
             messages.push(ChatMessage::tool(&tc.id, &tool_result_str));
         }
@@ -1002,11 +1146,16 @@ pub async fn run_agent_loop_streaming_with_limits(
             let mut guard = inbox.lock().await;
             if !guard.is_empty() {
                 let combined = guard.drain(..).collect::<Vec<_>>().join("\n");
-                debug!(steer_text = %combined, "injecting /steer guidance");
+                debug!(steer_bytes = combined.len(), "injecting /steer guidance");
                 messages.push(ChatMessage::system(format!(
                     "[Steering note from the user — adjust your approach accordingly]: {combined}"
                 )));
             }
         }
     }
+    }
+    .await;
+
+    instrumentation::finish_turn(turn_recorder.as_ref().as_ref(), &result);
+    result
 }

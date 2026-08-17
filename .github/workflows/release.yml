@@ -25,7 +25,7 @@ permissions: {}
 
 env:
   # Must match rust-toolchain.toml (single source of truth for the nightly pin).
-  NIGHTLY_TOOLCHAIN: nightly-2025-12-27
+  NIGHTLY_TOOLCHAIN: nightly-2026-06-20
   RELEASE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
   RELEASE_PRE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.pre_release && 'true' || 'false' }}
 
@@ -105,12 +105,15 @@ jobs:
       - name: Dry-run short-circuit
         if: ${{ env.RELEASE_DRY_RUN == 'true' }}
         run: echo "Dry run enabled, skipping biome checks"
-      - uses: biomejs/setup-biome@29711cbb52afee00eb13aeb30636592f9edc0088 # v2.7.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
-          version: "2.4.6"
+          node-version: 24
+          package-manager-cache: false
       - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
-        run: biome ci crates/web/ui/src/ crates/web/ui/e2e/
+        run: npm ci --ignore-scripts --prefix crates/web/ui
+      - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: ./crates/web/ui/node_modules/.bin/biome ci crates/web/ui/src/ crates/web/ui/e2e/
       - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: ./scripts/i18n-check.sh
 
@@ -137,7 +140,9 @@ jobs:
 
   clippy:
     needs: [fmt, biome]
-    runs-on: [self-hosted, Linux, X64]
+    # Temporarily use GitHub-hosted runners while self-hosted runners are offline.
+    # Restore to [self-hosted, Linux, X64] when they are connected again.
+    runs-on: ubuntu-latest
     container:
       image: nvidia/cuda:12.4.1-devel-ubuntu22.04
     env:
@@ -200,7 +205,9 @@ jobs:
 
   test:
     needs: [fmt, biome]
-    runs-on: [self-hosted, Linux, X64]
+    # Temporarily use GitHub-hosted runners while self-hosted runners are offline.
+    # Restore to [self-hosted, Linux, X64] when they are connected again.
+    runs-on: ubuntu-latest
     container:
       image: nvidia/cuda:12.4.1-devel-ubuntu22.04
     env:
@@ -313,6 +320,10 @@ jobs:
         timeout-minutes: 20
         run: cargo build --bin moltis
 
+      - name: Reclaim Rust build disk for E2E
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: bash ./scripts/cleanup-e2e-build-artifacts.sh
+
       - name: Install Playwright browsers
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         timeout-minutes: 2
@@ -324,6 +335,7 @@ jobs:
         working-directory: crates/web/ui
         env:
           CI: "true"
+          MOLTIS_BINARY: ${{ github.workspace }}/target/e2e-bin/moltis
         run: npx playwright test
 
       - name: Upload test results

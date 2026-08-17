@@ -528,7 +528,9 @@ impl AgentTool for ReadTool {
          Supports `offset` (1-indexed line to start at) and `limit` (max lines \
          to return) for paginating large files. Returns structured JSON with \
          the file's content, total line count, and truncation flag. Binary \
-         files return a typed marker instead of garbage."
+         files return a typed marker instead of garbage. In sandboxed sessions, \
+         use absolute workspace/data paths or `/home/sandbox/...` paths; both \
+         are routed through the sandbox when needed."
     }
 
     fn parameters_schema(&self) -> Value {

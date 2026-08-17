@@ -15,6 +15,18 @@ pub trait ChannelConfigView: Send + Sync + std::fmt::Debug {
     /// Group/chat ID allowlist.
     fn group_allowlist(&self) -> &[String];
 
+    /// Senders allowed to run privileged actions (`/sh`, shell command mode,
+    /// host-reaching tools).
+    ///
+    /// Separate from [`Self::allowlist`], which only decides who may talk to
+    /// the bot. In a guild or group chat every member can pass the access
+    /// gate, so privilege needs its own list.
+    ///
+    /// An empty list grants nobody privileged access.
+    fn operators(&self) -> &[String] {
+        &[]
+    }
+
     /// DM access policy.
     fn dm_policy(&self) -> DmPolicy;
 
@@ -30,6 +42,22 @@ pub trait ChannelConfigView: Send + Sync + std::fmt::Debug {
     /// Default agent id for this channel account.
     fn agent_id(&self) -> Option<&str> {
         None
+    }
+
+    /// Whether `sender_id`, as this channel reports it, is on [`Self::allowlist`].
+    ///
+    /// Privileged commands (`/approve`, `/deny`, `/update`) authorize against
+    /// this, so it has to agree with how the channel spells identities on the
+    /// wire *and* how an operator is likely to have written them in config. The
+    /// default compares text and is right for channels with one spelling per
+    /// identity; override it where an identity has several (Nostr keys are
+    /// either `npub1…` bech32 or 64-char hex, and both are valid to configure).
+    ///
+    /// Inherits [`gating::is_allowed`](crate::gating::is_allowed)'s convention
+    /// that an empty allowlist matches everyone — callers that treat "nobody is
+    /// authorized" differently must check for empty themselves.
+    fn sender_on_allowlist(&self, sender_id: &str) -> bool {
+        crate::gating::sender_matches_allowlist(sender_id, self.allowlist())
     }
 
     // ── Per-channel / per-user override methods ─────────────────────────────

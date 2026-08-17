@@ -6,6 +6,7 @@ import { localizeNavHtml, resolvePageLang } from "./nav-i18n.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
+const host = process.env.HOST || "127.0.0.1";
 const port = parseInt(process.env.PORT || "4000", 10);
 
 const MIME = {
@@ -96,6 +97,9 @@ watch(path.join(root, "_partials"), { recursive: true }, () => {
 	navCache = null;
 });
 
-server.listen(port, () => {
-	process.stdout.write(`Website dev server: http://localhost:${port}\n`);
+server.listen(port, host, () => {
+	const address = server.address();
+	const boundPort = typeof address === "object" && address ? address.port : port;
+	const displayHost = host.includes(":") ? `[${host}]` : host;
+	process.stdout.write(`Website dev server: http://${displayHost}:${boundPort}\n`);
 });

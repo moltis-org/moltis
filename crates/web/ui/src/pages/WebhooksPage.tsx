@@ -338,7 +338,7 @@ function DeliveryRow({ delivery }: { delivery: Delivery }): VNode {
 				</span>
 				<span className="text-[var(--muted)]">{d.eventType || "\u2014"}</span>
 				<span className="text-[var(--muted)]">{d.receivedAt ? new Date(d.receivedAt).toLocaleString() : ""}</span>
-				{d.durationMs != null ? <span className="text-[var(--muted)]">{d.durationMs}ms</span> : ""}
+				{d.durationMs == null ? "" : <span className="text-[var(--muted)]">{d.durationMs}ms</span>}
 			</div>
 			<div className="flex items-center gap-2">
 				{d.sessionKey ? <span className="text-[var(--muted)] font-mono text-[10px]">{d.sessionKey}</span> : ""}

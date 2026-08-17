@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use {moltis_channels::ChannelReplyTarget, moltis_tools::sandbox::SandboxRouter};
+use {
+    moltis_channels::{ChannelActivity, ChannelReplyTarget},
+    moltis_tools::sandbox::SandboxRouter,
+};
 
 /// TTS runtime override configuration (provider/voice/model).
 ///
@@ -48,6 +51,14 @@ pub trait ChatRuntime: Send + Sync {
 
     /// Broadcast a WebSocket event to all connected clients.
     async fn broadcast(&self, topic: &str, payload: Value);
+
+    /// Reaction-feedback service, when one is configured.
+    ///
+    /// Defaulted to `None` so runtimes that do not collect feedback — tests,
+    /// embedders — need no change.
+    fn feedback(&self) -> Option<Arc<moltis_channels::FeedbackService>> {
+        None
+    }
 
     // ── Channel reply queue ──────────────────────────────────────────────
 
@@ -130,7 +141,54 @@ pub trait ChatRuntime: Send + Sync {
     /// Take (and remove) the last error for a run_id.
     async fn last_run_error(&self, run_id: &str) -> Option<String>;
 
+    /// Report a mid-turn activity for a channel-dispatched session so the
+    /// runtime can drive acknowledgment reactions (phase emojis) and status.
+    ///
+    /// Default no-op: runtimes without channel reactions (tests, headless)
+    /// ignore it. Emitted from the agent loop (Thinking/Tool) and from the run
+    /// completion (Finished).
+    async fn note_channel_activity(&self, _activity_id: &str, _activity: ChannelActivity) {}
+
+    /// Bind the given acknowledgment keys to this session's now-executing run,
+    /// so activity routes to exactly the inbound message(s) this run handles.
+    /// Called once the queue decision is known and the run actually starts.
+    async fn activate_channel_acks(
+        &self,
+        _activity_id: &str,
+        _session_key: &str,
+        _ack_keys: Vec<String>,
+    ) {
+    }
+
+    /// Finalize the turn identified by `activity_id`.
+    ///
+    /// For abort, where the run future is killed and cannot emit its own
+    /// terminal. Turn-addressed, so it cannot resolve a turn that starts later.
+    async fn finalize_active_channel_acks(
+        &self,
+        _activity_id: &str,
+        _outcome: moltis_channels::ChannelAckOutcome,
+    ) {
+    }
+
+    /// Finalize acknowledgment keys directly, for paths where no run executes
+    /// (rejected hook, early error) and nothing else will signal a terminal.
+    async fn finalize_channel_acks(
+        &self,
+        _ack_keys: Vec<String>,
+        _outcome: moltis_channels::ChannelAckOutcome,
+    ) {
+    }
+
     // ── Push notifications ───────────────────────────────────────────────
+
+    /// Human-readable label for a session, used to title push notifications.
+    ///
+    /// Returns `None` when the session has no label yet (auto-titling may not
+    /// have run) or when no metadata store is wired up.
+    async fn session_label(&self, _session_key: &str) -> Option<String> {
+        None
+    }
 
     /// Send a push notification to all subscribed devices.
     /// Returns the number of devices notified, or an error.
@@ -141,6 +199,20 @@ pub trait ChatRuntime: Send + Sync {
         url: Option<&str>,
         session_key: Option<&str>,
     ) -> crate::error::Result<usize>;
+
+    /// Send an ordered notification. External runtimes that do not implement
+    /// ordering retain their existing delivery behavior by default.
+    async fn send_ordered_push_notification(
+        &self,
+        title: &str,
+        body: &str,
+        url: Option<&str>,
+        session_key: Option<&str>,
+        _order: u64,
+    ) -> crate::error::Result<usize> {
+        self.send_push_notification(title, body, url, session_key)
+            .await
+    }
 
     // ── Local LLM ────────────────────────────────────────────────────────
 

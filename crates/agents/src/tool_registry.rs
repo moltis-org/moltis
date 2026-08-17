@@ -33,10 +33,39 @@ pub enum ToolSource {
     Wasm { component_hash: [u8; 32] },
 }
 
-/// Internal entry pairing a tool with its source metadata.
+/// The least-trusted audience allowed to use a tool.
+///
+/// Tools are trusted-only unless their registration site explicitly opts into
+/// public use. Third-party metadata must not be able to widen this host-owned
+/// security boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToolAudience {
+    /// Safe for untrusted channel and webhook turns.
+    Public,
+    /// Available only to trusted owner/operator turns.
+    #[default]
+    Trusted,
+}
+
+impl ToolAudience {
+    fn allows(self, required: Self) -> bool {
+        matches!(self, Self::Trusted) || matches!(required, Self::Public)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Trusted => "trusted",
+        }
+    }
+}
+
+/// Internal entry pairing a tool with host-owned metadata.
+#[derive(Clone)]
 pub(crate) struct ToolEntry {
     pub(crate) tool: Arc<dyn AgentTool>,
     pub(crate) source: ToolSource,
+    pub(crate) audience: ToolAudience,
 }
 
 /// Shared set of tools activated at runtime by [`ToolSearchTool`](crate::lazy_tools::ToolSearchTool).
@@ -71,74 +100,81 @@ impl ToolRegistry {
         }
     }
 
-    /// Register a built-in tool. Warns (and overwrites) on name collision.
+    /// Whether the registry has no static or lazily activated tools.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty()
+            && self
+                .activated
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_empty()
+    }
+
+    /// Register a trusted-only built-in tool.
+    ///
+    /// Name collisions are rejected so an unrelated implementation cannot
+    /// inherit another tool's policy identity.
     pub fn register(&mut self, tool: Box<dyn AgentTool>) {
-        let name = tool.name().to_string();
-        let new_source = ToolSource::Builtin;
-        if let Some(existing) = self.tools.get(&name) {
-            warn!(
-                tool = %name,
-                old_source = ?existing.source,
-                new_source = ?new_source,
-                "tool name collision — new registration overwrites existing entry"
-            );
-        }
-        self.tools.insert(name, ToolEntry {
-            tool: Arc::from(tool),
-            source: new_source,
-        });
+        self.register_builtin(tool, ToolAudience::Trusted);
     }
 
-    /// Register a tool from an MCP server. Warns (and overwrites) on name collision.
+    /// Register a built-in tool reviewed as safe for untrusted input.
+    pub fn register_public(&mut self, tool: Box<dyn AgentTool>) {
+        self.register_builtin(tool, ToolAudience::Public);
+    }
+
+    fn register_builtin(&mut self, tool: Box<dyn AgentTool>, audience: ToolAudience) {
+        self.insert(tool, ToolSource::Builtin, audience);
+    }
+
+    /// Register a trusted-only tool from an MCP server.
     pub fn register_mcp(&mut self, tool: Box<dyn AgentTool>, server: McpServerId) {
-        let name = tool.name().to_string();
-        let new_source = ToolSource::Mcp { server };
-        if let Some(existing) = self.tools.get(&name) {
-            warn!(
-                tool = %name,
-                old_source = ?existing.source,
-                new_source = ?new_source,
-                "tool name collision — new registration overwrites existing entry"
-            );
-        }
-        self.tools.insert(name, ToolEntry {
-            tool: Arc::from(tool),
-            source: new_source,
-        });
+        self.insert(tool, ToolSource::Mcp { server }, ToolAudience::Trusted);
     }
 
-    /// Register a tool from a WASM component. Warns (and overwrites) on name collision.
+    /// Register a trusted-only tool from a WASM component.
     pub fn register_wasm(&mut self, tool: Box<dyn AgentTool>, component_hash: [u8; 32]) {
+        self.insert(
+            tool,
+            ToolSource::Wasm { component_hash },
+            ToolAudience::Trusted,
+        );
+    }
+
+    fn insert(&mut self, tool: Box<dyn AgentTool>, source: ToolSource, audience: ToolAudience) {
         let name = tool.name().to_string();
-        let new_source = ToolSource::Wasm { component_hash };
         if let Some(existing) = self.tools.get(&name) {
             warn!(
                 tool = %name,
                 old_source = ?existing.source,
-                new_source = ?new_source,
-                "tool name collision — new registration overwrites existing entry"
+                new_source = ?source,
+                "tool name collision; rejecting new registration"
             );
+            return;
         }
         self.tools.insert(name, ToolEntry {
             tool: Arc::from(tool),
-            source: new_source,
+            source,
+            audience,
         });
     }
 
-    /// Replace an existing tool by name, preserving its source metadata.
+    /// Replace an existing tool by name, preserving its host-owned metadata.
     ///
     /// Returns `true` if an existing tool was replaced, `false` if this was a new entry.
     pub fn replace(&mut self, tool: Box<dyn AgentTool>) -> bool {
         let name = tool.name().to_string();
-        let source = self
+        let metadata = self
             .tools
             .get(&name)
-            .map(|entry| entry.source.clone())
-            .unwrap_or(ToolSource::Builtin);
+            .map(|entry| (entry.source.clone(), entry.audience))
+            .unwrap_or((ToolSource::Builtin, ToolAudience::Trusted));
         self.tools
             .insert(name, ToolEntry {
                 tool: Arc::from(tool),
-                source,
+                source: metadata.0,
+                audience: metadata.1,
             })
             .is_some()
     }
@@ -166,6 +202,11 @@ impl ToolRegistry {
     /// Return the [`ToolSource`] for a tool by name.
     pub(crate) fn get_source(&self, name: &str) -> Option<ToolSource> {
         self.tools.get(name).map(|e| e.source.clone())
+    }
+
+    /// Return the [`ToolAudience`] for a tool by name.
+    pub(crate) fn get_audience(&self, name: &str) -> Option<ToolAudience> {
+        self.tools.get(name).map(|e| e.audience)
     }
 
     pub fn list_schemas(&self) -> Vec<serde_json::Value> {
@@ -237,12 +278,7 @@ impl ToolRegistry {
             .tools
             .iter()
             .filter(|(name, _)| !name.starts_with(prefix))
-            .map(|(name, entry)| {
-                (name.clone(), ToolEntry {
-                    tool: Arc::clone(&entry.tool),
-                    source: entry.source.clone(),
-                })
-            })
+            .map(|(name, entry)| (name.clone(), entry.clone()))
             .collect();
         ToolRegistry {
             tools,
@@ -256,12 +292,7 @@ impl ToolRegistry {
             .tools
             .iter()
             .filter(|(_, entry)| !matches!(entry.source, ToolSource::Mcp { .. }))
-            .map(|(name, entry)| {
-                (name.clone(), ToolEntry {
-                    tool: Arc::clone(&entry.tool),
-                    source: entry.source.clone(),
-                })
-            })
+            .map(|(name, entry)| (name.clone(), entry.clone()))
             .collect();
         ToolRegistry {
             tools,
@@ -275,12 +306,7 @@ impl ToolRegistry {
             .tools
             .iter()
             .filter(|(name, _)| !exclude.contains(&name.as_str()))
-            .map(|(name, entry)| {
-                (name.clone(), ToolEntry {
-                    tool: Arc::clone(&entry.tool),
-                    source: entry.source.clone(),
-                })
-            })
+            .map(|(name, entry)| (name.clone(), entry.clone()))
             .collect();
         ToolRegistry {
             tools,
@@ -296,6 +322,16 @@ impl ToolRegistry {
         self.clone_allowed_entries(|name, _| predicate(name))
     }
 
+    /// Merge another registry while preserving each tool's host-owned metadata.
+    pub fn extend_from(&mut self, other: &ToolRegistry) {
+        self.tools.extend(
+            other
+                .tools
+                .iter()
+                .map(|(name, entry)| (name.clone(), entry.clone())),
+        );
+    }
+
     /// Clone the registry keeping only tools whose name and source metadata match `predicate`.
     pub fn clone_allowed_entries<F>(&self, mut predicate: F) -> ToolRegistry
     where
@@ -305,12 +341,25 @@ impl ToolRegistry {
             .tools
             .iter()
             .filter(|(name, entry)| predicate(name, &entry.source))
-            .map(|(name, entry)| {
-                (name.clone(), ToolEntry {
-                    tool: Arc::clone(&entry.tool),
-                    source: entry.source.clone(),
-                })
-            })
+            .map(|(name, entry)| (name.clone(), entry.clone()))
+            .collect();
+        ToolRegistry {
+            tools,
+            activated: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Clone the registry at an audience ceiling.
+    ///
+    /// A public caller receives only explicitly reviewed public tools. Trusted
+    /// callers retain the complete registry. Name-based policy can narrow the
+    /// result later but cannot restore entries removed here.
+    pub fn clone_for_audience(&self, audience: ToolAudience) -> ToolRegistry {
+        let tools = self
+            .tools
+            .iter()
+            .filter(|(_, entry)| audience.allows(entry.audience))
+            .map(|(name, entry)| (name.clone(), entry.clone()))
             .collect();
         ToolRegistry {
             tools,
@@ -328,6 +377,7 @@ fn entry_to_schema(e: &ToolEntry) -> serde_json::Value {
         "name": e.tool.name(),
         "description": e.tool.description(),
         "parameters": e.tool.parameters_schema(),
+        "audience": e.audience.as_str(),
     });
     match &e.source {
         ToolSource::Builtin => {
@@ -496,6 +546,7 @@ mod tests {
             .find(|s| s["name"] == "exec")
             .expect("exec should exist");
         assert_eq!(builtin["source"], "builtin");
+        assert_eq!(builtin["audience"], "trusted");
         assert!(builtin.get("mcpServer").is_none() || builtin["mcpServer"].is_null());
 
         let mcp = schemas
@@ -504,6 +555,7 @@ mod tests {
             .expect("mcp tool should exist");
         assert_eq!(mcp["source"], "mcp");
         assert_eq!(mcp["mcpServer"], "github");
+        assert_eq!(mcp["audience"], "trusted");
     }
 
     #[test]
@@ -582,22 +634,24 @@ mod tests {
     }
 
     #[test]
-    fn test_register_collision_overwrites_with_warning() {
-        // The warn! output is emitted via tracing; we assert the overwrite
-        // semantics and trust the log at runtime.
+    fn test_register_collision_keeps_original_metadata() {
         let mut registry = ToolRegistry::new();
-        registry.register(Box::new(DummyTool {
+        registry.register_public(Box::new(DummyTool {
             name: "Read".to_string(),
         }));
-        // Same name again — should overwrite, warn logged.
-        registry.register(Box::new(DummyTool {
-            name: "Read".to_string(),
-        }));
+        registry.register_mcp(
+            Box::new(DummyTool {
+                name: "Read".to_string(),
+            }),
+            McpServerId::from("filesystem"),
+        );
         assert_eq!(registry.list_names(), vec!["Read".to_string()]);
+        assert_eq!(registry.get_source("Read"), Some(ToolSource::Builtin));
+        assert_eq!(registry.get_audience("Read"), Some(ToolAudience::Public));
     }
 
     #[test]
-    fn test_register_mcp_overwriting_builtin_warns() {
+    fn test_register_mcp_cannot_overwrite_builtin() {
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(DummyTool {
             name: "Read".to_string(),
@@ -608,9 +662,8 @@ mod tests {
             }),
             McpServerId::from("filesystem"),
         );
-        // Source should now be Mcp even though the builtin was registered first.
         let src = registry.get_source("Read").unwrap();
-        assert!(matches!(src, ToolSource::Mcp { .. }));
+        assert_eq!(src, ToolSource::Builtin);
     }
 
     #[test]
@@ -629,5 +682,48 @@ mod tests {
         let filtered = registry.clone_allowed_by(|name| name.starts_with("web") || name == "exec");
         let names = filtered.list_names();
         assert_eq!(names, vec!["exec".to_string(), "web_fetch".to_string()]);
+    }
+
+    #[test]
+    fn public_audience_excludes_new_and_external_tools_by_default() {
+        let mut registry = ToolRegistry::new();
+        registry.register_public(Box::new(DummyTool {
+            name: "calc".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "future_builtin".to_string(),
+        }));
+        registry.register_mcp(
+            Box::new(DummyTool {
+                name: "mcp__example__read".to_string(),
+            }),
+            McpServerId::from("example"),
+        );
+        registry.register_wasm(
+            Box::new(DummyTool {
+                name: "future_wasm".to_string(),
+            }),
+            [0xCD; 32],
+        );
+
+        let public = registry.clone_for_audience(ToolAudience::Public);
+        assert_eq!(public.list_names(), vec!["calc".to_string()]);
+        assert!(public.get("future_builtin").is_none());
+        assert!(public.get("mcp__example__read").is_none());
+        assert!(public.get("future_wasm").is_none());
+    }
+
+    #[test]
+    fn trusted_audience_keeps_all_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register_public(Box::new(DummyTool {
+            name: "calc".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "exec".to_string(),
+        }));
+
+        let trusted = registry.clone_for_audience(ToolAudience::Trusted);
+        assert_eq!(trusted.list_names(), vec!["calc", "exec"]);
     }
 }

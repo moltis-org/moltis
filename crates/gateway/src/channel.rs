@@ -71,6 +71,45 @@ fn sender_allowlist_key(channel_type: ChannelType) -> &'static str {
     }
 }
 
+/// Role requested when approving a sender.
+///
+/// Approving for access and granting host privilege are separate decisions:
+/// the allowlist answers "may this peer talk to the bot", `operators` answers
+/// "may this peer run commands on this machine". Absent or unrecognized values
+/// mean guest, so a caller can never grant privilege by accident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApprovalRole {
+    Guest,
+    Operator,
+}
+
+fn parse_approval_role(params: &Value) -> ApprovalRole {
+    match params.get("role").and_then(Value::as_str) {
+        Some("operator") => ApprovalRole::Operator,
+        _ => ApprovalRole::Guest,
+    }
+}
+
+/// Append `peer_id` to the account's `operators` list.
+///
+/// Operator entries are matched exactly and case-sensitively, so this must be
+/// the platform sender ID — never the username the allowlist may have been
+/// given, which would silently never match.
+fn grant_operator(config: &mut Value, peer_id: &str) -> Result<(), String> {
+    let operators = config
+        .as_object_mut()
+        .ok_or_else(|| "config is not an object".to_string())?
+        .entry("operators")
+        .or_insert_with(|| serde_json::json!([]));
+    let entries = operators
+        .as_array_mut()
+        .ok_or_else(|| "operators is not an array".to_string())?;
+    if !entries.iter().any(|entry| entry.as_str() == Some(peer_id)) {
+        entries.push(serde_json::json!(peer_id));
+    }
+    Ok(())
+}
+
 fn otp_pending_payload(code: &str, expires_at: i64) -> Value {
     serde_json::json!({
         "code": code,
@@ -222,7 +261,7 @@ impl ChannelService for LiveChannelService {
                         Some(status) => Some(status.probe(aid).await),
                         None => None,
                     };
-                    let cfg = p.account_config_json(aid);
+                    let cfg = p.account_config_json(aid).await;
                     (snap, cfg)
                 };
 
@@ -682,6 +721,30 @@ impl ChannelService for LiveChannelService {
             obj.insert("dm_policy".into(), serde_json::json!("allowlist"));
         }
 
+        // Operator entries must be the exact platform sender ID. `identifier`
+        // may be a username (allowlists match those), which would be accepted
+        // here and then never match at authorization time — privilege that
+        // silently does nothing is worse than an error.
+        let role = parse_approval_role(&params);
+        if role == ApprovalRole::Operator {
+            let peer_id = params
+                .get("peer_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|peer_id| !peer_id.is_empty())
+                .ok_or_else(|| {
+                    "approving as operator requires 'peer_id' (the exact platform sender ID)"
+                        .to_string()
+                })?;
+            grant_operator(&mut config, peer_id)?;
+            warn!(
+                account_id,
+                peer_id,
+                channel_type = channel_type.as_str(),
+                "sender granted operator privilege (host command access)"
+            );
+        }
+
         if let Err(e) = self
             .store
             .upsert(StoredChannel {
@@ -712,6 +775,7 @@ impl ChannelService for LiveChannelService {
         );
         Ok(serde_json::json!({
             "approved": identifier,
+            "role": if role == ApprovalRole::Operator { "operator" } else { "guest" },
             "type": channel_type.to_string()
         }))
     }
@@ -895,7 +959,7 @@ impl ChannelService for LiveChannelService {
 
         // Persist the new channel to the store.
         if let Some(account_id) = result.get("account_id").and_then(Value::as_str)
-            && let Some(config_json) = plugin.account_config_json(account_id)
+            && let Some(config_json) = plugin.account_config_json(account_id).await
             && let Err(e) = self
                 .store
                 .upsert(StoredChannel {
@@ -914,10 +978,14 @@ impl ChannelService for LiveChannelService {
     }
 }
 
+#[allow(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {
-        super::{merge_channel_config, otp_pending_payload, sender_allowlist_key},
+        super::{
+            ApprovalRole, grant_operator, merge_channel_config, otp_pending_payload,
+            parse_approval_role, sender_allowlist_key,
+        },
         moltis_channels::ChannelType,
         serde_json::json,
     };
@@ -979,6 +1047,49 @@ mod tests {
             merged["channel_overrides"]["C123"]["model_provider"],
             "anthropic"
         );
+    }
+
+    #[test]
+    fn approval_role_defaults_to_guest() {
+        // Anything that is not exactly "operator" must not grant privilege.
+        for params in [
+            serde_json::json!({}),
+            serde_json::json!({"role": "guest"}),
+            serde_json::json!({"role": "Operator"}),
+            serde_json::json!({"role": true}),
+            serde_json::json!({"role": ["operator"]}),
+        ] {
+            assert_eq!(
+                parse_approval_role(&params),
+                ApprovalRole::Guest,
+                "unexpected privilege for {params}"
+            );
+        }
+        assert_eq!(
+            parse_approval_role(&serde_json::json!({"role": "operator"})),
+            ApprovalRole::Operator
+        );
+    }
+
+    #[test]
+    fn grant_operator_appends_exact_id_once() {
+        let mut config = serde_json::json!({"allowlist": ["alice"]});
+
+        grant_operator(&mut config, "12345678").expect("grants");
+        grant_operator(&mut config, "12345678").expect("is idempotent");
+
+        assert_eq!(config["operators"], serde_json::json!(["12345678"]));
+        // Approval must not disturb the access list.
+        assert_eq!(config["allowlist"], serde_json::json!(["alice"]));
+    }
+
+    #[test]
+    fn grant_operator_keeps_existing_entries_and_is_case_sensitive() {
+        let mut config = serde_json::json!({"operators": ["Alice"]});
+
+        grant_operator(&mut config, "alice").expect("grants");
+
+        assert_eq!(config["operators"], serde_json::json!(["Alice", "alice"]));
     }
 
     #[test]

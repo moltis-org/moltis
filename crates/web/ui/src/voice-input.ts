@@ -31,7 +31,7 @@ let pttKey = localStorage.getItem("moltis_ptt_key") || "F13";
 let pttActive = false;
 
 // ── Tab coordination (prevent dual-tab recording) ────────────
-const voiceLockChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("moltis_voice_lock") : null;
+const voiceLockChannel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("moltis_voice_lock");
 let voiceLockedByOtherTab = false;
 if (voiceLockChannel) {
 	voiceLockChannel.onmessage = (e: MessageEvent): void => {

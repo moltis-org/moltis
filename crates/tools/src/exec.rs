@@ -6,11 +6,17 @@ use std::time::Instant;
 use {
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
-    tokio::process::Command,
+    tokio::{
+        io::{AsyncRead, AsyncReadExt},
+        process::Command,
+    },
     tracing::{debug, info, warn},
 };
 
-use crate::{Result, error::Error};
+use {
+    crate::{Result, error::Error},
+    moltis_common::process_tree::OwnedProcessTree,
+};
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{
@@ -112,19 +118,40 @@ impl Default for ExecOpts {
     }
 }
 
-fn truncate_output_for_display(output: &mut String, max_output_bytes: usize) {
-    if output.len() <= max_output_bytes {
-        return;
+async fn read_output_limited(
+    mut reader: impl AsyncRead + Unpin,
+    max_output_bytes: usize,
+) -> std::io::Result<String> {
+    let mut retained = Vec::with_capacity(max_output_bytes.min(64 * 1024));
+    let mut buffer = [0_u8; 8 * 1024];
+    let mut truncated = false;
+
+    loop {
+        let read = reader.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        let keep = read.min(max_output_bytes.saturating_sub(retained.len()));
+        retained.extend_from_slice(&buffer[..keep]);
+        truncated |= keep < read;
     }
-    output.truncate(output.floor_char_boundary(max_output_bytes));
-    output.push_str("\n... [output truncated]");
+
+    let mut output = String::from_utf8_lossy(&retained).into_owned();
+    if output.len() > max_output_bytes {
+        output.truncate(output.floor_char_boundary(max_output_bytes));
+        truncated = true;
+    }
+    if truncated {
+        output.push_str("\n... [output truncated]");
+    }
+    Ok(output)
 }
 
 /// Execute a shell command with timeout and output limits.
-#[tracing::instrument(skip(opts), fields(timeout_secs = opts.timeout.as_secs()))]
+#[tracing::instrument(skip(command, opts), fields(timeout_secs = opts.timeout.as_secs()))]
 pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> {
     debug!(
-        command,
+        command_bytes = command.len(),
         timeout_secs = opts.timeout.as_secs(),
         "exec_command"
     );
@@ -143,8 +170,7 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
     cmd.stderr(std::process::Stdio::piped());
     // Prevent the child from inheriting stdin.
     cmd.stdin(std::process::Stdio::null());
-
-    let child = cmd.spawn().map_err(|e| {
+    let mut child = OwnedProcessTree::spawn(cmd).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             if let Some(ref dir) = opts.working_dir {
                 Error::message(format!(
@@ -159,18 +185,24 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
         }
     })?;
 
-    let result = tokio::time::timeout(opts.timeout, child.wait_with_output()).await;
+    let stdout = child
+        .take_stdout()
+        .ok_or_else(|| Error::message("failed to capture command stdout"))?;
+    let stderr = child
+        .take_stderr()
+        .ok_or_else(|| Error::message("failed to capture command stderr"))?;
+    let execution = async {
+        tokio::try_join!(
+            child.wait(),
+            read_output_limited(stdout, opts.max_output_bytes),
+            read_output_limited(stderr, opts.max_output_bytes),
+        )
+    };
+    let result = tokio::time::timeout(opts.timeout, execution).await;
 
     match result {
-        Ok(Ok(output)) => {
-            let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-            let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-
-            // Truncate if exceeding limit.
-            truncate_output_for_display(&mut stdout, opts.max_output_bytes);
-            truncate_output_for_display(&mut stderr, opts.max_output_bytes);
-
-            let exit_code = output.status.code().unwrap_or(-1);
+        Ok(Ok((status, stdout, stderr))) => {
+            let exit_code = status.code().unwrap_or(-1);
             debug!(
                 exit_code,
                 stdout_len = stdout.len(),
@@ -186,13 +218,25 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
         },
         Ok(Err(e)) => Err(Error::message(format!("failed to run command: {e}"))),
         Err(_) => {
-            warn!(command, "exec timeout");
+            let _ = child.kill().await;
+            warn!(command_bytes = command.len(), "exec timeout");
             Err(Error::message(format!(
                 "command timed out after {}s",
                 opts.timeout.as_secs()
             )))
         },
     }
+}
+
+fn inject_moltis_data_dir(env: &mut Vec<(String, String)>, runs_on_host: bool) {
+    if !runs_on_host {
+        return;
+    }
+    env.retain(|(key, _)| key != "MOLTIS_DATA_DIR");
+    env.push((
+        "MOLTIS_DATA_DIR".to_owned(),
+        moltis_config::data_dir().to_string_lossy().into_owned(),
+    ));
 }
 
 /// The exec tool exposed to the agent tool registry.
@@ -418,7 +462,7 @@ impl AgentTool for ExecTool {
             let cwd = params.get("working_dir").and_then(|v| v.as_str());
 
             info!(
-                command,
+                command_bytes = command.len(),
                 node_id = %node_id,
                 timeout_secs,
                 "exec forwarding to remote node"
@@ -472,6 +516,13 @@ impl AgentTool for ExecTool {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
+            .or_else(|| {
+                params
+                    .get("_working_dir")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+            })
             .or_else(|| self.working_dir.clone());
 
         let runs_on_host = !(is_sandboxed && has_container_backend);
@@ -528,7 +579,7 @@ impl AgentTool for ExecTool {
         }
 
         info!(
-            command,
+            command_bytes = command.len(),
             timeout_secs,
             ?working_dir,
             is_sandboxed,
@@ -544,7 +595,10 @@ impl AgentTool for ExecTool {
         if needs_approval && let Some(ref mgr) = self.approval_manager {
             let action = mgr.check_command(command).await?;
             if action == ApprovalAction::NeedsApproval {
-                info!(command, "command needs approval, waiting...");
+                info!(
+                    command_bytes = command.len(),
+                    "command needs approval, waiting..."
+                );
                 let (req_id, rx) = mgr.create_request(command, session_key).await;
 
                 // Broadcast to connected clients.
@@ -557,7 +611,7 @@ impl AgentTool for ExecTool {
                 let decision = mgr.wait_for_decision(rx).await;
                 match decision {
                     ApprovalDecision::Approved => {
-                        info!(command, "command approved");
+                        info!(command_bytes = command.len(), "command approved");
                     },
                     ApprovalDecision::Denied => {
                         return Err(
@@ -582,10 +636,11 @@ impl AgentTool for ExecTool {
 
         // Expose secrets only at the injection boundary.
         use secrecy::ExposeSecret;
-        let env: Vec<(String, String)> = secret_env
+        let mut env: Vec<(String, String)> = secret_env
             .iter()
             .map(|(k, v)| (k.clone(), v.expose_secret().clone()))
             .collect();
+        inject_moltis_data_dir(&mut env, runs_on_host);
 
         let opts = ExecOpts {
             timeout: Duration::from_secs(timeout_secs),
@@ -712,7 +767,7 @@ impl AgentTool for ExecTool {
                         Error::message(format!("sandbox preparation failed: {error}")).into(),
                     );
                 }
-                debug!(session = sk, sandbox_id = %id, command, "sandbox running command");
+                debug!(session = sk, sandbox_id = %id, command_bytes = command.len(), "sandbox running command");
                 let mut sandbox_result = backend.exec(&id, command, &opts).await?;
                 for retry_idx in 1..=MAX_SANDBOX_RECOVERY_RETRIES {
                     if sandbox_result.exit_code == 0
@@ -724,7 +779,7 @@ impl AgentTool for ExecTool {
                     warn!(
                         session = sk,
                         sandbox_id = %id,
-                        command,
+                        command_bytes = command.len(),
                         retry_idx,
                         max_retries = MAX_SANDBOX_RECOVERY_RETRIES,
                         "sandbox exec failed because container is unavailable, reinitializing and retrying"
@@ -742,11 +797,15 @@ impl AgentTool for ExecTool {
                 }
                 sandbox_result
             } else {
-                debug!(session = sk, command, "running unsandboxed");
+                debug!(
+                    session = sk,
+                    command_bytes = command.len(),
+                    "running unsandboxed"
+                );
                 exec_command(command, &opts).await?
             }
         } else if let Some(ref id) = self.sandbox_id {
-            debug!(sandbox_id = %id, command, "static sandbox running command");
+            debug!(sandbox_id = %id, command_bytes = command.len(), "static sandbox running command");
             self.sandbox.ensure_ready(id, None).await?;
             let mut sandbox_result = self.sandbox.exec(id, command, &opts).await?;
             for retry_idx in 1..=MAX_SANDBOX_RECOVERY_RETRIES {
@@ -758,7 +817,7 @@ impl AgentTool for ExecTool {
 
                 warn!(
                     sandbox_id = %id,
-                    command,
+                    command_bytes = command.len(),
                     retry_idx,
                     max_retries = MAX_SANDBOX_RECOVERY_RETRIES,
                     "sandbox exec failed because container is unavailable, reinitializing and retrying"
@@ -792,7 +851,7 @@ impl AgentTool for ExecTool {
         }
 
         info!(
-            command,
+            command_bytes = command.len(),
             exit_code = result.exit_code,
             stdout_len = result.stdout.len(),
             stderr_len = result.stderr.len(),

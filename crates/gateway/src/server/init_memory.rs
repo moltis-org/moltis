@@ -21,6 +21,7 @@ pub(crate) async fn init_memory_system(
     effective_providers: &moltis_config::schema::ProvidersConfig,
     runtime_env_overrides: &HashMap<String, String>,
     db_pool_max_connections: u32,
+    start_background_tasks: bool,
 ) -> Option<moltis_memory::runtime::DynMemoryRuntime> {
     // Build embedding provider(s) for the fallback chain.
     let mut embedding_providers: Vec<(
@@ -29,6 +30,8 @@ pub(crate) async fn init_memory_system(
     )> = Vec::new();
 
     let mem_cfg = &config.memory;
+
+    validate_memory_backend(mem_cfg.backend);
 
     if mem_cfg.disable_rag {
         info!("memory: RAG disabled via memory.disable_rag=true, using keyword-only search");
@@ -191,6 +194,41 @@ pub(crate) async fn init_memory_system(
             }
         };
 
+    #[cfg(feature = "zvec")]
+    if mem_cfg.backend == moltis_config::MemoryBackend::Zvec {
+        // zvec derives its on-disk collection path from the embedding dimension
+        // (e.g. memory.zvec_768). To avoid silently splitting collections when
+        // an embedder is added later, only use zvec when a concrete dimension
+        // is available now; otherwise fall back to the built-in SQLite backend.
+        let embedding_dimension = mem_cfg
+            .embedding_dimension
+            .or_else(|| embedder.as_ref().map(|e| e.dimensions() as u32));
+        match embedding_dimension {
+            Some(dim) => match try_init_zvec(mem_cfg, data_dir, dim).await {
+                Ok(store) => {
+                    return build_memory_runtime_from_store(
+                        mem_cfg,
+                        data_dir,
+                        embedder,
+                        store,
+                        start_background_tasks,
+                    )
+                    .await;
+                },
+                Err(e) => {
+                    warn!(
+                        "zvec initialization failed ({e:#}), falling back to built-in SQLite backend"
+                    );
+                },
+            },
+            None => warn!(
+                "memory: zvec backend requires an embedding dimension (configure memory.model or \
+                 memory.embedding_dimension, or run with an embedding provider); \
+                 falling back to built-in SQLite backend"
+            ),
+        }
+    }
+
     let memory_db_path = data_dir.join("memory.db");
     let memory_pool_result = {
         use {
@@ -224,7 +262,14 @@ pub(crate) async fn init_memory_system(
                 tracing::warn!("memory migration failed: {e}");
                 None
             } else {
-                build_memory_runtime(mem_cfg, data_dir, embedder, memory_pool).await
+                build_memory_runtime(
+                    mem_cfg,
+                    data_dir,
+                    embedder,
+                    memory_pool,
+                    start_background_tasks,
+                )
+                .await
             }
         },
         Err(e) => {
@@ -240,6 +285,130 @@ async fn build_memory_runtime(
     data_dir: &FsPath,
     embedder: Option<Box<dyn moltis_memory::embeddings::EmbeddingProvider>>,
     memory_pool: sqlx::SqlitePool,
+    start_background_tasks: bool,
+) -> Option<moltis_memory::runtime::DynMemoryRuntime> {
+    let store: Box<dyn moltis_memory::store::MemoryStore> = Box::new(
+        moltis_memory::store_sqlite::SqliteMemoryStore::new(memory_pool),
+    );
+    build_memory_runtime_from_store(mem_cfg, data_dir, embedder, store, start_background_tasks)
+        .await
+}
+
+/// Validate that the configured memory backend is available with the current
+/// build features. Logs a clear warning when the required feature is missing.
+fn validate_memory_backend(backend: moltis_config::MemoryBackend) {
+    match backend {
+        moltis_config::MemoryBackend::Builtin => {},
+        moltis_config::MemoryBackend::Zvec => {
+            #[cfg(not(feature = "zvec"))]
+            warn!(
+                "memory: zvec backend requires moltis built with --features zvec, \
+                 falling back to built-in SQLite backend"
+            );
+        },
+        moltis_config::MemoryBackend::Qmd => {
+            #[cfg(not(feature = "qmd"))]
+            warn!(
+                "memory: qmd backend requires moltis built with --features qmd, \
+                 falling back to built-in SQLite backend"
+            );
+        },
+    }
+}
+
+/// Initialize the zvec memory backend.
+///
+/// Returns the ready store on success; on failure the error propagates to the
+/// caller, which logs a warning and falls back to the built-in SQLite backend.
+///
+/// `embedding_dimension` must be a concrete value (never `None`) so the on-disk
+/// collection path is stable across restarts (e.g. `memory.zvec_768`). Callers
+/// are responsible for falling back to the built-in backend when no dimension
+/// can be resolved.
+#[cfg(feature = "zvec")]
+async fn try_init_zvec(
+    cfg: &moltis_config::schema::MemoryEmbeddingConfig,
+    data_dir: &FsPath,
+    embedding_dimension: u32,
+) -> anyhow::Result<Box<dyn moltis_memory::store::MemoryStore>> {
+    let db_path = cfg.db_path.as_deref().unwrap_or("memory.zvec");
+    let collection_path = moltis_memory_zvec::path::resolve_data_subpath(data_dir, db_path)
+        .map_err(|e| anyhow::anyhow!("invalid memory.zvec db_path: {e}"))?;
+    let dim = embedding_dimension;
+
+    let cache_path =
+        moltis_memory_zvec::path::resolve_data_subpath(data_dir, &format!("{db_path}.cache"))
+            .map_err(|e| anyhow::anyhow!("invalid memory.zvec cache path: {e}"))?;
+    let cache_config = moltis_memory_zvec::ZvecCacheConfig {
+        dimension: dim,
+        cache_max_entries: 200_000,
+    };
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
+
+    let collection = moltis_memory_zvec::initialize(&collection_path, Some(dim))?;
+    let cache = moltis_memory_zvec::RedbCache::with_config(&cache_path, cache_config)?;
+
+    // Log index completeness on startup. `flush()` persists documents AND the
+    // HNSW graph (via WAL recovery on reopen), so vector search works even
+    // when `index_completeness` reports 0.0 — the metric is cosmetic. We do
+    // NOT call `optimize()` because it corrupts the FTS RocksDB index.
+    if let Ok(stats) = collection.stats() {
+        tracing::info!(
+            doc_count = stats.doc_count,
+            indexes = ?stats.indexes.iter().map(|i| (i.name.as_str(), i.completeness)).collect::<Vec<_>>(),
+            "zvec: opened existing collection"
+        );
+    }
+    let store = moltis_memory_zvec::ZvecMemoryStore::with_cache(collection, cache)
+        .with_cache_dimension(dim)
+        .with_collection_disk_path(&collection_path)
+        .with_shutdown_signal(shutdown_tx);
+
+    // Periodic flush to persist new writes; exits when `shutdown_rx` closes.
+    // `flush()` persists documents + HNSW graph. We avoid `optimize()` because
+    // it corrupts the FTS RocksDB index. Keyword search uses the native FTS
+    // engine (v0.6.0 enhanced tokenizer), which is rebuilt from persisted
+    // documents on reopen.
+    let zvec_collection = store.collection_arc();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        interval.tick().await;
+        let mut shutdown_rx = shutdown_rx;
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let c = Arc::clone(&zvec_collection);
+                    match tokio::task::spawn_blocking(move || c.flush()).await {
+                        Ok(Ok(())) => tracing::debug!("zvec: periodic flush ok"),
+                        Ok(Err(e)) => tracing::warn!("zvec: periodic flush failed: {e}"),
+                        Err(join_err) => tracing::warn!("zvec: periodic flush task panicked: {join_err}"),
+                    }
+                }
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() {
+                        let c = Arc::clone(&zvec_collection);
+                        let _ = tokio::task::spawn_blocking(move || {
+                            let _ = c.flush();
+                        }).await;
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    tracing::info!("using zvec memory backend");
+    Ok(Box::new(store))
+}
+
+/// Build the memory runtime from a pre-created store (used by both SQLite and zvec backends).
+async fn build_memory_runtime_from_store(
+    mem_cfg: &moltis_config::schema::MemoryEmbeddingConfig,
+    data_dir: &FsPath,
+    embedder: Option<Box<dyn moltis_memory::embeddings::EmbeddingProvider>>,
+    store: Box<dyn moltis_memory::store::MemoryStore>,
+    start_background_tasks: bool,
 ) -> Option<moltis_memory::runtime::DynMemoryRuntime> {
     let data_memory_file = data_dir.join("MEMORY.md");
     let data_memory_file_lower = data_dir.join("memory.md");
@@ -287,9 +456,6 @@ async fn build_memory_runtime(
         ..Default::default()
     };
 
-    let store = Box::new(moltis_memory::store_sqlite::SqliteMemoryStore::new(
-        memory_pool,
-    ));
     let memory_dirs_for_watch = memory_runtime_config.memory_dirs.clone();
     let builtin_manager = Arc::new(if let Some(embedder) = embedder {
         moltis_memory::manager::MemoryManager::new(memory_runtime_config, store, embedder)
@@ -339,7 +505,21 @@ async fn build_memory_runtime(
                 builtin_manager.clone()
             }
         },
+        moltis_config::MemoryBackend::Zvec => {
+            #[cfg(not(feature = "zvec"))]
+            warn!(
+                "memory: zvec backend requested but the gateway was built without the zvec feature, falling back to builtin memory"
+            );
+            builtin_manager.clone()
+        },
     };
+
+    if !start_background_tasks {
+        if let Err(error) = manager.sync().await {
+            tracing::warn!(%error, "memory: initial headless sync failed");
+        }
+        return Some(manager);
+    }
 
     // Initial sync + periodic re-sync (15min with watcher, 5min without).
     let sync_manager = Arc::clone(&manager);

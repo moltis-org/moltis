@@ -4,6 +4,7 @@ const {
 	expectPageContentMounted,
 	expectRpcOk,
 	navigateAndWait,
+	sendRpcFromPage,
 	waitForChatSessionReady,
 	waitForWsConnected,
 	watchPageErrors,
@@ -76,6 +77,85 @@ test.describe("Session management", () => {
 		// At least the default "main" session should be present
 		const items = sessionList.locator(".session-item");
 		await expect(items).not.toHaveCount(0);
+	});
+
+	test("session list distinguishes date buckets and refreshes after midnight", async ({ page }) => {
+		// This test injects sessions straight into the client store to control
+		// their timestamps. A background /api/sessions refresh replaces the list
+		// with the server's page wholesale (mergeSessionListPage with
+		// append=false), so any refresh landing mid-assertion drops them — and
+		// the server page is capped at 40 by recency, so once earlier specs have
+		// created enough sessions the injected ones cannot come back. Serving an
+		// empty page keeps the refresh from clobbering the fixtures.
+		await page.route("**/api/sessions?**", (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ sessions: [], next_cursor: null }),
+			}),
+		);
+
+		await page.clock.install({ time: new Date(2026, 6, 23, 23, 58) });
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+		await expect(page.locator('#sessionList .session-item[data-session-key="main"]')).toBeVisible();
+		await page.clock.pauseAt(new Date(2026, 6, 23, 23, 59, 59, 500));
+
+		const expected = await page.evaluate(() => {
+			const store = window.__moltis_stores?.sessionStore;
+			if (!store) throw new Error("session store unavailable");
+
+			const timestampForDaysAgo = (daysAgo, hour) => {
+				const date = new Date();
+				date.setDate(date.getDate() - daysAgo);
+				date.setHours(hour, 30, 0, 0);
+				return date.getTime();
+			};
+			const timestamps = {
+				today: timestampForDaysAgo(0, 9),
+				yesterday: timestampForDaysAgo(1, 10),
+				weekday: timestampForDaysAgo(3, 11),
+				older: timestampForDaysAgo(10, 12),
+			};
+
+			for (const [key, updatedAt] of Object.entries(timestamps)) {
+				store.upsert({
+					key: `e2e:date-label:${key}`,
+					label: `Date label ${key}`,
+					createdAt: updatedAt,
+					updatedAt,
+				});
+			}
+
+			const olderDate = new Date(timestamps.older);
+			const now = new Date();
+			return {
+				today: new Date(timestamps.today).toLocaleTimeString(undefined, {
+					hour: "2-digit",
+					minute: "2-digit",
+				}),
+				yesterday: new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(-1, "day"),
+				weekday: new Date(timestamps.weekday).toLocaleDateString(undefined, { weekday: "long" }),
+				older: olderDate.toLocaleDateString(undefined, {
+					month: "short",
+					day: "numeric",
+					...(olderDate.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+				}),
+			};
+		});
+
+		for (const [key, label] of Object.entries(expected)) {
+			await expect(
+				page.locator(`#sessionList .session-item[data-session-key="e2e:date-label:${key}"] .session-time`),
+			).toHaveText(label);
+		}
+
+		await page.clock.fastForward(1_000);
+		await expect(
+			page.locator('#sessionList .session-item[data-session-key="e2e:date-label:today"] .session-time'),
+		).toHaveText(expected.yesterday);
+
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("sessions sidebar uses search and add button row", async ({ page }) => {
@@ -368,14 +448,15 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("main session shows clear but hides delete, non-main shows delete but hides clear", async ({ page }) => {
+	test("main session shows clear, delete, and archive; non-main shows delete but hides clear", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/");
 		await waitForWsConnected(page);
 		await expectPageContentMounted(page);
 
 		await expect(page.locator('button[title="Clear session"]')).toBeVisible();
-		await expect(page.locator('button[title="Delete session"]')).toHaveCount(0);
+		await expect(page.locator('button[title="Delete session"]')).toBeVisible();
+		await expect(page.locator('button[title="Archive session"]')).toBeVisible();
 
 		await createSession(page);
 
@@ -417,6 +498,169 @@ test.describe("Session management", () => {
 
 		await archivedToggle.uncheck();
 		await expect(sessionItem).toBeVisible({ timeout: 10_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("main session can be archived and restored from the sidebar toggle", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		const mainItem = page.locator('#sessionList .session-item[data-session-key="main"]');
+		await expect(mainItem).toBeVisible({ timeout: 10_000 });
+
+		await page.locator('button[title="Archive session"]').click();
+		await expect(mainItem).toHaveCount(0);
+
+		const archivedToggle = page.locator("#showArchivedSessions");
+		await expect(archivedToggle).toBeVisible();
+		await archivedToggle.check();
+		await expect(mainItem).toBeVisible({ timeout: 10_000 });
+
+		await page.locator('button[title="Unarchive session"]').click();
+		await expect(page.locator('button[title="Archive session"]')).toBeVisible({ timeout: 10_000 });
+
+		await archivedToggle.uncheck();
+		await expect(mainItem).toBeVisible({ timeout: 10_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("main session can be deleted and comes back empty", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		// Keep another session around so the delete has somewhere to land.
+		await createSession(page);
+		const createdUrl = page.url();
+
+		const mainItem = page.locator('#sessionList .session-item[data-session-key="main"]');
+		await mainItem.click();
+		await expect.poll(() => page.url(), { timeout: 10_000 }).not.toBe(createdUrl);
+
+		const deleteBtn = page.getByRole("button", { name: "Delete", exact: true });
+		await expect(deleteBtn).toBeVisible({ timeout: 10_000 });
+		await deleteBtn.click();
+
+		// An empty main deletes without the confirmation dialog and hands the
+		// view to another session.
+		await expect.poll(() => page.url(), { timeout: 10_000 }).not.toMatch(/\/chats\/main$/);
+		await expect(mainItem).toHaveCount(0);
+		await expect
+			.poll(async () => {
+				const response = await sendRpcFromPage(page, "sessions.list", {});
+				if (!response?.ok) throw new Error(response?.error?.message || "sessions.list failed");
+				const payload = response.payload;
+				const sessions = Array.isArray(payload) ? payload : Array.isArray(payload?.sessions) ? payload.sessions : [];
+				return sessions.some((session) => session?.key === "main");
+			})
+			.toBe(false);
+
+		// Opening main again recreates it lazily rather than erroring.
+		await navigateAndWait(page, "/chats/main");
+		await waitForWsConnected(page);
+		await waitForChatSessionReady(page);
+		await expect(mainItem).toBeVisible({ timeout: 10_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("stale session list does not erase a concurrently created session", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+		await expect(page.locator('#sessionList .session-item[data-session-key="main"]')).toBeVisible();
+
+		let releaseStaleResponse = () => {
+			// Replaced synchronously by the Promise executor below.
+		};
+		const staleResponseReleased = new Promise((resolve) => {
+			releaseStaleResponse = resolve;
+		});
+		let staleResponseHeld = false;
+		let sessionListRequestCount = 0;
+		await page.route("**/api/sessions?**", async (route) => {
+			const response = await route.fetch();
+			const json = await response.json();
+			sessionListRequestCount += 1;
+			if (!staleResponseHeld) {
+				staleResponseHeld = true;
+				await staleResponseReleased;
+			}
+			await route.fulfill({ response, json });
+		});
+
+		await page.evaluate(() => {
+			const fetchSessions = window.__moltis_modules?.sessions?.fetchSessions;
+			if (typeof fetchSessions !== "function") throw new Error("fetchSessions unavailable");
+			fetchSessions();
+		});
+		await expect.poll(() => staleResponseHeld).toBe(true);
+
+		const sessionKey = `e2e-stale-list-${Date.now()}`;
+		await expectRpcOk(page, "sessions.switch", { key: sessionKey });
+		await page.evaluate((key) => {
+			const store = window.__moltis_stores?.sessionStore;
+			if (!store) throw new Error("session store unavailable");
+			const originalSetAll = store.setAll;
+			window.__staleListRemovedSession = false;
+			store.setAll = (sessions) => {
+				originalSetAll(sessions);
+				if (!store.getByKey(key)) window.__staleListRemovedSession = true;
+			};
+			store.upsert({ key, label: "Concurrent session" });
+		}, sessionKey);
+
+		releaseStaleResponse();
+		await expect.poll(() => sessionListRequestCount).toBeGreaterThan(1);
+		await expect.poll(() => page.evaluate(() => window.__staleListRemovedSession)).toBe(false);
+		await expect(page.locator(`#sessionList .session-item[data-session-key="${sessionKey}"]`)).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("cron tab hides archived sessions until the shared archive toggle is enabled", async ({ page }) => {
+		const suffix = Date.now();
+		const keys = {
+			activeKey: `cron:e2e-archive-filter-active-${suffix}`,
+			archivedKey: `cron:e2e-archive-filter-archived-${suffix}`,
+		};
+		await page.route("**/api/sessions?**", (route) =>
+			route.fulfill({
+				json: {
+					sessions: [
+						{ key: keys.activeKey, label: "Active cron run", archived: false },
+						{ key: keys.archivedKey, label: "Archived cron run", archived: true },
+					],
+					hasMore: false,
+					nextCursor: null,
+					total: 2,
+				},
+			}),
+		);
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		await page.evaluate(() => {
+			const store = window.__moltis_stores?.sessionStore;
+			if (!store) throw new Error("session store unavailable");
+			store.setShowArchivedSessions(false);
+		});
+
+		await page.locator('#sessionTabBar .session-tab[data-tab="cron"]').click();
+
+		const activeItem = page.locator(`#sessionList .session-item[data-session-key="${keys.activeKey}"]`);
+		const archivedItem = page.locator(`#sessionList .session-item[data-session-key="${keys.archivedKey}"]`);
+		const archivedToggle = page.locator("#showArchivedSessions");
+		await expect(activeItem).toBeVisible();
+		await expect(archivedItem).toHaveCount(0);
+		await expect(archivedToggle).toBeVisible();
+
+		await archivedToggle.check();
+		await expect(archivedItem).toBeVisible();
+
+		await archivedToggle.uncheck();
+		await expect(archivedItem).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -757,26 +1001,26 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("toggling sandbox shows chat notice", async ({ page }) => {
+	test("toggling sandbox updates toolbar state", async ({ page }) => {
 		const pageErrors = await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
+		const sandboxToggle = page.locator("#sandboxToggle");
+		const sandboxLabel = page.locator("#sandboxLabel");
+		await expect(sandboxToggle).toBeVisible();
 
-		// Enable sandbox via RPC patch
-		await expectRpcOk(page, "sessions.patch", {
-			key: "main",
-			sandboxEnabled: true,
-		});
-
-		// The chat notice should appear as a system message
-		await expect(page.locator(".msg.system").filter({ hasText: "Sandbox enabled" })).toBeVisible({ timeout: 5_000 });
-
-		// Disable sandbox
-		await expectRpcOk(page, "sessions.patch", {
-			key: "main",
-			sandboxEnabled: false,
-		});
-
-		await expect(page.locator(".msg.system").filter({ hasText: "Sandbox disabled" })).toBeVisible({ timeout: 5_000 });
+		const initialLabel = (await sandboxLabel.textContent())?.trim();
+		if (initialLabel === "sandboxed") {
+			await sandboxToggle.click();
+			await expect(sandboxLabel).toHaveText("direct", { timeout: 5_000 });
+			await sandboxToggle.click();
+			await expect(sandboxLabel).toHaveText("sandboxed", { timeout: 5_000 });
+		} else {
+			await expect(sandboxLabel).toHaveText("direct", { timeout: 5_000 });
+			await sandboxToggle.click();
+			await expect(sandboxLabel).toHaveText("sandboxed", { timeout: 5_000 });
+			await sandboxToggle.click();
+			await expect(sandboxLabel).toHaveText("direct", { timeout: 5_000 });
+		}
 
 		expect(pageErrors).toEqual([]);
 	});

@@ -53,9 +53,8 @@ pub fn generate_recovery_key() -> RecoveryKey {
     let mut entropy = [0u8; 16]; // 128 bits
     rand::rng().fill_bytes(&mut entropy);
 
-    // Encode 128 bits as 32 chars from a 32-char alphabet (5 bits per char).
-    // 128 / 5 = 25.6 → we generate 26 chars, but we'll use all 16 bytes differently.
-    // Simpler approach: map each byte to 2 chars from the 32-char alphabet.
+    // Encode 128 bits as 32 chars, one nibble (4 bits) per char, so the
+    // formatted phrase is exactly 8 groups of 4 chars.
     let mut chars = Vec::with_capacity(32);
     for byte in &entropy {
         chars.push(CHARSET[(byte >> 4) as usize % 32] as char);
@@ -72,15 +71,23 @@ pub fn generate_recovery_key() -> RecoveryKey {
     RecoveryKey { phrase }
 }
 
-/// Derive a KEK from a recovery phrase using Argon2id with the fixed salt.
-pub fn derive_recovery_kek(phrase: &str) -> Result<Zeroizing<[u8; 32]>, VaultError> {
-    // Normalize: strip dashes, uppercase.
-    let normalized: String = phrase
+/// Normalize a recovery phrase: strip dashes and uppercase, matching the form
+/// used for KEK derivation so hash checks agree with unwrapping.
+fn normalized_phrase(phrase: &str) -> String {
+    phrase
         .chars()
         .filter(|c| *c != '-')
         .collect::<String>()
-        .to_uppercase();
-    kdf::derive_key(normalized.as_bytes(), RECOVERY_SALT, &recovery_kdf_params())
+        .to_uppercase()
+}
+
+/// Derive a KEK from a recovery phrase using Argon2id with the fixed salt.
+pub fn derive_recovery_kek(phrase: &str) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+    kdf::derive_key(
+        normalized_phrase(phrase).as_bytes(),
+        RECOVERY_SALT,
+        &recovery_kdf_params(),
+    )
 }
 
 /// Wrap the DEK with a recovery key, returning `(wrapped_dek_b64, recovery_key_hash)`.
@@ -91,7 +98,7 @@ pub fn wrap_with_recovery<C: Cipher>(
 ) -> Result<(String, String), VaultError> {
     let recovery_kek = derive_recovery_kek(phrase)?;
     let wrapped = key_wrap::wrap_dek(cipher, &recovery_kek, dek)?;
-    let hash = sha256_hex(phrase);
+    let hash = sha256_hex(&normalized_phrase(phrase));
     Ok((wrapped, hash))
 }
 
@@ -106,8 +113,12 @@ pub fn unwrap_with_recovery<C: Cipher>(
 }
 
 /// Verify that a recovery phrase matches the stored hash.
+///
+/// New hashes use the normalized phrase, consistent with [`derive_recovery_kek`]
+/// and [`unwrap_with_recovery`]. The raw fallback preserves hashes stored by
+/// older Moltis versions from generated uppercase, dashed phrases.
 pub fn verify_recovery_hash(phrase: &str, stored_hash: &str) -> bool {
-    sha256_hex(phrase) == stored_hash
+    sha256_hex(&normalized_phrase(phrase)) == stored_hash || sha256_hex(phrase) == stored_hash
 }
 
 fn sha256_hex(input: &str) -> String {
@@ -182,13 +193,27 @@ mod tests {
         let lower = phrase.to_lowercase();
         let unwrapped = unwrap_with_recovery(&cipher, &wrapped, &lower).unwrap();
         assert_eq!(*unwrapped, dek);
+
+        // Hash verification must accept the same normalized form.
+        let (_, hash) = wrap_with_recovery(&cipher, &dek, phrase).unwrap();
+        assert!(verify_recovery_hash(&lower, &hash));
     }
 
     #[test]
     fn hash_verification() {
+        let cipher = XChaCha20Poly1305Cipher;
+        let dek = [0xBB; 32];
         let rk = generate_recovery_key();
-        let hash = sha256_hex(rk.phrase());
+        let (_, hash) = wrap_with_recovery(&cipher, &dek, rk.phrase()).unwrap();
         assert!(verify_recovery_hash(rk.phrase(), &hash));
         assert!(!verify_recovery_hash("wrong-phrase-AAAA-BBBB", &hash));
+    }
+
+    #[test]
+    fn legacy_hash_verification() {
+        let rk = generate_recovery_key();
+        let legacy_hash = sha256_hex(rk.phrase());
+
+        assert!(verify_recovery_hash(rk.phrase(), &legacy_hash));
     }
 }

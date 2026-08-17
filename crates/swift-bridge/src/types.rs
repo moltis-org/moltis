@@ -267,6 +267,9 @@ pub(crate) struct MemoryStatusResponse {
     pub db_size_display: String,
     pub embedding_model: String,
     pub has_embeddings: bool,
+    pub backend_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hnsw_percent: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

@@ -2,6 +2,12 @@
 
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
+#[cfg(target_os = "macos")]
+use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::sync::mpsc;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use async_trait::async_trait;
@@ -14,8 +20,8 @@ use tokio::sync::RwLock;
 use super::containers::{
     apple_container_exec_args, apple_container_run_args, apple_container_status_from_inspect,
     is_apple_container_daemon_stale_error, is_apple_container_exists_error,
-    is_apple_container_service_error, rebuildable_sandbox_image_tag, sandbox_image_dockerfile,
-    sandbox_image_exists, sandbox_image_tag, unmark_zombie,
+    is_apple_container_service_error, rebuildable_sandbox_image_tag, sandbox_image_exists,
+    unmark_zombie,
 };
 #[cfg(target_os = "macos")]
 use super::host::provision_packages;
@@ -27,7 +33,7 @@ use super::paths::{
 #[cfg(target_os = "macos")]
 use super::types::{
     BuildImageResult, DEFAULT_SANDBOX_IMAGE, NetworkPolicy, SANDBOX_HOME_DIR, Sandbox,
-    SandboxConfig, SandboxId, canonical_sandbox_packages, tail_lines, truncate_output_for_display,
+    SandboxConfig, SandboxId, truncate_output_for_display,
 };
 #[cfg(target_os = "macos")]
 use crate::error::{Error, Result};
@@ -198,23 +204,14 @@ impl AppleContainerSandbox {
             return Ok(requested_image.to_string());
         };
 
-        if requested_image == rebuild_tag {
-            info!(
-                image = requested_image,
-                "apple sandbox image missing locally, rebuilding on demand"
-            );
-        } else {
-            warn!(
-                requested = requested_image,
-                rebuilt = %rebuild_tag,
-                "requested apple sandbox image missing locally, using deterministic tag from current config"
-            );
-        }
-
-        let Some(result) = self.build_image(&base_image, &packages).await? else {
-            return Ok(requested_image.to_string());
-        };
-        Ok(result.tag)
+        warn!(
+            requested = requested_image,
+            deterministic_tag = %rebuild_tag,
+            base_image = %base_image,
+            package_count = packages.len(),
+            "requested apple sandbox prebuilt image missing locally; using base image and per-container provisioning"
+        );
+        Ok(base_image)
     }
 
     /// Check whether the `container` CLI is available.
@@ -580,7 +577,7 @@ enum CreateError {
 /// Check whether the Apple Container system service is running.
 #[cfg(target_os = "macos")]
 fn is_apple_container_service_running() -> bool {
-    std::process::Command::new("container")
+    Command::new("container")
         .args(["system", "status"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -592,12 +589,16 @@ fn is_apple_container_service_running() -> bool {
 /// Returns `true` if the service was successfully started.
 #[cfg(target_os = "macos")]
 fn try_start_apple_container_service() -> bool {
-    tracing::info!("apple container service is not running, starting it automatically");
-    let result = std::process::Command::new("container")
+    tracing::info!(
+        "apple container service is not running, starting it automatically; first startup can take about a minute"
+    );
+    let progress_done = spawn_apple_container_start_progress_logger();
+    let result = Command::new("container")
         .args(["system", "start"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .status();
+    let _ = progress_done.send(());
     match result {
         Ok(status) if status.success() => {
             tracing::info!("apple container service started successfully");
@@ -620,6 +621,34 @@ fn try_start_apple_container_service() -> bool {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn spawn_apple_container_start_progress_logger() -> mpsc::Sender<()> {
+    const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+    spawn_apple_container_start_progress_logger_with_interval(PROGRESS_INTERVAL)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn spawn_apple_container_start_progress_logger_with_interval(
+    progress_interval: std::time::Duration,
+) -> mpsc::Sender<()> {
+    let (done_tx, done_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let started_at = Instant::now();
+        loop {
+            match done_rx.recv_timeout(progress_interval) {
+                Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    tracing::info!(
+                        elapsed_secs = started_at.elapsed().as_secs(),
+                        "still starting apple container service"
+                    );
+                },
+            }
+        }
+    });
+    done_tx
+}
+
 /// Ensure the Apple Container system service is running, starting it if needed.
 /// Returns `true` if the service is running (either already or after starting).
 #[cfg(target_os = "macos")]
@@ -637,7 +666,7 @@ pub fn ensure_apple_container_service() -> bool {
 fn restart_apple_container_service() -> bool {
     tracing::warn!("apple container service unhealthy, restarting automatically");
 
-    let stop = std::process::Command::new("container")
+    let stop = Command::new("container")
         .args(["system", "stop"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1127,70 +1156,14 @@ impl Sandbox for AppleContainerSandbox {
         base: &str,
         packages: &[String],
     ) -> Result<Option<BuildImageResult>> {
-        if packages.is_empty() {
-            return Ok(None);
-        }
-
-        let tag = sandbox_image_tag(self.image_repo(), base, packages);
-
-        if sandbox_image_exists("container", &tag).await {
-            debug!(
-                tag,
-                "pre-built sandbox image already exists, skipping build"
+        if !packages.is_empty() {
+            info!(
+                base,
+                package_count = packages.len(),
+                "apple container skips pre-built sandbox images; packages are provisioned after container start"
             );
-            return Ok(Some(BuildImageResult { tag, built: false }));
         }
-
-        let tmp_dir =
-            std::env::temp_dir().join(format!("moltis-sandbox-build-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&tmp_dir)?;
-
-        let pkg_list = canonical_sandbox_packages(packages).join(" ");
-        let dockerfile = sandbox_image_dockerfile(base, packages);
-        let dockerfile_path = tmp_dir.join("Dockerfile");
-        std::fs::write(&dockerfile_path, &dockerfile)?;
-
-        info!(tag, packages = %pkg_list, "building pre-built sandbox image (apple container)");
-
-        let output = tokio::process::Command::new("container")
-            .args(["build", "-t", &tag, "-f"])
-            .arg(&dockerfile_path)
-            .arg(&tmp_dir)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .output()
-            .await;
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-
-        let output = output?;
-        if !output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("XPC connection error") || stderr.contains("Connection invalid") {
-                return Err(Error::message(
-                    "apple container service is not running. \
-                     Start it with `container system start` and restart moltis",
-                ));
-            }
-            debug!(
-                tag,
-                stdout = %tail_lines(&stdout, 20),
-                stderr = %tail_lines(&stderr, 20),
-                "container build failed"
-            );
-            let status = output.status.code().map_or_else(
-                || output.status.to_string(),
-                |code| format!("exit code {code}"),
-            );
-            return Err(Error::message(format!(
-                "container build failed for {tag}: {}",
-                status
-            )));
-        }
-
-        info!(tag, "pre-built sandbox image ready (apple container)");
-        Ok(Some(BuildImageResult { tag, built: true }))
+        Ok(None)
     }
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {

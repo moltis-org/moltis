@@ -39,7 +39,7 @@ async function mockChannelsStatus(page, { channels, senders = [], allowRetryOwne
 					const prefix = appUrl.slice(0, markerIdx);
 					const state = await import(`${prefix}js/state.js`);
 					const channelsPage = await import(`${prefix}js/page-channels.js`);
-					const wsOpen = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+					const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
 					window.__matrixOwnershipRetryRequest = null;
 					const responseFor = (req) => {
 						if (req.method === "channels.status") {
@@ -159,7 +159,7 @@ test.describe("Settings channels", () => {
 			if (markerIdx < 0) throw new Error("app.js marker not found in script URL");
 			const prefix = appUrl.slice(0, markerIdx);
 			const state = await import(`${prefix}js/state.js`);
-			const wsOpen = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+			const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
 			window.__matrixSettingsAddRequest = null;
 			state.setConnected(true);
 			state.setWs({
@@ -250,7 +250,7 @@ test.describe("Settings channels", () => {
 			if (markerIdx < 0) throw new Error("app.js marker not found in script URL");
 			const prefix = appUrl.slice(0, markerIdx);
 			const state = await import(`${prefix}js/state.js`);
-			const wsOpen = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+			const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
 			window.__matrixSettingsAddRequest = null;
 			state.setConnected(true);
 			state.setWs({
