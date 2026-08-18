@@ -11,10 +11,12 @@ base64                = { workspace = true }
 chrono                = { features = ["serde"], optional = true, workspace = true }
 chrono-tz             = { workspace = true }
 futures               = { workspace = true }
+html2text             = { workspace = true }
 moltis-agents         = { workspace = true }
 moltis-channels       = { workspace = true }
 moltis-common         = { workspace = true }
 moltis-config         = { workspace = true }
+moltis-observability   = { workspace = true }
 moltis-memory         = { workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 moltis-plugins        = { workspace = true }
@@ -26,6 +28,7 @@ moltis-skills         = { workspace = true }
 moltis-telegram       = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
 moltis-voice          = { workspace = true }
+pulldown-cmark        = { workspace = true }
 serde                 = { workspace = true }
 serde_json            = { workspace = true }
 thiserror             = { workspace = true }
@@ -45,8 +48,8 @@ llm-compaction     = []
 local-llm          = []
 metrics            = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
 push-notifications = ["dep:chrono"]
-web-ui             = ["dep:chrono"]
 telegram           = ["dep:moltis-telegram"]
+web-ui             = ["dep:chrono"]
 
 default = ["llm-compaction"]
 

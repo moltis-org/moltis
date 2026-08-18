@@ -295,8 +295,8 @@ export function resolveFinalMessageEl(p: ChatPayload): HTMLElement | null {
 
 // ── Final footer ──────────────────────────────────────────────
 
-export function appendFinalFooter(msgEl: HTMLElement | null, p: ChatPayload, eventSession: string): void {
-	if (!(msgEl && p.model)) return;
+function createFinalModelFooter(p: ChatPayload): HTMLElement | null {
+	if (!p.model) return null;
 	const footer = document.createElement("div");
 	footer.className = "msg-model-footer";
 	let footerText = p.provider ? `${p.provider} / ${p.model}` : p.model;
@@ -323,7 +323,13 @@ export function appendFinalFooter(msgEl: HTMLElement | null, p: ChatPayload, eve
 		badge.textContent = p.replyMedium;
 		footer.appendChild(badge);
 	}
-	msgEl.appendChild(footer);
+	return footer;
+}
+
+export function appendFinalFooter(msgEl: HTMLElement | null, p: ChatPayload, eventSession: string): void {
+	if (!msgEl) return;
+	const footer = createFinalModelFooter(p);
+	if (footer) msgEl.appendChild(footer);
 
 	appendMessageActions({
 		messageEl: msgEl,

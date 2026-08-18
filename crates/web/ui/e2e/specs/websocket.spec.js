@@ -235,6 +235,49 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("RPC timeout honors server-configured gon rpc_timeout_ms", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/");
+		await waitForWsConnected(page);
+
+		const { res, elapsedMs } = await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const helpers = await import(`${prefix}js/helpers.js`);
+			const state = await import(`${prefix}js/state.js`);
+			const gon = await import(`${prefix}js/gon.js`);
+			const originalWs = state.ws;
+			const originalGon = gon.get("rpc_timeout_ms");
+			// The test-only window override must be unset so the gon value is used.
+			window.__moltisTestRpcTimeoutMs = undefined;
+
+			try {
+				gon.set("rpc_timeout_ms", 1_000);
+				state.setWs({
+					readyState: WebSocket.OPEN,
+					send() {
+						// Never resolves; the gon-configured timeout should fire.
+					},
+				});
+
+				const start = performance.now();
+				const res = await helpers.sendRpc("test.slow_method", {});
+				return { res, elapsedMs: performance.now() - start };
+			} finally {
+				state.setWs(originalWs);
+				gon.set("rpc_timeout_ms", originalGon);
+			}
+		});
+
+		expect(res).toMatchObject({ ok: false, error: { code: "TIMEOUT" } });
+		// Proves the 1000ms gon value was applied rather than the 5000ms default.
+		expect(elapsedMs).toBeLessThan(3_000);
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("final chat text is kept when it includes tool output plus analysis", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");

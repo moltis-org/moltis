@@ -11,6 +11,65 @@ fn get_pairing_store(
     state.pairing_store.as_ref()
 }
 
+#[derive(serde::Deserialize)]
+struct PairVerifyParams {
+    id: String,
+    signature: String,
+}
+
+async fn find_pending_pair_request(
+    state: &crate::state::GatewayState,
+    id: &str,
+) -> Result<crate::pairing::PairRequest, ErrorShape> {
+    let request = if let Some(store) = get_pairing_store(state) {
+        store
+            .list_pending()
+            .await
+            .map_err(|error| ErrorShape::new(error_codes::INTERNAL, error.to_string()))?
+            .into_iter()
+            .find(|request| request.id == id)
+    } else {
+        state
+            .inner
+            .read()
+            .await
+            .pairing
+            .list_pending()
+            .into_iter()
+            .find(|request| request.id == id)
+            .cloned()
+    };
+
+    request.ok_or_else(|| ErrorShape::new(error_codes::INVALID_REQUEST, "pair request not found"))
+}
+
+async fn verify_pairing_challenge(
+    state: &crate::state::GatewayState,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, ErrorShape> {
+    let params: PairVerifyParams = serde_json::from_value(params).map_err(|error| {
+        ErrorShape::new(
+            error_codes::INVALID_REQUEST,
+            format!("invalid node.pair.verify params: {error}"),
+        )
+    })?;
+    let request = find_pending_pair_request(state, &params.id).await?;
+    let public_key = request.public_key.as_deref().ok_or_else(|| {
+        ErrorShape::new(
+            error_codes::INVALID_REQUEST,
+            "pair request has no public key",
+        )
+    })?;
+    let verified = crate::pairing::verify_ed25519_challenge(
+        public_key,
+        request.nonce.as_bytes(),
+        &params.signature,
+    )
+    .map_err(|error| ErrorShape::new(error_codes::INVALID_REQUEST, error))?;
+
+    Ok(serde_json::json!({ "verified": verified }))
+}
+
 pub(super) fn register(reg: &mut MethodRegistry) {
     // node.pair.request
     reg.register(
@@ -225,10 +284,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
 
-    // node.pair.verify (placeholder — signature verification)
+    // node.pair.verify
     reg.register(
         "node.pair.verify",
-        Box::new(|_ctx| Box::pin(async move { Ok(serde_json::json!({ "verified": true })) })),
+        Box::new(|ctx| {
+            Box::pin(async move { verify_pairing_challenge(&ctx.state, ctx.params).await })
+        }),
     );
 
     // node.pairing.enable — open the gate for new node pairing requests.
@@ -517,4 +578,289 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             })
         }),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::{
+            auth::{AuthMode, ResolvedAuth},
+            methods::MethodContext,
+            pairing::{PairRequest, PairingStore},
+            services::GatewayServices,
+            state::GatewayState,
+        },
+        base64::Engine,
+        ed25519_dalek::{Signer, SigningKey},
+        moltis_protocol::ResponseFrame,
+    };
+
+    fn test_state() -> std::sync::Arc<GatewayState> {
+        GatewayState::new(
+            ResolvedAuth {
+                mode: AuthMode::Token,
+                token: None,
+                password: None,
+            },
+            GatewayServices::noop(),
+        )
+    }
+
+    fn test_state_with_pairing_store(
+        pairing_store: std::sync::Arc<PairingStore>,
+    ) -> std::sync::Arc<GatewayState> {
+        let mut state = test_state();
+        let Some(unique_state) = std::sync::Arc::get_mut(&mut state) else {
+            panic!("test state should be uniquely owned");
+        };
+        unique_state.pairing_store = Some(pairing_store);
+        state
+    }
+
+    fn public_key(signing_key: &SigningKey) -> String {
+        base64::engine::general_purpose::STANDARD.encode(signing_key.verifying_key().to_bytes())
+    }
+
+    fn signature(nonce: &str, signing_key: &SigningKey) -> String {
+        base64::engine::general_purpose::STANDARD
+            .encode(signing_key.sign(nonce.as_bytes()).to_bytes())
+    }
+
+    fn signed_params(request: &PairRequest, signing_key: &SigningKey) -> serde_json::Value {
+        serde_json::json!({
+            "id": request.id,
+            "signature": signature(&request.nonce, signing_key),
+        })
+    }
+
+    async fn request_pair(
+        state: &GatewayState,
+        device_id: &str,
+        public_key: Option<&str>,
+    ) -> PairRequest {
+        state.inner.write().await.pairing.request_pair(
+            device_id,
+            Some("Test node"),
+            "test",
+            public_key,
+        )
+    }
+
+    async fn dispatch_pair_verify(
+        state: std::sync::Arc<GatewayState>,
+        params: serde_json::Value,
+    ) -> ResponseFrame {
+        MethodRegistry::new()
+            .dispatch(MethodContext {
+                request_id: String::from("test"),
+                method: String::from("node.pair.verify"),
+                params,
+                client_conn_id: String::from("conn-1"),
+                client_role: String::from("operator"),
+                client_scopes: vec![String::from("operator.pairing")],
+                state,
+                channel: None,
+            })
+            .await
+    }
+
+    fn assert_invalid_request(response: &ResponseFrame) {
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code.as_str()),
+            Some(error_codes::INVALID_REQUEST)
+        );
+    }
+
+    #[tokio::test]
+    async fn pair_verify_accepts_valid_signature() {
+        let state = test_state();
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let public_key = public_key(&signing_key);
+        let request = request_pair(&state, "valid-node", Some(&public_key)).await;
+
+        let response = dispatch_pair_verify(state, signed_params(&request, &signing_key)).await;
+
+        assert!(response.ok);
+        assert_eq!(
+            response.payload,
+            Some(serde_json::json!({ "verified": true }))
+        );
+    }
+
+    #[tokio::test]
+    async fn pair_verify_accepts_valid_signature_from_sqlite_store() -> anyhow::Result<()> {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await?;
+        crate::run_migrations(&pool).await?;
+        let pairing_store = std::sync::Arc::new(PairingStore::new(pool));
+        let state = test_state_with_pairing_store(std::sync::Arc::clone(&pairing_store));
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let public_key = public_key(&signing_key);
+        let request = pairing_store
+            .request_pair(
+                "sqlite-valid-node",
+                Some("SQLite test node"),
+                "test",
+                Some(&public_key),
+            )
+            .await?;
+        let pending = pairing_store.list_pending().await?;
+        assert_eq!(pending.len(), 1);
+        let persisted = &pending[0];
+        assert_eq!(persisted.device_id, "sqlite-valid-node");
+        assert_eq!(persisted.display_name.as_deref(), Some("SQLite test node"));
+        assert_eq!(persisted.platform, "test");
+        assert_eq!(persisted.public_key.as_deref(), Some(public_key.as_str()));
+        assert_eq!(persisted.nonce, request.nonce);
+
+        let response = dispatch_pair_verify(state, signed_params(&request, &signing_key)).await;
+
+        assert!(response.ok);
+        assert_eq!(
+            response.payload,
+            Some(serde_json::json!({ "verified": true }))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pair_verify_rejects_expired_request_from_sqlite_store() -> anyhow::Result<()> {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await?;
+        crate::run_migrations(&pool).await?;
+        let pairing_store = std::sync::Arc::new(PairingStore::new(pool.clone()));
+        let state = test_state_with_pairing_store(std::sync::Arc::clone(&pairing_store));
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let public_key = public_key(&signing_key);
+        let request = pairing_store
+            .request_pair(
+                "sqlite-expired-node",
+                Some("Expired SQLite test node"),
+                "test",
+                Some(&public_key),
+            )
+            .await?;
+        sqlx::query("UPDATE pair_requests SET expires_at = ? WHERE id = ?")
+            .bind("2000-01-01T00:00:00Z")
+            .bind(&request.id)
+            .execute(&pool)
+            .await?;
+
+        let response = dispatch_pair_verify(state, signed_params(&request, &signing_key)).await;
+
+        assert_invalid_request(&response);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pair_verify_returns_false_for_wrong_signature_and_cross_request_nonce() {
+        let state = test_state();
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let wrong_signing_key = SigningKey::from_bytes(&[8; 32]);
+        let public_key = public_key(&signing_key);
+        let first_request = request_pair(&state, "first-node", Some(&public_key)).await;
+        let second_request = request_pair(&state, "second-node", Some(&public_key)).await;
+
+        let wrong_signature_response = dispatch_pair_verify(
+            std::sync::Arc::clone(&state),
+            signed_params(&first_request, &wrong_signing_key),
+        )
+        .await;
+        let cross_request_response = dispatch_pair_verify(
+            state,
+            serde_json::json!({
+                "id": second_request.id,
+                "signature": signature(&first_request.nonce, &signing_key),
+            }),
+        )
+        .await;
+
+        assert!(wrong_signature_response.ok);
+        assert_eq!(
+            wrong_signature_response.payload,
+            Some(serde_json::json!({ "verified": false }))
+        );
+        assert!(cross_request_response.ok);
+        assert_eq!(
+            cross_request_response.payload,
+            Some(serde_json::json!({ "verified": false }))
+        );
+    }
+
+    #[tokio::test]
+    async fn pair_verify_fails_closed_when_params_are_missing() {
+        let state = test_state();
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let public_key = public_key(&signing_key);
+        let request = request_pair(&state, "missing-param-node", Some(&public_key)).await;
+
+        for field in ["id", "signature"] {
+            let mut params = signed_params(&request, &signing_key);
+            if let Some(params) = params.as_object_mut() {
+                params.remove(field);
+            }
+
+            assert_invalid_request(
+                &dispatch_pair_verify(std::sync::Arc::clone(&state), params).await,
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn pair_verify_fails_closed_when_params_are_malformed() {
+        let state = test_state();
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let public_key = public_key(&signing_key);
+        let request = request_pair(&state, "malformed-param-node", Some(&public_key)).await;
+        let malformed_params = [
+            serde_json::json!({ "id": 42, "signature": signature(&request.nonce, &signing_key) }),
+            serde_json::json!({ "id": request.id, "signature": "not base64" }),
+            serde_json::json!({
+                "id": request.id,
+                "signature": base64::engine::general_purpose::STANDARD.encode([0; 63]),
+            }),
+        ];
+
+        for params in malformed_params {
+            assert_invalid_request(
+                &dispatch_pair_verify(std::sync::Arc::clone(&state), params).await,
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn pair_verify_rejects_unknown_request() {
+        let state = test_state();
+        let signature = base64::engine::general_purpose::STANDARD.encode([0; 64]);
+
+        let response = dispatch_pair_verify(
+            state,
+            serde_json::json!({ "id": "unknown", "signature": signature }),
+        )
+        .await;
+
+        assert_invalid_request(&response);
+    }
+
+    #[tokio::test]
+    async fn pair_verify_rejects_request_without_public_key() {
+        let state = test_state();
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let request = request_pair(&state, "no-key-node", None).await;
+
+        let response = dispatch_pair_verify(state, signed_params(&request, &signing_key)).await;
+
+        assert_invalid_request(&response);
+    }
+
+    #[tokio::test]
+    async fn pair_verify_rejects_request_with_malformed_public_key() {
+        let state = test_state();
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let request = request_pair(&state, "bad-key-node", Some("not base64")).await;
+
+        let response = dispatch_pair_verify(state, signed_params(&request, &signing_key)).await;
+
+        assert_invalid_request(&response);
+    }
 }

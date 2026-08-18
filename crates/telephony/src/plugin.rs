@@ -94,6 +94,7 @@ impl TelephonyPlugin {
         let config = self.accounts.get(account_id).map(|a| &a.config);
 
         let reply_to = moltis_channels::ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: moltis_channels::ChannelType::Telephony,
             account_id: account_id.to_string(),
             chat_id: call_id.to_string(),
@@ -274,13 +275,13 @@ impl ChannelPlugin for TelephonyPlugin {
         self.accounts.keys().cloned().collect()
     }
 
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
         self.accounts
             .get(account_id)
             .map(|a| Box::new(a.config.clone()) as Box<dyn ChannelConfigView>)
     }
 
-    fn update_account_config(
+    async fn update_account_config(
         &self,
         _account_id: &str,
         _config: serde_json::Value,
@@ -288,7 +289,7 @@ impl ChannelPlugin for TelephonyPlugin {
         Ok(())
     }
 
-    fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
+    async fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
         self.accounts
             .get(account_id)
             .and_then(|a| serde_json::to_value(&a.config).ok())

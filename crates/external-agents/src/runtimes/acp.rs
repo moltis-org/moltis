@@ -30,19 +30,39 @@ use crate::{
     },
 };
 
+const MAX_ACP_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const MAX_INFLIGHT_ACP_MESSAGES: usize = 256;
+
 /// Transport for ACP (Agent Client Protocol) agents over JSON-RPC stdio.
 pub struct AcpTransport {
+    kind: AgentTransportKind,
+    name: String,
     binary: String,
+    default_args: Vec<String>,
     permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
 }
 
 impl AcpTransport {
     #[must_use]
     pub fn new(binary: String) -> Self {
+        Self::for_kind(AgentTransportKind::Acp, "ACP", binary)
+    }
+
+    #[must_use]
+    pub fn for_kind(kind: AgentTransportKind, name: impl Into<String>, binary: String) -> Self {
         Self {
+            kind,
+            name: name.into(),
             binary,
+            default_args: Vec::new(),
             permission_handler: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_default_args(mut self, args: Vec<String>) -> Self {
+        self.default_args = args;
+        self
     }
 
     #[must_use]
@@ -53,12 +73,20 @@ impl AcpTransport {
         self.permission_handler = Some(permission_handler);
         self
     }
+
+    fn spec_with_default_args(&self, spec: &ExternalAgentSpec) -> ExternalAgentSpec {
+        let mut spec = spec.clone();
+        if !spec.args_configured {
+            spec.args.clone_from(&self.default_args);
+        }
+        spec
+    }
 }
 
 #[async_trait]
 impl ExternalAgentTransport for AcpTransport {
     fn name(&self) -> &str {
-        "acp"
+        &self.name
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
@@ -67,7 +95,7 @@ impl ExternalAgentTransport for AcpTransport {
     }
 
     fn supported_kinds(&self) -> &[AgentTransportKind] {
-        &[AgentTransportKind::Acp]
+        std::slice::from_ref(&self.kind)
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, spec)))]
@@ -76,8 +104,9 @@ impl ExternalAgentTransport for AcpTransport {
         spec: &ExternalAgentSpec,
     ) -> anyhow::Result<Box<dyn ExternalAgentSession>> {
         let binary = spec.binary.clone().unwrap_or_else(|| self.binary.clone());
+        let spec = self.spec_with_default_args(spec);
         Ok(Box::new(
-            AcpSession::start(binary, spec.clone(), self.permission_handler.clone()).await?,
+            AcpSession::start(binary, spec, self.permission_handler.clone()).await?,
         ))
     }
 }
@@ -575,10 +604,15 @@ async fn run_acp_controller(
             tokio::task::spawn_local(forward_stderr(stderr, Arc::clone(&client)));
         }
 
-        let (conn, io_task) = acp::ClientSideConnection::new(
+        let (conn, io_task) = acp::ClientSideConnection::new_with_limits(
             Arc::clone(&client),
             stdin.compat_write(),
             stdout.compat(),
+            acp::ConnectionLimits::bounded(
+                MAX_ACP_FRAME_BYTES,
+                MAX_ACP_FRAME_BYTES,
+                MAX_INFLIGHT_ACP_MESSAGES,
+            ),
             |future| {
                 tokio::task::spawn_local(future);
             },
@@ -814,6 +848,54 @@ mod tests {
         let client = AcpClient::new(Arc::clone(&state), Some("main".to_string()), None);
         client.set_session_id("session-1".to_string());
         (client, state)
+    }
+
+    #[test]
+    fn transport_can_target_named_acp_kind() {
+        let transport = AcpTransport::for_kind(
+            AgentTransportKind::AcpCopilot,
+            "ACP: Copilot",
+            "copilot".to_string(),
+        );
+
+        assert_eq!(transport.name(), "ACP: Copilot");
+        assert_eq!(transport.supported_kinds(), &[
+            AgentTransportKind::AcpCopilot
+        ]);
+    }
+
+    #[test]
+    fn transport_can_store_default_args() {
+        let transport = AcpTransport::for_kind(
+            AgentTransportKind::AcpOpencode,
+            "ACP: opencode",
+            "opencode".to_string(),
+        )
+        .with_default_args(vec!["acp".to_string()]);
+
+        assert_eq!(transport.default_args, ["acp"]);
+    }
+
+    #[test]
+    fn transport_default_args_respect_explicit_empty_config() {
+        let transport = AcpTransport::for_kind(
+            AgentTransportKind::AcpOpencode,
+            "ACP: opencode",
+            "opencode".to_string(),
+        )
+        .with_default_args(vec!["acp".to_string()]);
+
+        let absent_args = ExternalAgentSpec::new(AgentTransportKind::AcpOpencode);
+        assert_eq!(transport.spec_with_default_args(&absent_args).args, ["acp"]);
+
+        let mut explicit_empty_args = ExternalAgentSpec::new(AgentTransportKind::AcpOpencode);
+        explicit_empty_args.args_configured = true;
+        assert!(
+            transport
+                .spec_with_default_args(&explicit_empty_args)
+                .args
+                .is_empty()
+        );
     }
 
     #[tokio::test]

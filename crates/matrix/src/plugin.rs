@@ -433,21 +433,21 @@ impl ChannelPlugin for MatrixPlugin {
         accounts.keys().cloned().collect()
     }
 
-    fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
+    async fn account_config(&self, account_id: &str) -> Option<Box<dyn ChannelConfigView>> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .map(|s| Box::new(s.config.clone()) as Box<dyn ChannelConfigView>)
     }
 
-    fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
+    async fn account_config_json(&self, account_id: &str) -> Option<serde_json::Value> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .and_then(|s| serde_json::to_value(RedactedConfig(&s.config)).ok())
     }
 
-    fn update_account_config(
+    async fn update_account_config(
         &self,
         account_id: &str,
         config: serde_json::Value,
@@ -480,6 +480,12 @@ impl ChannelPlugin for MatrixPlugin {
 
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
         Some(&self.outbound)
+    }
+
+    fn shared_thread_context(&self) -> Option<Arc<dyn ChannelThreadContext>> {
+        Some(Arc::new(MatrixOutbound {
+            accounts: Arc::clone(&self.accounts),
+        }))
     }
 
     fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
@@ -704,12 +710,10 @@ mod tests {
 
     use crate::plugin::MatrixPlugin;
 
-    fn test_account_state(cancel: CancellationToken) -> AccountState {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap_or_else(|error| panic!("matrix test runtime should build: {error}"));
-
+    /// Async because the tests that use it are: `update_account_config` is an
+    /// async trait method now, so spinning a nested runtime here to build the
+    /// client would panic ("cannot start a runtime from within a runtime").
+    async fn test_account_state(cancel: CancellationToken) -> AccountState {
         AccountState {
             account_id: "test".into(),
             config: MatrixAccountConfig {
@@ -718,12 +722,10 @@ mod tests {
                 user_id: Some("@moltis:example.com".into()),
                 ..Default::default()
             },
-            client: runtime
-                .block_on(
-                    matrix_sdk::Client::builder()
-                        .homeserver_url("https://matrix.example.com")
-                        .build(),
-                )
+            client: matrix_sdk::Client::builder()
+                .homeserver_url("https://matrix.example.com")
+                .build()
+                .await
                 .unwrap_or_else(|error| panic!("matrix test client should build: {error}")),
             message_log: None,
             event_sink: None,
@@ -772,13 +774,14 @@ mod tests {
         assert!(plugin.account_ids().is_empty());
     }
 
-    #[test]
-    fn pending_otp_challenges_are_exposed_via_provider_trait() {
+    #[tokio::test]
+    async fn pending_otp_challenges_are_exposed_via_provider_trait() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let state = test_account_state(cancel).await;
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            map.insert("test".into(), test_account_state(cancel));
+            map.insert("test".into(), state);
         }
 
         {
@@ -800,29 +803,25 @@ mod tests {
         assert_eq!(pending[0].sender_name.as_deref(), Some("Alice"));
     }
 
-    #[test]
-    fn probe_exposes_matrix_ownership_details() {
+    #[tokio::test]
+    async fn probe_exposes_matrix_ownership_details() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let mut state = test_account_state(cancel).await;
+        state.config.ownership_mode = crate::config::MatrixOwnershipMode::MoltisOwned;
+        state.config.password = Some(Secret::new("wordpass".into()));
+        state.config.access_token = Secret::new(String::new());
+        state.config.device_id = Some("MOLTISBOT".into());
+        state.config.device_display_name = Some("Moltis Matrix Bot".into());
+        state.ownership_startup_error = Some("ownership setup failed".into());
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            let mut state = test_account_state(cancel);
-            state.config.ownership_mode = crate::config::MatrixOwnershipMode::MoltisOwned;
-            state.config.password = Some(Secret::new("wordpass".into()));
-            state.config.access_token = Secret::new(String::new());
-            state.config.device_id = Some("MOLTISBOT".into());
-            state.config.device_display_name = Some("Moltis Matrix Bot".into());
-            state.ownership_startup_error = Some("ownership setup failed".into());
             map.insert("test".into(), state);
         }
 
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap_or_else(|error| panic!("matrix test runtime should build: {error}"));
-
-        let snapshot = runtime
-            .block_on(plugin.probe("test"))
+        let snapshot = plugin
+            .probe("test")
+            .await
             .unwrap_or_else(|error| panic!("probe should succeed: {error}"));
 
         assert!(!snapshot.connected);
@@ -865,13 +864,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn update_account_config_preserves_otp_state_and_updates_cooldown() {
+    #[tokio::test]
+    async fn update_account_config_preserves_otp_state_and_updates_cooldown() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let state = test_account_state(cancel).await;
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            map.insert("test".into(), test_account_state(cancel));
+            map.insert("test".into(), state);
         }
 
         {
@@ -883,16 +883,19 @@ mod tests {
             otp.initiate("alice", Some("alice".into()), None);
         }
 
-        if let Err(error) = plugin.update_account_config(
-            "test",
-            serde_json::json!({
-                "homeserver": "https://matrix.example.com",
-                "access_token": "test_token",
-                "user_id": "@moltis:example.com",
-                "allowlist": ["alice"],
-                "otp_cooldown_secs": 1,
-            }),
-        ) {
+        if let Err(error) = plugin
+            .update_account_config(
+                "test",
+                serde_json::json!({
+                    "homeserver": "https://matrix.example.com",
+                    "access_token": "test_token",
+                    "user_id": "@moltis:example.com",
+                    "allowlist": ["alice"],
+                    "otp_cooldown_secs": 1,
+                }),
+            )
+            .await
+        {
             panic!("config update should succeed: {error}");
         }
 
@@ -946,22 +949,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn update_account_config_preserves_redacted_access_token_and_identity_fields() {
+    #[tokio::test]
+    async fn update_account_config_preserves_redacted_access_token_and_identity_fields() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let state = test_account_state(cancel).await;
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            map.insert("test".into(), test_account_state(cancel));
+            map.insert("test".into(), state);
         }
 
-        if let Err(error) = plugin.update_account_config(
-            "test",
-            serde_json::json!({
-                "access_token": "[REDACTED]",
-                "dm_policy": "open",
-            }),
-        ) {
+        if let Err(error) = plugin
+            .update_account_config(
+                "test",
+                serde_json::json!({
+                    "access_token": "[REDACTED]",
+                    "dm_policy": "open",
+                }),
+            )
+            .await
+        {
             panic!("config update should succeed: {error}");
         }
 
@@ -978,25 +985,28 @@ mod tests {
         );
     }
 
-    #[test]
-    fn partial_update_preserves_omitted_fields_instead_of_resetting_defaults() {
+    #[tokio::test]
+    async fn partial_update_preserves_omitted_fields_instead_of_resetting_defaults() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let mut state = test_account_state(cancel).await;
+        state.config.mention_mode = moltis_channels::gating::MentionMode::Always;
+        state.config.reply_to_message = false;
+        state.config.auto_join = AutoJoinPolicy::Allowlist;
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            let mut state = test_account_state(cancel);
-            state.config.mention_mode = moltis_channels::gating::MentionMode::Always;
-            state.config.reply_to_message = false;
-            state.config.auto_join = AutoJoinPolicy::Allowlist;
             map.insert("test".into(), state);
         }
 
-        if let Err(error) = plugin.update_account_config(
-            "test",
-            serde_json::json!({
-                "dm_policy": "open",
-            }),
-        ) {
+        if let Err(error) = plugin
+            .update_account_config(
+                "test",
+                serde_json::json!({
+                    "dm_policy": "open",
+                }),
+            )
+            .await
+        {
             panic!("partial update should succeed: {error}");
         }
 
@@ -1016,23 +1026,27 @@ mod tests {
         );
     }
 
-    #[test]
-    fn config_update_can_switch_from_access_token_to_password_auth() {
+    #[tokio::test]
+    async fn config_update_can_switch_from_access_token_to_password_auth() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let state = test_account_state(cancel).await;
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            map.insert("test".into(), test_account_state(cancel));
+            map.insert("test".into(), state);
         }
 
-        if let Err(error) = plugin.update_account_config(
-            "test",
-            serde_json::json!({
-                "access_token": "",
-                "password": "wordpass",
-                "user_id": "@moltis:example.com",
-            }),
-        ) {
+        if let Err(error) = plugin
+            .update_account_config(
+                "test",
+                serde_json::json!({
+                    "access_token": "",
+                    "password": "wordpass",
+                    "user_id": "@moltis:example.com",
+                }),
+            )
+            .await
+        {
             panic!("auth mode switch should succeed: {error}");
         }
 
@@ -1055,25 +1069,28 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn redacted_password_update_preserves_existing_password() {
+    #[tokio::test]
+    async fn redacted_password_update_preserves_existing_password() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let mut state = test_account_state(cancel).await;
+        state.config.access_token = Secret::new(String::new());
+        state.config.password = Some(Secret::new("wordpass".into()));
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            let mut state = test_account_state(cancel);
-            state.config.access_token = Secret::new(String::new());
-            state.config.password = Some(Secret::new("wordpass".into()));
             map.insert("test".into(), state);
         }
 
-        if let Err(error) = plugin.update_account_config(
-            "test",
-            serde_json::json!({
-                "password": "[REDACTED]",
-                "room_policy": "open",
-            }),
-        ) {
+        if let Err(error) = plugin
+            .update_account_config(
+                "test",
+                serde_json::json!({
+                    "password": "[REDACTED]",
+                    "room_policy": "open",
+                }),
+            )
+            .await
+        {
             panic!("password-preserving update should succeed: {error}");
         }
 
@@ -1095,35 +1112,33 @@ mod tests {
         );
     }
 
-    #[test]
-    fn probe_exposes_matrix_verification_status_details() {
+    #[tokio::test]
+    async fn probe_exposes_matrix_verification_status_details() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let state = test_account_state(cancel).await;
+        {
+            let mut verification = state
+                .verification
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            verification
+                .prompts
+                .insert("flow-1".into(), VerificationPrompt {
+                    flow_id: "flow-1".into(),
+                    other_user_id: "@alice:example.com".into(),
+                    room_id: Some("!room:example.com".into()),
+                    emoji_lines: vec!["🐶 Dog".into(), "🔥 Fire".into()],
+                });
+        }
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            let state = test_account_state(cancel);
-            {
-                let mut verification = state
-                    .verification
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner());
-                verification
-                    .prompts
-                    .insert("flow-1".into(), VerificationPrompt {
-                        flow_id: "flow-1".into(),
-                        other_user_id: "@alice:example.com".into(),
-                        room_id: Some("!room:example.com".into()),
-                        emoji_lines: vec!["🐶 Dog".into(), "🔥 Fire".into()],
-                    });
-            }
             map.insert("test".into(), state);
         }
 
-        let snapshot = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap_or_else(|error| panic!("matrix test runtime should build: {error}"))
-            .block_on(plugin.probe("test"))
+        let snapshot = plugin
+            .probe("test")
+            .await
             .unwrap_or_else(|error| panic!("matrix probe should succeed: {error}"));
 
         let extra = snapshot

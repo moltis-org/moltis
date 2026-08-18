@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use {
-    tokio_util::sync::CancellationToken,
-    tracing::{info, warn},
-};
+use {tokio_util::sync::CancellationToken, tracing::info};
 
 use moltis_channels::{ChannelEventSink, message_log::MessageLog};
 
@@ -57,8 +54,8 @@ pub async fn start_connection(
     let state_ref_handler = Arc::clone(&state_ref);
     let accounts_handler = Arc::clone(&accounts);
 
-    let mut bot = whatsapp_rust::bot::Bot::builder()
-        .with_backend(backend)
+    let bot = whatsapp_rust::bot::Bot::builder()
+        .with_backend_arc(backend)
         .with_transport_factory(
             whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory::new(),
         )
@@ -66,9 +63,9 @@ pub async fn start_connection(
         .with_runtime(whatsapp_rust::TokioRuntime)
         .skip_history_sync()
         .with_device_props(
-            Some("Moltis".to_string()),
-            None,
-            Some(waproto::whatsapp::device_props::PlatformType::Desktop),
+            wacore::store::DevicePropsOverride::new()
+                .with_os("Moltis")
+                .with_platform_type(waproto::whatsapp::device_props::PlatformType::Desktop),
         )
         .with_push_name("Moltis")
         .on_event(move |event, client| {
@@ -128,31 +125,14 @@ pub async fn start_connection(
     // Spawn the event loop.
     let account_id_task = account_id.clone();
     tokio::spawn(async move {
+        // `Bot::run` now drives the whole lifecycle itself (no JoinHandle);
+        // dropping the future on cancel is the supported teardown path.
         tokio::select! {
-            result = bot.run() => {
-                match result {
-                    Ok(handle) => {
-                        tokio::pin!(handle);
-                        tokio::select! {
-                            _ = &mut handle => {
-                                info!(account_id = %account_id_task, "WhatsApp bot task completed");
-                            },
-                            _ = cancel.cancelled() => {
-                                info!(account_id = %account_id_task, "WhatsApp account cancelled, aborting bot task");
-                                handle.abort();
-                                // Wait for the task to finish after abort so the
-                                // sled store is fully released before we signal done.
-                                let _ = handle.await;
-                            },
-                        }
-                    },
-                    Err(e) => {
-                        warn!(account_id = %account_id_task, error = %e, "WhatsApp bot failed to start");
-                    },
-                }
+            _ = bot.run() => {
+                info!(account_id = %account_id_task, "WhatsApp bot task completed");
             },
             _ = cancel.cancelled() => {
-                info!(account_id = %account_id_task, "WhatsApp account cancelled before start");
+                info!(account_id = %account_id_task, "WhatsApp account cancelled");
             },
         }
         shutdown_clone.mark_done();

@@ -41,6 +41,17 @@ fn take_alias(obj: &mut Map<String, Value>, canonical: &str, aliases: &[&str]) {
     }
 }
 
+fn prune_null_fields(value: &mut Value) {
+    match value {
+        Value::Object(obj) => {
+            obj.retain(|_, value| !value.is_null());
+            obj.values_mut().for_each(prune_null_fields);
+        },
+        Value::Array(items) => items.iter_mut().for_each(prune_null_fields),
+        _ => {},
+    }
+}
+
 fn parse_epoch_millis(value: &Value, field: &str) -> Result<u64> {
     match value {
         Value::Number(n) => n
@@ -581,6 +592,7 @@ fn rescue_stringified_object(v: &mut Value) {
 fn normalize_job_value(job: &Value) -> Result<Value> {
     let mut normalized = job.clone();
     rescue_stringified_object(&mut normalized);
+    prune_null_fields(&mut normalized);
     let obj = normalized
         .as_object_mut()
         .ok_or_else(|| Error::message("job must be an object"))?;
@@ -609,6 +621,7 @@ fn normalize_job_value(job: &Value) -> Result<Value> {
 fn normalize_patch_value(patch: &Value) -> Result<Value> {
     let mut normalized = patch.clone();
     rescue_stringified_object(&mut normalized);
+    prune_null_fields(&mut normalized);
     let obj = normalized
         .as_object_mut()
         .ok_or_else(|| Error::message("patch must be an object"))?;

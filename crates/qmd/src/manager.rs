@@ -2,11 +2,15 @@
 //!
 //! Manages the current QMD CLI for indexing and search operations.
 
-use std::{collections::HashMap, path::PathBuf, process::Stdio, time::Duration};
+use std::{collections::HashMap, io::ErrorKind, path::PathBuf, process::Stdio, time::Duration};
 
 use {
     serde::{Deserialize, Serialize},
-    tokio::{process::Command, sync::RwLock, time::timeout},
+    tokio::{
+        process::Command,
+        sync::RwLock,
+        time::{sleep, timeout},
+    },
     tracing::{debug, info},
 };
 
@@ -247,7 +251,19 @@ impl QmdManager {
 
     async fn run_with_timeout(&self, mut command: Command) -> anyhow::Result<std::process::Output> {
         let timeout_duration = Duration::from_millis(self.config.timeout_ms);
-        match timeout(timeout_duration, command.output()).await {
+        let run = async {
+            for attempt in 0..=4 {
+                match command.output().await {
+                    Ok(output) => return Ok(output),
+                    Err(error) if error.kind() == ErrorKind::ExecutableFileBusy && attempt < 4 => {
+                        sleep(Duration::from_millis(50)).await;
+                    },
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(std::io::Error::other("QMD command retry loop exhausted"))
+        };
+        match timeout(timeout_duration, run).await {
             Ok(result) => Ok(result?),
             Err(_) => anyhow::bail!("QMD command timed out after {}ms", self.config.timeout_ms),
         }
@@ -585,6 +601,32 @@ exit 0
         assert!(status.error.is_some());
     }
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn retries_executable_file_busy_within_command_timeout() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("qmd.log");
+        let script = write_fake_qmd_script(&tmp, &log_path);
+        let busy_guard = OpenOptions::new().write(true).open(&script).unwrap();
+        let release_guard = tokio::spawn(async move {
+            sleep(Duration::from_millis(120)).await;
+            drop(busy_guard);
+        });
+
+        let manager = QmdManager::new(QmdManagerConfig {
+            command: script.to_string_lossy().into_owned(),
+            timeout_ms: 5_000,
+            work_dir: tmp.path().to_path_buf(),
+            index_name: "busy-index".into(),
+            ..Default::default()
+        });
+        *manager.available.write().await = Some(true);
+
+        let results = manager.hybrid_search("retry", 1, false).await.unwrap();
+        release_guard.await.unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
     #[tokio::test]
     async fn refresh_index_bootstraps_collections_and_embeddings() {
         let tmp = TempDir::new().unwrap();
@@ -670,8 +712,14 @@ exit 0
             env_overrides: real_qmd_env(&tmp),
         });
 
-        manager.refresh_index(false).await.unwrap();
-        let results = manager.keyword_search("keyword target", 5).await.unwrap();
+        manager
+            .refresh_index(false)
+            .await
+            .unwrap_or_else(|error| panic!("installed qmd failed to refresh index: {error}"));
+        let results = manager
+            .keyword_search("keyword target", 5)
+            .await
+            .unwrap_or_else(|error| panic!("installed qmd failed keyword search: {error}"));
         assert!(!results.is_empty(), "expected keyword result from live qmd");
         let first = &results[0];
         assert!(
@@ -683,7 +731,7 @@ exit 0
         let body = manager
             .get_document(&first.docid_ref(), Some(first.line), Some(10))
             .await
-            .unwrap();
+            .unwrap_or_else(|error| panic!("installed qmd failed document get: {error}"));
         assert!(
             body.contains("gamma keyword target"),
             "expected qmd get to return indexed content, got: {body}"

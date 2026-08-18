@@ -14,7 +14,7 @@ async function mockPhoneProviders(page, providers) {
 		if (markerIdx < 0) throw new Error("app.js marker not found in script URL");
 		const prefix = appUrl.slice(0, markerIdx);
 		const state = await import(`${prefix}js/state.js`);
-		const wsOpen = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+		const wsOpen = typeof WebSocket === "undefined" ? 1 : WebSocket.OPEN;
 		window.__phoneSettingsRequests = [];
 		state.setConnected(false);
 		state.setWs({

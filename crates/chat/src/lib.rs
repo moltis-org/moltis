@@ -1,10 +1,17 @@
 mod agent_loop;
+pub(crate) mod channel_acks;
+mod channel_compaction;
+mod channel_feedback;
+#[cfg(any(feature = "push-notifications", test))]
+mod channel_push;
+mod channel_reply_delivery;
 mod channels;
 mod compaction;
 mod compaction_run;
 mod memory_tools;
 mod message;
 mod models;
+pub mod params;
 mod prompt;
 mod run_with_tools;
 mod service;
@@ -13,6 +20,7 @@ mod types;
 
 pub mod chat_error;
 pub mod error;
+pub mod request_params;
 pub mod runtime;
 
 pub use {

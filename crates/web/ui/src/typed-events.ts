@@ -1,11 +1,20 @@
 /** Extract the value from an input/select/textarea change event. */
 export function targetValue(e: Event): string {
-	return (e.target as HTMLInputElement).value;
+	const eventTarget = e.currentTarget ?? e.target;
+	if (
+		eventTarget instanceof HTMLInputElement ||
+		eventTarget instanceof HTMLSelectElement ||
+		eventTarget instanceof HTMLTextAreaElement
+	) {
+		return eventTarget.value;
+	}
+	return "";
 }
 
 /** Extract the checked state from a checkbox change event. */
 export function targetChecked(e: Event): boolean {
-	return (e.target as HTMLInputElement).checked;
+	const eventTarget = e.currentTarget ?? e.target;
+	return eventTarget instanceof HTMLInputElement ? eventTarget.checked : false;
 }
 
 /** Get the typed target element from an event. */

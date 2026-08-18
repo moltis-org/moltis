@@ -128,6 +128,11 @@ pub mod channels {
     pub const ACTIVE: &str = "moltis_channels_active";
     /// Channel errors
     pub const ERRORS_TOTAL: &str = "moltis_channel_errors_total";
+    /// OTP challenges issued to non-allowlisted users (label: channel)
+    pub const OTP_CHALLENGES_TOTAL: &str = "moltis_channel_otp_challenges_total";
+    /// OTP verification attempts (labels: channel, result: approved, wrong_code,
+    /// locked_out, expired)
+    pub const OTP_VERIFICATIONS_TOTAL: &str = "moltis_channel_otp_verifications_total";
 }
 
 /// Channel webhook middleware metrics (signature verification, dedup, rate limiting)

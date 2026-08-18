@@ -9,6 +9,7 @@
 import { effect } from "@preact/signals";
 import { t } from "./i18n";
 import { modelStore } from "./stores/model-store";
+import { sessionStore } from "./stores/session-store";
 
 const EFFORT_VALUES: string[] = ["", "minimal", "low", "medium", "high", "xhigh"];
 
@@ -91,10 +92,15 @@ export function bindReasoningToggle(): void {
 
 	// Reactively show/hide the combo based on model reasoning support
 	disposeVisibility = effect(() => {
-		const show = modelStore.supportsReasoning.value;
+		const session = sessionStore.activeSession.value;
+		const sessionState = session
+			? { externalAgentKind: session.external_agent_kind, version: session.dataVersion.value }
+			: null;
+		const supportsReasoning = modelStore.supportsReasoning.value;
+		const show = supportsReasoning && !sessionState?.externalAgentKind;
 		reasoningCombo?.classList.toggle("hidden", !show);
 		// Reset effort when switching to a non-reasoning model
-		if (!show && modelStore.reasoningEffort.value) {
+		if (!supportsReasoning && modelStore.reasoningEffort.value) {
 			modelStore.setReasoningEffort("");
 		}
 		if (reasoningComboLabel) {

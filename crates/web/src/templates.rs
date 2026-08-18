@@ -70,7 +70,9 @@ pub(crate) struct GonData {
     stt_enabled: bool,
     tts_enabled: bool,
     graphql_enabled: bool,
+    connectors_enabled: bool,
     terminal_enabled: bool,
+    rpc_timeout_ms: u64,
     git_branch: Option<String>,
     mem: MemSnapshot,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -377,6 +379,20 @@ pub(crate) async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
 
 // ── GonData builder ──────────────────────────────────────────────────────────
 
+#[cfg(feature = "voice")]
+fn voice_status(gw: &GatewayState) -> (bool, bool, bool) {
+    (
+        true,
+        gw.config.voice.stt.enabled,
+        gw.config.voice.tts.enabled,
+    )
+}
+
+#[cfg(not(feature = "voice"))]
+fn voice_status(_gw: &GatewayState) -> (bool, bool, bool) {
+    (false, false, false)
+}
+
 pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
     const GON_SESSIONS_RECENT_LIMIT: usize = 30;
 
@@ -532,6 +548,8 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         tracing::warn!(elapsed_ms = total_ms, "gon: build_gon_data complete");
     }
 
+    let (voice_enabled, stt_enabled, tts_enabled) = voice_status(gw);
+
     GonData {
         identity,
         version: gw.version.clone(),
@@ -541,11 +559,13 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         cron_status,
         heartbeat_config,
         heartbeat_runs,
-        voice_enabled: cfg!(feature = "voice"),
-        stt_enabled: cfg!(feature = "voice") && gw.config.voice.stt.enabled,
-        tts_enabled: cfg!(feature = "voice") && gw.config.voice.tts.enabled,
+        voice_enabled,
+        stt_enabled,
+        tts_enabled,
         graphql_enabled: cfg!(feature = "graphql"),
+        connectors_enabled: cfg!(feature = "connectors"),
         terminal_enabled: gw.config.server.is_terminal_enabled(),
+        rpc_timeout_ms: gw.config.server.rpc_timeout_ms,
         git_branch: tokio::task::spawn_blocking(detect_git_branch)
             .await
             .ok()

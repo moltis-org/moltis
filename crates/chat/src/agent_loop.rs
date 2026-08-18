@@ -1,6 +1,13 @@
 //! Agent loop support: model flagging, shell commands, channel streaming, and compaction.
 
-use std::{collections::HashSet, sync::Arc, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 use {
     moltis_config::schema::ToolMode,
@@ -20,7 +27,7 @@ use crate::{
     compaction_run, error,
     models::DisabledModelsStore,
     runtime::ChatRuntime,
-    service::{build_tool_call_assistant_message, persist_tool_history_pair},
+    service::{build_tool_call_assistant_message, commit_terminal_run, persist_tool_history_pair},
     types::*,
 };
 
@@ -125,6 +132,7 @@ pub(crate) fn ordered_runner_event_callback() -> (
 }
 
 const CHANNEL_STREAM_BUFFER_SIZE: usize = 64;
+const FINAL_CHANNEL_STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct ChannelReplyTargetKey {
@@ -149,6 +157,37 @@ impl From<&moltis_channels::ChannelReplyTarget> for ChannelReplyTargetKey {
 
 struct ChannelStreamWorker {
     sender: moltis_channels::StreamSender,
+    receives_progress_deltas: bool,
+    receives_task_updates: bool,
+}
+
+struct AbortOnDropTask(Option<tokio::task::JoinHandle<()>>);
+
+impl AbortOnDropTask {
+    fn new(task: tokio::task::JoinHandle<()>) -> Self {
+        Self(Some(task))
+    }
+
+    fn abort(&self) {
+        if let Some(task) = &self.0 {
+            task.abort();
+        }
+    }
+
+    async fn join(mut self) -> Result<(), tokio::task::JoinError> {
+        let Some(task) = self.0.as_mut() else {
+            return Ok(());
+        };
+        let result = task.await;
+        self.0.take();
+        result
+    }
+}
+
+impl Drop for AbortOnDropTask {
+    fn drop(&mut self) {
+        self.abort();
+    }
 }
 
 /// Fan out model deltas to channel stream workers (Telegram/Discord edit-in-place).
@@ -160,16 +199,23 @@ pub(crate) struct ChannelStreamDispatcher {
     outbound: Arc<dyn moltis_channels::plugin::ChannelStreamOutbound>,
     targets: Vec<moltis_channels::ChannelReplyTarget>,
     workers: Vec<ChannelStreamWorker>,
-    tasks: Vec<tokio::task::JoinHandle<()>>,
+    tasks: Vec<AbortOnDropTask>,
     completed: Arc<Mutex<HashSet<ChannelReplyTargetKey>>>,
+    feedback: Option<Arc<moltis_channels::FeedbackService>>,
+    session_key: String,
+    trace_correlation_key: String,
     started: bool,
-    sent_delta: bool,
+    sent_final_delta: Arc<AtomicBool>,
+    active_tasks: HashMap<String, String>,
+    task_ids: HashMap<String, String>,
+    next_task_id: usize,
 }
 
 impl ChannelStreamDispatcher {
     pub(crate) async fn for_session(
         state: &Arc<dyn ChatRuntime>,
         session_key: &str,
+        trace_correlation_key: &str,
     ) -> Option<Self> {
         let outbound = state.channel_stream_outbound()?;
         let targets: Vec<moltis_channels::ChannelReplyTarget> = state
@@ -186,8 +232,14 @@ impl ChannelStreamDispatcher {
             workers: Vec::new(),
             tasks: Vec::new(),
             completed: Arc::new(Mutex::new(HashSet::new())),
+            feedback: state.feedback(),
+            session_key: session_key.to_string(),
+            trace_correlation_key: trace_correlation_key.to_string(),
             started: false,
-            sent_delta: false,
+            sent_final_delta: Arc::new(AtomicBool::new(false)),
+            active_tasks: HashMap::new(),
+            task_ids: HashMap::new(),
+            next_task_id: 0,
         };
         dispatcher.ensure_started().await;
         Some(dispatcher)
@@ -210,9 +262,29 @@ impl ChannelStreamDispatcher {
             }
 
             let key = ChannelReplyTargetKey::from(&target);
+            let streams_final_replies = self
+                .outbound
+                .streams_final_replies(&target.account_id)
+                .await;
+            let receives_progress_deltas = self
+                .outbound
+                .receives_progress_deltas(&target.account_id)
+                .await;
+            let receives_task_updates = self
+                .outbound
+                .receives_task_updates(&target.account_id)
+                .await;
+            let claims_stream_delivery = self
+                .outbound
+                .claims_stream_delivery(&target.account_id, target.message_id.as_deref())
+                .await;
             let (tx, rx) = mpsc::channel(CHANNEL_STREAM_BUFFER_SIZE);
             let outbound = Arc::clone(&self.outbound);
             let completed = Arc::clone(&self.completed);
+            let feedback = self.feedback.clone();
+            let session_key = self.session_key.clone();
+            let trace_correlation_key = self.trace_correlation_key.clone();
+            let sent_final_delta = Arc::clone(&self.sent_final_delta);
             let account_id = target.account_id.clone();
             let to = target.outbound_to().into_owned();
             let reply_to = target.message_id.clone();
@@ -221,25 +293,43 @@ impl ChannelStreamDispatcher {
             let chat_for_log = target.chat_id.clone();
             let thread_for_log = target.thread_id.clone();
 
-            self.workers.push(ChannelStreamWorker { sender: tx });
-            self.tasks.push(tokio::spawn(async move {
-                match outbound
-                    .send_stream(&account_id, &to, reply_to.as_deref(), rx)
-                    .await
-                {
-                    Ok(()) => {
-                        completed.lock().await.insert(key_for_insert);
-                    },
-                    Err(e) => {
-                        warn!(
-                            account_id = account_for_log,
-                            chat_id = chat_for_log,
-                            thread_id = thread_for_log.as_deref().unwrap_or("-"),
-                            "channel stream outbound failed: {e}"
-                        );
-                    },
-                }
-            }));
+            self.workers.push(ChannelStreamWorker {
+                sender: tx,
+                receives_progress_deltas,
+                receives_task_updates,
+            });
+            self.tasks
+                .push(AbortOnDropTask::new(tokio::spawn(async move {
+                    match outbound
+                        .send_stream_reporting_ids(&account_id, &to, reply_to.as_deref(), rx)
+                        .await
+                    {
+                        Ok(message_ids) => {
+                            if streams_final_replies
+                                && (sent_final_delta.load(Ordering::Acquire)
+                                    || claims_stream_delivery)
+                            {
+                                completed.lock().await.insert(key_for_insert);
+                                crate::channel_feedback::record_reply_trace(
+                                    feedback.as_deref(),
+                                    &target,
+                                    &message_ids,
+                                    &session_key,
+                                    &trace_correlation_key,
+                                )
+                                .await;
+                            }
+                        },
+                        Err(e) => {
+                            warn!(
+                                account_id = account_for_log,
+                                chat_id = chat_for_log,
+                                thread_id = thread_for_log.as_deref().unwrap_or("-"),
+                                "channel stream outbound failed: {e}"
+                            );
+                        },
+                    }
+                })));
         }
     }
 
@@ -247,17 +337,94 @@ impl ChannelStreamDispatcher {
         if delta.is_empty() {
             return;
         }
-        self.sent_delta = true;
+        self.sent_final_delta.store(true, Ordering::Release);
         self.ensure_started().await;
-        let event = moltis_channels::StreamEvent::Delta(delta.to_string());
+        self.send_to_workers(
+            moltis_channels::StreamEvent::Delta(delta.to_string()),
+            "delta",
+        )
+        .await;
+    }
+
+    pub(crate) async fn send_progress_delta(&mut self, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        self.ensure_started().await;
+        let event = moltis_channels::StreamEvent::ProgressDelta(delta.to_string());
+        for worker in &self.workers {
+            if worker.receives_progress_deltas && worker.sender.send(event.clone()).await.is_err() {
+                debug!("channel stream progress delta dropped: worker closed");
+            }
+        }
+    }
+
+    pub(crate) async fn send_task_update(
+        &mut self,
+        mut update: moltis_channels::plugin::ChannelTaskUpdate,
+    ) {
+        use moltis_channels::plugin::ChannelTaskStatus;
+
+        self.ensure_started().await;
+        let source_id = update.id.clone();
+        update.id = self.opaque_task_id(&source_id);
+        match update.status {
+            ChannelTaskStatus::InProgress => {
+                self.active_tasks
+                    .insert(source_id.clone(), update.title.clone());
+            },
+            ChannelTaskStatus::Complete | ChannelTaskStatus::Error => {
+                self.active_tasks.remove(&source_id);
+            },
+        }
+        let event = moltis_channels::StreamEvent::TaskUpdate(update);
+        for worker in &self.workers {
+            if worker.receives_task_updates && worker.sender.send(event.clone()).await.is_err() {
+                debug!("channel stream task update dropped: worker closed");
+            }
+        }
+    }
+
+    fn opaque_task_id(&mut self, source_id: &str) -> String {
+        if let Some(id) = self.task_ids.get(source_id) {
+            return id.clone();
+        }
+        self.next_task_id += 1;
+        let id = format!("task-{}", self.next_task_id);
+        self.task_ids.insert(source_id.to_string(), id.clone());
+        id
+    }
+
+    async fn send_to_workers(&mut self, event: moltis_channels::StreamEvent, label: &str) {
         for worker in &self.workers {
             if worker.sender.send(event.clone()).await.is_err() {
-                debug!("channel stream delta dropped: worker closed");
+                debug!("channel stream {label} dropped: worker closed");
             }
         }
     }
 
     pub(crate) async fn finish(&mut self) {
+        if tokio::time::timeout(FINAL_CHANNEL_STREAM_TIMEOUT, self.finish_inner())
+            .await
+            .is_err()
+        {
+            warn!("timed out finishing channel stream workers");
+            self.abort_workers();
+            self.workers.clear();
+            self.join_workers().await;
+        }
+    }
+
+    async fn finish_inner(&mut self) {
+        let unfinished = std::mem::take(&mut self.active_tasks);
+        for (id, title) in unfinished {
+            self.send_task_update(moltis_channels::plugin::ChannelTaskUpdate {
+                id,
+                title,
+                status: moltis_channels::plugin::ChannelTaskStatus::Error,
+            })
+            .await;
+        }
         self.send_terminal(moltis_channels::StreamEvent::Done).await;
         self.join_workers().await;
     }
@@ -277,38 +444,63 @@ impl ChannelStreamDispatcher {
     async fn join_workers(&mut self) {
         let tasks = std::mem::take(&mut self.tasks);
         for task in tasks {
-            if let Err(e) = task.await {
+            if let Err(e) = task.join().await {
                 warn!(error = %e, "channel stream worker task join failed");
             }
         }
     }
 
-    pub(crate) async fn completed_target_keys(&self) -> HashSet<ChannelReplyTargetKey> {
-        if !self.sent_delta {
-            return HashSet::new();
+    fn abort_workers(&self) {
+        for task in &self.tasks {
+            task.abort();
         }
+    }
+
+    pub(crate) async fn completed_target_keys(&self) -> HashSet<ChannelReplyTargetKey> {
         self.completed.lock().await.clone()
     }
+}
+
+impl Drop for ChannelStreamDispatcher {
+    fn drop(&mut self) {
+        // Abort receivers before dropping senders. Some channel implementations
+        // treat sender closure like Done and would otherwise publish a late final.
+        self.abort_workers();
+    }
+}
+
+pub(crate) async fn commit_terminal_and_finish_channel_stream(
+    terminal_runs: &Arc<RwLock<HashSet<String>>>,
+    run_id: &str,
+    dispatcher: Option<&mut ChannelStreamDispatcher>,
+) -> HashSet<ChannelReplyTargetKey> {
+    commit_terminal_run(terminal_runs, run_id).await;
+    let Some(dispatcher) = dispatcher else {
+        return HashSet::new();
+    };
+    dispatcher.finish().await;
+    dispatcher.completed_target_keys().await
 }
 
 pub(crate) async fn run_explicit_shell_command(
     state: &Arc<dyn ChatRuntime>,
     run_id: &str,
-    tool_registry: &Arc<RwLock<ToolRegistry>>,
-    session_store: &Arc<SessionStore>,
     terminal_runs: &Arc<RwLock<HashSet<String>>>,
+    tool_registry: &Arc<RwLock<ToolRegistry>>,
+    session_store: Option<&Arc<SessionStore>>,
     session_key: &str,
     command: &str,
     user_message_index: usize,
     accept_language: Option<String>,
     conn_id: Option<String>,
     client_seq: Option<u64>,
+    working_dir: Option<String>,
 ) -> AssistantTurnOutput {
     let started = Instant::now();
     let tool_call_id = format!("sh_{}", uuid::Uuid::new_v4().simple());
     let tool_args = serde_json::json!({ "command": command });
 
-    send_tool_status_to_channels(state, session_key, "exec", &tool_args).await;
+    send_tool_status_to_channels(state, run_id, session_key, "exec", &tool_args).await;
 
     broadcast(
         state,
@@ -335,6 +527,9 @@ pub(crate) async fn run_explicit_shell_command(
     }
     if let Some(cid) = conn_id.as_deref() {
         exec_params["_conn_id"] = serde_json::json!(cid);
+    }
+    if let Some(directory) = working_dir {
+        exec_params["_working_dir"] = serde_json::json!(directory);
     }
 
     let exec_tool = {
@@ -365,23 +560,29 @@ pub(crate) async fn run_explicit_shell_command(
                 client_seq,
                 Some(run_id),
             );
-            let tool_result_msg = PersistedMessage::tool_result(
+            // Both halves of the pair must carry the run id: run-scoped history
+            // filtering keeps or drops a run as a unit, and a result without one
+            // would be dropped on its own, orphaning the tool call above.
+            let tool_result_msg = PersistedMessage::tool_result_with_run_id(
                 tool_call_id.clone(),
                 "exec",
                 Some(serde_json::json!({ "command": command })),
                 true,
                 Some(capped.clone()),
                 None,
+                run_id,
             );
-            persist_tool_history_pair(
-                session_store,
-                session_key,
-                assistant_tool_call_msg,
-                tool_result_msg,
-                "failed to persist direct /sh assistant tool call",
-                "failed to persist direct /sh tool result",
-            )
-            .await;
+            if let Some(session_store) = session_store {
+                persist_tool_history_pair(
+                    session_store,
+                    session_key,
+                    assistant_tool_call_msg,
+                    tool_result_msg,
+                    "failed to persist direct /sh assistant tool call",
+                    "failed to persist direct /sh tool result",
+                )
+                .await;
+            }
 
             broadcast(
                 state,
@@ -418,23 +619,26 @@ pub(crate) async fn run_explicit_shell_command(
                 client_seq,
                 Some(run_id),
             );
-            let tool_result_msg = PersistedMessage::tool_result(
+            let tool_result_msg = PersistedMessage::tool_result_with_run_id(
                 tool_call_id.clone(),
                 "exec",
                 Some(serde_json::json!({ "command": command })),
                 false,
                 None,
                 Some(error_text.clone()),
+                run_id,
             );
-            persist_tool_history_pair(
-                session_store,
-                session_key,
-                assistant_tool_call_msg,
-                tool_result_msg,
-                "failed to persist direct /sh assistant tool call",
-                "failed to persist direct /sh tool error",
-            )
-            .await;
+            if let Some(session_store) = session_store {
+                persist_tool_history_pair(
+                    session_store,
+                    session_key,
+                    assistant_tool_call_msg,
+                    tool_result_msg,
+                    "failed to persist direct /sh assistant tool call",
+                    "failed to persist direct /sh tool error",
+                )
+                .await;
+            }
 
             broadcast(
                 state,
@@ -459,10 +663,15 @@ pub(crate) async fn run_explicit_shell_command(
         },
     }
 
+    // A channel can accept the reply immediately, so claim terminal ownership
+    // before final delivery. This prevents a concurrent abort from emitting a
+    // contradictory aborted terminal after the user already received output.
+    commit_terminal_run(terminal_runs, run_id).await;
     if !final_text.trim().is_empty() {
         let streamed_target_keys = HashSet::new();
         deliver_channel_replies(
             state,
+            run_id,
             session_key,
             &final_text,
             ReplyMedium::Text,
@@ -493,10 +702,8 @@ pub(crate) async fn run_explicit_shell_command(
     );
     #[allow(clippy::unwrap_used)] // serializing known-valid struct
     let payload = serde_json::to_value(&final_payload).unwrap();
-    terminal_runs.write().await.insert(run_id.to_string());
-    broadcast(state, "chat", payload, BroadcastOpts::default()).await;
 
-    build_assistant_turn_output(
+    let mut output = build_assistant_turn_output(
         final_text,
         UsageSnapshot::new(
             moltis_agents::model::Usage::default(),
@@ -506,7 +713,9 @@ pub(crate) async fn run_explicit_shell_command(
         None,
         None,
         None,
-    )
+    );
+    output.final_broadcast = Some(payload);
+    output
 }
 
 /// Resolve the effective tool mode for a provider.
@@ -536,15 +745,17 @@ pub(crate) async fn compact_session(
     session_key: &str,
     config: &moltis_config::CompactionConfig,
     provider: Option<&dyn moltis_agents::model::LlmProvider>,
+    max_tool_result_bytes: usize,
 ) -> error::Result<compaction_run::CompactionOutcome> {
     let history = store
         .read(session_key)
         .await
         .map_err(|source| error::Error::external("failed to read session history", source))?;
 
-    let mut outcome = compaction_run::run_compaction(&history, config, provider)
-        .await
-        .map_err(|e| error::Error::message(e.to_string()))?;
+    let mut outcome =
+        compaction_run::run_compaction(&history, config, provider, max_tool_result_bytes)
+            .await
+            .map_err(|e| error::Error::message(e.to_string()))?;
 
     // Enforce summary budget discipline on the compacted history.
     outcome.history = compress_summary_in_history(outcome.history);
@@ -555,4 +766,355 @@ pub(crate) async fn compact_session(
         .map_err(|source| error::Error::external("failed to replace compacted history", source))?;
 
     Ok(outcome)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use async_trait::async_trait;
+
+    use super::*;
+
+    struct RecordingStreamOutbound {
+        streams_final_replies: bool,
+        receives_progress_deltas: bool,
+        receives_task_updates: bool,
+        claims_stream_delivery: bool,
+        events: Arc<Mutex<Vec<moltis_channels::StreamEvent>>>,
+        reporting_calls: std::sync::atomic::AtomicUsize,
+    }
+
+    struct DropNotice(Option<tokio::sync::oneshot::Sender<()>>);
+
+    impl Drop for DropNotice {
+        fn drop(&mut self) {
+            if let Some(sender) = self.0.take() {
+                let _ = sender.send(());
+            }
+        }
+    }
+
+    struct ClosureFinalizingOutbound {
+        started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        dropped: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        finalized_on_close: AtomicBool,
+    }
+
+    #[async_trait]
+    impl moltis_channels::ChannelStreamOutbound for ClosureFinalizingOutbound {
+        async fn send_stream(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _reply_to: Option<&str>,
+            mut stream: moltis_channels::StreamReceiver,
+        ) -> moltis_channels::Result<()> {
+            let dropped = self.dropped.lock().await.take();
+            let _notice = DropNotice(dropped);
+            if let Some(started) = self.started.lock().await.take() {
+                let _ = started.send(());
+            }
+            while let Some(event) = stream.recv().await {
+                if matches!(
+                    event,
+                    moltis_channels::StreamEvent::Done | moltis_channels::StreamEvent::Error(_)
+                ) {
+                    return Ok(());
+                }
+            }
+            self.finalized_on_close.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn is_stream_enabled(&self, _account_id: &str) -> bool {
+            true
+        }
+    }
+
+    struct TerminalCheckingOutbound {
+        terminal_runs: Arc<RwLock<HashSet<String>>>,
+        final_observed_after_terminal: AtomicBool,
+    }
+
+    #[async_trait]
+    impl moltis_channels::ChannelStreamOutbound for TerminalCheckingOutbound {
+        async fn send_stream(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _reply_to: Option<&str>,
+            mut stream: moltis_channels::StreamReceiver,
+        ) -> moltis_channels::Result<()> {
+            while let Some(event) = stream.recv().await {
+                if matches!(event, moltis_channels::StreamEvent::Done) {
+                    self.final_observed_after_terminal.store(
+                        self.terminal_runs.read().await.contains("run-1"),
+                        Ordering::SeqCst,
+                    );
+                    break;
+                }
+            }
+            Ok(())
+        }
+
+        async fn is_stream_enabled(&self, _account_id: &str) -> bool {
+            true
+        }
+
+        async fn streams_final_replies(&self, _account_id: &str) -> bool {
+            true
+        }
+    }
+
+    #[async_trait]
+    impl moltis_channels::ChannelStreamOutbound for RecordingStreamOutbound {
+        async fn send_stream(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _reply_to: Option<&str>,
+            mut stream: moltis_channels::StreamReceiver,
+        ) -> moltis_channels::Result<()> {
+            while let Some(event) = stream.recv().await {
+                self.events.lock().await.push(event.clone());
+                if matches!(
+                    event,
+                    moltis_channels::StreamEvent::Done | moltis_channels::StreamEvent::Error(_)
+                ) {
+                    break;
+                }
+            }
+            Ok(())
+        }
+
+        async fn send_stream_reporting_ids(
+            &self,
+            account_id: &str,
+            to: &str,
+            reply_to: Option<&str>,
+            stream: moltis_channels::StreamReceiver,
+        ) -> moltis_channels::Result<Vec<String>> {
+            self.reporting_calls.fetch_add(1, Ordering::SeqCst);
+            self.send_stream(account_id, to, reply_to, stream).await?;
+            Ok(vec!["stream-message".into()])
+        }
+
+        async fn is_stream_enabled(&self, _account_id: &str) -> bool {
+            true
+        }
+
+        async fn streams_final_replies(&self, _account_id: &str) -> bool {
+            self.streams_final_replies
+        }
+
+        async fn receives_progress_deltas(&self, _account_id: &str) -> bool {
+            self.receives_progress_deltas
+        }
+
+        async fn receives_task_updates(&self, _account_id: &str) -> bool {
+            self.receives_task_updates
+        }
+
+        async fn claims_stream_delivery(&self, _account_id: &str, _reply_to: Option<&str>) -> bool {
+            self.claims_stream_delivery
+        }
+    }
+
+    fn channel_target() -> moltis_channels::ChannelReplyTarget {
+        moltis_channels::ChannelReplyTarget {
+            ack_message_id: None,
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "bot".into(),
+            chat_id: "chat".into(),
+            message_id: Some("msg".into()),
+            thread_id: None,
+        }
+    }
+
+    fn dispatcher_with(
+        outbound: Arc<dyn moltis_channels::ChannelStreamOutbound>,
+    ) -> ChannelStreamDispatcher {
+        ChannelStreamDispatcher {
+            outbound,
+            targets: vec![channel_target()],
+            workers: Vec::new(),
+            tasks: Vec::new(),
+            completed: Arc::new(Mutex::new(HashSet::new())),
+            feedback: None,
+            session_key: "session".into(),
+            trace_correlation_key: "run".into(),
+            started: false,
+            sent_final_delta: Arc::new(AtomicBool::new(false)),
+            active_tasks: HashMap::new(),
+            task_ids: HashMap::new(),
+            next_task_id: 0,
+        }
+    }
+
+    fn event_kinds(events: &[moltis_channels::StreamEvent]) -> Vec<&'static str> {
+        events
+            .iter()
+            .map(|event| match event {
+                moltis_channels::StreamEvent::Delta(_) => "delta",
+                moltis_channels::StreamEvent::ProgressDelta(_) => "progress",
+                moltis_channels::StreamEvent::TaskUpdate(_) => "task",
+                moltis_channels::StreamEvent::Done => "done",
+                moltis_channels::StreamEvent::Error(_) => "error",
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn streams_without_final_delivery_do_not_complete_targets() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingStreamOutbound {
+            streams_final_replies: false,
+            claims_stream_delivery: false,
+            receives_progress_deltas: true,
+            receives_task_updates: false,
+            events: Arc::clone(&events),
+            reporting_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut dispatcher = dispatcher_with(outbound.clone());
+
+        dispatcher.send_progress_delta("progress").await;
+        dispatcher.send_delta("final").await;
+        dispatcher.finish().await;
+
+        let events = events.lock().await;
+        assert_eq!(event_kinds(&events), vec!["progress", "delta", "done"]);
+        assert!(dispatcher.completed_target_keys().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn final_stream_workers_receive_progress_and_final_deltas_and_complete_targets() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingStreamOutbound {
+            streams_final_replies: true,
+            claims_stream_delivery: false,
+            receives_progress_deltas: true,
+            receives_task_updates: false,
+            events: Arc::clone(&events),
+            reporting_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut dispatcher = dispatcher_with(outbound.clone());
+
+        dispatcher.send_progress_delta("progress").await;
+        dispatcher.send_delta("final").await;
+        dispatcher.finish().await;
+
+        let events = events.lock().await;
+        assert_eq!(event_kinds(&events), vec!["progress", "delta", "done"]);
+        assert_eq!(outbound.reporting_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(dispatcher.completed_target_keys().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn claimed_stream_delivery_completes_without_a_final_delta() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingStreamOutbound {
+            streams_final_replies: true,
+            claims_stream_delivery: true,
+            receives_progress_deltas: true,
+            receives_task_updates: false,
+            events: Arc::clone(&events),
+            reporting_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut dispatcher = dispatcher_with(outbound);
+
+        dispatcher
+            .send_progress_delta("retained error response")
+            .await;
+        dispatcher.finish().await;
+
+        assert_eq!(event_kinds(&events.lock().await), vec!["progress", "done"]);
+        assert_eq!(dispatcher.completed_target_keys().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn unfinished_tasks_are_marked_error_before_stream_completion() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let outbound = Arc::new(RecordingStreamOutbound {
+            streams_final_replies: true,
+            claims_stream_delivery: false,
+            receives_progress_deltas: false,
+            receives_task_updates: true,
+            events: Arc::clone(&events),
+            reporting_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut dispatcher = dispatcher_with(outbound);
+
+        dispatcher
+            .send_task_update(moltis_channels::plugin::ChannelTaskUpdate {
+                id: "call-1".into(),
+                title: "web_search".into(),
+                status: moltis_channels::plugin::ChannelTaskStatus::InProgress,
+            })
+            .await;
+        dispatcher.finish().await;
+
+        let events = events.lock().await;
+        assert_eq!(event_kinds(&events), vec!["task", "task", "done"]);
+        let Some(moltis_channels::StreamEvent::TaskUpdate(update)) = events.get(1) else {
+            panic!("expected terminal task update");
+        };
+        let Some(moltis_channels::StreamEvent::TaskUpdate(started)) = events.first() else {
+            panic!("expected starting task update");
+        };
+        assert_eq!(started.id, "task-1");
+        assert_eq!(update.id, started.id);
+        assert_eq!(
+            update.status,
+            moltis_channels::plugin::ChannelTaskStatus::Error
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_dispatcher_aborts_worker_before_sender_closure_can_finalize() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let outbound = Arc::new(ClosureFinalizingOutbound {
+            started: Mutex::new(Some(started_tx)),
+            dropped: Mutex::new(Some(dropped_tx)),
+            finalized_on_close: AtomicBool::new(false),
+        });
+        let mut dispatcher = dispatcher_with(outbound.clone());
+        dispatcher.send_delta("final").await;
+        assert!(started_rx.await.is_ok());
+
+        drop(dispatcher);
+
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), dropped_rx)
+                .await
+                .is_ok()
+        );
+        assert!(!outbound.finalized_on_close.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn terminal_is_committed_before_channel_stream_final() {
+        let terminal_runs = Arc::new(RwLock::new(HashSet::new()));
+        let outbound = Arc::new(TerminalCheckingOutbound {
+            terminal_runs: Arc::clone(&terminal_runs),
+            final_observed_after_terminal: AtomicBool::new(false),
+        });
+        let mut dispatcher = dispatcher_with(outbound.clone());
+        dispatcher.send_delta("final").await;
+
+        let completed = commit_terminal_and_finish_channel_stream(
+            &terminal_runs,
+            "run-1",
+            Some(&mut dispatcher),
+        )
+        .await;
+
+        assert!(terminal_runs.read().await.contains("run-1"));
+        assert!(
+            outbound
+                .final_observed_after_terminal
+                .load(Ordering::SeqCst)
+        );
+        assert_eq!(completed.len(), 1);
+    }
 }

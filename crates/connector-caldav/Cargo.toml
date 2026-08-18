@@ -1,0 +1,31 @@
+[package]
+description          = "CalDAV provider adapter for Moltis connectors"
+edition.workspace    = true
+license.workspace    = true
+name                 = "moltis-connector-caldav"
+repository.workspace = true
+version.workspace    = true
+
+[features]
+default = ["tracing"]
+metrics = ["dep:metrics"]
+tracing = ["dep:tracing"]
+
+[dependencies]
+async-trait       = { workspace = true }
+metrics           = { optional = true, workspace = true }
+moltis-caldav     = { workspace = true }
+moltis-common     = { workspace = true }
+moltis-connectors = { workspace = true }
+secrecy           = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+sha2              = { workspace = true }
+thiserror         = { workspace = true }
+time              = { features = ["parsing"], workspace = true }
+tokio             = { features = ["macros", "net", "rt"], workspace = true }
+tracing           = { optional = true, workspace = true }
+url               = { workspace = true }
+
+[lints]
+workspace = true

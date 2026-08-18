@@ -525,6 +525,12 @@ fn chat_config_toml_parses_workspace_file_limit() {
 }
 
 #[test]
+fn chat_config_toml_parses_context_command() {
+    let cfg: ChatConfig = toml::from_str(r#"context_command = "thomas context""#).unwrap();
+    assert_eq!(cfg.context_command.as_deref(), Some("thomas context"));
+}
+
+#[test]
 fn providers_config_local_alias_maps_local_llm_to_local() {
     let mut config = ProvidersConfig::default();
     config.providers.insert("local-llm".into(), ProviderEntry {
@@ -972,6 +978,23 @@ enabled = true
 }
 
 #[test]
+fn external_agent_models_from_toml() {
+    let toml_str = r#"
+[external_agents]
+enabled = true
+
+[external_agents.agents.claude-code]
+binary = "claude"
+models = ["claude-opus-4-8", "claude-sonnet-4-6"]
+efforts = ["high", "xhigh"]
+"#;
+    let config: MoltisConfig = toml::from_str(toml_str).unwrap();
+    let entry = config.external_agents.agents.get("claude-code").unwrap();
+    assert_eq!(entry.models, vec!["claude-opus-4-8", "claude-sonnet-4-6"]);
+    assert_eq!(entry.efforts, vec!["high", "xhigh"]);
+}
+
+#[test]
 fn provider_entry_wire_api_skip_serializing_default() {
     let entry = ProviderEntry::default();
     let serialized = toml::to_string(&entry).unwrap();
@@ -1015,6 +1038,18 @@ fn terminal_disabled_via_config_reflects_in_helper() {
     // (We cannot test the env-var override here because workspace lints
     // deny unsafe code, and `std::env::set_var` is unsafe.)
     assert!(!cfg.server.is_terminal_enabled());
+}
+
+#[test]
+fn rpc_timeout_ms_defaults_to_5000() {
+    let cfg: MoltisConfig = toml::from_str("").unwrap();
+    assert_eq!(cfg.server.rpc_timeout_ms, 5000);
+}
+
+#[test]
+fn rpc_timeout_ms_parsed_from_config() {
+    let cfg: MoltisConfig = toml::from_str("[server]\nrpc_timeout_ms = 8000\n").unwrap();
+    assert_eq!(cfg.server.rpc_timeout_ms, 8000);
 }
 
 #[test]
@@ -1200,4 +1235,11 @@ mode = "sometimes"
 "#;
     let result: Result<MoltisConfig, _> = toml::from_str(toml_str);
     assert!(result.is_err());
+}
+#[test]
+fn external_agents_default_to_enabled_for_detection() {
+    let config = MoltisConfig::default();
+
+    assert!(config.external_agents.enabled);
+    assert!(config.external_agents.agents.is_empty());
 }

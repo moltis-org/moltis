@@ -32,6 +32,7 @@ export function EditChannelModal(): VNode | null {
 	const editAgent = useSignal("");
 	const agentsList = useSignal<Array<{ id: string; name: string; emoji?: string }>>([]);
 	const allowlistItems = useSignal<string[]>([]);
+	const operatorItems = useSignal<string[]>([]);
 	const roomAllowlistItems = useSignal<string[]>([]);
 	const editCredential = useSignal("");
 	const editWebhookSecret = useSignal("");
@@ -46,6 +47,10 @@ export function EditChannelModal(): VNode | null {
 	const editMatrixOtpCooldown = useSignal("300");
 	const editSignalAccount = useSignal("");
 	const editSignalHttpUrl = useSignal("http://127.0.0.1:8080");
+	const editSlackApiBaseUrl = useSignal("https://slack.com/api");
+	const editSlackAckReactions = useSignal(true);
+	const editSlackReactionTriggers = useSignal(false);
+	const editSlackRichBlocks = useSignal(false);
 	const editChannelNamePatterns = useSignal<string[]>([]);
 	const editCategoryAllowlist = useSignal<string[]>([]);
 	const editAdvancedConfigPatch = useSignal("");
@@ -57,6 +62,7 @@ export function EditChannelModal(): VNode | null {
 			ch?.config?.user_allowlist ||
 			ch?.config?.allowed_pubkeys ||
 			[]) as string[];
+		operatorItems.value = (ch?.config?.operators || []) as string[];
 		roomAllowlistItems.value = (ch?.config?.room_allowlist || ch?.config?.group_allowlist || []) as string[];
 		editCredential.value = "";
 		editWebhookSecret.value = (ch?.config?.webhook_secret as string) || "";
@@ -73,6 +79,10 @@ export function EditChannelModal(): VNode | null {
 		editMatrixOtpCooldown.value = String(ch?.config?.otp_cooldown_secs || 300);
 		editSignalAccount.value = (ch?.config?.account as string) || "";
 		editSignalHttpUrl.value = (ch?.config?.http_url as string) || "http://127.0.0.1:8080";
+		editSlackApiBaseUrl.value = (ch?.config?.api_base_url as string) || "https://slack.com/api";
+		editSlackAckReactions.value = ch?.config?.ack_reactions !== false;
+		editSlackReactionTriggers.value = ch?.config?.reaction_triggers === true;
+		editSlackRichBlocks.value = ch?.config?.rich_blocks === true;
 		editChannelNamePatterns.value = (ch?.config?.channel_name_patterns || []) as string[];
 		editCategoryAllowlist.value = (ch?.config?.category_allowlist || []) as string[];
 		editAdvancedConfigPatch.value = "";
@@ -95,6 +105,7 @@ export function EditChannelModal(): VNode | null {
 	const isDiscord = chType === ChannelType.Discord;
 	const isWhatsApp = chType === ChannelType.WhatsApp;
 	const isTelegram = chType === ChannelType.Telegram;
+	const isSlack = chType === ChannelType.Slack;
 	const isMatrix = chType === ChannelType.Matrix;
 	const isNostr = chType === ChannelType.Nostr;
 	const isSignal = chType === ChannelType.Signal;
@@ -154,6 +165,7 @@ export function EditChannelModal(): VNode | null {
 		const dmFallback = isWhatsApp ? "open" : "allowlist";
 		updateConfig.dm_policy = (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement)?.value || dmFallback;
 		updateConfig.allowlist = allowlistItems.value;
+		updateConfig.operators = operatorItems.value;
 		if (isMatrix) {
 			updateConfig.user_allowlist = allowlistItems.value;
 			updateConfig.room_policy =
@@ -188,6 +200,14 @@ export function EditChannelModal(): VNode | null {
 			updateConfig.channel_name_patterns = editChannelNamePatterns.value;
 			updateConfig.category_allowlist = editCategoryAllowlist.value;
 		}
+		if (isSlack) {
+			updateConfig.api_base_url = editSlackApiBaseUrl.value.trim() || "https://slack.com/api";
+			updateConfig.stream_mode = editStreamMode.value;
+			updateConfig.thread_replies = editStreamMode.value === "native" ? true : cfg.thread_replies !== false;
+			updateConfig.ack_reactions = editSlackAckReactions.value;
+			updateConfig.reaction_triggers = editSlackReactionTriggers.value;
+			updateConfig.rich_blocks = editSlackRichBlocks.value;
+		}
 		addChannelCredentials(updateConfig, form);
 		addModelToConfig(updateConfig);
 		addAgentToConfig(updateConfig);
@@ -213,6 +233,10 @@ export function EditChannelModal(): VNode | null {
 		saving.value = true;
 		const updateConfig = buildUpdateConfig(form);
 		Object.assign(updateConfig, advancedPatch.value);
+		if (isSlack && updateConfig.stream_mode === "native") {
+			updateConfig.thread_replies = true;
+			updateConfig.rich_blocks = false;
+		}
 		sendRpc("channels.update", {
 			type: channelType(ch.type),
 			account_id: ch.account_id,
@@ -375,6 +399,99 @@ export function EditChannelModal(): VNode | null {
 							Only respond in channels under these Discord categories. Combined with name patterns via OR.
 						</div>
 					</>
+				)}
+				{isSlack && (
+					<div className="flex flex-col gap-1">
+						<label className="text-xs text-[var(--muted)]">Slack API Base URL</label>
+						<input
+							type="url"
+							className="channel-input w-full"
+							value={editSlackApiBaseUrl.value}
+							onInput={(e) => {
+								editSlackApiBaseUrl.value = targetValue(e);
+							}}
+							placeholder="https://slack.com/api"
+							autoComplete="off"
+							autoCapitalize="none"
+							autoCorrect="off"
+							spellcheck={false}
+						/>
+						<div className="text-xs text-[var(--muted)]">
+							Use Slack's default endpoint unless you use a Slack-compatible proxy or test gateway.
+						</div>
+						<label className="text-xs text-[var(--muted)]" htmlFor="edit-slack-stream-mode">
+							Response streaming
+						</label>
+						<select
+							id="edit-slack-stream-mode"
+							className="channel-select"
+							value={editStreamMode.value}
+							onChange={(e) => {
+								const mode = targetValue(e);
+								editStreamMode.value = mode;
+								if (mode === "native") editSlackRichBlocks.value = false;
+							}}
+							aria-label="Response streaming"
+						>
+							<option value="edit_in_place">Edit-in-place text (default)</option>
+							<option value="native">Slack live text and tool cards</option>
+							<option value="off">Off (send once complete)</option>
+						</select>
+						<div className="text-xs text-[var(--muted)]">
+							Native streaming requires threaded replies and shows tool names without arguments or results.
+						</div>
+						<label className="flex items-start gap-2 cursor-pointer mt-1">
+							<input
+								type="checkbox"
+								checked={editSlackAckReactions.value}
+								onChange={(e) => {
+									editSlackAckReactions.value = targetChecked(e);
+								}}
+							/>
+							<span className="flex flex-col gap-1">
+								<span className="text-xs font-medium text-[var(--text-strong)]">Acknowledge with reactions</span>
+								<span className="text-xs text-[var(--muted)]">
+									React to messages that mention the bot (or DMs) with 👀 on receipt, then ✅ or ❌ when done.
+								</span>
+							</span>
+						</label>
+						<label className="flex items-start gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={editSlackReactionTriggers.value}
+								onChange={(e) => {
+									editSlackReactionTriggers.value = targetChecked(e);
+								}}
+							/>
+							<span className="flex flex-col gap-1">
+								<span className="text-xs font-medium text-[var(--text-strong)]">Reaction triggers</span>
+								<span className="text-xs text-[var(--muted)]">
+									Let users drive the bot by reacting to a message (e.g. react ✅ to approve). Restrict which emoji
+									trigger it via <code>reaction_trigger_emojis</code> in Advanced config.
+								</span>
+							</span>
+						</label>
+						<label className="flex items-start gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={editSlackRichBlocks.value}
+								onChange={(e) => {
+									const enabled = targetChecked(e);
+									editSlackRichBlocks.value = enabled;
+									if (enabled && editStreamMode.value === "native") {
+										editStreamMode.value = "edit_in_place";
+									}
+								}}
+							/>
+							<span className="flex flex-col gap-1">
+								<span className="text-xs font-medium text-[var(--text-strong)]">Rich Block Kit rendering</span>
+								<span className="text-xs text-[var(--muted)]">
+									Render replies with headings, dividers, and code blocks instead of one flat message. Falls back to
+									plain text when it can't fit Slack's limits.
+								</span>
+							</span>
+						</label>
+					</div>
 				)}
 				{isNostr && (
 					<>
@@ -662,6 +779,25 @@ export function EditChannelModal(): VNode | null {
 						allowlistItems.value = v;
 					}}
 				/>
+				<label className="text-xs text-[var(--muted)]">Operators</label>
+				<p className="text-xs text-[var(--muted)]" data-testid="operators-description">
+					Senders who may run <code>/sh</code> and other commands on <strong>this machine</strong>, and read this
+					instance's sessions and memory. This is equivalent to giving someone your terminal — add yourself, or someone
+					you trust with the host. Entries are exact, case-sensitive platform sender IDs.
+				</p>
+				<AllowlistInput
+					value={operatorItems.value}
+					preserveAt={true}
+					placeholder="Type a user ID and press Enter"
+					onChange={(v) => {
+						operatorItems.value = v;
+					}}
+				/>
+				<p className="text-xs text-[var(--muted)]" data-testid="operators-hint">
+					{operatorItems.value.length > 0
+						? "Only these exact sender IDs can use privileged commands. Shared-room agent turns remain restricted for everyone."
+						: "No operators set — privileged commands and private host access are disabled for every sender on this channel."}
+				</p>
 				{isMatrix && (
 					<>
 						<label className="text-xs text-[var(--muted)]">Room Allowlist</label>

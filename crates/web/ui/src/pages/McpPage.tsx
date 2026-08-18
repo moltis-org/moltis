@@ -832,7 +832,7 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 						{transportLabel(server.transport)}
 					</span>
 					<span className="text-xs text-[var(--muted)]">
-						{server.tool_count} tool{server.tool_count !== 1 ? "s" : ""}
+						{server.tool_count} tool{server.tool_count === 1 ? "" : "s"}
 					</span>
 					{needsReauth && (
 						<span className="text-[0.62rem] px-1.5 py-px rounded-full bg-[var(--error)] text-white font-medium">

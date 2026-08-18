@@ -8,8 +8,8 @@ use {
 
 use {
     moltis_channels::{
-        ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget,
-        Error as ChannelError, Result as ChannelResult, SavedChannelFile,
+        ChannelAckOutcome, ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelMessageMeta,
+        ChannelReplyTarget, Error as ChannelError, Result as ChannelResult, SavedChannelFile,
     },
     moltis_sessions::metadata::{SessionEntry, SqliteSessionMetadata},
     moltis_tools::approval::PendingApprovalView,
@@ -17,24 +17,18 @@ use {
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
+    channel_reactions::ChannelReactionController,
     state::GatewayState,
 };
+
+pub use moltis_channels::operators::ChannelSenderRole;
 
 /// Default (deterministic) session key for a channel chat.
 ///
 /// For Telegram forum topics the thread ID is appended so each topic gets its
 /// own session: `telegram:bot:chat:thread`.
 fn default_channel_session_key(target: &ChannelReplyTarget) -> String {
-    match &target.thread_id {
-        Some(tid) => format!(
-            "{}:{}:{}:{}",
-            target.channel_type, target.account_id, target.chat_id, tid
-        ),
-        None => format!(
-            "{}:{}:{}",
-            target.channel_type, target.account_id, target.chat_id
-        ),
-    }
+    target.default_session_key()
 }
 
 /// Resolve the active session key for a channel chat.
@@ -110,39 +104,99 @@ fn parse_numbered_selection(arg: &str, command_name: &str) -> ChannelResult<usiz
         .map_err(|_| ChannelError::invalid_input(format!("usage: /{command_name} [number]")))
 }
 
-/// Check whether `sender_id` is on the channel account's DM allowlist.
+/// Denial shown when a non-operator attempts a privileged action.
 ///
-/// The DM allowlist is the source of truth for privileged command access:
-/// anyone allowed to DM the bot is trusted to run commands like `/approve`
-/// and `/deny` from any context (DM or group). Users not on the allowlist
-/// can still chat (if group policy permits) but cannot run privileged
-/// commands.
+/// `action` names what was refused, e.g. `"/sh"` or `"Shell access"`.
 ///
-/// Returns `false` when the allowlist is empty (open DM policy) because an
-/// open policy means no one has been explicitly authorized.
-async fn is_sender_on_allowlist(
+/// The sender's own platform ID is echoed back because `operators` entries must
+/// be exact platform IDs — an owner who has not set the list yet is locked out
+/// of their own bot and would otherwise have to go and find their ID by hand.
+/// It is the sender's own already-public identifier on that platform, so this
+/// discloses nothing they could not read off their own profile.
+pub(in crate::channel_events) fn operator_denied_message(
+    action: &str,
+    sender_id: Option<&str>,
+) -> String {
+    let mut message = format!(
+        "{action} is restricted to this bot's operators in direct chats. \
+         Shared chats and chats that cannot be verified as direct are denied.\n\n\
+         Open a direct chat first. If you own this moltis instance and are still denied, add yourself under \
+         Settings → Channels → (your account) → Edit → Operators in the web UI, \
+         or set `operators` for the account in moltis.toml. Entries must be exact \
+         platform sender IDs."
+    );
+    if let Some(sender_id) = sender_id.map(str::trim).filter(|id| !id.is_empty()) {
+        message.push_str(&format!("\n\nYour sender ID here is: {sender_id}"));
+    }
+    message
+}
+
+/// Resolve a channel sender's privilege level for an account.
+///
+/// Privileged actions (`/sh`, shell command mode, `/approve`, `/update`, and
+/// host-reaching tools) require the sender to be an **operator**. Passing the
+/// channel access gate is not enough: in a guild or group chat every member
+/// clears that gate, so privilege is decided by the account's explicit
+/// `operators` list.
+///
+/// Fail-closed at every step — an unknown account, a missing registry, or an
+/// unidentified sender all resolve to [`ChannelSenderRole::Guest`].
+async fn resolve_sender_role(
     state: &Arc<GatewayState>,
     account_id: &str,
-    sender_id: &str,
-) -> bool {
+    sender_id: Option<&str>,
+) -> ChannelSenderRole {
     let Some(ref registry) = state.services.channel_registry else {
-        return false;
+        return ChannelSenderRole::Guest;
     };
     let Some(config) = registry.account_config(account_id).await else {
-        return false;
+        return ChannelSenderRole::Guest;
     };
-    let allowlist = config.allowlist();
-    // Empty allowlist = open policy → no explicit authorization.
-    if allowlist.is_empty() {
-        return false;
+    moltis_channels::operators::resolve_sender_role(sender_id, config.operators())
+}
+
+/// Apply the fail-closed context used for every untrusted channel turn.
+///
+/// The audience ceiling excludes trusted tools, while the deny-all name policy
+/// also removes explicitly public tools. Configured policies may narrow this
+/// context further but cannot widen it.
+fn apply_untrusted_channel_context(params: &mut serde_json::Value) {
+    params["_tool_audience"] = serde_json::json!("public");
+    params["_tool_policy"] = serde_json::json!({ "deny": ["*"] });
+    params["_private_context"] = serde_json::json!(false);
+}
+
+/// Unknown chat kinds are treated as shared. Only channel types that can prove
+/// a one-to-one conversation may expose private prompt context.
+fn is_shared_channel_target(reply_to: &ChannelReplyTarget) -> bool {
+    reply_to.channel_type.is_shared_chat(&reply_to.chat_id)
+}
+
+fn is_trusted_channel_turn(role: ChannelSenderRole, reply_to: &ChannelReplyTarget) -> bool {
+    role.is_operator() && !is_shared_channel_target(reply_to)
+}
+
+fn is_channel_command_authorized(
+    privilege: moltis_channels::commands::CommandPrivilege,
+    role: ChannelSenderRole,
+    reply_to: &ChannelReplyTarget,
+) -> bool {
+    match privilege {
+        moltis_channels::commands::CommandPrivilege::Public => true,
+        moltis_channels::commands::CommandPrivilege::OperatorDirect => {
+            is_trusted_channel_turn(role, reply_to)
+        },
     }
-    // Check the full sender_id first, then try the user part before '@'
-    // (WhatsApp JIDs are e.g. "15551234567@s.whatsapp.net" but allowlists
-    // use plain phone numbers like "15551234567").
-    moltis_channels::gating::is_allowed(sender_id, allowlist)
-        || sender_id
-            .split_once('@')
-            .is_some_and(|(user, _)| moltis_channels::gating::is_allowed(user, allowlist))
+}
+
+/// Whether `sender_id` may run privileged actions from this conversation.
+async fn is_sender_authorized_for_target(
+    state: &Arc<GatewayState>,
+    reply_to: &ChannelReplyTarget,
+    sender_id: Option<&str>,
+) -> bool {
+    let role = resolve_sender_role(state, &reply_to.account_id, sender_id).await;
+    is_trusted_channel_turn(role, reply_to)
 }
 
 fn is_attachable_session(entry: &SessionEntry) -> bool {
@@ -333,6 +387,82 @@ fn start_channel_typing_loop(
     Some(done_tx)
 }
 
+/// Create and register a per-turn acknowledgment reaction controller, keyed by
+/// the inbound message's own ack key. The controller immediately adds 👀 to that
+/// exact message and is later driven through phase emojis and finalized by
+/// whichever agent run claims it.
+///
+/// No-op unless the channel populated `ack_message_id` (bot directly addressed
+/// and reactions enabled) and an outbound implementation is available. Today
+/// that is Slack; other channels leave `ack_message_id` unset and get no
+/// reactions.
+///
+/// Returns the ack key so the caller can carry it into `chat.send`.
+async fn register_channel_reaction_controller(
+    state: &Arc<GatewayState>,
+    reply_to: &ChannelReplyTarget,
+) -> Option<String> {
+    let message_id = reply_to.ack_message_id.clone()?;
+    let outbound = state.services.channel_outbound_arc()?;
+    let key =
+        crate::channel_reactions::ack_key(&reply_to.account_id, &reply_to.chat_id, &message_id);
+    let controller = ChannelReactionController::start(
+        outbound,
+        reply_to.account_id.clone(),
+        reply_to.chat_id.clone(),
+        message_id,
+    );
+    // Park it against this message's own identity. A run claims it once the
+    // queue decision is known, so a message that queues behind an active run
+    // keeps its own 👀 instead of hijacking the running turn's reactions.
+    state
+        .channel_reaction_controllers
+        .register_pending(key.clone(), controller)
+        .await;
+    Some(key)
+}
+
+/// Finalize the acknowledgment reaction only when `chat.send` returned before
+/// the run executed — an error, or an `Ok` payload carrying a terminal state
+/// (`rejected`/`error`/`blocked`/`aborted`). Normal runs (which return
+/// `{ok, runId}` with no terminal state) finalize from the run's completion, so
+/// this leaves their controller in place.
+async fn finalize_reaction_on_early_return(
+    state: &Arc<GatewayState>,
+    ack_key: Option<&String>,
+    send_result: &Result<serde_json::Value, moltis_service_traits::ServiceError>,
+) {
+    let Some(ack_key) = ack_key else {
+        return;
+    };
+    let outcome = match send_result {
+        Err(_) => Some(ChannelAckOutcome::Failure),
+        Ok(payload) => {
+            // A queued message keeps its acknowledgment: it has not run yet and
+            // will claim it on replay.
+            if payload.get("queued").and_then(serde_json::Value::as_bool) == Some(true) {
+                None
+            } else if payload.get("rejected").and_then(serde_json::Value::as_bool) == Some(true) {
+                // Blocked by a MessageReceived hook — no run will ever start.
+                Some(ChannelAckOutcome::Failure)
+            } else {
+                match payload.get("state").and_then(|v| v.as_str()) {
+                    Some("rejected" | "error" | "blocked") => Some(ChannelAckOutcome::Failure),
+                    Some("aborted") => Some(ChannelAckOutcome::Cancelled),
+                    _ => None,
+                }
+            }
+        },
+    };
+    let Some(outcome) = outcome else {
+        return;
+    };
+    state
+        .channel_reaction_controllers
+        .finalize_keys(std::slice::from_ref(ack_key), outcome)
+        .await;
+}
+
 async fn resolve_channel_agent_id(
     state: &Arc<GatewayState>,
     session_key: &str,
@@ -440,26 +570,30 @@ impl ChannelEventSink for GatewayChannelEventSink {
         &self,
         callback_data: &str,
         reply_to: ChannelReplyTarget,
+        sender_id: Option<&str>,
     ) -> ChannelResult<String> {
-        commands::dispatch_interaction(&self.state, callback_data, reply_to).await
+        commands::dispatch_interaction(&self.state, callback_data, reply_to, sender_id).await
     }
 
     async fn update_location(
         &self,
         reply_to: &ChannelReplyTarget,
+        sender_id: Option<&str>,
         latitude: f64,
         longitude: f64,
     ) -> bool {
-        commands::update_location(&self.state, reply_to, latitude, longitude).await
+        commands::update_location(&self.state, reply_to, sender_id, latitude, longitude).await
     }
 
     async fn resolve_pending_location(
         &self,
         reply_to: &ChannelReplyTarget,
+        sender_id: Option<&str>,
         latitude: f64,
         longitude: f64,
     ) -> bool {
-        commands::resolve_pending_location(&self.state, reply_to, latitude, longitude).await
+        commands::resolve_pending_location(&self.state, reply_to, sender_id, latitude, longitude)
+            .await
     }
 
     async fn dispatch_to_chat_with_attachments(

@@ -456,7 +456,7 @@ fn peek_n(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, n: usize) -> Str
 }
 
 /// Escape HTML special characters.
-fn escape_html(text: &str) -> String {
+pub(crate) fn escape_html(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

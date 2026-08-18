@@ -4,7 +4,7 @@ use std::{
 };
 
 use {
-    moltis_channels::{ChannelEventSink, message_log::MessageLog},
+    moltis_channels::{ChannelEventSink, message_log::MessageLog, otp::OtpState},
     reqwest::Client,
     tokio::sync::Mutex,
 };
@@ -30,4 +30,5 @@ pub struct AccountState {
     pub jwt_validator: Option<Arc<BotFrameworkJwtValidator>>,
     /// Tracks which conversations have received a welcome card/message.
     pub welcomed_conversations: Arc<RwLock<std::collections::HashSet<String>>>,
+    pub otp: std::sync::Mutex<OtpState>,
 }

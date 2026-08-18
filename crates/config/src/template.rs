@@ -38,6 +38,7 @@ port = {port}                           # Port number (auto-generated for this i
 # bind = "127.0.0.1"                # Address to bind to ("0.0.0.0" for all interfaces)
 # http_request_logs = false              # Enable verbose Axum HTTP request/response logs (debugging)
 # ws_request_logs = false                # Enable WebSocket RPC request/response logs (debugging)
+# rpc_timeout_ms = 5000                  # Web UI WebSocket RPC reply timeout (milliseconds)
 # terminal_enabled = true                # Enable interactive host terminal in Settings > Terminal
                                          # Set to false to disable the unsandboxed shell in the web UI.
                                          # NOTE: this can be re-enabled via the web UI config editor.
@@ -154,16 +155,29 @@ port = {port}                           # Port number (auto-generated for this i
 # policy.allow = []                            # Restrict to only these tools (empty = all allowed)
 # [providers.anthropic.model_overrides.claude-opus-4-6]
 # context_window = 1_000_000                   # Provider-scoped model override
+# For a MiniMax Anthropic-compatible endpoint, keep the `/anthropic` suffix:
+# base_url = "https://api.minimax.io/anthropic" # Use https://api.minimaxi.com/anthropic for China
+# models = ["MiniMax-M3", "MiniMax-M2.7"]
+# alias = "minimax-anthropic"
 
 # ── OpenAI ────────────────────────────────────────────────────
 # [providers.openai]
 # enabled = true
 # api_key = "sk-..."                          # Or set OPENAI_API_KEY env var
-# models = ["gpt-5.3", "gpt-5.2"]            # Preferred models shown first
+# models = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]  # Preferred models shown first
 # fetch_models = true
 # stream_transport = "sse"                     # "sse" | "websocket" | "auto"
 # base_url = "https://api.openai.com/v1"     # API endpoint (change for Azure, etc.)
 # alias = "openai"
+
+# ── MiniMax ────────────────────────────────────────────────────
+# [providers.minimax]
+# enabled = true
+# api_key = "..."                             # Or set MINIMAX_API_KEY
+# models = ["MiniMax-M3", "MiniMax-M2.7"]
+# fetch_models = false                         # MiniMax uses the static model catalog by default
+# base_url = "https://api.minimax.io/v1"     # OpenAI-compatible global endpoint
+# For China, use "https://api.minimaxi.com/v1".
 
 # ── Google Gemini ─────────────────────────────────────────────
 # [providers.gemini]
@@ -201,7 +215,7 @@ port = {port}                           # Port number (auto-generated for this i
 # [providers.fireworks]
 # enabled = true
 # api_key = "..."                             # Or set FIREWORKS_API_KEY env var
-# models = ["accounts/fireworks/models/kimi-k2p5"]
+# models = ["accounts/fireworks/models/kimi-k2p6"]
 # fetch_models = true                          # Set false to skip remote discovery
 # base_url = "https://api.fireworks.ai/inference/v1"
 # alias = "fireworks"
@@ -224,7 +238,7 @@ port = {port}                           # Port number (auto-generated for this i
 # [providers.moonshot]
 # enabled = true
 # api_key = "..."                             # Or set MOONSHOT_API_KEY env var
-# models = ["kimi-k2.5"]                      # Preferred models shown first
+# models = ["kimi-k3", "kimi-k2.7-code-highspeed", "kimi-k2.6"]  # Preferred models shown first
 # base_url = "https://api.moonshot.ai/v1"
 # alias = "moonshot"
 
@@ -272,7 +286,10 @@ port = {port}                           # Port number (auto-generated for this i
                                       #   "live-reload"            - Re-read MEMORY.md before each turn
                                       #   "frozen-at-session-start" - Freeze the first MEMORY.md snapshot per session
 # workspace_file_max_chars = 32000  # Optional: per-file prompt cap for AGENTS.md / TOOLS.md before truncation.
-# priority_models = ["claude-opus-4-5", "gpt-5.2", "gemini-3-flash"]  # Optional: models to pin first in selectors
+# context_command = ""              # Optional command run before each turn; stdout is appended to prompt context.
+                                    #   Runs in the active project/worktree dir when set, else the server cwd.
+                                    #   Times out after 30s; stdout capped at 32,000 bytes.
+# priority_models = ["claude-opus-4-5", "gpt-5.6-sol", "gemini-3-flash"]  # Optional: models to pin first in selectors
 
 # ── Compaction ─────────────────────────────────────────────────────────────
 # Strategy used to shrink a session when its context window fills up, or when
@@ -556,6 +573,64 @@ port = {port}                           # Port number (auto-generated for this i
 # prometheus_endpoint = true        # Expose /metrics endpoint
 
 # ══════════════════════════════════════════════════════════════════════════════
+# INSTRUMENTATION (Langfuse / OpenTelemetry / Datadog)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Exports completed agent runs — LLM calls, tool calls and retrievals — to an
+# external backend. Observations are immutable and sent once, after completion.
+# Disabled by default: enabling it sends conversation data to a third party.
+# See docs/src/instrumentation.md.
+#
+# Backends deliberately receive different data. Langfuse gets the full
+# conversation, token usage and session context for LLM observability and cost
+# inference. Prompt Management, datasets, evaluators and media uploads are not
+# integrated. OTLP and Datadog receive operational shape only.
+
+# [instrumentation]
+# enabled = false                   # Master switch, gates every backend
+# environment = "production"        # Reported to every backend
+# sample_rate = 1.0                 # Fraction of turns traced (0.0-1.0)
+# redact = ["customer_ref"]         # Extra keys to redact; extends the defaults
+# queue_capacity = 10000            # Must be nonzero; full queues drop events
+# flush_interval_ms = 5000          # Must be nonzero
+# max_batch_bytes = 3000000         # Must be nonzero
+
+# [instrumentation.langfuse]
+# enabled = false
+# host = "https://cloud.langfuse.com"   # Or a self-hosted URL
+# public_key = "pk-lf-..."
+# Prefer MOLTIS_INSTRUMENTATION__LANGFUSE__SECRET_KEY in the process environment.
+# A secret_key config value is also accepted.
+# capture_input = true              # Turn and LLM inputs
+# capture_output = true             # Turn and LLM outputs
+# capture_tool_io = true            # Tool arguments and results
+# timeout_secs = 10                 # Must be nonzero
+
+# [instrumentation.otlp]            # Grafana Tempo/Alloy, Honeycomb, a collector
+# enabled = false
+# endpoint = "http://localhost:4318/v1/traces"
+# content = "metadata_only"         # "full" | "metadata_only" | "none"
+# emit_user_id = false              # High-cardinality in an APM index
+# timeout_secs = 10                 # Must be nonzero
+
+# [instrumentation.datadog]         # Via the Datadog Agent's OTLP intake
+# enabled = false
+# endpoint = "http://localhost:4318/v1/traces"
+# service = "moltis"
+# content = "metadata_only"
+# timeout_secs = 10                 # Must be nonzero
+
+# Reaction feedback. A thumbs up/down on a reply in Telegram, Discord or Slack
+# becomes a BOOLEAN "user-feedback" score through Langfuse's dedicated Scores
+# API. Score creates/replacements and deletions retain queue order. Lists accept
+# raw emoji or shortcodes; empty means the built-in vocabulary.
+# [instrumentation.feedback]
+# enabled = true
+# positive = ["\U0001F44D", "+1", "thumbsup"]
+# negative = ["\U0001F44E", "-1", "thumbsdown"]
+# link_retention_days = 30          # How long a reply stays attributable
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CRON
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -652,8 +727,11 @@ port = {port}                           # Port number (auto-generated for this i
 # [memory]
 # style = "hybrid"                  # "hybrid" | "prompt-only" | "search-only" | "off"
 # agent_write_mode = "hybrid"       # "hybrid" | "prompt-only" | "search-only" | "off"
-# backend = "builtin"               # "builtin" | "qmd"
+# backend = "builtin"               # "builtin" | "qmd" | "zvec"
 # provider = "auto"                 # "local" | "ollama" | "openai" | "custom"
+# db_path = "memory.zvec"           # Zvec collection directory (only when backend = "zvec")
+# vector_weight = 0.7               # Weight for vector similarity in hybrid search
+# keyword_weight = 0.3              # Weight for keyword/FTS similarity in hybrid search
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PHONE (Telephony Providers)
@@ -689,12 +767,17 @@ port = {port}                           # Port number (auto-generated for this i
 # Moltis acts as orchestrator; the CLI agent owns its own context window.
 
 [external_agents]
-# enabled = false                   # Enable external agent bridge
+# enabled = true                    # Auto-detect installed external agents for chat session selection
+# Set enabled = false to opt out of all external-agent discovery.
+# Default detection trusts Moltis' PATH. Use absolute binary paths below when
+# you want to pin which executable Moltis may launch after a user selects it.
 
 # Per-agent configuration (key = agent kind)
 # [external_agents.agents.claude-code]
 # binary = "claude"                 # Override binary path (default: look up on $PATH)
 # args = ["-p", "--output-format", "json"]
+# models = ["claude-opus-4-8", "claude-sonnet-4-6"] # Optional model choices shown in /model
+# efforts = ["high", "xhigh"]       # Optional effort choices shown in /model
 # working_dir = "."                 # Override working directory
 # timeout_secs = 300                # Session timeout
 # use_tmux = false                  # Force tmux backend (vs direct PTY)
@@ -704,10 +787,83 @@ port = {port}                           # Port number (auto-generated for this i
 # [external_agents.agents.codex]
 # binary = "codex"
 # args = ["app-server"]
+# models = ["gpt-5.5", "gpt-5.4"]
+# efforts = ["medium", "high", "xhigh"]
 
+# Generic manual ACP server for advanced/custom CLIs not listed below.
+# If Moltis is missing a named default for an ACP agent, check the official
+# catalog for the agent's current launch command and configure it here:
+# https://agentclientprotocol.com/get-started/agents
 # [external_agents.agents.acp]
 # binary = "/path/to/acp-agent"
+# args = ["--stdio"]
+
+# Named ACP agents are auto-detected by default when their binaries are on PATH.
+# Add entries only to override binary paths, args, env, working_dir, or timeout.
+# [external_agents.agents.acp-copilot]
+# binary = "copilot"
+# args = ["--acp"]
+
+# [external_agents.agents.acp-codex]
+# binary = "codex-acp"              # Zed Codex ACP adapter
 # args = []
+
+# Claude ACP uses the adapter at https://github.com/agentclientprotocol/claude-agent-acp
+# Plain `claude` is not an ACP server; install @agentclientprotocol/claude-agent-acp
+# and ensure `claude-agent-acp` is on PATH or use an absolute binary path here.
+# [external_agents.agents.acp-claude]
+# binary = "claude-agent-acp"
+# args = []
+
+# [external_agents.agents.acp-pi]
+# binary = "pi-acp"
+# args = []
+
+# [external_agents.agents.acp-opencode]
+# binary = "opencode"
+# args = ["acp"]
+
+# [external_agents.agents.acp-gemini]
+# binary = "gemini"
+# args = ["--experimental-acp"]
+
+# [external_agents.agents.acp-augment]
+# binary = "auggie"
+# args = ["--acp"]
+
+# [external_agents.agents.acp-kiro]
+# binary = "kiro-cli"
+# args = ["acp"]
+
+# [external_agents.agents.acp-openclaw]
+# binary = "openclaw"
+# args = ["acp"]
+
+# [external_agents.agents.acp-openhands]
+# binary = "openhands"
+# args = ["acp"]
+
+# [external_agents.agents.acp-kimi]
+# binary = "kimi"
+# args = ["acp"]
+
+# [external_agents.agents.acp-minimax-code]
+# binary = "mcode"
+# args = ["acp"]
+
+# [external_agents.agents.acp-stakpak]
+# binary = "stakpak"
+# args = ["acp"]
+
+# [external_agents.agents.acp-fast-agent]
+# binary = "fast-agent-acp"
+# args = []
+
+# Cursor also supports ACP with `agent acp`, but `agent` is too generic to
+# auto-detect safely. Configure it manually via the generic ACP entry if needed.
+# [external_agents.agents.acp]
+# binary = "/absolute/path/to/cursor/agent"
+# args = ["acp"]
 
 # [external_agents.agents.opencode]
 # binary = "opencode"
@@ -722,6 +878,50 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [channels]
 # offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]
+
+# Example Slack account. api_base_url defaults to Slack; set it only for
+# Slack-compatible proxies, mock servers, or gateways.
+# [channels.slack.my-bot]
+# bot_token = "xoxb-..."
+# app_token = "xapp-..."
+# api_base_url = "https://slack.com/api"
+# dm_policy = "allowlist"
+# allowlist = []
+# operators = []             # Exact sender IDs allowed to run privileged commands; empty means nobody.
+# thread_replies = true
+# stream_mode = "edit_in_place" # use "native" for Slack live text and tool task cards
+# ack_reactions = true       # 👀 on receipt, phase emoji while working, ✅/❌ on completion
+# reaction_triggers = false  # route user reactions into the agent (react ✅ to approve)
+# rich_blocks = false        # render replies as Block Kit blocks (fallback to plain text)
+# otp_self_approval = true
+# otp_cooldown_secs = 300
+
+# Example Microsoft Teams account.
+# [channels.msteams.my-bot]
+# app_id = "00000000-0000-0000-0000-000000000000"
+# app_password = "..."
+# dm_policy = "allowlist"
+# allowlist = []
+# operators = []             # Exact sender IDs; no allowlist fallback.
+# otp_self_approval = true
+# otp_cooldown_secs = 300
+
+# Example Nostr account. Handles NIP-04/NIP-59 encrypted DMs and, when `groups`
+# is set, NIP-29 group chat on Buzz-style relays (https://github.com/block/buzz).
+# [channels.nostr.my-bot]
+# secret_key = "nsec1..."
+# relays = ["wss://relay.damus.io", "wss://relay.nostr.band", "wss://nos.lol"]
+# dm_policy = "allowlist"
+# allowed_pubkeys = ["npub1..."]
+# # Buzz / NIP-29 group chat: the `h`-tag group ids the bot joins. Requires a
+# # relay that supports NIP-29 + NIP-42 (Buzz relays do). Empty = DM-only.
+# # This list is also the allowlist — messages for any other group are dropped.
+# groups = ["buzz-general"]
+# group_mention_mode = "mention"  # mention (p-tagged only) | always | none (receive-only)
+# # Dialect for bot-initiated group messages. Both kinds are always read and
+# # replies mirror the message they answer; set buzz_v2 on a Buzz relay.
+# group_message_kind = "nip29"    # nip29 (kind:9) | buzz_v2 (kind:40002)
+# group_ack_reactions = true      # 👀 on receipt, phase glyphs, ✅/❌ at the end (NIP-25)
 
 # See docs or defaults.toml for full channel configuration examples
 # (WhatsApp, Telegram, Teams, Discord, Slack, Matrix, Nostr, Signal).

@@ -57,6 +57,7 @@ pub(crate) fn openai_builtin_capabilities(
     }
     openai::OpenAiProviderCapabilities {
         responses_websocket_policy: openai::ResponsesWebSocketPolicy::OpenAiPlatform,
+        responses_required_for_reasoning_tools: true,
         ..openai::OpenAiProviderCapabilities::DEFAULT
     }
 }
@@ -457,6 +458,9 @@ impl ProviderRegistry {
             let provider = Arc::new(genai_provider::GenaiProvider::new(
                 model_id.clone(),
                 genai_provider_name.clone(),
+                // genai normalizes every adapter to inclusive prompt tokens,
+                // including Anthropic's otherwise-exclusive API counters.
+                moltis_agents::model::InputTokenAccounting::Inclusive,
                 resolved_key,
             ));
             self.register(

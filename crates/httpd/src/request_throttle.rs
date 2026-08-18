@@ -37,10 +37,16 @@ enum ThrottleScope {
     Api,
     Share,
     Ws,
+    #[cfg(any(feature = "slack", test))]
+    SlackCallbackPreauth,
 }
 
 impl ThrottleScope {
     fn from_request(method: &Method, path: &str) -> Option<Self> {
+        #[cfg(feature = "slack")]
+        if method == Method::POST && crate::auth_middleware::is_slack_callback_path(path) {
+            return Some(Self::SlackCallbackPreauth);
+        }
         if path == "/api/auth/login" && method == Method::POST {
             return Some(Self::Login);
         }
@@ -57,6 +63,14 @@ impl ThrottleScope {
             return Some(Self::Ws);
         }
         None
+    }
+
+    fn permits_authenticated_bypass(self) -> bool {
+        #[cfg(any(feature = "slack", test))]
+        if self == Self::SlackCallbackPreauth {
+            return false;
+        }
+        true
     }
 }
 
@@ -85,6 +99,8 @@ struct ThrottleLimits {
     api: RateLimit,
     share: RateLimit,
     ws: RateLimit,
+    #[cfg(any(feature = "slack", test))]
+    callback_preauth: RateLimit,
 }
 
 impl Default for ThrottleLimits {
@@ -113,6 +129,14 @@ impl Default for ThrottleLimits {
             // Limit reconnect storms for websocket upgrades.
             ws: RateLimit {
                 max_requests: 30,
+                window: Duration::from_secs(60),
+            },
+            #[cfg(any(feature = "slack", test))]
+            // This IP-level ceiling runs before account lookup and signature
+            // verification. It is intentionally above Slack's three callback
+            // endpoints at their verified 600/minute + 200 burst policy.
+            callback_preauth: RateLimit {
+                max_requests: 5_000,
                 window: Duration::from_secs(60),
             },
         }
@@ -145,6 +169,8 @@ impl RequestThrottle {
             ThrottleScope::Api => self.limits.api,
             ThrottleScope::Share => self.limits.share,
             ThrottleScope::Ws => self.limits.ws,
+            #[cfg(any(feature = "slack", test))]
+            ThrottleScope::SlackCallbackPreauth => self.limits.callback_preauth,
         }
     }
 
@@ -202,7 +228,7 @@ impl RequestThrottle {
     }
 
     fn max_window(&self) -> Duration {
-        [
+        let max_window = [
             self.limits.login.window,
             self.limits.auth_api.window,
             self.limits.api.window,
@@ -211,7 +237,10 @@ impl RequestThrottle {
         ]
         .into_iter()
         .max()
-        .unwrap_or(Duration::from_secs(60))
+        .unwrap_or(Duration::from_secs(60));
+        #[cfg(any(feature = "slack", test))]
+        let max_window = max_window.max(self.limits.callback_preauth.window);
+        max_window
     }
 }
 
@@ -233,7 +262,9 @@ pub async fn throttle_gate(
         return next.run(request).await;
     };
 
-    if should_bypass_throttling(&state, request.headers(), addr).await {
+    if scope.permits_authenticated_bypass()
+        && should_bypass_throttling(&state, request.headers(), addr).await
+    {
         return next.run(request).await;
     }
 
@@ -354,6 +385,37 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "slack")]
+    #[test]
+    fn exact_slack_callbacks_use_preauth_throttle_scope() {
+        for path in [
+            "/api/channels/slack/account/events",
+            "/api/channels/slack/account/interactions",
+            "/api/channels/slack/account/commands",
+        ] {
+            assert_eq!(
+                ThrottleScope::from_request(&Method::POST, path),
+                Some(ThrottleScope::SlackCallbackPreauth),
+                "{path}"
+            );
+        }
+        for path in [
+            "/api/channels/slack/account/config",
+            "/api/channels/slack/account/events/extra",
+            "/api/channels/slack//events",
+        ] {
+            assert_eq!(
+                ThrottleScope::from_request(&Method::POST, path),
+                Some(ThrottleScope::Api),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            ThrottleScope::from_request(&Method::GET, "/api/channels/slack/account/events"),
+            Some(ThrottleScope::Api)
+        );
+    }
+
     #[test]
     fn classify_ws_request() {
         assert_eq!(
@@ -398,6 +460,10 @@ mod tests {
                 max_requests: 100,
                 window: Duration::from_secs(10),
             },
+            callback_preauth: RateLimit {
+                max_requests: 100,
+                window: Duration::from_secs(10),
+            },
         });
 
         let ip = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
@@ -424,6 +490,73 @@ mod tests {
             throttle.check_at(ip, ThrottleScope::Login, now + Duration::from_secs(11)),
             ThrottleDecision::Allowed
         ));
+    }
+
+    #[cfg(feature = "slack")]
+    #[test]
+    fn callback_preauth_scope_limits_floods_without_authenticated_bypass() {
+        let limits = ThrottleLimits {
+            callback_preauth: RateLimit {
+                max_requests: 2,
+                window: Duration::from_secs(10),
+            },
+            ..ThrottleLimits::default()
+        };
+        let throttle = RequestThrottle::with_limits(limits);
+        let ip = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+        let now = Instant::now();
+
+        assert!(!ThrottleScope::SlackCallbackPreauth.permits_authenticated_bypass());
+        assert!(matches!(
+            throttle.check_at(ip, ThrottleScope::SlackCallbackPreauth, now),
+            ThrottleDecision::Allowed
+        ));
+        assert!(matches!(
+            throttle.check_at(ip, ThrottleScope::SlackCallbackPreauth, now),
+            ThrottleDecision::Allowed
+        ));
+        assert!(matches!(
+            throttle.check_at(ip, ThrottleScope::SlackCallbackPreauth, now),
+            ThrottleDecision::Denied { .. }
+        ));
+    }
+
+    #[cfg(feature = "slack")]
+    #[test]
+    fn callback_preauth_ceiling_does_not_override_verified_slack_burst() {
+        let throttle = RequestThrottle::new();
+        assert!(
+            throttle.limits.callback_preauth.max_requests > 3 * (600 + 200),
+            "preauth must allow one account's three endpoint bursts"
+        );
+        let verified = moltis_gateway::channel_webhook_rate_limit::ChannelWebhookRateLimiter::new();
+        let policy = moltis_channels::ChannelWebhookRatePolicy {
+            max_requests_per_minute: 600,
+            burst: 200,
+        };
+        let ip = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+        let now = Instant::now();
+
+        for _ in 0..800 {
+            assert!(matches!(
+                throttle.check_at(ip, ThrottleScope::SlackCallbackPreauth, now),
+                ThrottleDecision::Allowed
+            ));
+            assert!(
+                verified
+                    .check("slack", "account", "events", &policy)
+                    .is_ok()
+            );
+        }
+        assert!(matches!(
+            throttle.check_at(ip, ThrottleScope::SlackCallbackPreauth, now),
+            ThrottleDecision::Allowed
+        ));
+        assert!(
+            verified
+                .check("slack", "account", "events", &policy)
+                .is_err()
+        );
     }
 
     #[test]

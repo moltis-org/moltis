@@ -28,6 +28,17 @@ pub(super) async fn send_media_impl(
     payload: &ReplyPayload,
     reply_to: Option<&str>,
 ) -> Result<()> {
+    send_media_reporting_ids_impl(outbound, account_id, to, payload, reply_to).await?;
+    Ok(())
+}
+
+pub(super) async fn send_media_reporting_ids_impl(
+    outbound: &TelegramOutbound,
+    account_id: &str,
+    to: &str,
+    payload: &ReplyPayload,
+    reply_to: Option<&str>,
+) -> Result<Vec<String>> {
     let bot = outbound.get_bot(account_id)?;
     let (chat_id, thread_id) = parse_chat_target(to)?;
     let rp = outbound.reply_params(account_id, reply_to);
@@ -46,24 +57,25 @@ pub(super) async fn send_media_impl(
         "telegram outbound media send start"
     );
 
-    if let Some(ref media) = payload.media {
+    let message_ids = if let Some(ref media) = payload.media {
         if media.url.starts_with("data:") {
             send_base64_media(
                 outbound, &bot, account_id, to, chat_id, thread_id, &rp, payload,
             )
-            .await?;
+            .await?
         } else {
-            send_url_media(&bot, account_id, to, chat_id, thread_id, payload).await?;
+            send_url_media(&bot, account_id, to, chat_id, thread_id, payload).await?
         }
     } else if !payload.text.is_empty() {
         // No media attachment -- fall back to plain text.
         use moltis_channels::plugin::ChannelOutbound;
         outbound
-            .send_text(account_id, to, &payload.text, reply_to)
-            .await?;
-    }
-
-    Ok(())
+            .send_text_reporting_ids(account_id, to, &payload.text, reply_to)
+            .await?
+    } else {
+        Vec::new()
+    };
+    Ok(message_ids)
 }
 
 async fn send_base64_media(
@@ -75,7 +87,7 @@ async fn send_base64_media(
     thread_id: Option<ThreadId>,
     rp: &Option<ReplyParameters>,
     payload: &ReplyPayload,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let media = payload
         .media
         .as_ref()
@@ -108,7 +120,7 @@ async fn send_base64_media(
         send_base64_image(
             outbound, bot, account_id, to, chat_id, thread_id, rp, payload, &bytes, &filename,
         )
-        .await?;
+        .await
     } else if media.mime_type == "audio/ogg" {
         let input = InputFile::memory(bytes).file_name("voice.ogg");
         let mut req = bot.send_voice(chat_id, input);
@@ -118,7 +130,7 @@ async fn send_base64_media(
         if !payload.text.is_empty() {
             req = req.caption(&payload.text);
         }
-        req.await.channel_context("send voice media")?;
+        let message = req.await.channel_context("send voice media")?;
         info!(
             account_id,
             chat_id = to,
@@ -126,6 +138,7 @@ async fn send_base64_media(
             caption_len = payload.text.len(),
             "telegram outbound media sent as voice"
         );
+        Ok(vec![message.id.0.to_string()])
     } else if media.mime_type.starts_with("audio/") {
         let input = InputFile::memory(bytes).file_name("audio.mp3");
         let mut req = bot.send_audio(chat_id, input);
@@ -135,7 +148,7 @@ async fn send_base64_media(
         if !payload.text.is_empty() {
             req = req.caption(&payload.text);
         }
-        req.await.channel_context("send audio media")?;
+        let message = req.await.channel_context("send audio media")?;
         info!(
             account_id,
             chat_id = to,
@@ -143,6 +156,7 @@ async fn send_base64_media(
             caption_len = payload.text.len(),
             "telegram outbound media sent as audio"
         );
+        Ok(vec![message.id.0.to_string()])
     } else {
         let input = InputFile::memory(bytes).file_name(filename);
         let mut req = bot.send_document(chat_id, input);
@@ -152,7 +166,7 @@ async fn send_base64_media(
         if !payload.text.is_empty() {
             req = req.caption(&payload.text);
         }
-        req.await.channel_context("send document media")?;
+        let message = req.await.channel_context("send document media")?;
         info!(
             account_id,
             chat_id = to,
@@ -160,9 +174,8 @@ async fn send_base64_media(
             caption_len = payload.text.len(),
             "telegram outbound media sent as document"
         );
+        Ok(vec![message.id.0.to_string()])
     }
-
-    Ok(())
 }
 
 /// Send a base64-decoded image, falling back to document if photo dimensions
@@ -178,7 +191,7 @@ async fn send_base64_image(
     payload: &ReplyPayload,
     bytes: &[u8],
     filename: &str,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let media = payload
         .media
         .as_ref()
@@ -201,7 +214,7 @@ async fn send_base64_image(
     let _ = outbound;
 
     match req.await {
-        Ok(_) => {
+        Ok(message) => {
             info!(
                 account_id,
                 chat_id = to,
@@ -209,6 +222,7 @@ async fn send_base64_image(
                 caption_len = payload.text.len(),
                 "telegram outbound media sent as photo"
             );
+            Ok(vec![message.id.0.to_string()])
         },
         Err(e) => {
             let err_str = e.to_string();
@@ -228,7 +242,7 @@ async fn send_base64_image(
                 if !payload.text.is_empty() {
                     req = req.caption(&payload.text);
                 }
-                req.await.channel_context("send document fallback")?;
+                let message = req.await.channel_context("send document fallback")?;
                 info!(
                     account_id,
                     chat_id = to,
@@ -236,13 +250,12 @@ async fn send_base64_image(
                     caption_len = payload.text.len(),
                     "telegram outbound media sent as document fallback"
                 );
+                Ok(vec![message.id.0.to_string()])
             } else {
-                return Err(ChannelError::external("send media photo", e));
+                Err(ChannelError::external("send media photo", e))
             }
         },
     }
-
-    Ok(())
 }
 
 async fn send_url_media(
@@ -252,7 +265,7 @@ async fn send_url_media(
     chat_id: ChatId,
     thread_id: Option<ThreadId>,
     payload: &ReplyPayload,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let media = payload
         .media
         .as_ref()
@@ -269,7 +282,7 @@ async fn send_url_media(
             if !payload.text.is_empty() {
                 req = req.caption(&payload.text);
             }
-            req.await.channel_context("send URL photo media")?;
+            let message = req.await.channel_context("send URL photo media")?;
             info!(
                 account_id,
                 chat_id = to,
@@ -277,6 +290,7 @@ async fn send_url_media(
                 caption_len = payload.text.len(),
                 "telegram outbound URL media sent as photo"
             );
+            Ok(vec![message.id.0.to_string()])
         },
         "audio/ogg" => {
             let mut req = bot.send_voice(chat_id, input);
@@ -286,7 +300,7 @@ async fn send_url_media(
             if !payload.text.is_empty() {
                 req = req.caption(&payload.text);
             }
-            req.await.channel_context("send URL voice media")?;
+            let message = req.await.channel_context("send URL voice media")?;
             info!(
                 account_id,
                 chat_id = to,
@@ -294,6 +308,7 @@ async fn send_url_media(
                 caption_len = payload.text.len(),
                 "telegram outbound URL media sent as voice"
             );
+            Ok(vec![message.id.0.to_string()])
         },
         t if t.starts_with("audio/") => {
             let mut req = bot.send_audio(chat_id, input);
@@ -303,7 +318,7 @@ async fn send_url_media(
             if !payload.text.is_empty() {
                 req = req.caption(&payload.text);
             }
-            req.await.channel_context("send URL audio media")?;
+            let message = req.await.channel_context("send URL audio media")?;
             info!(
                 account_id,
                 chat_id = to,
@@ -311,6 +326,7 @@ async fn send_url_media(
                 caption_len = payload.text.len(),
                 "telegram outbound URL media sent as audio"
             );
+            Ok(vec![message.id.0.to_string()])
         },
         _ => {
             let mut req = bot.send_document(chat_id, input);
@@ -320,7 +336,7 @@ async fn send_url_media(
             if !payload.text.is_empty() {
                 req = req.caption(&payload.text);
             }
-            req.await.channel_context("send URL document media")?;
+            let message = req.await.channel_context("send URL document media")?;
             info!(
                 account_id,
                 chat_id = to,
@@ -328,8 +344,7 @@ async fn send_url_media(
                 caption_len = payload.text.len(),
                 "telegram outbound URL media sent as document"
             );
+            Ok(vec![message.id.0.to_string()])
         },
     }
-
-    Ok(())
 }

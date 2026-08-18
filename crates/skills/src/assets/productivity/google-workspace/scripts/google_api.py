@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Google Workspace API CLI for Hermes Agent.
+"""Google Workspace API CLI for Moltis.
 
 Uses the Google Workspace CLI (`gws`) when available, but preserves the
-existing Hermes-facing JSON contract and falls back to the Python client
+existing Moltis JSON contract and falls back to the Python client
 libraries if `gws` is not installed.
 
 Usage:
@@ -27,13 +27,14 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from pathlib import Path
 
-HERMES_HOME = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
-TOKEN_PATH = HERMES_HOME / "google_token.json"
-CLIENT_SECRET_PATH = HERMES_HOME / "google_client_secret.json"
+MOLTIS_HOME = Path(os.getenv("MOLTIS_DATA_DIR") or os.getenv("HERMES_HOME") or Path.home() / ".moltis")
+TOKEN_PATH = MOLTIS_HOME / "google_token.json"
+CLIENT_SECRET_PATH = MOLTIS_HOME / "google_client_secret.json"
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -52,6 +53,24 @@ def _normalize_authorized_user_payload(payload: dict) -> dict:
     if not normalized.get("type"):
         normalized["type"] = "authorized_user"
     return normalized
+
+
+def _write_private_json(path: Path, payload: dict):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as file:
+            json.dump(payload, file, indent=2)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def _ensure_authenticated():
@@ -177,11 +196,9 @@ def get_credentials():
     creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), _stored_token_scopes())
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        TOKEN_PATH.write_text(
-            json.dumps(
-                _normalize_authorized_user_payload(json.loads(creds.to_json())),
-                indent=2,
-            )
+        _write_private_json(
+            TOKEN_PATH,
+            _normalize_authorized_user_payload(json.loads(creds.to_json())),
         )
     if not creds.valid:
         print("Token is invalid. Re-run setup.", file=sys.stderr)
@@ -733,7 +750,7 @@ def docs_get(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Google Workspace API for Hermes Agent")
+    parser = argparse.ArgumentParser(description="Google Workspace API for Moltis")
     sub = parser.add_subparsers(dest="service", required=True)
 
     # --- Gmail ---

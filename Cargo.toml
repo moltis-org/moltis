@@ -1,6 +1,7 @@
 [workspace]
 default-members = [
   "apps/courier",
+  "crates/acp",
   "crates/agents",
   "crates/auth",
   "crates/auto-reply",
@@ -16,6 +17,10 @@ default-members = [
   "crates/codex-import",
   "crates/common",
   "crates/config",
+  "crates/connector-caldav",
+  "crates/connector-gmail",
+  "crates/connector-himalaya",
+  "crates/connectors",
   "crates/cron",
   "crates/ctl",
   "crates/discord",
@@ -38,6 +43,7 @@ default-members = [
   "crates/node-host",
   "crates/nostr",
   "crates/oauth",
+  "crates/observability",
   "crates/onboarding",
   "crates/openclaw-import",
   "crates/plugins",
@@ -70,8 +76,10 @@ default-members = [
   "crates/webhooks",
   "crates/whatsapp",
 ]
+exclude = ["vendor/agent-client-protocol"]
 members = [
   "apps/courier",
+  "crates/acp",
   "crates/agents",
   "crates/auth",
   "crates/auto-reply",
@@ -87,6 +95,10 @@ members = [
   "crates/codex-import",
   "crates/common",
   "crates/config",
+  "crates/connector-caldav",
+  "crates/connector-gmail",
+  "crates/connector-himalaya",
+  "crates/connectors",
   "crates/cron",
   "crates/ctl",
   "crates/external-agents",
@@ -100,12 +112,14 @@ members = [
   "crates/mcp",
   "crates/media",
   "crates/memory",
+  "crates/memory-zvec",
   "crates/metrics",
   "crates/msteams",
   "crates/netbird",
   "crates/node-host",
   "crates/nostr",
   "crates/oauth",
+  "crates/observability",
   "crates/onboarding",
   "crates/openclaw-import",
   "crates/plugins",
@@ -143,11 +157,27 @@ members = [
 resolver = "2"
 
 [patch.crates-io]
+# Keep ACP stdin cancellation and EOF processing independent of blocked stdout,
+# while bounding queued wire bytes. Remove once a compatible release includes it.
+agent-client-protocol = { path = "vendor/agent-client-protocol" }
 # Widen libsqlite3-sys pin (0.30.1 → >=0.30.1,<0.36.0) so sqlx-sqlite 0.8.6
 # can coexist with matrix-sdk-sqlite's rusqlite 0.37 (libsqlite3-sys 0.35).
 # Remove once sqlx ≥ 0.9 ships stable.
 sqlx-core   = { git = "https://github.com/moltis-org/sqlx", rev = "33747ad2e2d0c7962c6450faf31591c4e0782c23" }
 sqlx-sqlite = { git = "https://github.com/moltis-org/sqlx", rev = "33747ad2e2d0c7962c6450faf31591c4e0782c23" }
+# whatsapp-rust 0.6.0 plus the DM LID-migration gate (oxidezap/whatsapp-rust#943,
+# merged upstream): accounts the server has not migrated to LID 1:1 get their
+# LID-addressed DMs silently 400-nacked; the gate keeps wire addressing on PN
+# until the account migrates. Pinned to the merge commit of #943; drop this
+# patch section for a plain version bump once a whatsapp-rust release includes
+# it. The whole family is patched to the same rev so wacore/waproto types stay
+# unified (mixing crates.io and git copies makes them incompatible).
+wacore                         = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
+wacore-binary                  = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
+waproto                        = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
+whatsapp-rust                  = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
+whatsapp-rust-tokio-transport  = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
 
 [workspace.lints.rust]
 unsafe_code           = "deny"
@@ -168,17 +198,19 @@ version      = "0.1.0"
 # APNS
 a2 = { default-features = false, features = ["ring"], version = "0.10" }
 # Async runtime
-tokio = { features = ["full"], version = "1" }
 agent-client-protocol = "0.10.2"
+tokio                 = { features = ["full"], version = "1" }
 # HTTP/WS server
 askama     = "0.15"
 axum       = { features = ["ws"], version = "0.8" }
 axum-extra = "0.10"
 # Serialization
-postcard   = { features = ["alloc"], version = "1.1" }
-schemars   = "1.2"
-serde      = { features = ["derive"], version = "1" }
-serde_json = "1"
+postcard        = { features = ["alloc"], version = "1.1" }
+process-wrap    = { default-features = false, features = ["job-object", "kill-on-drop", "process-group", "tokio1"], version = "9.1" }
+schemars        = "1.2"
+serde           = { features = ["derive"], version = "1" }
+serde-big-array = "0.5"
+serde_json      = "1"
 # Error handling
 anyhow    = "1"
 thiserror = "2"
@@ -192,13 +224,20 @@ tracing               = "0.1"
 tracing-opentelemetry = "0.30"
 tracing-subscriber    = { features = ["env-filter", "json"], version = "0.3" }
 # CLI
-clap = { features = ["derive", "env"], version = "4" }
+clap      = { features = ["derive", "env"], version = "4" }
+indicatif = "0.17"
 # Database
 sqlx = { features = ["migrate", "runtime-tokio", "sqlite"], version = "0.8" }
+# Embedded key-value store (zvec memory backend cache + file index)
+redb = "2"
+# Zvec vector database (memory backend)
+# Packages renamed in v0.5.1: zvec→zvec-rust, zvec-sys→zvec-rust-sys.
+zvec     = { git = "https://github.com/zvec-ai/zvec-rust", rev = "f8e81a1645db9e5004fddc2e3f2160e0a512bfce", package = "zvec-rust" }
+zvec-sys = { git = "https://github.com/zvec-ai/zvec-rust", rev = "f8e81a1645db9e5004fddc2e3f2160e0a512bfce", package = "zvec-rust-sys" }
 # HTTP client
 reqwest = { features = ["form", "json", "multipart", "query", "socks", "stream"], version = "0.13" }
 # UUID
-uuid = { features = ["v4"], version = "1" }
+uuid = { features = ["v4", "v5"], version = "1" }
 # Async
 async-stream = "0.3"
 async-trait  = "0.1"
@@ -227,36 +266,39 @@ fd-lock         = "4"
 genai           = "0.5"
 json_schema_ast = "0.3.1"
 # GraphQL
-async-graphql      = "7"
-async-graphql-axum = "7"
-gix                = "0.83"
-hex                = "0.4"
-hmac               = "0.12"
-jsonwebtoken       = { features = ["aws_lc_rs"], version = "10" }
-llama-cpp-2        = "0.1"
-matrix-sdk         = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
-mockito            = "1.7"
-nostr-sdk          = { features = ["nip04", "nip44", "nip59"], version = "0.44" }
-open               = "5.3"
-rand               = "0.10"
-regex              = "1"
-ring               = "0.17"
-secrecy            = { features = ["serde"], version = "0.8" }
-serenity           = { features = ["cache", "client", "gateway", "model", "rustls_backend"], version = "0.12" }
-sha1               = "0.10"
-sha2               = "0.10"
-slack-morphism     = { features = ["axum", "hyper"], version = "2.20" }
-sled               = "0.34"
-sysinfo            = "0.34"
-teloxide           = { features = ["macros"], version = "0.17" }
+async-graphql       = "7"
+async-graphql-axum  = "7"
+gix                 = "0.83"
+half                = "2"
+hex                 = "0.4"
+hmac                = "0.12"
+jsonwebtoken        = { features = ["aws_lc_rs"], version = "10" }
+libc                = "0.2"
+llama-cpp-2         = "0.1"
+matrix-sdk          = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
+mockito             = "1.7"
+nostr-relay-builder = { version = "0.44" }
+nostr-sdk           = { features = ["nip04", "nip44", "nip59"], version = "0.44" }
+open                = "5.3"
+rand                = "0.10"
+regex               = "1"
+ring                = "0.17"
+secrecy             = { features = ["serde"], version = "0.8" }
+serenity            = { features = ["cache", "client", "gateway", "model", "rustls_backend"], version = "0.12" }
+sha1                = "0.10"
+sha2                = "0.10"
+slack-morphism      = { features = ["axum", "hyper"], version = "2.20" }
+sled                = "0.34"
+sysinfo             = "0.34"
+teloxide            = { features = ["macros"], version = "0.17" }
 # WhatsApp (sqlite-storage disabled to avoid libsqlite3-sys conflict with sqlx;
 # re-enable once sqlx 0.9 stabilises).
-wacore                         = { default-features = false, version = "0.5" }
-wacore-binary                  = { default-features = false, version = "0.5" }
-waproto                        = "0.5"
-whatsapp-rust                  = { default-features = false, features = ["tokio-native", "tokio-runtime", "tokio-transport", "ureq-client"], version = "0.5" }
-whatsapp-rust-tokio-transport  = "0.5"
-whatsapp-rust-ureq-http-client = "0.5"
+wacore                         = { default-features = false, version = "0.6" }
+wacore-binary                  = { default-features = false, version = "0.6" }
+waproto                        = "0.6"
+whatsapp-rust                  = { default-features = false, features = ["tokio-native", "tokio-runtime", "tokio-transport", "ureq-client"], version = "0.6" }
+whatsapp-rust-tokio-transport  = "0.6"
+whatsapp-rust-ureq-http-client = "0.6"
 # QR code rendering
 qrcode = "0.14"
 # TLS / certificate generation
@@ -280,12 +322,15 @@ hostname    = "0.4"
 http        = "1"
 hyper       = { features = ["client", "http1", "http2", "server"], version = "1" }
 hyper-util  = { features = ["client-legacy", "http1", "http2", "server-auto", "service", "tokio"], version = "0.1" }
+isahc       = "1.8"
 ngrok       = "0.18"
 tower       = "0.5"
 tower-http  = "0.6"
 url         = "2"
 urlencoding = "2"
-web-push    = "0.11"
+# Form bodies (application/x-www-form-urlencoded)
+form_urlencoded = "1"
+web-push        = "0.11"
 # Metrics
 metrics                     = "0.24"
 metrics-exporter-prometheus = "0.16"
@@ -317,6 +362,8 @@ tree-sitter-typescript = "0.23"
 # Allocator
 tikv-jemallocator = "0.6"
 # Filesystem / archiving
+cap-fs-ext            = "4.0.2"
+cap-std               = "4.0.2"
 chrono                = "0.4"
 chrono-tz             = { features = ["serde"], version = "0.10" }
 cron                  = "0.13"
@@ -329,6 +376,7 @@ grep-searcher         = "0.1"
 ignore                = "0.4"
 include_dir           = "0.7"
 json5                 = "0.4"
+mail-parser           = "0.11.6"
 notify-debouncer-full = "0.7"
 pdf-extract           = "0.10"
 portable-pty          = "0.9"
@@ -353,6 +401,7 @@ zeroize       = { features = ["derive"], version = "1" }
 
 # Workspace crates
 moltis                  = { path = "crates/cli" }
+moltis-acp              = { path = "crates/acp" }
 moltis-agents           = { path = "crates/agents" }
 moltis-auth             = { path = "crates/auth" }
 moltis-auto-reply       = { path = "crates/auto-reply" }
@@ -366,6 +415,10 @@ moltis-code-index       = { path = "crates/code-index" }
 moltis-codex-import     = { path = "crates/codex-import" }
 moltis-common           = { path = "crates/common" }
 moltis-config           = { path = "crates/config" }
+moltis-connector-caldav = { path = "crates/connector-caldav" }
+moltis-connector-gmail  = { path = "crates/connector-gmail" }
+moltis-connector-himalaya = { path = "crates/connector-himalaya" }
+moltis-connectors       = { path = "crates/connectors" }
 moltis-cron             = { path = "crates/cron" }
 moltis-discord          = { path = "crates/discord" }
 moltis-external-agents  = { path = "crates/external-agents" }
@@ -380,6 +433,7 @@ moltis-mcp              = { path = "crates/mcp" }
 moltis-mcp-agent-bridge = { path = "crates/mcp-agent-bridge" }
 moltis-media            = { path = "crates/media" }
 moltis-memory           = { path = "crates/memory" }
+moltis-memory-zvec      = { path = "crates/memory-zvec" }
 moltis-metrics          = { path = "crates/metrics" }
 moltis-msteams          = { path = "crates/msteams" }
 moltis-netbird          = { path = "crates/netbird" }
@@ -387,6 +441,7 @@ moltis-network-filter   = { default-features = false, path = "crates/network-fil
 moltis-node-host        = { path = "crates/node-host" }
 moltis-nostr            = { path = "crates/nostr" }
 moltis-oauth            = { path = "crates/oauth" }
+moltis-observability    = { default-features = false, path = "crates/observability" }
 moltis-onboarding       = { path = "crates/onboarding" }
 moltis-openclaw-import  = { path = "crates/openclaw-import" }
 moltis-plugins          = { path = "crates/plugins" }
@@ -394,7 +449,7 @@ moltis-portable         = { path = "crates/portable" }
 moltis-projects         = { path = "crates/projects" }
 moltis-protocol         = { path = "crates/protocol" }
 moltis-provider-setup   = { path = "crates/provider-setup" }
-moltis-providers        = { features = ["provider-github-copilot", "provider-kimi-code", "provider-openai-codex"], path = "crates/providers" }
+moltis-providers        = { features = ["provider-kimi-code", "provider-openai-codex"], path = "crates/providers" }
 moltis-qmd              = { path = "crates/qmd" }
 moltis-routing          = { path = "crates/routing" }
 moltis-schema-export    = { path = "crates/schema-export" }

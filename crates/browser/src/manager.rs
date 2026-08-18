@@ -22,7 +22,8 @@ use crate::{
     error::Error,
     pool::BrowserPool,
     snapshot::{
-        extract_snapshot, find_element_by_ref, focus_element_by_ref, scroll_element_into_view,
+        DEEP_COLLECT_FN, DEEP_FIND_FN, extract_snapshot, find_element_by_ref, focus_element_by_ref,
+        scroll_element_into_view,
     },
     types::{
         BrowserAction, BrowserConfig, BrowserKind, BrowserPreference, BrowserRequest,
@@ -578,13 +579,14 @@ impl BrowserManager {
         let page = self.pool.get_page(&sid).await?;
 
         let js = if let Some(ref_) = ref_ {
-            format!(
+            let body = format!(
                 r#"(() => {{
-                    const el = document.querySelector(`[data-moltis-ref="{ref_}"]`);
+                    const el = __mDeepFind(`[data-moltis-ref="{ref_}"]`);
                     if (el) el.scrollBy({x}, {y});
                     return !!el;
                 }})()"#
-            )
+            );
+            format!("{DEEP_FIND_FN}{body}")
         } else {
             format!("window.scrollBy({x}, {y}); true")
         };
@@ -639,11 +641,11 @@ impl BrowserManager {
 
         let check_js = if let Some(ref selector) = selector {
             format!(
-                r#"document.querySelector({}) !== null"#,
+                r#"{DEEP_FIND_FN}__mDeepFind({}) !== null"#,
                 serde_json::to_string(selector).map_err(|e| Error::Cdp(e.to_string()))?
             )
         } else if let Some(ref_) = ref_ {
-            format!(r#"document.querySelector('[data-moltis-ref="{ref_}"]') !== null"#)
+            format!(r#"{DEEP_FIND_FN}__mDeepFind('[data-moltis-ref="{ref_}"]') !== null"#)
         } else {
             return Err(Error::InvalidAction("wait requires selector or ref".into()));
         };
@@ -797,15 +799,16 @@ impl BrowserManager {
 
     /// Highlight an element (for screenshots).
     async fn highlight_element(&self, page: &Page, ref_: u32) -> Result<(), Error> {
-        let js = format!(
+        let body = format!(
             r#"(() => {{
-                const el = document.querySelector(`[data-moltis-ref="{ref_}"]`);
+                const el = __mDeepFind(`[data-moltis-ref="{ref_}"]`);
                 if (el) {{
                     el.style.outline = '3px solid #ff0000';
                     el.style.outlineOffset = '2px';
                 }}
             }})()"#
         );
+        let js = format!("{DEEP_FIND_FN}{body}");
 
         page.evaluate(js.as_str())
             .await
@@ -816,14 +819,14 @@ impl BrowserManager {
 
     /// Remove all element highlights.
     async fn remove_highlights(&self, page: &Page) -> Result<(), Error> {
-        let js = r#"
-            document.querySelectorAll('[data-moltis-ref]').forEach(el => {
+        let js = format!(
+            r#"{DEEP_COLLECT_FN}__mDeepCollect('[data-moltis-ref]').forEach(el => {{
                 el.style.outline = '';
                 el.style.outlineOffset = '';
-            });
-        "#;
+            }});"#
+        );
 
-        page.evaluate(js)
+        page.evaluate(js.as_str())
             .await
             .map_err(|e| Error::JsEvalFailed(e.to_string()))?;
 
@@ -982,6 +985,17 @@ mod tests {
         assert_eq!(prefix.len(), 99);
         assert!(!prefix.contains('л'));
         assert!(prefix.ends_with('a'));
+    }
+
+    #[test]
+    fn wait_selector_path_uses_shadow_piercing_lookup() {
+        let source = include_str!("manager.rs");
+
+        let flat_query = concat!("document.", "querySelector({}) !== null");
+        let deep_query = concat!("{DEEP_FIND_FN}", "__mDeepFind({}) !== null");
+
+        assert!(!source.contains(flat_query));
+        assert!(source.contains(deep_query));
     }
 
     #[tokio::test]

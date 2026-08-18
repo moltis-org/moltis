@@ -1,5 +1,7 @@
 // ── Shared types for onboarding sub-modules ──────────────────
 
+export type { ExternalAgentInfo } from "../types";
+
 export interface ProviderInfo {
 	name: string;
 	displayName: string;

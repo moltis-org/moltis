@@ -103,6 +103,8 @@ pub struct ConnectedClient {
     pub connect_params: ConnectParams,
     /// Bounded channel for sending serialized frames to this client's write loop.
     pub sender: mpsc::Sender<String>,
+    /// Frames rejected because the client's bounded channel was full.
+    pub delivery_failures: Arc<std::sync::atomic::AtomicU64>,
     pub connected_at: Instant,
     /// Milliseconds since process start. Updated atomically — no write lock needed.
     pub last_activity_ms: std::sync::atomic::AtomicU64,
@@ -119,6 +121,13 @@ pub struct ConnectedClient {
     /// `None` = wildcard (receive everything, v3 compat).
     /// `Some(set)` = only events in the set (or `"*"` = wildcard).
     pub subscriptions: Option<HashSet<String>>,
+    /// Optional session key for in-process clients that consume one session's
+    /// events. Filtering before enqueue keeps unrelated traffic from filling
+    /// their bounded delivery channel.
+    pub session_filter: Option<String>,
+    /// Optional `payload.state` allowlist for in-process consumers. This makes
+    /// delivery-failure accounting reflect only states the consumer needs.
+    pub payload_state_filter: Option<HashSet<String>>,
     /// Channels this client has joined (v4 multiplexing).
     pub joined_channels: HashSet<String>,
     /// Negotiated protocol version for this connection.
@@ -165,7 +174,11 @@ impl ConnectedClient {
     /// Uses `try_send` to avoid blocking; drops the frame if the client's
     /// outbound buffer is full (slow consumer protection).
     pub fn send(&self, frame: &str) -> bool {
-        self.sender.try_send(frame.to_string()).is_ok()
+        if self.sender.try_send(frame.to_string()).is_ok() {
+            return true;
+        }
+        self.delivery_failures.fetch_add(1, Ordering::Relaxed);
+        false
     }
 
     /// Touch the activity timestamp (lock-free).
@@ -415,6 +428,11 @@ pub struct GatewayState {
     /// Code index for workspace codebase intelligence (discover, filter, status, peek).
     /// Always initialized in config-only mode; search is deferred to QMD backend.
     pub code_index: Arc<moltis_code_index::CodeIndex>,
+    /// Live agent instrumentation (Langfuse / OTLP / Datadog).
+    /// `Arc` because the RPC handlers and the shutdown path both reach it.
+    pub instrumentation: Arc<crate::server::instrumentation::InstrumentationState>,
+    /// Reaction feedback: reply/trace correlation and score submission.
+    pub feedback: Arc<moltis_channels::FeedbackService>,
     /// Whether the server is bound to a loopback address (localhost/127.0.0.1/::1).
     pub localhost_only: bool,
     /// Whether the server is known to be behind a reverse proxy.
@@ -450,6 +468,10 @@ pub struct GatewayState {
     /// Encryption-at-rest vault for environment variables.
     #[cfg(feature = "vault")]
     pub vault: Option<Arc<moltis_vault::Vault>>,
+
+    /// Late-bound connector manager, initialized after its dedicated database opens.
+    #[cfg(feature = "connectors")]
+    pub connector_manager: std::sync::OnceLock<Arc<crate::connectors::ConnectorManager>>,
 
     // ── Channel webhook deduplication (separate lock) ──────────────────────
     /// Idempotency dedup store for channel webhooks. Uses its own
@@ -498,6 +520,11 @@ pub struct GatewayState {
     // ── Mutable runtime state (single lock) ─────────────────────────────────
     /// All mutable runtime state, behind a single lock.
     pub inner: RwLock<GatewayInner>,
+
+    /// Active per-turn channel acknowledgment reaction controllers, keyed by
+    /// session key. Created when a channel message is received (adds 👀),
+    /// driven by the agent run, and removed when the turn finalizes.
+    pub channel_reaction_controllers: Arc<crate::channel_reactions::ReactionRegistry>,
 }
 
 impl GatewayState {
@@ -568,6 +595,11 @@ impl GatewayState {
             pairing_store,
             memory_manager,
             code_index,
+            // Constructed empty; `apply` runs later from `prepare_core`, which
+            // is inside a Tokio runtime (each backend spawns an export task).
+            instrumentation: Arc::default(),
+            // Filled in by `prepare_core`, which has the database pool.
+            feedback: Arc::default(),
             localhost_only,
             behind_proxy,
             tls_active,
@@ -585,6 +617,8 @@ impl GatewayState {
             metrics_store,
             #[cfg(feature = "vault")]
             vault,
+            #[cfg(feature = "connectors")]
+            connector_manager: std::sync::OnceLock::new(),
             channel_webhook_dedup: std::sync::RwLock::new(
                 crate::channel_webhook_dedup::ChannelWebhookDedupeStore::new(),
             ),
@@ -601,6 +635,9 @@ impl GatewayState {
             broadcaster: Arc::new(Broadcaster::new()),
             client_registry: RwLock::new(ClientRegistryInner::new()),
             inner: RwLock::new(GatewayInner::new(hook_registry)),
+            channel_reaction_controllers: Arc::new(
+                crate::channel_reactions::ReactionRegistry::default(),
+            ),
         })
     }
 
@@ -614,6 +651,18 @@ impl GatewayState {
     /// the `X-Forwarded-Proto` header.
     pub fn is_secure(&self) -> bool {
         self.tls_active || self.behind_proxy
+    }
+
+    #[cfg(feature = "connectors")]
+    pub fn connector_manager(&self) -> Option<Arc<crate::connectors::ConnectorManager>> {
+        self.connector_manager.get().cloned()
+    }
+
+    #[cfg(feature = "connectors")]
+    pub async fn shutdown_connectors(&self) {
+        if let Some(manager) = self.connector_manager() {
+            manager.shutdown().await;
+        }
     }
 
     /// Process uptime in milliseconds since this gateway state was created.
@@ -1098,16 +1147,29 @@ mod tests {
                 timezone: None,
             },
             sender: tx,
+            delivery_failures: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             connected_at: Instant::now(),
             last_activity_ms: std::sync::atomic::AtomicU64::new(0),
             accept_language: None,
             remote_ip: None,
             timezone: None,
             subscriptions: None,
+            session_filter: None,
+            payload_state_filter: None,
             joined_channels: HashSet::new(),
             negotiated_protocol: moltis_protocol::PROTOCOL_VERSION,
         };
         (client, rx)
+    }
+
+    #[test]
+    fn connected_client_records_dropped_frames() {
+        let (client, _rx) = mock_client("slow-client");
+        for _ in 0..512 {
+            assert!(client.send("frame"));
+        }
+        assert!(!client.send("overflow"));
+        assert_eq!(client.delivery_failures.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]
@@ -1315,6 +1377,43 @@ mod tests {
         let msg = rx2.try_recv().expect("wildcard should receive");
         let frame: serde_json::Value = serde_json::from_str(&msg).unwrap();
         assert_eq!(frame["event"], "presence");
+    }
+
+    #[tokio::test]
+    async fn broadcast_skips_other_sessions_for_filtered_clients() {
+        let state = test_state();
+        let (mut client, mut rx) = mock_client("conn-session");
+        client.subscriptions = Some(["chat".to_string()].into());
+        client.session_filter = Some("acp:expected".to_string());
+        client.payload_state_filter = Some(["delta".to_string()].into());
+        state.register_client(client).await;
+
+        crate::broadcast::broadcast(
+            &state,
+            "chat",
+            serde_json::json!({"sessionKey": "acp:other", "state": "delta", "text": "secret"}),
+            crate::broadcast::BroadcastOpts::default(),
+        )
+        .await;
+        assert!(rx.try_recv().is_err());
+
+        crate::broadcast::broadcast(
+            &state,
+            "chat",
+            serde_json::json!({"sessionKey": "acp:expected", "state": "final", "text": "hello"}),
+            crate::broadcast::BroadcastOpts::default(),
+        )
+        .await;
+        assert!(rx.try_recv().is_err());
+
+        crate::broadcast::broadcast(
+            &state,
+            "chat",
+            serde_json::json!({"sessionKey": "acp:expected", "state": "delta", "text": "hello"}),
+            crate::broadcast::BroadcastOpts::default(),
+        )
+        .await;
+        assert!(rx.try_recv().is_ok());
     }
 
     #[tokio::test]

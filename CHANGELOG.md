@@ -19,6 +19,217 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260818.01] - 2026-08-18
+### Fixed
+- [ci] Stabilize release validation races
+
+## [20260817.05] - 2026-08-17
+### Fixed
+- [web] Stabilize stateful E2E flows
+- [ci] Run release E2E through the sharded CI runner
+
+## [20260817.04] - 2026-08-17
+### Fixed
+- Unblock provider release checks
+
+## [20260817.03] - 2026-08-17
+### Fixed
+- [ci] Split external agent tests
+
+## [20260817.02] - 2026-08-17
+### Added
+- Make webui rpc timeout configurable (#1130)
+- Add MiniMax Code ACP agent (#1204)
+
+
+### Fixed
+- [browser] Pierce shadow DOM lookups efficiently (#1103)
+- [ci] Stage zvec runtime for OpenAI E2E
+
+## [20260817.01] - 2026-08-17
+### Fixed
+- [ci] Repair release validation failures
+- [ci] Stabilize OAuth and push E2E
+- [web] Eliminate session and PWA test races
+- [ci] Eliminate remaining release races
+
+## [20260816.01] - 2026-08-16
+### Added
+- [slack] Acknowledge messages with reactions and add reaction triggers (#1165)
+- [website] Add install command copy controls
+- [pwa] Make push notifications reliable and non-disruptive (#1173)
+- [acp] Expose Moltis as an ACP agent over stdio (#1169)
+- [slack] Per-message acknowledgment reactions, phases, reconnect supervision, and Block Kit (#1166)
+- [web] Add Markdown copy and session export (#1176)
+- [nostr] Add NIP-29 group chat support for Buzz channels (#1168)
+- Add instrumentation and feedback collection infrastructure (#1174)
+- Add Slack native live task cards (#1195)
+- Add durable calendar, channel, and email connectors (#1190)
+- [memory] Add zvec vector database memory backend (#1158)
+- Start agent chats from the command palette (#1197)
+
+
+### Changed
+- Move ACP selection into the chat model picker (#1171)
+- Route OpenAI reasoning tool calls through Responses (#1198)
+
+
+### Fixed
+- [scripts] Target local validation tests
+- [web] Hide archived cron sessions by default (#1172)
+- [ios] Refresh Apollo package resolution
+- [channels] Gate /sh and privileged tools behind a per-account operators list (#1170)
+- Fix Docker sandbox filesystem tool fallback (#1105)
+- Fix ClawHub skill search results (#1196)
+- [ios] Stabilize GraphQL project generation
+- [scripts] Guard empty bash array expansions for macOS bash 3.2 (#1194)
+- [sessions] Allow deleting and archiving the main session (#1182)
+- [skills] Point wacrawl install metadata at the openclaw org (#1192)
+- [sandbox] Point gogcli module path at the openclaw org (#1191)
+- [gateway] Verify node pairing signatures (#1179)
+- Fix(security): harden model and zip paths (#1180)
+- [vault] Normalize recovery phrase before hashing (#1186)
+- Restore local validation on main
+- [gateway] Thread start_background_tasks into the memory runtime builder (#1201)
+- [caldav] Honor list_events time ranges (#1147)
+
+## [20260723.03] - 2026-07-23
+### Added
+- Add context command support for chat turns (#1124)
+
+
+### Fixed
+- [slack] Allow operator-approved api base hosts (#1164)
+- [web] Show dates for older sessions (#1162)
+- [ci] Keep local validation on pinned tools
+
+## [20260723.02] - 2026-07-23
+
+## [20260723.01] - 2026-07-23
+### Fixed
+- [slack] Challenge unknown allowlist DMs with OTP (#1163)
+
+## [20260719.01] - 2026-07-19
+### Added
+- [slack] Support configurable API base URL (#1159)
+
+
+### Fixed
+- [web] Support ACP-only chat setup (#1157)
+
+## [20260717.03] - 2026-07-17
+
+## [20260717.02] - 2026-07-17
+
+## [20260717.01] - 2026-07-17
+### Fixed
+- [web] Guard command palette input events
+
+## [20260716.04] - 2026-07-16
+### Fixed
+- [ci] Disable release biome cache
+
+## [20260716.03] - 2026-07-16
+### Fixed
+- [ci] Install biome from npm lockfile
+
+## [20260716.02] - 2026-07-16
+### Added
+- Add Kimi K3 provider support (#1156)
+
+
+### Changed
+- Improve agent and sandbox status feedback (#1155)
+
+
+### Fixed
+- [web] Show direct mode when sandbox is unavailable (#1154)
+
+## [20260716.01] - 2026-07-16
+### Added
+- [external-agents] Auto-detect ACP agents (#1149)
+- [providers] Add MiniMax M3 model support (#1151)
+
+
+### Removed
+- [httpd] Remove unused hashmap import
+
+
+### Fixed
+- [sandbox] Harden apple container handling
+- [e2e] Stabilize autoscroll indicator test
+- Handle cron null fields and biome migration
+- [cli] Support services without systemd (#1153)
+- [providers] Derive context windows from capabilities (#1150)
+- [providers] Derive openai-codex token expiry from JWT exp claim (#1152)
+- [ci] Align biome version with repo config
+- [e2e] Wait for onboarding summary readiness
+
+## [20260714.11] - 2026-07-14
+### Fixed
+- [ci] Align workflow rust nightly pin
+
+## [20260714.10] - 2026-07-14
+### Fixed
+- [e2e] Reset autoscroll mode per test
+
+## [20260714.09] - 2026-07-14
+### Fixed
+- [ci] Reclaim disk before e2e tests
+
+## [20260714.08] - 2026-07-14
+### Fixed
+- [ci] Run required jobs on hosted runners
+
+## [20260714.07] - 2026-07-14
+### Fixed
+- [copilot] Satisfy provider lint gates
+
+## [20260714.06] - 2026-07-14
+### Fixed
+- [providers] Enable provider features by default
+
+## [20260714.05] - 2026-07-14
+### Fixed
+- [copilot] Keep OAuth provider enabled for registry rebuild
+- [copilot] Include provider in packaged builds
+- [ci] Install codecov cli from pypi
+
+## [20260714.04] - 2026-07-14
+### Fixed
+- [ci] Clear profiled llama build caches
+
+## [20260714.03] - 2026-07-14
+### Fixed
+- [ci] Restore macos and fireworks release jobs
+
+## [20260714.02] - 2026-07-14
+### Added
+- Add GPT-5.6 model support (#1146)
+
+
+### Fixed
+- [mcp] Use direct fetch for resource_metadata URL from WWW-Authenticate (#1120)
+- [caldav] Avoid panic on non-ASCII datetime in normalise_datetime (#1145)
+- [gateway] Don't force-enable matrix-sdk via the metrics feature (#1139)
+- [agents] Coerce stringified scalar tool args before validation (#1136)
+- [browser] Tolerate null optional params in browser tool calls (#1098)
+- [validation] Restore local release checks
+
+## [20260714.01] - 2026-07-14
+### Added
+- [whatsapp] Bump whatsapp-rust 0.5 -> 0.6 with LID-native addressing (#1144)
+
+
+### Removed
+- Drop VOLUME declarations that shadow the home bind mount (#1122)
+
+
+### Fixed
+- [github-copilot] Improve enterprise diagnostics
+- [github-copilot] Refresh auth after misdirected responses
+- [github-copilot] Prefetch API endpoint metadata
+
 ## [20260603.01] - 2026-06-03
 
 ## [20260602.05] - 2026-06-02

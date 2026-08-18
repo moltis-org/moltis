@@ -70,6 +70,9 @@ export default {
 			"Using WASM sandbox with filesystem isolation. For container-level isolation, install Docker or Apple Container.",
 	},
 
+	// ── Memory backends ─────────────────────────────────────
+	zvec: "Zvec (fast vector)",
+
 	// ── Alert labels ───────────────────────────────────────
 	alertWarning: "Warning: ",
 	alertTip: "Tip: ",

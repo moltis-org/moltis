@@ -23,7 +23,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     let account_ids = plugin.account_ids();
                     let mut accounts = Vec::new();
                     for aid in &account_ids {
-                        let config = plugin.account_config_json(aid);
+                        let config = plugin.account_config_json(aid).await;
                         let active_calls: Vec<serde_json::Value> = plugin
                             .call_manager(aid)
                             .and_then(|mgr| {
@@ -127,6 +127,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                     let webhook_base = plugin
                         .account_config_json(&account_id)
+                        .await
                         .and_then(|config| {
                             config["webhook_url"]
                                 .as_str()

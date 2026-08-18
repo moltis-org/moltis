@@ -392,6 +392,106 @@ async fn test_add_accepts_payload_string_shorthand() {
 }
 
 #[tokio::test]
+async fn test_add_ignores_null_optional_fields() {
+    let tool = make_tool();
+    let add_result = tool
+        .execute(json!({
+            "action": "add",
+            "force": null,
+            "id": null,
+            "limit": null,
+            "patch": null,
+            "job": {
+                "name": "morning-joke",
+                "enabled": true,
+                "deleteAfterRun": null,
+                "execution": null,
+                "sandbox": null,
+                "schedule": {
+                    "kind": "cron",
+                    "expr": "0 8 * * *",
+                    "tz": "America/Los_Angeles",
+                    "at_ms": null,
+                    "anchor_ms": null,
+                    "delay_ms": null,
+                    "every_ms": null
+                },
+                "payload": {
+                    "kind": "systemEvent",
+                    "text": "Tell me a funny joke.",
+                    "active_tools": null,
+                    "channel": null,
+                    "deliver": null,
+                    "message": null,
+                    "model": null,
+                    "timeout_secs": null,
+                    "to": null,
+                    "tool_choice": null
+                },
+                "sessionTarget": "main",
+                "wakeMode": null
+            }
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(add_result["name"], "morning-joke");
+    assert_eq!(add_result["schedule"]["kind"], "cron");
+    assert_eq!(add_result["schedule"]["expr"], "0 8 * * *");
+    assert_eq!(add_result["schedule"]["tz"], "America/Los_Angeles");
+    assert_eq!(add_result["payload"]["kind"], "systemEvent");
+    assert_eq!(add_result["payload"]["text"], "Tell me a funny joke.");
+    assert_eq!(add_result["sessionTarget"], "main");
+    assert_eq!(add_result["deleteAfterRun"], false);
+    assert_eq!(add_result["wakeMode"], "nextHeartbeat");
+}
+
+#[tokio::test]
+async fn test_update_ignores_null_optional_fields() {
+    let tool = make_tool();
+    let add = tool
+        .execute(json!({
+            "action": "add",
+            "job": {
+                "name": "to patch",
+                "schedule": { "kind": "every", "every_ms": 60000 },
+                "payload": { "kind": "agentTurn", "message": "x" },
+                "sessionTarget": "isolated",
+                "wakeMode": "nextHeartbeat"
+            }
+        }))
+        .await
+        .unwrap();
+    let id = add["id"].as_str().unwrap();
+
+    let updated = tool
+        .execute(json!({
+            "action": "update",
+            "id": id,
+            "patch": {
+                "name": "patched",
+                "wakeMode": null,
+                "sandbox": { "enabled": null, "image": null },
+                "payload": {
+                    "kind": "agentTurn",
+                    "message": "patched run",
+                    "timeout_secs": null,
+                    "deliver": null,
+                    "channel": null,
+                    "to": null
+                }
+            }
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(updated["name"], "patched");
+    assert_eq!(updated["wakeMode"], "nextHeartbeat");
+    assert_eq!(updated["payload"]["message"], "patched run");
+    assert_eq!(updated["payload"]["deliver"], false);
+}
+
+#[tokio::test]
 async fn test_add_rejects_ambiguous_schedule_without_kind() {
     let tool = make_tool();
     let result = tool

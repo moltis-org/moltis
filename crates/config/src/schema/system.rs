@@ -32,6 +32,10 @@ pub struct ServerConfig {
     /// usage for personal gateways. Defaults to 5.
     #[serde(default = "default_db_pool_max_connections")]
     pub db_pool_max_connections: u32,
+    /// Milliseconds the web UI waits for a WebSocket RPC reply before failing
+    /// with a `TIMEOUT` error. Defaults to 5000.
+    #[serde(default = "default_rpc_timeout_ms")]
+    pub rpc_timeout_ms: u64,
     /// Base URL for the Shiki syntax-highlighting library loaded by the web UI.
     ///
     /// Defaults to `https://esm.sh/shiki@3.2.1?bundle` when unset.
@@ -62,6 +66,10 @@ fn default_db_pool_max_connections() -> u32 {
     5
 }
 
+fn default_rpc_timeout_ms() -> u64 {
+    5000
+}
+
 fn default_terminal_enabled() -> bool {
     true
 }
@@ -76,6 +84,7 @@ impl Default for ServerConfig {
             log_buffer_size: default_log_buffer_size(),
             update_releases_url: None,
             db_pool_max_connections: default_db_pool_max_connections(),
+            rpc_timeout_ms: default_rpc_timeout_ms(),
             shiki_cdn_url: None,
             terminal_enabled: default_terminal_enabled(),
             external_url: None,

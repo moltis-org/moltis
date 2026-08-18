@@ -100,56 +100,6 @@ impl TelegramOutbound {
         }
     }
 
-    pub(crate) async fn edit_chunk_with_fallback(
-        &self,
-        bot: &Bot,
-        account_id: &str,
-        to: &str,
-        chat_id: ChatId,
-        message_id: MessageId,
-        chunk: &str,
-    ) -> Result<()> {
-        match self
-            .run_telegram_request_with_retry(account_id, to, "edit message (html)", || {
-                let html_req = bot
-                    .edit_message_text(chat_id, message_id, chunk)
-                    .parse_mode(ParseMode::Html);
-                async move { html_req.await }
-            })
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                if is_message_not_modified_error(&e) {
-                    return Ok(());
-                }
-                let plain_chunk = telegram_html_to_plain_text(chunk);
-                warn!(
-                    account_id,
-                    chat_id = to,
-                    error = %e,
-                    "telegram HTML edit failed, retrying as plain text"
-                );
-                match self
-                    .run_telegram_request_with_retry(account_id, to, "edit message (plain)", || {
-                        let plain_req = bot.edit_message_text(chat_id, message_id, &plain_chunk);
-                        async move { plain_req.await }
-                    })
-                    .await
-                {
-                    Ok(_) => Ok(()),
-                    Err(plain_err) => {
-                        if is_message_not_modified_error(&plain_err) {
-                            Ok(())
-                        } else {
-                            Err(ChannelError::external("edit message (plain)", plain_err))
-                        }
-                    },
-                }
-            },
-        }
-    }
-
     pub(crate) async fn run_telegram_request_with_retry<T, F, Fut>(
         &self,
         account_id: &str,

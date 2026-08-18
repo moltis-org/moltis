@@ -48,7 +48,9 @@ Slack streaming messages (progressive edits) are proxied via reqwest.
 However, regular `chat.postMessage` calls go through the `slack-morphism`
 library's built-in hyper connector, which does **not** use the upstream
 proxy. If you need full Slack proxy coverage, also set the `HTTPS_PROXY`
-environment variable.
+environment variable. If you are using a Slack-compatible API gateway instead
+of a generic outbound proxy, configure the Slack channel's `api_base_url`
+instead.
 
 ### Telegram caveat
 

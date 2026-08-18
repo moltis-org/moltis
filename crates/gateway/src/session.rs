@@ -18,8 +18,10 @@ use {
         store::SessionStore,
     },
     moltis_tools::sandbox::SandboxRouter,
-    moltis_voice::{AudioFormat, TtsProviderId},
 };
+
+#[cfg(feature = "voice")]
+use moltis_voice::{AudioFormat, TtsProviderId};
 
 #[allow(unused_imports)]
 #[cfg(feature = "fs-tools")]
@@ -29,12 +31,15 @@ use moltis_tools::fs::FsState;
 use crate::{
     agent_persona::AgentPersonaStore,
     services::{ServiceError, ServiceResult, SessionService, TtsService},
-    session_types::{PatchParams, VoiceGenerateParams, VoiceTarget, parse_params},
+    session_types::{PatchParams, parse_params},
     share_store::{
         ShareSnapshot, ShareStore, ShareVisibility, SharedImageAsset, SharedImageSet,
         SharedMapLinks, SharedMessage, SharedMessageRole,
     },
 };
+
+#[cfg(feature = "voice")]
+use crate::session_types::{VoiceGenerateParams, VoiceTarget};
 
 const SHARE_BOUNDARY_NOTICE: &str =
     "This session until here has been shared. Later messages are not included in the shared link.";
@@ -92,6 +97,7 @@ pub(crate) async fn dispatch_command_hook(
     }
 }
 
+#[cfg(feature = "voice")]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TtsStatusPayload {
@@ -102,6 +108,7 @@ struct TtsStatusPayload {
     max_text_length: Option<usize>,
 }
 
+#[cfg(feature = "voice")]
 fn session_voice_format(status: &TtsStatusPayload) -> AudioFormat {
     match status.provider {
         Some(TtsProviderId::OpenAi) => AudioFormat::Mp3,
@@ -109,6 +116,7 @@ fn session_voice_format(status: &TtsStatusPayload) -> AudioFormat {
     }
 }
 
+#[cfg(feature = "voice")]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TtsConvertPayload {
@@ -180,16 +188,9 @@ fn message_text(msg: &Value) -> Option<String> {
     }
 }
 
+#[cfg(feature = "voice")]
 fn sanitize_tts_text(text: &str) -> String {
-    #[cfg(feature = "voice")]
-    {
-        moltis_voice::tts::sanitize_text_for_tts(text).to_string()
-    }
-
-    #[cfg(not(feature = "voice"))]
-    {
-        text.to_string()
-    }
+    moltis_voice::tts::sanitize_text_for_tts(text).to_string()
 }
 
 /// Truncate a string to `max` chars, appending "…" if truncated.
@@ -870,6 +871,7 @@ pub(crate) mod summary;
 #[cfg(test)]
 mod tests;
 pub(crate) mod title;
+#[cfg(feature = "voice")]
 mod voice;
 
 pub use service::LiveSessionService;

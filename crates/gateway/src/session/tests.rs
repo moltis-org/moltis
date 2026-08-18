@@ -568,6 +568,7 @@ mod tests {
         assert!(shared.content.contains(SHARE_REDACTED_VALUE));
     }
 
+    #[cfg(feature = "voice")]
     struct MockTtsService {
         status_payload: Value,
         convert_payload: Option<Value>,
@@ -576,6 +577,7 @@ mod tests {
         last_convert_params: std::sync::Mutex<Option<Value>>,
     }
 
+    #[cfg(feature = "voice")]
     impl MockTtsService {
         fn new(status_payload: Value, convert_payload: Option<Value>) -> Self {
             Self {
@@ -598,6 +600,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "voice")]
     #[async_trait]
     impl TtsService for MockTtsService {
         async fn status(&self) -> ServiceResult {
@@ -632,6 +635,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "voice")]
     #[tokio::test]
     async fn voice_generate_reuses_existing_audio_without_tts_convert() {
         let dir = tempfile::tempdir().unwrap();
@@ -656,7 +660,7 @@ mod tests {
                 &serde_json::json!({
                     "role": "assistant",
                     "content": "hi there",
-                    "audio": existing_path,
+                    "audio": existing_path.clone(),
                     "tts_provider": "openai",
                     "run_id": "run-abc",
                 }),
@@ -677,11 +681,12 @@ mod tests {
             .expect("voice generate");
 
         assert_eq!(result["reused"], true);
-        assert_eq!(result["audio"].as_str(), Some("media/main/voice-msg-1.ogg"));
+        assert_eq!(result["audio"].as_str(), Some(existing_path.as_str()));
         assert_eq!(result["ttsProvider"].as_str(), Some("openai"));
         assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 0);
     }
 
+    #[cfg(feature = "voice")]
     #[tokio::test]
     async fn voice_generate_uses_mp3_for_openai_compatible_tts() {
         let dir = tempfile::tempdir().unwrap();
@@ -726,7 +731,10 @@ mod tests {
 
         assert_eq!(result["reused"], false);
         let audio_path = result["audio"].as_str().unwrap_or_default().to_string();
-        assert_eq!(audio_path, "media/main/voice-msg-1.mp3");
+        assert_eq!(
+            audio_path,
+            SessionStore::media_reference("main", "voice-msg-1.mp3").expect("media reference")
+        );
         assert_eq!(result["ttsProvider"].as_str(), Some("openai"));
         assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 1);
         let convert_params = mock_tts
@@ -750,6 +758,7 @@ mod tests {
         assert_eq!(saved, audio_bytes);
     }
 
+    #[cfg(feature = "voice")]
     #[tokio::test]
     async fn voice_generate_keeps_ogg_for_non_openai_tts() {
         let dir = tempfile::tempdir().unwrap();
@@ -794,7 +803,10 @@ mod tests {
 
         assert_eq!(result["reused"], false);
         let audio_path = result["audio"].as_str().unwrap_or_default().to_string();
-        assert_eq!(audio_path, "media/main/voice-msg-1.ogg");
+        assert_eq!(
+            audio_path,
+            SessionStore::media_reference("main", "voice-msg-1.ogg").expect("media reference")
+        );
         assert_eq!(result["ttsProvider"].as_str(), Some("elevenlabs"));
         let convert_params = mock_tts
             .last_convert_params
@@ -805,6 +817,7 @@ mod tests {
         assert_eq!(convert_params["format"].as_str(), Some("opus"));
     }
 
+    #[cfg(feature = "voice")]
     #[tokio::test]
     async fn voice_generate_rejects_non_assistant_target() {
         let dir = tempfile::tempdir().unwrap();
@@ -834,6 +847,7 @@ mod tests {
         assert!(error.to_string().contains("not an assistant"));
     }
 
+    #[cfg(feature = "voice")]
     #[tokio::test]
     async fn voice_generate_prefers_run_id_over_non_assistant_message_index() {
         let dir = tempfile::tempdir().unwrap();
@@ -865,7 +879,7 @@ mod tests {
                 &serde_json::json!({
                     "role": "assistant",
                     "content": "assistant answer",
-                    "audio": existing_path,
+                    "audio": existing_path.clone(),
                     "run_id": "run-target",
                 }),
             )
@@ -888,7 +902,7 @@ mod tests {
 
         assert_eq!(result["reused"], true);
         assert_eq!(result["messageIndex"], 2);
-        assert_eq!(result["audio"].as_str(), Some("media/main/voice-msg-2.ogg"));
+        assert_eq!(result["audio"].as_str(), Some(existing_path.as_str()));
         assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 0);
     }
 
@@ -930,6 +944,24 @@ mod tests {
         moltis_projects::run_migrations(&pool).await.unwrap();
         SqliteSessionMetadata::init(&pool).await.unwrap();
         pool
+    }
+
+    #[cfg(not(feature = "voice"))]
+    #[tokio::test]
+    async fn voice_generate_reports_not_configured_without_voice() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let service = LiveSessionService::new(store, metadata);
+
+        let error = SessionService::voice_generate(&service, serde_json::json!({}))
+            .await
+            .expect_err("voice generation should be unavailable");
+
+        assert_eq!(
+            error.to_string(),
+            "session voice generation is not configured"
+        );
     }
 
     #[tokio::test]
@@ -985,6 +1017,7 @@ mod tests {
         let key = "telegram:bot-main:-100123";
         metadata.upsert(key, None).await.unwrap();
         let binding_json = serde_json::to_string(&moltis_channels::ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: moltis_channels::ChannelType::Telegram,
             account_id: "bot-main".to_string(),
             chat_id: "-100123".to_string(),
@@ -1267,7 +1300,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn patch_archived_rejects_main_session() {
+    async fn patch_archived_allows_main_session() {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
@@ -1279,12 +1312,30 @@ mod tests {
 
         let svc = LiveSessionService::new(Arc::clone(&store), Arc::clone(&metadata));
 
-        let error = svc
+        let result = svc
             .patch(serde_json::json!({ "key": "main", "archived": true }))
             .await
-            .unwrap_err();
-        assert!(error.to_string().contains("cannot be archived"));
-        assert!(!metadata.get("main").await.unwrap().archived);
+            .unwrap();
+        assert_eq!(result.get("archived").and_then(|v| v.as_bool()), Some(true));
+        assert!(metadata.get("main").await.unwrap().archived);
+    }
+
+    #[tokio::test]
+    async fn delete_allows_main_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+        metadata
+            .upsert("main", Some("Main".to_string()))
+            .await
+            .unwrap();
+
+        let svc = LiveSessionService::new(Arc::clone(&store), Arc::clone(&metadata));
+
+        let result = svc.delete(serde_json::json!({ "key": "main" })).await;
+        assert!(result.is_ok());
+        assert!(metadata.get("main").await.is_none());
     }
 
     #[tokio::test]
@@ -1374,6 +1425,9 @@ mod tests {
 
     #[path = "archive_search_tests.rs"]
     mod archive_search_tests;
+
+    #[path = "channel_binding_tests.rs"]
+    mod channel_binding_tests;
 
     #[cfg(feature = "fs-tools")]
     #[tokio::test]

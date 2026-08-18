@@ -1,5 +1,7 @@
 // ── Helpers ──────────────────────────────────────────────────
+
 import { Marked, Renderer, type Token } from "marked";
+import * as gon from "./gon";
 import { hasTranslation, t } from "./i18n";
 import * as S from "./state";
 import type { RpcResponse } from "./types";
@@ -271,8 +273,12 @@ mdRenderer.html = ({ text }) => esc(text);
 const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
 const RPC_TIMEOUT_MS = 5_000;
 
-function rpcTimeoutMs(): number {
-	return window.__moltisTestRpcTimeoutMs ?? RPC_TIMEOUT_MS;
+function rpcTimeoutMs(requested?: number): number {
+	if (typeof window.__moltisTestRpcTimeoutMs === "number") return window.__moltisTestRpcTimeoutMs;
+	if (typeof requested === "number") return requested;
+	// server.rpc_timeout_ms via gon; ignore a misconfigured 0/negative.
+	const configured = gon.get("rpc_timeout_ms");
+	return typeof configured === "number" && configured > 0 ? configured : RPC_TIMEOUT_MS;
 }
 
 export function renderMarkdown(raw: string): string {
@@ -284,7 +290,11 @@ export function renderMarkdown(raw: string): string {
 	return result.trimEnd();
 }
 
-export function sendRpc<T = unknown>(method: string, params: unknown): Promise<RpcResponse<T>> {
+export function sendRpc<T = unknown>(
+	method: string,
+	params: unknown,
+	timeout?: number | { timeoutMs?: number },
+): Promise<RpcResponse<T>> {
 	return new Promise((resolve) => {
 		if (!S.ws || S.ws.readyState !== WebSocket.OPEN) {
 			resolve({
@@ -300,12 +310,13 @@ export function sendRpc<T = unknown>(method: string, params: unknown): Promise<R
 			return;
 		}
 		const id = nextId();
-		const timeoutMs = rpcTimeoutMs();
+		const requestedTimeoutMs = typeof timeout === "number" ? timeout : timeout?.timeoutMs;
+		const requestTimeoutMs = rpcTimeoutMs(requestedTimeoutMs);
 		const timer = setTimeout(() => {
 			if (S.pending[id]) {
 				delete S.pending[id];
 				const message = `${localizedRpcErrorMessage({ code: "TIMEOUT", message: "RPC request timed out" })} (${method})`;
-				console.warn("RPC request timed out", { method, timeoutMs });
+				console.warn("RPC request timed out", { method, timeoutMs: requestTimeoutMs });
 				resolve({
 					ok: false,
 					error: {
@@ -314,7 +325,7 @@ export function sendRpc<T = unknown>(method: string, params: unknown): Promise<R
 					},
 				} as unknown as RpcResponse<T>);
 			}
-		}, timeoutMs);
+		}, requestTimeoutMs);
 		S.pending[id] = ((res: RpcResponse) => {
 			clearTimeout(timer);
 			resolve(res as RpcResponse<T>);

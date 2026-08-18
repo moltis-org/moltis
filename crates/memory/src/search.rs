@@ -1,15 +1,12 @@
-/// Hybrid search: combine vector similarity and keyword/FTS results.
-use std::collections::HashMap;
-
-#[cfg(feature = "metrics")]
-use moltis_metrics::{counter, histogram, labels, memory as mem_metrics};
-use tracing::instrument;
-
+/// Search result types. The `SearchResult` struct, citation formatting, and the
+/// backend-agnostic hybrid merge functions live here. Each store backend calls
+/// these shared merge functions rather than reimplementing them.
 use crate::{
-    config::{CitationMode, MergeStrategy},
-    embeddings::EmbeddingProvider,
-    store::MemoryStore,
+    config::CitationMode,
+    store::{MemoryStore, MergeStrategy},
 };
+
+use std::collections::HashMap;
 
 /// A search result with metadata.
 #[derive(Debug, Clone)]
@@ -41,7 +38,6 @@ impl SearchResult {
             CitationMode::On => true,
             CitationMode::Off => false,
             CitationMode::Auto => {
-                // Include citations if results come from multiple files
                 if results.len() <= 1 {
                     return false;
                 }
@@ -52,95 +48,35 @@ impl SearchResult {
     }
 }
 
-/// Perform hybrid search: embed the query, run vector + keyword search, merge with weights.
-#[instrument(skip(store, embedder), fields(query_len = query.len(), limit))]
-pub async fn hybrid_search(
-    store: &dyn MemoryStore,
-    embedder: &dyn EmbeddingProvider,
-    query: &str,
-    limit: usize,
-    vector_weight: f32,
-    keyword_weight: f32,
-    merge_strategy: MergeStrategy,
-) -> crate::error::Result<Vec<SearchResult>> {
-    #[cfg(feature = "metrics")]
-    let start = std::time::Instant::now();
-
-    #[cfg(feature = "metrics")]
-    counter!(mem_metrics::SEARCHES_TOTAL, labels::SEARCH_TYPE => "hybrid").increment(1);
-
-    let query_embedding = embedder.embed(query).await?;
-
-    let fetch_limit = limit * 3; // over-fetch for merging
-    let vector_results = store.vector_search(&query_embedding, fetch_limit).await?;
-    let keyword_results = store.keyword_search(query, fetch_limit).await?;
-
-    let merged = match merge_strategy {
-        MergeStrategy::Linear => merge_results(
-            &vector_results,
-            &keyword_results,
-            vector_weight,
-            keyword_weight,
-        ),
-        MergeStrategy::Rrf => merge_results_rrf(
-            &vector_results,
-            &keyword_results,
-            vector_weight,
-            keyword_weight,
-            limit,
-        ),
-    };
-
-    let mut final_results: Vec<SearchResult> = merged.into_iter().take(limit).collect();
-
-    // Fill in text for results that need it
-    for result in &mut final_results {
-        if result.text.is_empty()
-            && let Some(chunk) = store.get_chunk_by_id(&result.chunk_id).await?
-        {
-            result.text = chunk.text;
-        }
-    }
-
-    #[cfg(feature = "metrics")]
-    histogram!(mem_metrics::SEARCH_DURATION_SECONDS, labels::SEARCH_TYPE => "hybrid")
-        .record(start.elapsed().as_secs_f64());
-
-    Ok(final_results)
-}
-
 /// Keyword-only search when no embedding provider is available.
-#[instrument(skip(store), fields(query_len = query.len(), limit))]
+#[tracing::instrument(skip(store), fields(query_len = query.len(), limit))]
 pub async fn keyword_only_search(
     store: &dyn MemoryStore,
     query: &str,
     limit: usize,
 ) -> crate::error::Result<Vec<SearchResult>> {
     #[cfg(feature = "metrics")]
+    use moltis_metrics::memory as mem_metrics;
+
+    #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
     #[cfg(feature = "metrics")]
-    counter!(mem_metrics::SEARCHES_TOTAL, labels::SEARCH_TYPE => "keyword").increment(1);
+    moltis_metrics::counter!(mem_metrics::SEARCHES_TOTAL, moltis_metrics::labels::SEARCH_TYPE => "keyword").increment(1);
 
-    let mut results = store.keyword_search(query, limit).await?;
-
-    for result in &mut results {
-        if result.text.is_empty()
-            && let Some(chunk) = store.get_chunk_by_id(&result.chunk_id).await?
-        {
-            result.text = chunk.text;
-        }
-    }
+    let results = store
+        .hybrid_search(&[], query, 0.0, 1.0, MergeStrategy::Weighted, limit)
+        .await?;
 
     #[cfg(feature = "metrics")]
-    histogram!(mem_metrics::SEARCH_DURATION_SECONDS, labels::SEARCH_TYPE => "keyword")
+    moltis_metrics::histogram!(mem_metrics::SEARCH_DURATION_SECONDS, moltis_metrics::labels::SEARCH_TYPE => "keyword")
         .record(start.elapsed().as_secs_f64());
 
     Ok(results)
 }
 
-/// Merge vector and keyword results with weighted scores. Deduplicates by chunk_id.
-fn merge_results(
+/// Merge vector and keyword results with weighted scores. Deduplicates by `chunk_id`.
+pub fn merge_weighted(
     vector: &[SearchResult],
     keyword: &[SearchResult],
     vector_weight: f32,
@@ -174,20 +110,36 @@ fn merge_results(
     results
 }
 
+/// Fill in the `text` field for any results whose text is empty by fetching
+/// the full chunk from the store. Shared by all backends.
+pub async fn fill_missing_text(
+    store: &dyn MemoryStore,
+    results: &mut [SearchResult],
+) -> crate::error::Result<()> {
+    for result in results {
+        if result.text.is_empty()
+            && let Some(chunk) = store.get_chunk_by_id(&result.chunk_id).await?
+        {
+            result.text = chunk.text;
+        }
+    }
+    Ok(())
+}
+
 /// Merge results using Reciprocal Rank Fusion (RRF).
 ///
-/// RRF is rank-based and score-magnitude-agnostic, avoiding the sensitivity
-/// to differing score scales between vector cosine similarity and FTS5 ranks.
+/// RRF is rank-based and score-magnitude-agnostic, avoiding sensitivity to
+/// differing score scales between vector cosine similarity and FTS ranks.
 ///
 /// Formula per result: `score = Σ weight / (rrf_k + rank + 1)`
-fn merge_results_rrf(
+pub fn merge_rrf(
     vector: &[SearchResult],
     keyword: &[SearchResult],
     vector_weight: f32,
     keyword_weight: f32,
-    limit: usize,
+    rrf_k: u32,
 ) -> Vec<SearchResult> {
-    let rrf_k = (limit * 2) as f32;
+    let rrf_k = rrf_k as f32;
     let mut scores: HashMap<String, (f32, SearchResult)> = HashMap::new();
 
     for (rank, r) in vector.iter().enumerate() {
@@ -223,18 +175,6 @@ fn merge_results_rrf(
 mod tests {
     use super::*;
 
-    fn make_result(id: &str, score: f32) -> SearchResult {
-        SearchResult {
-            chunk_id: id.into(),
-            path: "test.md".into(),
-            source: "daily".into(),
-            start_line: 1,
-            end_line: 5,
-            score,
-            text: String::new(),
-        }
-    }
-
     fn make_result_with_path(id: &str, path: &str, text: &str) -> SearchResult {
         SearchResult {
             chunk_id: id.into(),
@@ -245,36 +185,6 @@ mod tests {
             score: 0.9,
             text: text.into(),
         }
-    }
-
-    #[test]
-    fn test_merge_results_deduplication() {
-        let vec_results = vec![make_result("c1", 0.9), make_result("c2", 0.5)];
-        let kw_results = vec![make_result("c1", 0.8), make_result("c3", 0.7)];
-
-        let merged = merge_results(&vec_results, &kw_results, 0.7, 0.3);
-
-        // c1 should have combined score: 0.9*0.7 + 0.8*0.3 = 0.63 + 0.24 = 0.87
-        let c1 = merged.iter().find(|r| r.chunk_id == "c1").unwrap();
-        assert!((c1.score - 0.87).abs() < 1e-5);
-
-        // c2: 0.5*0.7 = 0.35
-        let c2 = merged.iter().find(|r| r.chunk_id == "c2").unwrap();
-        assert!((c2.score - 0.35).abs() < 1e-5);
-
-        // c3: 0.7*0.3 = 0.21
-        let c3 = merged.iter().find(|r| r.chunk_id == "c3").unwrap();
-        assert!((c3.score - 0.21).abs() < 1e-5);
-
-        // Sorted descending
-        assert!(merged[0].score >= merged[1].score);
-        assert!(merged[1].score >= merged[2].score);
-    }
-
-    #[test]
-    fn test_merge_empty() {
-        let merged = merge_results(&[], &[], 0.7, 0.3);
-        assert!(merged.is_empty());
     }
 
     #[test]
@@ -297,7 +207,15 @@ mod tests {
 
     #[test]
     fn test_should_include_citations_on() {
-        let results = vec![make_result("c1", 0.9)];
+        let results = vec![SearchResult {
+            chunk_id: "c1".into(),
+            path: "test.md".into(),
+            source: "daily".into(),
+            start_line: 1,
+            end_line: 5,
+            score: 0.9,
+            text: String::new(),
+        }];
         assert!(SearchResult::should_include_citations(
             &results,
             CitationMode::On
@@ -322,7 +240,6 @@ mod tests {
             make_result_with_path("c1", "same.md", "text1"),
             make_result_with_path("c2", "same.md", "text2"),
         ];
-        // Same file, auto mode should NOT include citations
         assert!(!SearchResult::should_include_citations(
             &results,
             CitationMode::Auto
@@ -335,7 +252,6 @@ mod tests {
             make_result_with_path("c1", "file1.md", "text1"),
             make_result_with_path("c2", "file2.md", "text2"),
         ];
-        // Multiple files, auto mode SHOULD include citations
         assert!(SearchResult::should_include_citations(
             &results,
             CitationMode::Auto
@@ -349,82 +265,6 @@ mod tests {
             &results,
             CitationMode::Auto
         ));
-    }
-
-    #[test]
-    fn test_merge_rrf_deduplication() {
-        let vec_results = vec![make_result("c1", 0.9), make_result("c2", 0.5)];
-        let kw_results = vec![make_result("c1", 0.8), make_result("c3", 0.7)];
-
-        let merged = merge_results_rrf(&vec_results, &kw_results, 0.7, 0.3, 5);
-
-        // c1 should appear once with combined RRF score
-        let c1_count = merged.iter().filter(|r| r.chunk_id == "c1").count();
-        assert_eq!(c1_count, 1, "c1 should be deduplicated");
-
-        // All three unique chunks present
-        assert_eq!(merged.len(), 3);
-
-        // Sorted descending
-        for i in 0..merged.len() - 1 {
-            assert!(
-                merged[i].score >= merged[i + 1].score,
-                "results should be sorted descending by score"
-            );
-        }
-    }
-
-    #[test]
-    fn test_merge_rrf_empty() {
-        let merged = merge_results_rrf(&[], &[], 0.7, 0.3, 5);
-        assert!(merged.is_empty());
-    }
-
-    #[test]
-    fn test_merge_rrf_single_source() {
-        let vec_results = vec![make_result("c1", 0.9), make_result("c2", 0.5)];
-        let merged = merge_results_rrf(&vec_results, &[], 0.7, 0.3, 5);
-        assert_eq!(merged.len(), 2);
-        assert!(merged[0].score > merged[1].score);
-    }
-
-    #[test]
-    fn test_rrf_vs_linear_produce_different_rankings() {
-        // Construct inputs where RRF and linear produce different orderings.
-        // Vector: c1 has high score (0.95), c2 low (0.1)
-        // Keyword: c2 has high score (10.0 — FTS magnitudes differ), c1 low (0.5)
-        let vec_results = vec![make_result("c1", 0.95), make_result("c2", 0.1)];
-        let kw_results = vec![make_result("c2", 10.0), make_result("c1", 0.5)];
-
-        let linear = merge_results(&vec_results, &kw_results, 0.7, 0.3);
-        let rrf = merge_results_rrf(&vec_results, &kw_results, 0.7, 0.3, 5);
-
-        // Linear: c2 = 0.1*0.7 + 10.0*0.3 = 3.07, c1 = 0.95*0.7 + 0.5*0.3 = 0.815
-        // So linear puts c2 first.
-        assert_eq!(linear[0].chunk_id, "c2");
-
-        // RRF: c1 is rank 0 in vector (high weight), rank 1 in keyword
-        //      c2 is rank 1 in vector, rank 0 in keyword (low weight)
-        // With vector_weight=0.7 > keyword_weight=0.3, c1 should rank first.
-        assert_eq!(rrf[0].chunk_id, "c1");
-    }
-
-    #[test]
-    fn test_merge_strategy_from_str() {
-        assert_eq!("rrf".parse::<MergeStrategy>().unwrap(), MergeStrategy::Rrf);
-        assert_eq!(
-            "linear".parse::<MergeStrategy>().unwrap(),
-            MergeStrategy::Linear
-        );
-        assert_eq!(
-            "LINEAR".parse::<MergeStrategy>().unwrap(),
-            MergeStrategy::Linear
-        );
-        // Unknown defaults to RRF
-        assert_eq!(
-            "unknown".parse::<MergeStrategy>().unwrap(),
-            MergeStrategy::Rrf
-        );
     }
 
     #[test]
@@ -444,5 +284,180 @@ mod tests {
             "anything".parse::<CitationMode>().unwrap(),
             CitationMode::Auto
         );
+    }
+
+    #[test]
+    fn test_merge_strategy_from_str() {
+        // config::MergeStrategy (Rrf/Linear) — the user-facing enum parsed
+        // from moltis.toml. Distinct from store::MergeStrategy, which is the
+        // parameterized runtime enum without FromStr.
+        use crate::config::MergeStrategy;
+
+        assert_eq!("rrf".parse::<MergeStrategy>().unwrap(), MergeStrategy::Rrf);
+        assert_eq!("RRF".parse::<MergeStrategy>().unwrap(), MergeStrategy::Rrf);
+        assert_eq!(
+            "linear".parse::<MergeStrategy>().unwrap(),
+            MergeStrategy::Linear,
+        );
+        assert_eq!(
+            "LINEAR".parse::<MergeStrategy>().unwrap(),
+            MergeStrategy::Linear,
+        );
+        // Unknown strings default to Rrf (FromStr impl is infallible).
+        assert_eq!(
+            "unknown".parse::<MergeStrategy>().unwrap(),
+            MergeStrategy::Rrf,
+        );
+        assert_eq!("".parse::<MergeStrategy>().unwrap(), MergeStrategy::Rrf,);
+    }
+
+    // ── merge_weighted / merge_rrf ──
+    //
+    // Canonical coverage for the shared merge functions used by every store
+    // backend. Previously these were duplicated in `store_sqlite::tests` and
+    // `moltis_memory_zvec::store::tests`; both copies now defer to this
+    // module so the critical path is exercised by plain `cargo test
+    // -p moltis-memory` regardless of backend feature flags.
+
+    fn make_search_result(id: &str, score: f32) -> SearchResult {
+        SearchResult {
+            chunk_id: id.into(),
+            path: "test/path.md".into(),
+            source: "test".into(),
+            start_line: 1,
+            end_line: 5,
+            score,
+            text: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_merge_weighted_both_empty() {
+        assert!(merge_weighted(&[], &[], 0.7, 0.3).is_empty());
+    }
+
+    #[test]
+    fn test_merge_weighted_vector_only_preserves_order() {
+        let vec_results = vec![make_search_result("a", 0.9), make_search_result("b", 0.8)];
+        let merged = merge_weighted(&vec_results, &[], 0.7, 0.3);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].chunk_id, "a");
+        assert_eq!(merged[1].chunk_id, "b");
+        assert!(merged[0].score > merged[1].score);
+    }
+
+    #[test]
+    fn test_merge_weighted_keyword_only_preserves_order() {
+        let kw_results = vec![make_search_result("x", 0.5), make_search_result("y", 0.3)];
+        let merged = merge_weighted(&[], &kw_results, 0.7, 0.3);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].chunk_id, "x");
+        assert_eq!(merged[1].chunk_id, "y");
+        assert!(merged[0].score > merged[1].score);
+    }
+
+    #[test]
+    fn test_merge_weighted_deduplication_and_combined_scores() {
+        let vec_results = vec![make_search_result("c1", 0.9), make_search_result("c2", 0.5)];
+        let kw_results = vec![make_search_result("c1", 0.8), make_search_result("c3", 0.7)];
+
+        let merged = merge_weighted(&vec_results, &kw_results, 0.7, 0.3);
+
+        // c1 appears in both sources and must be deduplicated with the
+        // combined weighted score: 0.9*0.7 + 0.8*0.3 = 0.87.
+        assert_eq!(merged.len(), 3);
+        assert_eq!(
+            merged.iter().filter(|r| r.chunk_id == "c1").count(),
+            1,
+            "overlapping chunk must be deduplicated"
+        );
+        let c1 = merged.iter().find(|r| r.chunk_id == "c1").unwrap();
+        assert!((c1.score - 0.87).abs() < 1e-5);
+
+        // c2 only in vector: 0.5*0.7 = 0.35. c3 only in keyword: 0.7*0.3 = 0.21.
+        let c2 = merged.iter().find(|r| r.chunk_id == "c2").unwrap();
+        assert!((c2.score - 0.35).abs() < 1e-5);
+        let c3 = merged.iter().find(|r| r.chunk_id == "c3").unwrap();
+        assert!((c3.score - 0.21).abs() < 1e-5);
+
+        // Descending order.
+        assert!(merged[0].score >= merged[1].score);
+        assert!(merged[1].score >= merged[2].score);
+    }
+
+    #[test]
+    fn test_merge_rrf_both_empty() {
+        assert!(merge_rrf(&[], &[], 1.0, 1.0, 60).is_empty());
+    }
+
+    #[test]
+    fn test_merge_rrf_vector_only_preserves_order() {
+        let vec_results = vec![make_search_result("a", 0.0), make_search_result("b", 0.0)];
+        let merged = merge_rrf(&vec_results, &[], 1.0, 0.0, 60);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].chunk_id, "a");
+        assert_eq!(merged[1].chunk_id, "b");
+        assert!(merged[0].score > merged[1].score);
+    }
+
+    #[test]
+    fn test_merge_rrf_keyword_only_preserves_order() {
+        let kw_results = vec![make_search_result("k1", 0.0), make_search_result("k2", 0.0)];
+        let merged = merge_rrf(&[], &kw_results, 0.0, 1.0, 60);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].chunk_id, "k1");
+        assert_eq!(merged[1].chunk_id, "k2");
+        assert!(merged[0].score > merged[1].score);
+    }
+
+    #[test]
+    fn test_merge_rrf_deduplication_and_combined_score() {
+        let vec_results = vec![make_search_result("c1", 0.9), make_search_result("c2", 0.5)];
+        let kw_results = vec![make_search_result("c1", 0.8), make_search_result("c3", 0.7)];
+
+        let merged = merge_rrf(&vec_results, &kw_results, 0.7, 0.3, 5);
+
+        assert_eq!(merged.len(), 3);
+        assert_eq!(
+            merged.iter().filter(|r| r.chunk_id == "c1").count(),
+            1,
+            "overlapping chunk must be deduplicated"
+        );
+        // c1 ranks 0 in both lists, so it accumulates the max RRF score.
+        let c1 = merged.iter().find(|r| r.chunk_id == "c1").unwrap();
+        let expected_c1 = 0.7 / (5.0 + 0.0 + 1.0) + 0.3 / (5.0 + 0.0 + 1.0);
+        assert!((c1.score - expected_c1).abs() < 1e-6);
+
+        // Descending order.
+        for i in 0..merged.len() - 1 {
+            assert!(
+                merged[i].score >= merged[i + 1].score,
+                "results should be sorted descending by score"
+            );
+        }
+    }
+
+    #[test]
+    fn test_rrf_vs_weighted_produce_different_rankings() {
+        // Construct inputs where weighted (raw-score blend) and RRF
+        // (rank-based) must disagree. Vector strongly favors c1; keyword's
+        // huge raw score for c2 dominates the weighted blend but is neutral
+        // under RRF, which only sees ranks.
+        let vec_results = vec![
+            make_search_result("c1", 0.95),
+            make_search_result("c2", 0.1),
+        ];
+        let kw_results = vec![
+            make_search_result("c2", 10.0),
+            make_search_result("c1", 0.5),
+        ];
+
+        let weighted = merge_weighted(&vec_results, &kw_results, 0.7, 0.3);
+        let rrf = merge_rrf(&vec_results, &kw_results, 0.7, 0.3, 5);
+
+        // Weighted: c2 = 0.1*0.7 + 10.0*0.3 = 3.07 > c1 = 0.95*0.7 + 0.5*0.3 = 0.815.
+        assert_eq!(weighted[0].chunk_id, "c2");
+        // RRF: c1 is rank 0 in the higher-weighted vector list, so it wins.
+        assert_eq!(rrf[0].chunk_id, "c1");
     }
 }

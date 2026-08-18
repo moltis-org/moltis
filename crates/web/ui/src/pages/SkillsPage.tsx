@@ -1115,7 +1115,7 @@ function EnabledSkillsTable(): VNode | null {
 					Enabled Skills
 					<span className="ml-2 text-xs font-normal text-[var(--muted)]">
 						({filtered.length}
-						{filtered.length !== s.length ? ` of ${s.length}` : ""})
+						{filtered.length === s.length ? "" : ` of ${s.length}`})
 					</span>
 				</h3>
 				<input

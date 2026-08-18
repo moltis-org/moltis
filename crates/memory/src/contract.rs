@@ -7,7 +7,7 @@
 
 use crate::{
     schema::{ChunkRow, FileRow},
-    store::MemoryStore,
+    store::{MemoryStore, MergeStrategy},
 };
 
 fn test_file(path: &str) -> FileRow {
@@ -52,7 +52,16 @@ pub async fn ingest_then_search_returns_result(store: &dyn MemoryStore) -> anyho
     );
     store.upsert_chunks(&[chunk]).await?;
 
-    let results = store.keyword_search("quick brown fox", 10).await?;
+    let results = store
+        .hybrid_search(
+            &[],
+            "quick brown fox",
+            0.0,
+            1.0,
+            MergeStrategy::Weighted,
+            10,
+        )
+        .await?;
     assert!(
         !results.is_empty(),
         "keyword search must find ingested content"
@@ -80,7 +89,14 @@ pub async fn delete_removes_from_search(store: &dyn MemoryStore) -> anyhow::Resu
 
     // Verify it's searchable first.
     let before = store
-        .keyword_search("unique_deletable_content_xyz", 10)
+        .hybrid_search(
+            &[],
+            "unique_deletable_content_xyz",
+            0.0,
+            1.0,
+            MergeStrategy::Weighted,
+            10,
+        )
         .await?;
     assert!(
         !before.is_empty(),
@@ -90,7 +106,14 @@ pub async fn delete_removes_from_search(store: &dyn MemoryStore) -> anyhow::Resu
     // Delete and verify removal.
     store.delete_chunks_for_file("test/delete-me.md").await?;
     let after = store
-        .keyword_search("unique_deletable_content_xyz", 10)
+        .hybrid_search(
+            &[],
+            "unique_deletable_content_xyz",
+            0.0,
+            1.0,
+            MergeStrategy::Weighted,
+            10,
+        )
         .await?;
     assert!(
         after.is_empty(),
@@ -112,7 +135,16 @@ pub async fn keyword_search_finds_exact_match(store: &dyn MemoryStore) -> anyhow
     );
     store.upsert_chunks(&[chunk]).await?;
 
-    let results = store.keyword_search("supercalifragilistic", 10).await?;
+    let results = store
+        .hybrid_search(
+            &[],
+            "supercalifragilistic",
+            0.0,
+            1.0,
+            MergeStrategy::Weighted,
+            10,
+        )
+        .await?;
     assert!(
         !results.is_empty(),
         "keyword search must find exact keyword match"
@@ -123,7 +155,14 @@ pub async fn keyword_search_finds_exact_match(store: &dyn MemoryStore) -> anyhow
 /// Searching an empty store must return empty results (not error).
 pub async fn empty_search_returns_empty(store: &dyn MemoryStore) -> anyhow::Result<()> {
     let results = store
-        .keyword_search("nonexistent_content_that_cannot_match", 10)
+        .hybrid_search(
+            &[],
+            "nonexistent_content_that_cannot_match",
+            0.0,
+            1.0,
+            MergeStrategy::Weighted,
+            10,
+        )
         .await?;
     assert!(
         results.is_empty(),

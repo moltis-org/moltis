@@ -100,6 +100,11 @@ pub struct DiscordAccountConfig {
     /// User allowlist (Discord user IDs or usernames).
     pub allowlist: Vec<String>,
 
+    /// Exact sender IDs allowed to run privileged channel commands.
+    /// Empty grants nobody privileged access.
+    #[serde(default)]
+    pub operators: Vec<String>,
+
     /// Guild allowlist (Discord guild/server IDs).
     pub guild_allowlist: Vec<String>,
 
@@ -180,6 +185,7 @@ impl std::fmt::Debug for DiscordAccountConfig {
             .field("group_policy", &self.group_policy)
             .field("mention_mode", &self.mention_mode)
             .field("allowlist", &self.allowlist)
+            .field("operators", &self.operators)
             .field("guild_allowlist", &self.guild_allowlist)
             .field("model", &self.model)
             .field("model_provider", &self.model_provider)
@@ -267,6 +273,10 @@ impl ChannelConfigView for DiscordAccountConfig {
         &self.allowlist
     }
 
+    fn operators(&self) -> &[String] {
+        &self.operators
+    }
+
     fn group_allowlist(&self) -> &[String] {
         &self.guild_allowlist
     }
@@ -336,6 +346,7 @@ impl Default for DiscordAccountConfig {
             group_policy: GroupPolicy::Open,
             mention_mode: MentionMode::Mention,
             allowlist: Vec::new(),
+            operators: Vec::new(),
             guild_allowlist: Vec::new(),
             model: None,
             model_provider: None,
@@ -362,7 +373,7 @@ pub struct RedactedConfig<'a>(pub &'a DiscordAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 9; // always-present fields
+        let mut count = 10; // always-present fields
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
         count += c.agent_id.is_some() as usize;
@@ -381,6 +392,7 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("group_policy", &c.group_policy)?;
         s.serialize_field("mention_mode", &c.mention_mode)?;
         s.serialize_field("allowlist", &c.allowlist)?;
+        s.serialize_field("operators", &c.operators)?;
         s.serialize_field("guild_allowlist", &c.guild_allowlist)?;
         if c.model.is_some() {
             s.serialize_field("model", &c.model)?;

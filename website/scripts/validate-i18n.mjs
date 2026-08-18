@@ -151,6 +151,16 @@ for (const lang of LANGUAGES) {
     fail(`data-page mismatch: EN=[${enPages}] ${lang.code.toUpperCase()}=[${langPages}]`);
   }
 
+  const enCopyCommands = [...enDoc.querySelectorAll("button[data-copy-text]")]
+    .map((el) => el.dataset.copyText);
+  const langCopyCommands = [...doc.querySelectorAll("button[data-copy-text]")]
+    .map((el) => el.dataset.copyText);
+  if (JSON.stringify(enCopyCommands) === JSON.stringify(langCopyCommands)) {
+    pass(`Copy commands match (${enCopyCommands.length} buttons)`);
+  } else {
+    fail(`Copy commands differ: EN=[${enCopyCommands}] ${lang.code.toUpperCase()}=[${langCopyCommands}]`);
+  }
+
   // 5. Check data-tab attributes match
   const enTabs = [...enDoc.querySelectorAll("[data-tab]")]
     .map((el) => el.dataset.tab)

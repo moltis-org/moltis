@@ -64,7 +64,7 @@ Core checks:
 ```bash
 just format-check
 just release-preflight
-just test
+cargo test <changed_test_name>
 ```
 
 Changelog preview (for unreleased commits since the last tag):
@@ -83,10 +83,10 @@ For web UI changes, run e2e tests:
 
 ```bash
 just ui-e2e-install
-just ui-e2e
+npx playwright test e2e/specs/<changed-spec>.spec.js
 ```
 
-For CI-parity local validation (format, lint, test, e2e, lockfile, workflow security):
+For local validation with broad non-test checks and targeted changed/added tests:
 
 ```bash
 ./scripts/local-validate.sh
@@ -98,6 +98,12 @@ If you are working on an existing PR and have permissions to publish statuses:
 ./scripts/local-validate.sh <PR_NUMBER>
 ```
 
+To intentionally run full Rust and Playwright suites through local validation:
+
+```bash
+just local-validate-full <PR_NUMBER>
+```
+
 See also:
 
 - `docs/src/local-validation.md`
@@ -107,6 +113,8 @@ See also:
 
 - Rust changes should include unit/integration coverage.
 - Web UI changes should include Playwright coverage in `crates/web/ui/e2e/specs/`.
+- Local validation runs only changed or added Rust tests and Playwright specs;
+  CI covers broader suites.
 - Prefer real behavior tests over heavy mocking.
 - Keep tests deterministic and avoid timing-based flakiness.
 
@@ -127,8 +135,8 @@ See also:
 - [ ] Tests added or updated for changed behavior
 - [ ] `just format-check` passes
 - [ ] `just release-preflight` passes
-- [ ] `just test` passes
-- [ ] `just ui-e2e` run for web UI changes
+- [ ] Changed/added Rust tests pass
+- [ ] Changed/added Playwright specs pass for web UI changes
 - [ ] Commit messages follow conventional commit style
 - [ ] Full session/context shared (or clear explanation if partial)
 - [ ] Shared session/logs are redacted (no API keys, private keys, tokens, passwords)

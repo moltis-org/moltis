@@ -657,6 +657,14 @@ fn set_bot_presence(ctx: &Context, account_id: &str, config: &DiscordAccountConf
 
 #[async_trait]
 impl EventHandler for Handler {
+    async fn reaction_add(&self, ctx: Context, reaction: serenity::all::Reaction) {
+        self.emit_reaction_change(&ctx, &reaction, true).await;
+    }
+
+    async fn reaction_remove(&self, ctx: Context, reaction: serenity::all::Reaction) {
+        self.emit_reaction_change(&ctx, &reaction, false).await;
+    }
+
     async fn message(&self, ctx: Context, msg: Message) {
         // Ignore messages from bots (including ourselves).
         if msg.author.bot {
@@ -900,6 +908,7 @@ impl EventHandler for Handler {
         }
 
         let reply_to = ChannelReplyTarget {
+            ack_message_id: None,
             channel_type: ChannelType::Discord,
             account_id: self.account_id.clone(),
             chat_id: chat_id.clone(),
@@ -1018,7 +1027,7 @@ impl EventHandler for Handler {
 
         if let Some((latitude, longitude)) = extract_location_coordinates(&body) {
             let resolved = sink
-                .resolve_pending_location(&reply_to, latitude, longitude)
+                .resolve_pending_location(&reply_to, Some(&peer_id), latitude, longitude)
                 .await;
             if resolved {
                 info!(
@@ -1361,12 +1370,28 @@ pub async fn send_discord_message(
     text: &str,
     reference: Option<MessageId>,
 ) -> Result<Message, String> {
+    let mut sent = send_discord_message_all(http, channel_id, text, reference).await?;
+    // Always `Some` because `text` is non-empty and every chunk is sent.
+    sent.pop().ok_or_else(|| "no chunks produced".into())
+}
+
+/// Send `text`, returning every message the send produced.
+///
+/// Long replies are split across several Discord messages and a reader may
+/// react to any of them, so feedback attribution needs all the ids rather than
+/// just the last.
+pub async fn send_discord_message_all(
+    http: &serenity::http::Http,
+    channel_id: serenity::all::ChannelId,
+    text: &str,
+    reference: Option<MessageId>,
+) -> Result<Vec<Message>, String> {
     if text.is_empty() {
         return Err("empty message".into());
     }
 
     let chunks = chunk_message(text, 2000);
-    let mut last_msg = None;
+    let mut sent = Vec::with_capacity(chunks.len());
     for (i, chunk) in chunks.iter().enumerate() {
         let mut create = CreateMessage::new().content(*chunk);
         // Only the first chunk gets the reply reference.
@@ -1375,15 +1400,14 @@ pub async fn send_discord_message(
         {
             create = create.reference_message((channel_id, ref_id));
         }
-        last_msg = Some(
+        sent.push(
             channel_id
                 .send_message(http, create)
                 .await
                 .map_err(|e| format!("Discord send: {e}"))?,
         );
     }
-    // `last_msg` is always `Some` because `text` is non-empty.
-    last_msg.ok_or_else(|| "no chunks produced".into())
+    Ok(sent)
 }
 
 /// Split a message into chunks of at most `max_len` characters.

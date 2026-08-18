@@ -1,5 +1,8 @@
 // PWA utilities - service worker registration and install prompt handling
 
+import { initPresenceReporting } from "./push";
+import { navigate } from "./router";
+
 /** Extended Navigator interface for iOS standalone detection. */
 interface NavigatorStandalone extends Navigator {
 	standalone?: boolean;
@@ -12,12 +15,12 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
-let swRegistration: ServiceWorkerRegistration | null = null;
+const INSTALLED_DISPLAY_MODES = ["standalone", "window-controls-overlay", "fullscreen", "minimal-ui"] as const;
 
 // Check if running in standalone mode (installed PWA)
 export function isStandalone(): boolean {
 	return (
-		window.matchMedia("(display-mode: standalone)").matches ||
+		INSTALLED_DISPLAY_MODES.some((mode) => window.matchMedia(`(display-mode: ${mode})`).matches) ||
 		(navigator as NavigatorStandalone).standalone === true ||
 		document.referrer.includes("android-app://")
 	);
@@ -45,40 +48,14 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
 	}
 
 	try {
-		swRegistration = await navigator.serviceWorker.register("/sw.js", {
+		const registration = await navigator.serviceWorker.register("/sw.js", {
 			scope: "/",
 		});
-		console.log("Service worker registered:", swRegistration.scope);
-
-		// Handle updates
-		swRegistration.addEventListener("updatefound", () => {
-			const newWorker = swRegistration?.installing;
-			if (newWorker) {
-				newWorker.addEventListener("statechange", () => {
-					if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-						// New content is available, notify user
-						dispatchUpdateAvailable();
-					}
-				});
-			}
-		});
-
-		return swRegistration;
+		console.log("Service worker registered:", registration.scope);
+		return registration;
 	} catch (error) {
 		console.error("Service worker registration failed:", error);
 		return null;
-	}
-}
-
-// Dispatch custom event when update is available
-function dispatchUpdateAvailable(): void {
-	window.dispatchEvent(new CustomEvent("sw-update-available"));
-}
-
-// Skip waiting and activate new service worker
-export function activateUpdate(): void {
-	if (swRegistration?.waiting) {
-		swRegistration.waiting.postMessage({ type: "SKIP_WAITING" });
 	}
 }
 
@@ -117,7 +94,14 @@ export function canPromptInstall(): boolean {
 // Listen for notification clicks from service worker
 export function setupNotificationHandler(callback?: (url: string) => void): void {
 	navigator.serviceWorker?.addEventListener("message", (event: MessageEvent) => {
-		if (event.data && event.data.type === "notification-click" && callback) callback(event.data.url);
+		if (!(event.data && event.data.type === "notification-click" && callback)) return;
+		try {
+			callback(event.data.url);
+		} catch (error) {
+			console.error("Failed to route notification click:", error);
+			return;
+		}
+		event.ports[0]?.postMessage({ handled: true });
 	});
 }
 
@@ -146,32 +130,103 @@ export function getNotificationPermission(): NotificationPermission {
 	return Notification.permission;
 }
 
+/**
+ * Tell the service worker whether this app is running installed.
+ *
+ * The worker badges the app icon when a push arrives with no page open, but it
+ * cannot see display-mode itself and a badge is meaningless in a browser tab.
+ * Reporting it here — and having the worker persist it — is what lets a closed
+ * app still show a count.
+ */
+function reportInstalledState(installed = isStandalone()): void {
+	// A regular browser tab cannot prove the PWA was uninstalled. Never let one
+	// clear state previously reported by an installed window.
+	if (!installed) return;
+	navigator.serviceWorker?.ready
+		.then((registration) => {
+			registration.active?.postMessage({ type: "PWA_INSTALLED", installed: true });
+		})
+		.catch(() => {
+			// No worker yet; the next page load reports again.
+		});
+}
+
+/**
+ * Set or clear the installed-app badge from the page.
+ *
+ * The worker handles the app-closed case; this keeps a running app in sync
+ * immediately rather than waiting on the platform call.
+ */
+function setAppBadge(count: number): void {
+	const nav = navigator as Navigator & {
+		setAppBadge?: (count?: number) => Promise<void>;
+		clearAppBadge?: () => Promise<void>;
+	};
+	const update = count > 0 ? nav.setAppBadge?.(count) : nav.clearAppBadge?.();
+	update?.catch(() => {
+		// Badging is unsupported on most desktop browsers.
+	});
+}
+
+/** Apply badge counts pushed by the service worker. */
+function setupBadgeHandler(): void {
+	navigator.serviceWorker?.addEventListener("message", (event: MessageEvent) => {
+		if (event.data?.type !== "badge-count") return;
+		const count = typeof event.data.count === "number" ? event.data.count : 0;
+		setAppBadge(count);
+	});
+}
+
+function syncAppBadge(): void {
+	navigator.serviceWorker?.ready
+		.then((registration) => registration.active?.postMessage({ type: "SYNC_BADGE" }))
+		.catch(() => {
+			// The next visibility change retries once a worker is available.
+		});
+}
+
 // Initialize PWA features
 export function initPWA(): void {
 	syncStandaloneClass();
-	const hadControllerBeforeInit = Boolean(navigator.serviceWorker?.controller);
 
 	// Register service worker
 	registerServiceWorker();
 
-	// Handle notification clicks (navigate to URL)
+	// Report foreground presence so the server can skip push for the device
+	// that is already watching the session.
+	initPresenceReporting();
+
+	// The service worker mirrors badge updates here — see setAppBadge().
+	setupBadgeHandler();
+	syncAppBadge();
+
+	// Let the worker badge the icon while the app is closed.
+	reportInstalledState();
+	window.addEventListener("appinstalled", () => reportInstalledState(true));
+	const onDisplayModeChange = (): void => {
+		syncStandaloneClass();
+		reportInstalledState();
+	};
+	for (const mode of INSTALLED_DISPLAY_MODES) {
+		const media = window.matchMedia(`(display-mode: ${mode})`);
+		if (typeof media.addEventListener === "function") {
+			media.addEventListener("change", onDisplayModeChange);
+		} else if (typeof media.addListener === "function") {
+			media.addListener(onDisplayModeChange);
+		}
+	}
+
+	// Handle notification clicks — route in-place so the SPA keeps its state
+	// and open WebSocket instead of doing a full document reload.
 	setupNotificationHandler((url: string) => {
 		if (url && url !== window.location.pathname) {
-			window.location.href = url;
+			navigate(url);
 		}
 	});
 
-	// Listen for controller change (new SW activated)
-	navigator.serviceWorker?.addEventListener("controllerchange", () => {
-		// First service worker install should not force a reload.
-		if (!hadControllerBeforeInit) {
-			return;
+	document.addEventListener("visibilitychange", () => {
+		if (document.visibilityState === "visible") {
+			syncAppBadge();
 		}
-		// Avoid forced reload churn on onboarding; the app boot path will
-		// fetch fresh assets on the next navigation to the main UI.
-		if (window.location.pathname === "/onboarding") {
-			return;
-		}
-		window.location.reload();
 	});
 }

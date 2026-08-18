@@ -7,10 +7,6 @@ impl LiveSessionService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'key' parameter".to_string())?;
 
-        if key == "main" {
-            return Err("cannot delete the main session".into());
-        }
-
         let force = params
             .get("force")
             .and_then(|v| v.as_bool())
@@ -247,9 +243,16 @@ impl LiveSessionService {
             max.saturating_mul(10).min(200)
         };
 
+        let known_keys = self
+            .metadata
+            .list()
+            .await
+            .into_iter()
+            .map(|entry| entry.key)
+            .collect::<Vec<_>>();
         let results = self
             .store
-            .search(query, search_limit)
+            .search_known_keys(query, search_limit, &known_keys)
             .await
             .map_err(ServiceError::message)?;
 

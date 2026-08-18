@@ -141,6 +141,23 @@ rate_limit_max = 10
 }
 
 #[test]
+fn chat_context_command_is_known_field() {
+    let toml = r#"
+[chat]
+context_command = "echo context"
+"#;
+    let result = validate_toml_str(toml);
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.category == "unknown-field" && d.path == "chat.context_command"),
+        "chat.context_command should be accepted, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn schema_drift_guard() {
     let config = MoltisConfig::default();
     let toml_value = toml::Value::try_from(&config).expect("serialize default config");
@@ -246,6 +263,23 @@ terminal_enabled = false
     assert!(
         unknown.is_none(),
         "terminal_enabled should be a known field, got: {unknown:?}"
+    );
+}
+
+#[test]
+fn server_rpc_timeout_ms_is_known_field() {
+    let toml = r#"
+[server]
+rpc_timeout_ms = 8000
+"#;
+    let result = validate_toml_str(toml);
+    let unknown = result
+        .diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path.contains("rpc_timeout_ms"));
+    assert!(
+        unknown.is_none(),
+        "rpc_timeout_ms should be a known field, got: {unknown:?}"
     );
 }
 

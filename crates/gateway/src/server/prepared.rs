@@ -5,6 +5,20 @@ use crate::{auth_webauthn::SharedWebAuthnRegistry, methods::MethodRegistry, stat
 #[cfg(feature = "tailscale")]
 use crate::tailscale::TailscaleMode;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CoreStartupProfile {
+    #[default]
+    Server,
+    Headless,
+}
+
+impl CoreStartupProfile {
+    #[must_use]
+    pub fn is_headless(self) -> bool {
+        self == Self::Headless
+    }
+}
+
 /// Core gateway state produced by [`super::prepare_gateway_core`].
 ///
 /// Contains everything needed to build an HTTP server on top of the core, but
@@ -13,6 +27,10 @@ use crate::tailscale::TailscaleMode;
 pub struct PreparedGatewayCore {
     /// Shared gateway state (sessions, services, config, etc.).
     pub state: Arc<GatewayState>,
+    /// Concrete chat service used by non-HTTP surfaces with session-local tools.
+    pub live_chat: Arc<moltis_chat::LiveChatService>,
+    /// Configured MCP manager retained for readiness and graceful shutdown.
+    pub mcp_manager: Arc<moltis_mcp::McpManager>,
     /// RPC method registry.
     pub methods: Arc<MethodRegistry>,
     /// WebAuthn registry for passkey auth.

@@ -82,9 +82,10 @@ offered = ["telegram"]
 | `otp_self_approval` | no | `true` | Enable OTP self-approval for non-allowlisted DM users |
 | `otp_cooldown_secs` | no | `300` | Cooldown in seconds after 3 failed OTP attempts |
 | `stream_mode` | no | `"edit_in_place"` | Streaming mode: `"edit_in_place"` or `"off"` |
-| `edit_throttle_ms` | no | `300` | Minimum milliseconds between streaming edit updates |
-| `stream_notify_on_complete` | no | `false` | Send a completion notification after streaming finishes |
-| `stream_min_initial_chars` | no | `30` | Minimum characters before sending the first streamed message |
+| `edit_throttle_ms` | no | `2000` | Minimum milliseconds between streaming edit updates |
+| `stream_notify_on_complete` | no | `false` | Send the final answer as a notifying message instead of silently reusing the progress message |
+| `stream_min_initial_chars` | no | `30` | Minimum characters before sending the first temporary progress message |
+| `stream_progress_max_chars` | no | `3500` | Maximum recent progress characters kept visible in the temporary streamed message |
 
 ```admonish important title="Allowlist values are strings"
 All allowlist entries must be **strings**, even for numeric Telegram user IDs.
@@ -112,7 +113,7 @@ model_provider = "anthropic"
 agent_id = "research"
 otp_self_approval = true
 stream_mode = "edit_in_place"
-edit_throttle_ms = 300
+edit_throttle_ms = 2000
 ```
 
 ### Per-User and Per-Channel Model and Agent Overrides
@@ -210,10 +211,18 @@ the web UI.
 
 ## Streaming
 
-By default (`stream_mode = "edit_in_place"`), the bot sends an initial message
-after `stream_min_initial_chars` characters (default: 30) and then edits it
-in place as tokens arrive, throttled to at most one edit every
-`edit_throttle_ms` milliseconds (default: 300).
+By default (`stream_mode = "edit_in_place"`), Telegram shows temporary progress
+while a turn is running. The bot sends a silent progress message after
+`stream_min_initial_chars` characters (default: 30), edits that progress message
+at most once every `edit_throttle_ms` milliseconds (default: 2000), and keeps only
+the latest `stream_progress_max_chars` progress characters visible.
+
+When the final answer is ready, the progress message is cleaned up or reused and
+the final answer is delivered separately from intermediate progress. With
+`stream_notify_on_complete = false` (default), Moltis may silently reuse the
+existing progress message for the final answer. With `stream_notify_on_complete =
+true`, Moltis deletes the progress message where possible and sends the final
+answer as a new notifying message.
 
 ## Session Commands
 

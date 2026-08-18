@@ -111,6 +111,10 @@ pub async fn start_polling(
                     AllowedUpdate::Message,
                     AllowedUpdate::EditedMessage,
                     AllowedUpdate::CallbackQuery,
+                    // Telegram only delivers reaction updates when they are
+                    // explicitly requested; without this the bot never learns
+                    // that anyone reacted.
+                    AllowedUpdate::MessageReaction,
                 ])
                 .await;
 
@@ -157,6 +161,10 @@ pub async fn start_polling(
                                         "error handling telegram edited message"
                                     );
                                 }
+                            },
+                            UpdateKind::MessageReaction(reaction) => {
+                                handlers::handle_message_reaction(reaction, &aid, &poll_accounts)
+                                    .await;
                             },
                             UpdateKind::CallbackQuery(query) => {
                                 debug!(

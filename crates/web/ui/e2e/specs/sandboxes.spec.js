@@ -115,6 +115,76 @@ test.describe("Sandboxes page – Shared home settings", () => {
 	});
 });
 
+test.describe("Sandboxes page – Backend recommendations", () => {
+	test.afterEach(async ({ page }) => {
+		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => undefined);
+	});
+
+	test("shows Apple Container install hint when unavailable on macOS", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+
+		await page.addInitScript(() => {
+			var m = window.__MOLTIS__ || {};
+			m.sandbox = Object.assign(m.sandbox || {}, { backend: "docker", os: "macos" });
+			window.__MOLTIS__ = m;
+		});
+
+		await page.route("**/api/gon*", async (route) => {
+			var response = await route.fetch();
+			var json = await response.json();
+			json.sandbox = Object.assign(json.sandbox || {}, { backend: "docker", os: "macos" });
+			return route.fulfill({ response, json });
+		});
+
+		await page.route("**/api/bootstrap*", async (route) => {
+			var response = await route.fetch();
+			var json = await response.json();
+			json.sandbox = Object.assign(json.sandbox || {}, { backend: "docker", os: "macos" });
+			return route.fulfill({ response, json });
+		});
+
+		await page.route("**/api/sandbox/available-backends", (route, request) => {
+			if (request.method() === "GET") {
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({
+						default: "auto",
+						backends: [
+							{ id: "docker", label: "Docker", kind: "local", available: true },
+							{
+								id: "apple-container",
+								label: "Apple Container (VM)",
+								kind: "local",
+								available: false,
+								installHint:
+									"Recommended on macOS. Apple Container is VM-isolated and much faster than Docker for sandbox startup.",
+								installCommand: "brew install container && container system start",
+							},
+							{ id: "restricted-host", label: "Restricted Host (no isolation)", kind: "local", available: true },
+						],
+					}),
+				});
+			}
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/settings/sandboxes");
+
+		const appleButton = page.getByRole("button", { name: /Apple Container \(VM\).*install/ });
+		await expect(appleButton).toBeVisible();
+		await expect(appleButton).toBeDisabled();
+		await expect(
+			page.getByText(
+				"Recommended on macOS. Apple Container is VM-isolated and much faster than Docker for sandbox startup.",
+			),
+		).toBeVisible();
+		await expect(page.getByText("brew install container && container system start", { exact: true })).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+});
+
 /**
  * Make the sandbox runtime appear available in the e2e environment.
  *

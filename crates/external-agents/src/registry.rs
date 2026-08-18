@@ -132,8 +132,9 @@ impl ExternalAgentRegistry {
             for kind in transport.supported_kinds() {
                 infos.push(ExternalAgentInfo {
                     kind: *kind,
-                    name: kind.as_str().to_string(),
+                    name: kind.display_name().to_string(),
                     installed,
+                    is_acp: kind.is_acp(),
                     version: None,
                 });
             }
@@ -323,6 +324,7 @@ mod tests {
 
     struct FakeTransport {
         tracker: Arc<SessionTracker>,
+        kind: AgentTransportKind,
     }
 
     #[async_trait]
@@ -336,7 +338,7 @@ mod tests {
         }
 
         fn supported_kinds(&self) -> &[AgentTransportKind] {
-            &[AgentTransportKind::ClaudeCode]
+            std::slice::from_ref(&self.kind)
         }
 
         async fn start_session(
@@ -390,6 +392,7 @@ mod tests {
         let mut registry = ExternalAgentRegistry::new();
         registry.register(Box::new(FakeTransport {
             tracker: Arc::new(SessionTracker::default()),
+            kind: AgentTransportKind::ClaudeCode,
         }));
 
         assert!(registry.has_kind(AgentTransportKind::ClaudeCode));
@@ -418,6 +421,7 @@ mod tests {
         let mut registry = ExternalAgentRegistry::new();
         registry.register(Box::new(FakeTransport {
             tracker: Arc::clone(&tracker),
+            kind: AgentTransportKind::ClaudeCode,
         }));
 
         let spec = ExternalAgentSpec::new(AgentTransportKind::ClaudeCode);
@@ -442,5 +446,35 @@ mod tests {
         assert_eq!(tracker.send_prompt_calls.load(Ordering::SeqCst), 1);
         assert_eq!(tracker.is_alive_calls.load(Ordering::SeqCst), 1);
         assert_eq!(tracker.shutdown_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn registry_keeps_named_acp_kinds_distinct() {
+        let mut registry = ExternalAgentRegistry::new();
+        registry.register(Box::new(FakeTransport {
+            tracker: Arc::new(SessionTracker::default()),
+            kind: AgentTransportKind::AcpCopilot,
+        }));
+        registry.register(Box::new(FakeTransport {
+            tracker: Arc::new(SessionTracker::default()),
+            kind: AgentTransportKind::AcpClaude,
+        }));
+
+        assert!(registry.has_kind(AgentTransportKind::AcpCopilot));
+        assert!(registry.has_kind(AgentTransportKind::AcpClaude));
+        assert!(!registry.has_kind(AgentTransportKind::AcpCodex));
+
+        let agents = registry.list_agents().await;
+        let copilot_is_acp = agents
+            .iter()
+            .find(|agent| agent.kind == AgentTransportKind::AcpCopilot)
+            .map(|agent| agent.is_acp);
+        assert_eq!(copilot_is_acp, Some(true));
+        let names = agents
+            .into_iter()
+            .map(|agent| agent.name)
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"ACP: Copilot".to_string()));
+        assert!(names.contains(&"ACP: Claude".to_string()));
     }
 }

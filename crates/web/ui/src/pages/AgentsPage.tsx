@@ -855,7 +855,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }: AgentCa
 	const workspacePromptFiles = Array.isArray(agent.workspace_prompt_files) ? agent.workspace_prompt_files : [];
 	const truncatedWorkspacePromptFiles = workspacePromptFiles.filter((file) => file?.truncated);
 	return (
-		<div className="backend-card">
+		<div className="backend-card" data-agent-id={agent.id}>
 			<div className="flex items-center justify-between">
 				<div className="flex items-center gap-2">
 					{agent.emoji && <span className="text-lg">{agent.emoji}</span>}

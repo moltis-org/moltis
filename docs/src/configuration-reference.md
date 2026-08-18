@@ -77,6 +77,8 @@
   - [`mcp`](#mcp)
   - [`mcp.servers.<name>`](#mcpserversname)
   - [`mcp.servers.<name>.oauth`](#mcpserversnameoauth)
+  - [`external_agents`](#external-agents)
+  - [`external_agents.agents.<kind>`](#external-agentsagentskind)
 - **Memory**
   - [`memory`](#memory)
   - [`memory.qmd`](#memoryqmd)
@@ -132,6 +134,7 @@ Gateway server configuration.
 | `log_buffer_size` | integer | `1000` | Maximum number of log entries kept in the in-memory ring buffer. Older entries are persisted to disk. Increase for busy servers, decrease for memory-constrained devices. |
 | `update_releases_url` | optional string | — | URL of the releases manifest (`releases.json`) used by the update checker. Defaults to `https://www.moltis.org/releases.json` when unset. |
 | `db_pool_max_connections` | integer | `5` | Maximum number of SQLite pool connections. Lower values reduce memory usage for personal gateways. |
+| `rpc_timeout_ms` | integer | `5000` | Milliseconds the web UI waits for a WebSocket RPC reply before failing with a `TIMEOUT` error. |
 | `shiki_cdn_url` | optional string | — | Base URL for the Shiki syntax-highlighting library loaded by the web UI. Defaults to `https://esm.sh/shiki@3.2.1?bundle` when unset. |
 | `terminal_enabled` | bool | `true` | Enable or disable the host terminal in the web UI. Set to `false` to prevent an unsandboxed shell. The `MOLTIS_TERMINAL_DISABLED` env var (`1` or `true`) takes precedence. |
 
@@ -285,6 +288,7 @@ User profile collected during onboarding.
 | `message_queue_mode` | enum: `followup`, `collect` | `"followup"` | How to handle messages that arrive while an agent run is active. `followup` queues each message and replays them one-by-one; `collect` concatenates and processes as a single message. |
 | `prompt_memory_mode` | enum: `live-reload`, `frozen-at-session-start` | `"live-reload"` | How `MEMORY.md` is loaded into the prompt for an ongoing session. `live-reload` reloads from disk before each turn; `frozen-at-session-start` freezes the initial content for the session lifetime. |
 | `workspace_file_max_chars` | integer | `32000` | Maximum characters from each workspace prompt file (`AGENTS.md`, `TOOLS.md`). |
+| `context_command` | optional string | `null` | Command run before each turn to generate additional prompt context. Stdout is appended to normal chat project context and external-agent context snapshots. Runs in the session worktree or bound project directory when a project is active, otherwise the server's working directory. Times out after 30s; stdout is capped at 32,000 bytes (truncated beyond that). |
 | `priority_models` | array | `[]` | Preferred model IDs to show first in selectors (full or raw model IDs). |
 | `allowed_models` | array | `[]` | ⚠️ **Deprecated.** Legacy model allowlist kept for backward compatibility; currently ignored (model visibility is provider-driven). Will be removed in a future release. |
 
@@ -706,6 +710,34 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 ---
 
+### `external_agents`
+
+**Struct:** `ExternalAgentsConfig`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the external CLI agent bridge. |
+| `agents` | map | `{}` | Per-agent configuration keyed by agent kind, such as `claude-code` or `codex`. |
+
+
+### `external_agents.agents.<kind>`
+
+**Struct:** `ExternalAgentConfig`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `binary` | optional string | `null` | Override the CLI binary path. |
+| `args` | array of strings | `[]` | Override CLI arguments for the external agent runtime. |
+| `models` | array of strings | `[]` | Optional model choices shown in `/model`; selected values are passed to the external CLI runtime. |
+| `efforts` | array of strings | `[]` | Optional thinking/reasoning effort choices shown in `/model`; selected values are passed to runtimes that support effort. |
+| `env` | map | `{}` | Environment variables for this external agent runtime. |
+| `working_dir` | optional string | `null` | Working directory for this external agent runtime. |
+| `timeout_secs` | optional integer | `null` | Timeout for external agent startup or turns. |
+| `use_tmux` | optional bool | `null` | Force tmux-backed runtime when supported. |
+
+
+---
+
 ## Memory
 
 
@@ -718,7 +750,7 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | `style` | enum (`hybrid`, `prompt-only`, `search-only`, `off`) | `"hybrid"` | High-level memory orchestration style. |
 | `agent_write_mode` | enum (`hybrid`, `prompt-only`, `search-only`, `off`) | `"hybrid"` | Where agent-authored memory writes are allowed to land. |
 | `user_profile_write_mode` | enum (`explicit-and-auto`, `explicit-only`, `off`) | `"explicit-and-auto"` | How Moltis writes the managed `USER.md` profile surface. |
-| `backend` | enum (`builtin`, `qmd`) | `"builtin"` | Memory backend used for search, retrieval, and indexing. |
+| `backend` | enum (`builtin`, `qmd`, `zvec`) | `"builtin"` | Memory backend used for search, retrieval, and indexing. |
 | `provider` | optional enum (`local`, `ollama`, `openai`, `custom`) | *auto-detect* | Embedding provider. Alias: `embedding_provider`. |
 | `disable_rag` | bool | `false` | Disable RAG embeddings and force keyword-only memory search. |
 | `base_url` | optional string | — | Base URL for the embedding API. Alias: `embedding_base_url`. |
@@ -729,6 +761,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | `search_merge_strategy` | enum (`rrf`, `linear`) | `"rrf"` | Merge strategy for hybrid search results. |
 | `session_export` | enum (`off`, `on-new-or-reset`) | `"on-new-or-reset"` | How session transcripts are exported into searchable memory. |
 | `qmd` | map (see `memory.qmd`) | `{}` | QMD-specific configuration (only used when backend = `"qmd"`). |
+| `db_path` | optional string | — | Zvec collection directory path (only used when `backend = "zvec"`). Resolved relative to the Moltis data directory. |
+| `vector_weight` | float | `0.7` | Weight for vector similarity in hybrid search (0.0–1.0). |
+| `keyword_weight` | float | `0.3` | Weight for keyword/FTS similarity in hybrid search (0.0–1.0). |
 
 
 ### `memory.qmd`

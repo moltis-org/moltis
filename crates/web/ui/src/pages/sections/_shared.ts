@@ -22,6 +22,7 @@ export interface IdentityData {
 }
 
 import type { RpcResponse } from "../../types/rpc";
+
 export type { RpcResponse };
 
 export interface SectionItem {

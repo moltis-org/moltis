@@ -10,6 +10,8 @@ use {
     serde::{Deserialize, Serialize, ser::SerializeStruct},
 };
 
+pub(crate) const DEFAULT_STREAM_PROGRESS_MAX_CHARS: usize = 3500;
+
 /// Per-channel model/provider override.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChannelOverride {
@@ -63,6 +65,11 @@ pub struct TelegramAccountConfig {
     /// User/peer allowlist for DMs.
     pub allowlist: Vec<String>,
 
+    /// Exact sender IDs allowed to run privileged channel commands.
+    /// Empty grants nobody privileged access.
+    #[serde(default)]
+    pub operators: Vec<String>,
+
     /// Group/chat ID allowlist.
     pub group_allowlist: Vec<String>,
 
@@ -79,6 +86,10 @@ pub struct TelegramAccountConfig {
     /// Minimum number of characters to accumulate before sending the first
     /// streamed message. Helps avoid early push notifications with tiny drafts.
     pub stream_min_initial_chars: usize,
+
+    /// Maximum number of recent progress characters to show in the temporary
+    /// progress message. Older progress is discarded from the visible tail.
+    pub stream_progress_max_chars: usize,
 
     /// Default model ID for this bot's sessions (e.g. "claude-sonnet-4-5-20250929").
     /// When set, channel messages use this model instead of the first registered provider.
@@ -132,7 +143,7 @@ pub struct RedactedConfig<'a>(pub &'a TelegramAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 13; // always-present fields
+        let mut count = 15; // always-present fields
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
         count += c.agent_id.is_some() as usize;
@@ -144,11 +155,13 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("group_policy", &c.group_policy)?;
         s.serialize_field("mention_mode", &c.mention_mode)?;
         s.serialize_field("allowlist", &c.allowlist)?;
+        s.serialize_field("operators", &c.operators)?;
         s.serialize_field("group_allowlist", &c.group_allowlist)?;
         s.serialize_field("stream_mode", &c.stream_mode)?;
         s.serialize_field("edit_throttle_ms", &c.edit_throttle_ms)?;
         s.serialize_field("stream_notify_on_complete", &c.stream_notify_on_complete)?;
         s.serialize_field("stream_min_initial_chars", &c.stream_min_initial_chars)?;
+        s.serialize_field("stream_progress_max_chars", &c.stream_progress_max_chars)?;
         if c.model.is_some() {
             s.serialize_field("model", &c.model)?;
         }
@@ -174,6 +187,10 @@ impl Serialize for RedactedConfig<'_> {
 impl ChannelConfigView for TelegramAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.allowlist
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {
@@ -245,11 +262,13 @@ impl Default for TelegramAccountConfig {
             group_policy: GroupPolicy::default(),
             mention_mode: MentionMode::default(),
             allowlist: Vec::new(),
+            operators: Vec::new(),
             group_allowlist: Vec::new(),
             stream_mode: StreamMode::default(),
-            edit_throttle_ms: 300,
+            edit_throttle_ms: 2000,
             stream_notify_on_complete: false,
             stream_min_initial_chars: 30,
+            stream_progress_max_chars: DEFAULT_STREAM_PROGRESS_MAX_CHARS,
             model: None,
             model_provider: None,
             agent_id: None,
@@ -276,9 +295,10 @@ mod tests {
         assert_eq!(cfg.group_policy, GroupPolicy::Open);
         assert_eq!(cfg.mention_mode, MentionMode::Mention);
         assert_eq!(cfg.stream_mode, StreamMode::EditInPlace);
-        assert_eq!(cfg.edit_throttle_ms, 300);
+        assert_eq!(cfg.edit_throttle_ms, 2000);
         assert!(!cfg.stream_notify_on_complete);
         assert_eq!(cfg.stream_min_initial_chars, 30);
+        assert_eq!(cfg.stream_progress_max_chars, 3500);
     }
 
     #[test]
@@ -289,6 +309,7 @@ mod tests {
             "stream_mode": "off",
             "stream_notify_on_complete": true,
             "stream_min_initial_chars": 42,
+            "stream_progress_max_chars": 1234,
             "allowlist": ["user1", "user2"]
         }"#;
         let cfg: TelegramAccountConfig = serde_json::from_str(json).unwrap();
@@ -297,6 +318,7 @@ mod tests {
         assert_eq!(cfg.stream_mode, StreamMode::Off);
         assert!(cfg.stream_notify_on_complete);
         assert_eq!(cfg.stream_min_initial_chars, 42);
+        assert_eq!(cfg.stream_progress_max_chars, 1234);
         assert_eq!(cfg.allowlist, vec!["user1", "user2"]);
         // defaults for unspecified fields
         assert_eq!(cfg.group_policy, GroupPolicy::Open);
@@ -404,6 +426,7 @@ mod tests {
             redacted["stream_mode"],
             serde_json::to_value(&cfg.stream_mode).unwrap()
         );
+        assert_eq!(redacted["stream_progress_max_chars"], 3500);
 
         // Storage path still exposes the token
         let storage = serde_json::to_value(&cfg).unwrap();

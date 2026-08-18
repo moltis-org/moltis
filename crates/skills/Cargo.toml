@@ -5,6 +5,8 @@ version.workspace = true
 
 [dependencies]
 async-trait           = { workspace = true }
+cap-fs-ext            = { workspace = true }
+cap-std               = { workspace = true }
 flate2                = { workspace = true }
 include_dir           = { optional = true, workspace = true }
 moltis-config         = { workspace = true }

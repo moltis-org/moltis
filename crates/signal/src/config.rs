@@ -28,6 +28,11 @@ pub struct SignalAccountConfig {
     pub dm_policy: DmPolicy,
     /// Signal identifiers allowed to send DMs.
     pub allowlist: Vec<String>,
+
+    /// Exact sender IDs allowed to run privileged channel commands.
+    /// Empty grants nobody privileged access.
+    #[serde(default)]
+    pub operators: Vec<String>,
     /// Group access policy.
     pub group_policy: GroupPolicy,
     /// Signal group IDs allowed when `group_policy = "allowlist"`.
@@ -62,6 +67,7 @@ impl Default for SignalAccountConfig {
             http_url: DEFAULT_HTTP_URL.to_string(),
             dm_policy: DmPolicy::Allowlist,
             allowlist: Vec::new(),
+            operators: Vec::new(),
             group_policy: GroupPolicy::Disabled,
             group_allowlist: Vec::new(),
             mention_mode: MentionMode::Mention,
@@ -111,6 +117,10 @@ fn normalize_http_url(raw: &str) -> String {
 impl ChannelConfigView for SignalAccountConfig {
     fn allowlist(&self) -> &[String] {
         &self.allowlist
+    }
+
+    fn operators(&self) -> &[String] {
+        &self.operators
     }
 
     fn group_allowlist(&self) -> &[String] {

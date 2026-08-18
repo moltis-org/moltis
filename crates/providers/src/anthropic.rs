@@ -10,8 +10,8 @@ use {async_trait::async_trait, futures::StreamExt, secrecy::ExposeSecret, tokio_
 use tracing::{debug, trace, warn};
 
 use moltis_agents::model::{
-    AgentToolControls, ChatMessage, CompletionResponse, ContentPart, LlmProvider, StreamEvent,
-    ToolCall, ToolChoice, Usage, UserContent,
+    AgentToolControls, ChatMessage, CompletionResponse, ContentPart, InputTokenAccounting,
+    LlmProvider, StreamEvent, ToolCall, ToolChoice, Usage, UserContent,
 };
 
 pub struct AnthropicProvider {
@@ -67,6 +67,10 @@ impl AnthropicProvider {
             context_window_global: HashMap::new(),
             context_window_provider: HashMap::new(),
         }
+    }
+
+    fn messages_url(&self) -> String {
+        format!("{}/v1/messages", self.base_url.trim_end_matches('/'))
     }
 
     #[must_use]
@@ -137,11 +141,14 @@ impl AnthropicProvider {
         }
 
         debug!(model = %self.model, "anthropic probe request");
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "anthropic probe request body");
+        trace!(
+            body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()),
+            "anthropic probe request body prepared"
+        );
 
         let http_resp = self
             .client
-            .post(format!("{}/v1/messages", self.base_url))
+            .post(self.messages_url())
             .header("x-api-key", self.api_key.expose_secret())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -153,7 +160,7 @@ impl AnthropicProvider {
         if !status.is_success() {
             let retry_after_ms = retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
-            warn!(status = %status, body = %body_text, "anthropic probe API error");
+            warn!(status = %status, body_bytes = body_text.len(), "anthropic probe API error");
             anyhow::bail!(
                 "{}",
                 with_retry_after_marker(
@@ -775,11 +782,14 @@ impl LlmProvider for AnthropicProvider {
             reasoning_effort = ?self.reasoning_effort,
             "anthropic complete request"
         );
-        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "anthropic request body");
+        trace!(
+            body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()),
+            "anthropic request body prepared"
+        );
 
         let http_resp = self
             .client
-            .post(format!("{}/v1/messages", self.base_url))
+            .post(self.messages_url())
             .header("x-api-key", self.api_key.expose_secret())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -791,7 +801,7 @@ impl LlmProvider for AnthropicProvider {
         if !status.is_success() {
             let retry_after_ms = retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
-            warn!(status = %status, body = %body_text, "anthropic API error");
+            warn!(status = %status, body_bytes = body_text.len(), "anthropic API error");
             anyhow::bail!(
                 "{}",
                 with_retry_after_marker(
@@ -802,7 +812,10 @@ impl LlmProvider for AnthropicProvider {
         }
 
         let resp = http_resp.json::<serde_json::Value>().await?;
-        trace!(response = %resp, "anthropic raw response");
+        trace!(
+            response_bytes = serde_json::to_vec(&resp).map_or(0, |value| value.len()),
+            "anthropic response received"
+        );
 
         let content = resp["content"].as_array().cloned().unwrap_or_default();
 
@@ -819,16 +832,17 @@ impl LlmProvider for AnthropicProvider {
 
         let tool_calls = parse_tool_calls(&content);
 
-        let usage = Usage {
-            input_tokens: resp["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
-            output_tokens: resp["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens: resp["usage"]["cache_read_input_tokens"]
+        let usage = Usage::from_input_tokens(
+            InputTokenAccounting::Exclusive,
+            resp["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
+            resp["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
+            resp["usage"]["cache_read_input_tokens"]
                 .as_u64()
                 .unwrap_or(0) as u32,
-            cache_write_tokens: resp["usage"]["cache_creation_input_tokens"]
+            resp["usage"]["cache_creation_input_tokens"]
                 .as_u64()
                 .unwrap_or(0) as u32,
-        };
+        );
 
         if usage.cache_read_tokens > 0 || usage.cache_write_tokens > 0 {
             debug!(
@@ -922,11 +936,11 @@ impl LlmProvider for AnthropicProvider {
                 reasoning_effort = ?self.reasoning_effort,
                 "anthropic stream_with_tools request"
             );
-            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "anthropic stream request body");
+            trace!(body_bytes = serde_json::to_vec(&body).map_or(0, |value| value.len()), "anthropic stream request body prepared");
 
             let resp = match self
                 .client
-                .post(format!("{}/v1/messages", self.base_url))
+                .post(self.messages_url())
                 .header("x-api-key", self.api_key.expose_secret())
                 .header("anthropic-version", "2023-06-01")
                 .header("content-type", "application/json")
@@ -1049,12 +1063,13 @@ impl LlmProvider for AnthropicProvider {
                                         }
                                     }
                                     "message_stop" => {
-                                        yield StreamEvent::Done(Usage {
+                                        yield StreamEvent::Done(Usage::from_input_tokens(
+                                            InputTokenAccounting::Exclusive,
                                             input_tokens,
                                             output_tokens,
                                             cache_read_tokens,
                                             cache_write_tokens,
-                                        });
+                                        ));
                                         return;
                                     }
                                     "error" => {
