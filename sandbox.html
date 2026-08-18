@@ -131,6 +131,59 @@ podman run --rm docker.io/library/ubuntu echo &#x22;hello from podman&#x22;"><co
 <p>Once installed, restart <code>moltis gateway</code> — the startup banner will show
 <code>sandbox: podman backend</code>. All Docker hardening flags (see below) apply
 identically to Podman containers.</p>
+<p>If Moltis runs under systemd, rootless Podman must be allowed to create user
+namespaces and access the Moltis user’s container storage. For the bundled
+system unit, install <code>deploy/moltis-podman.conf</code> as
+<code>/etc/systemd/system/moltis.service.d/podman.conf</code>. It disables
+<code>NoNewPrivileges</code> and places Podman’s home and runtime state outside the paths
+hidden by <code>ProtectHome</code>. Without those accommodations, Podman can fail with
+<code>cannot clone: Operation not permitted</code> and <code>Error: cannot re-exec process</code> even
+when the same <code>podman run ...</code> command works from an interactive shell.</p>
+<p>Moltis supports using Podman as the sandbox backend. Running <code>podman run ...</code>
+from inside an already sandboxed Moltis container is different and is blocked by
+the default hardened sandbox, which drops capabilities and sets
+<code>no-new-privileges</code> inside the container.</p>
+<p>Two mutually exclusive escape hatches are available when you intentionally want
+container commands inside a Podman sandbox. Both require <code>backend = "podman"</code>;
+host socket passthrough is supported only on Linux:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[tools.exec.sandbox]
+backend = &#x22;podman&#x22;
+
+# Use the host Podman service from inside the sandbox.
+# This mounts the host Podman socket and sets CONTAINER_HOST/DOCKER_HOST.
+allow_host_podman = true
+# The sandbox image must include a Podman client. This replaces default packages.
+packages = [&#x22;ca-certificates&#x22;, &#x22;curl&#x22;, &#x22;podman&#x22;]
+
+# Or run Podman nested inside the sandbox.
+# This starts the sandbox with privileged Podman launch flags and disables
+# the normal no-new-privileges/cap-drop/read-only hardening for that sandbox.
+# allow_nested_podman = true
+# packages = [&#x22;ca-certificates&#x22;, &#x22;curl&#x22;, &#x22;podman&#x22;, &#x22;uidmap&#x22;, &#x22;slirp4netns&#x22;, &#x22;fuse-overlayfs&#x22;]"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">exec</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">sandbox</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">backend </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "podman"</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Use the host Podman service from inside the sandbox.</span></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># This mounts the host Podman socket and sets CONTAINER_HOST/DOCKER_HOST.</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">allow_host_podman </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># The sandbox image must include a Podman client. This replaces default packages.</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">packages </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"ca-certificates"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "curl"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "podman"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Or run Podman nested inside the sandbox.</span></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># This starts the sandbox with privileged Podman launch flags and disables</span></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># the normal no-new-privileges/cap-drop/read-only hardening for that sandbox.</span></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># allow_nested_podman = true</span></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># packages = ["ca-certificates", "curl", "podman", "uidmap", "slirp4netns", "fuse-overlayfs"]</span></span></code></pre>
+<p>Before using <code>allow_host_podman</code>, start the Podman API socket. For a CLI-installed
+user service, run <code>systemctl --user enable --now podman.socket</code>. For the bundled
+system service, install <code>deploy/moltis-podman-api.service</code> as documented in
+<a href="/deploy-vps.html">VPS Deployment</a>. Moltis verifies that the configured path is a
+live Unix socket and fails sandbox startup if it is unavailable. The mount also
+disables SELinux label separation so the container can access the socket.</p>
+<p><code>allow_host_podman</code> removes the sandbox boundary: sandboxed commands can use the
+API to create containers with host bind mounts and execute code with the Podman
+service user’s file access. <code>allow_nested_podman</code> keeps container state inside
+the sandbox, but it is runtime-dependent and weakens the sandbox substantially
+by using privileged container settings.</p>
 <h2 id="docker">Docker</h2>
 <p>Docker is supported on macOS, Linux, and Windows. On macOS it runs inside a
 Linux VM managed by Docker Desktop, so it is reasonably isolated but adds more
@@ -192,6 +245,10 @@ hardening flags by default:</p>
 <p>The <code>--read-only</code> flag is applied only to prebuilt sandbox images (where
 packages are already baked in). Non-prebuilt images need a writable root
 filesystem for <code>apt-get</code> provisioning on first start.</p>
+<p>When <code>allow_nested_podman = true</code> and the backend is Podman, Moltis starts the
+sandbox with <code>--privileged</code> and does not apply <code>--cap-drop ALL</code>,
+<code>--security-opt no-new-privileges</code>, or <code>--read-only</code>. This is required for
+nested container runtimes but materially reduces the security boundary.</p>
 <p>The <code>/sys</code> tmpfs overlays prevent host hardware metadata (serial numbers, disk
 models, LUKS UUIDs) from being visible inside the container. Note that
 <code>tools.fs.deny_paths</code> only restricts Moltis file-access tools — these kernel
