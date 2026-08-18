@@ -100,19 +100,22 @@ Once installed, restart `moltis gateway` — the startup banner will show
 identically to Podman containers.
 
 If Moltis runs under systemd, rootless Podman must be allowed to create user
-namespaces and access the Moltis user's container storage. Do not run Moltis
-from a unit with `NoNewPrivileges=true` or `ProtectHome=true`; those restrictions
-can make Podman fail with `cannot clone: Operation not permitted` and
-`Error: cannot re-exec process` even when the same `podman run ...` command works
-from an interactive shell.
+namespaces and access the Moltis user's container storage. For the bundled
+system unit, install `deploy/moltis-podman.conf` as
+`/etc/systemd/system/moltis.service.d/podman.conf`. It disables
+`NoNewPrivileges` and places Podman's home and runtime state outside the paths
+hidden by `ProtectHome`. Without those accommodations, Podman can fail with
+`cannot clone: Operation not permitted` and `Error: cannot re-exec process` even
+when the same `podman run ...` command works from an interactive shell.
 
 Moltis supports using Podman as the sandbox backend. Running `podman run ...`
 from inside an already sandboxed Moltis container is different and is blocked by
 the default hardened sandbox, which drops capabilities and sets
 `no-new-privileges` inside the container.
 
-Two explicit escape hatches are available when you intentionally want container
-commands inside a Podman sandbox:
+Two mutually exclusive escape hatches are available when you intentionally want
+container commands inside a Podman sandbox. Both require `backend = "podman"`;
+host socket passthrough is supported only on Linux:
 
 ```toml
 [tools.exec.sandbox]
@@ -121,19 +124,28 @@ backend = "podman"
 # Use the host Podman service from inside the sandbox.
 # This mounts the host Podman socket and sets CONTAINER_HOST/DOCKER_HOST.
 allow_host_podman = true
+# The sandbox image must include a Podman client. This replaces default packages.
+packages = ["ca-certificates", "curl", "podman"]
 
 # Or run Podman nested inside the sandbox.
 # This starts the sandbox with privileged Podman launch flags and disables
 # the normal no-new-privileges/cap-drop/read-only hardening for that sandbox.
 # allow_nested_podman = true
-# packages = ["podman", "uidmap", "slirp4netns", "fuse-overlayfs"]
+# packages = ["ca-certificates", "curl", "podman", "uidmap", "slirp4netns", "fuse-overlayfs"]
 ```
 
-Use only one of these modes unless you have a specific reason to combine them.
-`allow_host_podman` is usually more reliable, but sandboxed commands can control
-host containers. `allow_nested_podman` keeps container state inside the sandbox,
-but it is runtime-dependent and weakens the sandbox substantially by using
-privileged container settings.
+Before using `allow_host_podman`, start the Podman API socket. For a CLI-installed
+user service, run `systemctl --user enable --now podman.socket`. For the bundled
+system service, install `deploy/moltis-podman-api.service` as documented in
+[VPS Deployment](deploy-vps.md). Moltis verifies that the configured path is a
+live Unix socket and fails sandbox startup if it is unavailable. The mount also
+disables SELinux label separation so the container can access the socket.
+
+`allow_host_podman` removes the sandbox boundary: sandboxed commands can use the
+API to create containers with host bind mounts and execute code with the Podman
+service user's file access. `allow_nested_podman` keeps container state inside
+the sandbox, but it is runtime-dependent and weakens the sandbox substantially
+by using privileged container settings.
 
 ## Docker
 

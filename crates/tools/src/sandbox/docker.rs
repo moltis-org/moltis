@@ -6,6 +6,7 @@ use {
         collections::{HashMap, HashSet},
         path::{Path, PathBuf},
         sync::{Arc, OnceLock},
+        time::Duration,
     },
     tokio::sync::{Mutex, Semaphore},
     tracing::{debug, info, warn},
@@ -41,6 +42,8 @@ use {
 };
 
 const SANDBOX_HOST_PODMAN_SOCKET: &str = "/tmp/moltis-host-podman.sock";
+const PODMAN_MODE_LABEL: &str = "org.moltis.podman-mode";
+const PODMAN_SOCKET_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Distinguishes Docker from Podman for behaviour that differs between the two
 /// OCI runtimes (hardening flags, host-gateway resolution, etc.).
@@ -104,6 +107,18 @@ impl DockerSandbox {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn podman_with_cli(config: SandboxConfig, cli: &'static str) -> Self {
+        Self {
+            config,
+            kind: BackendKind::Podman,
+            cli,
+            backend_label: "podman",
+            provisioned: Mutex::new(HashSet::new()),
+            startup_gates: Mutex::new(HashMap::new()),
+        }
+    }
+
     fn image(&self) -> &str {
         self.config
             .image
@@ -160,6 +175,65 @@ impl DockerSandbox {
             return false;
         };
         String::from_utf8_lossy(&output.stdout).trim() == "true"
+    }
+
+    async fn container_podman_mode(&self, name: &str) -> Option<String> {
+        let format = format!(r#"{{{{ index .Config.Labels "{PODMAN_MODE_LABEL}" }}}}"#);
+        let output = tokio::process::Command::new(self.cli)
+            .args(["inspect", "--format", &format, name])
+            .output()
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let mode = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!mode.is_empty() && mode != "<no value>").then_some(mode)
+    }
+
+    pub(crate) fn podman_mode_label_value(&self, socket_path: Option<&Path>) -> Result<String> {
+        if self.config.allow_nested_podman {
+            return Ok("nested".to_string());
+        }
+        let Some(path) = socket_path else {
+            return Ok("hardened".to_string());
+        };
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+
+            let metadata = std::fs::metadata(path).map_err(|error| {
+                Error::message(format!(
+                    "failed to identify host Podman socket '{}': {error}",
+                    path.display()
+                ))
+            })?;
+            Ok(format!(
+                "host:{}:{}:{}:{}:{}",
+                path.display(),
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec()
+            ))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Err(Error::message(
+                "allow_host_podman is supported only on Unix hosts",
+            ))
+        }
+    }
+
+    pub(crate) fn podman_mode_label_args(mode: &str) -> Vec<String> {
+        vec!["--label".to_string(), format!("{PODMAN_MODE_LABEL}={mode}")]
+    }
+
+    pub(crate) fn podman_mode_matches(actual: Option<&str>, expected: &str) -> bool {
+        actual == Some(expected)
     }
 
     fn mounted_host_path(&self, id: &SandboxId, guest_path: &str) -> Option<PathBuf> {
@@ -312,24 +386,58 @@ impl DockerSandbox {
         args
     }
 
-    pub(crate) fn podman_socket_run_args_for_path(socket_path: Option<&Path>) -> Vec<String> {
+    pub(crate) fn podman_socket_run_args_for_path(
+        socket_path: Option<&Path>,
+    ) -> Result<Vec<String>> {
         let Some(socket_path) = socket_path else {
-            return Vec::new();
+            return Err(Error::message(
+                "allow_host_podman is enabled, but no host Podman socket was found; start the Podman API service (for example, `systemctl --user enable --now podman.socket`) and set CONTAINER_HOST if it uses a nonstandard path",
+            ));
         };
 
-        vec![
+        let host = format!("unix://{SANDBOX_HOST_PODMAN_SOCKET}");
+        Ok(vec![
             "-v".to_string(),
             format!("{}:{SANDBOX_HOST_PODMAN_SOCKET}:rw", socket_path.display()),
-        ]
+            "--security-opt".to_string(),
+            "label=disable".to_string(),
+            "-e".to_string(),
+            format!("CONTAINER_HOST={host}"),
+            "-e".to_string(),
+            format!("DOCKER_HOST={host}"),
+        ])
     }
 
-    fn host_podman_socket_path() -> Option<PathBuf> {
+    pub(crate) async fn is_usable_podman_socket(path: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt as _;
+
+            path.is_absolute()
+                && std::fs::metadata(path).is_ok_and(|metadata| metadata.file_type().is_socket())
+                && matches!(
+                    tokio::time::timeout(
+                        PODMAN_SOCKET_PROBE_TIMEOUT,
+                        tokio::net::UnixStream::connect(path)
+                    )
+                    .await,
+                    Ok(Ok(_))
+                )
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            false
+        }
+    }
+
+    async fn host_podman_socket_path() -> Option<PathBuf> {
         for var in ["CONTAINER_HOST", "PODMAN_HOST"] {
             if let Ok(host) = std::env::var(var)
                 && let Some(path) = host.strip_prefix("unix://")
             {
                 let path = PathBuf::from(path);
-                if path.exists() {
+                if Self::is_usable_podman_socket(&path).await {
                     return Some(path);
                 }
             }
@@ -337,45 +445,31 @@ impl DockerSandbox {
 
         if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
             let path = PathBuf::from(runtime_dir).join("podman/podman.sock");
-            if path.exists() {
+            if Self::is_usable_podman_socket(&path).await {
                 return Some(path);
             }
         }
 
         let path = PathBuf::from("/run/podman/podman.sock");
-        if path.exists() {
-            Some(path)
-        } else {
-            None
-        }
+        Self::is_usable_podman_socket(&path).await.then_some(path)
     }
 
-    pub(crate) fn podman_socket_run_args(&self) -> Vec<String> {
+    pub(crate) async fn podman_socket_path(&self) -> Result<Option<PathBuf>> {
         if self.kind != BackendKind::Podman || !self.config.allow_host_podman {
-            return Vec::new();
+            return Ok(None);
         }
 
-        let socket_path = Self::host_podman_socket_path();
+        if cfg!(not(target_os = "linux")) {
+            return Err(Error::message(
+                "allow_host_podman is supported only on Linux hosts",
+            ));
+        }
+
+        let socket_path = Self::host_podman_socket_path().await;
         if socket_path.is_none() {
-            warn!(
-                "allow_host_podman is enabled, but no host Podman socket was found; skipping socket passthrough"
-            );
+            Self::podman_socket_run_args_for_path(None)?;
         }
-        Self::podman_socket_run_args_for_path(socket_path.as_deref())
-    }
-
-    pub(crate) fn podman_socket_exec_env_args(&self) -> Vec<String> {
-        if self.kind != BackendKind::Podman || !self.config.allow_host_podman {
-            return Vec::new();
-        }
-
-        let host = format!("unix://{SANDBOX_HOST_PODMAN_SOCKET}");
-        vec![
-            "-e".to_string(),
-            format!("CONTAINER_HOST={host}"),
-            "-e".to_string(),
-            format!("DOCKER_HOST={host}"),
-        ]
+        Ok(socket_path)
     }
 
     /// Mount the host `moltis-ctl` binary into the sandbox at `/usr/local/bin/moltis-ctl`.
@@ -550,10 +644,33 @@ impl DockerSandbox {
         image_override: Option<&str>,
     ) -> Result<()> {
         let name = self.container_name(id);
+        let podman_socket_path = self.podman_socket_path().await?;
+        let podman_mode = self.podman_mode_label_value(podman_socket_path.as_deref())?;
 
         if self.is_container_running(&name).await {
-            debug!(container = %name, "sandbox container already running");
-            return Ok(());
+            let reusable = self.kind != BackendKind::Podman
+                || Self::podman_mode_matches(
+                    self.container_podman_mode(&name).await.as_deref(),
+                    &podman_mode,
+                );
+            if reusable {
+                debug!(container = %name, "sandbox container already running");
+                return Ok(());
+            }
+
+            info!(container = %name, %podman_mode, "recreating sandbox after Podman mode changed");
+            let output = tokio::process::Command::new(self.cli)
+                .args(["rm", "-f", &name])
+                .output()
+                .await?;
+            if !output.status.success() {
+                return Err(Error::message(format!(
+                    "failed to recreate sandbox '{}': {}",
+                    name,
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+            self.provisioned.lock().await.remove(&name);
         }
 
         // Resolve image first so we know whether it's prebuilt (affects hardening).
@@ -585,7 +702,12 @@ impl DockerSandbox {
         ));
         args.extend(self.workspace_args());
         args.extend(self.home_persistence_args(id)?);
-        args.extend(self.podman_socket_run_args());
+        if self.kind == BackendKind::Podman {
+            args.extend(Self::podman_mode_label_args(&podman_mode));
+        }
+        if let Some(socket_path) = podman_socket_path.as_deref() {
+            args.extend(Self::podman_socket_run_args_for_path(Some(socket_path))?);
+        }
         args.extend(Self::moltis_ctl_mount_args());
 
         args.push(image);
@@ -600,12 +722,19 @@ impl DockerSandbox {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if is_container_name_conflict(&stderr) {
                 if self.is_container_running(&name).await {
-                    debug!(
-                        container = %name,
-                        "{} run reported a name conflict, existing container is running",
-                        self.cli
-                    );
-                    return Ok(());
+                    let reusable = self.kind != BackendKind::Podman
+                        || Self::podman_mode_matches(
+                            self.container_podman_mode(&name).await.as_deref(),
+                            &podman_mode,
+                        );
+                    if reusable {
+                        debug!(
+                            container = %name,
+                            "{} run reported a name conflict, existing container is running",
+                            self.cli
+                        );
+                        return Ok(());
+                    }
                 }
 
                 warn!(
@@ -795,7 +924,6 @@ impl Sandbox for DockerSandbox {
         // Inject proxy env vars so traffic routes through the trusted-network
         // proxy running on the host.
         args.extend(self.proxy_exec_env_args());
-        args.extend(self.podman_socket_exec_env_args());
 
         for (k, v) in &opts.env {
             args.extend(["-e".to_string(), format!("{}={}", k, v)]);
@@ -966,7 +1094,7 @@ pub(crate) fn format_container_run_stderr(kind: BackendKind, stderr: &str) -> St
     }
 
     format!(
-        "{trimmed}\n\nRootless Podman cannot start from a process restricted by systemd NoNewPrivileges=true or equivalent namespace/privilege hardening. If Moltis is running as a system service, remove NoNewPrivileges=true from the unit and restart the service. Running podman inside an already sandboxed Moltis container requires an explicit escape hatch: allow_host_podman=true for host socket passthrough or allow_nested_podman=true for a privileged nested-Podman sandbox."
+        "{trimmed}\n\nRootless Podman cannot start from a process restricted by systemd NoNewPrivileges=true or equivalent namespace/privilege hardening. If Moltis uses the bundled system service, install deploy/moltis-podman.conf as a systemd drop-in; custom units must also provide writable Podman home and runtime directories. Running podman inside an already sandboxed Moltis container requires an explicit escape hatch: allow_host_podman=true for host socket passthrough or allow_nested_podman=true for a privileged nested-Podman sandbox."
     )
 }
 

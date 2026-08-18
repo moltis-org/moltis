@@ -422,8 +422,8 @@ not create chat agents, change memory, or affect `spawn_agent` presets.
 | `trusted_domains` | array | `[]` | Domains allowed through the proxy in `"trusted"` network mode. |
 | `backend` | string | `"auto"` | Sandbox backend: `"auto"`, `"docker"`, `"podman"`, `"apple-container"`, `"restricted-host"`, or `"wasm"`. |
 | `gpus` | optional string | `null` | GPU device passthrough for Docker/Podman backends. |
-| `allow_host_podman` | bool | `false` | Dangerous Podman escape hatch: mount the host Podman socket into Podman sandboxes and set container runtime env vars. |
-| `allow_nested_podman` | bool | `false` | Dangerous Podman escape hatch: relax Podman sandbox hardening and launch the sandbox with privileged container settings so Podman can run inside it. |
+| `allow_host_podman` | bool | `false` | Linux-only Podman escape hatch. Mounts the host socket, disables SELinux label separation, and removes the sandbox boundary by granting the Podman service user's host access. Requires `backend = "podman"` and cannot be combined with `allow_nested_podman`. |
+| `allow_nested_podman` | bool | `false` | Dangerous Podman escape hatch: relax Podman sandbox hardening and launch the sandbox with privileged container settings. Requires `backend = "podman"` and cannot be combined with `allow_host_podman`. |
 | `packages` | array | *(~130 packages)* | Packages to install via `apt-get` in the sandbox image. Empty list to skip. |
 | `wasm_fuel_limit` | optional integer | `null` | Fuel limit for WASM sandbox execution (instructions). |
 | `wasm_epoch_interval_ms` | optional integer | `null` | Epoch interruption interval in milliseconds for WASM sandbox. |

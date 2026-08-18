@@ -700,8 +700,9 @@ pub struct SandboxConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpus: Option<String>,
     /// Mount the host Podman socket into Podman-backed sandboxes and set
-    /// CONTAINER_HOST/DOCKER_HOST inside the sandbox. Dangerous: commands in
-    /// the sandbox can control host containers.
+    /// CONTAINER_HOST/DOCKER_HOST inside the sandbox. Linux only. Dangerous:
+    /// this removes the sandbox boundary because commands can use the API to
+    /// mount host paths and execute code with the Podman service user's access.
     #[serde(default)]
     pub allow_host_podman: bool,
     /// Relax Podman sandbox hardening so Podman can run inside the sandbox.

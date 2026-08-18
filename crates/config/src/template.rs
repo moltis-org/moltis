@@ -459,8 +459,9 @@ port = {port}                           # Port number (auto-generated for this i
 # host_data_dir = "/host/moltis-data" # Host path for Moltis data when running Moltis inside Docker
 # gpus = "all"                      # GPU passthrough: "all", "device=0", "device=0,1"
                                     # (Docker/Podman only, ignored for other backends)
-# allow_host_podman = false         # DANGEROUS: mount host Podman socket into Podman sandboxes
-# allow_nested_podman = false       # DANGEROUS: privileged Podman sandbox for running Podman inside it
+# allow_host_podman = false         # DANGEROUS, Linux only: host API removes sandbox boundary
+# allow_nested_podman = false       # DANGEROUS: privileged nested Podman sandbox
+                                    # Both require backend = "podman" and are mutually exclusive
 
 # [tools.exec.sandbox.resource_limits]
 # memory_limit = "512M"             # Memory limit (e.g., "512M", "1G")

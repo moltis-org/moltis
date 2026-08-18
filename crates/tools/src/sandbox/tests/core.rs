@@ -126,36 +126,169 @@ fn test_docker_ignores_nested_podman_hardening_flag() {
     assert!(args.contains(&"--read-only".to_string()));
 }
 
-#[test]
-fn test_podman_socket_args_disabled_by_default() {
+#[tokio::test]
+async fn test_podman_socket_args_disabled_by_default() {
     let sandbox = DockerSandbox::podman(SandboxConfig::default());
 
-    assert!(sandbox.podman_socket_run_args().is_empty());
-    assert!(sandbox.podman_socket_exec_env_args().is_empty());
+    assert!(sandbox.podman_socket_path().await.unwrap().is_none());
+    assert!(DockerSandbox::podman_socket_run_args_for_path(None).is_err());
 }
 
 #[test]
-fn test_podman_socket_args_for_path() {
+fn test_podman_socket_run_args_include_matching_env() {
     let args = DockerSandbox::podman_socket_run_args_for_path(Some(std::path::Path::new(
         "/run/user/1000/podman/podman.sock",
-    )));
+    )))
+    .unwrap();
 
     assert_eq!(args, vec![
         "-v".to_string(),
         "/run/user/1000/podman/podman.sock:/tmp/moltis-host-podman.sock:rw".to_string(),
+        "--security-opt".to_string(),
+        "label=disable".to_string(),
+        "-e".to_string(),
+        "CONTAINER_HOST=unix:///tmp/moltis-host-podman.sock".to_string(),
+        "-e".to_string(),
+        "DOCKER_HOST=unix:///tmp/moltis-host-podman.sock".to_string(),
     ]);
 }
 
 #[test]
-fn test_podman_socket_exec_env_args_when_enabled() {
+fn test_podman_mode_labels_detect_escape_hatch_transitions() {
+    let hardened = DockerSandbox::podman(SandboxConfig::default())
+        .podman_mode_label_value(None)
+        .unwrap();
+    let nested = DockerSandbox::podman(SandboxConfig {
+        allow_nested_podman: true,
+        ..Default::default()
+    })
+    .podman_mode_label_value(None)
+    .unwrap();
+
+    assert_eq!(hardened, "hardened");
+    assert_eq!(nested, "nested");
+    assert!(DockerSandbox::podman_mode_matches(
+        Some(&hardened),
+        &hardened
+    ));
+    assert!(!DockerSandbox::podman_mode_matches(
+        Some(&nested),
+        &hardened
+    ));
+    assert!(!DockerSandbox::podman_mode_matches(None, &hardened));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_podman_host_mode_changes_when_socket_is_recreated() {
+    use std::os::unix::net::UnixListener;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let socket_path = temp_dir.path().join("podman.sock");
+    let listener = UnixListener::bind(&socket_path).unwrap();
     let sandbox = DockerSandbox::podman(SandboxConfig {
         allow_host_podman: true,
         ..Default::default()
     });
-    let args = sandbox.podman_socket_exec_env_args();
+    let first = sandbox.podman_mode_label_value(Some(&socket_path)).unwrap();
 
-    assert!(args.contains(&"CONTAINER_HOST=unix:///tmp/moltis-host-podman.sock".to_string()));
-    assert!(args.contains(&"DOCKER_HOST=unix:///tmp/moltis-host-podman.sock".to_string()));
+    drop(listener);
+    std::fs::remove_file(&socket_path).unwrap();
+    let _replacement = UnixListener::bind(&socket_path).unwrap();
+    let second = sandbox.podman_mode_label_value(Some(&socket_path)).unwrap();
+
+    assert_ne!(first, second);
+    assert!(!DockerSandbox::podman_mode_matches(Some(&first), &second));
+    assert_eq!(DockerSandbox::podman_mode_label_args(&second), vec![
+        "--label".to_string(),
+        format!("org.moltis.podman-mode={second}"),
+    ]);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_podman_mode_mismatch_recreates_running_container() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let fake_cli = temp_dir.path().join("fake-podman");
+    let state = temp_dir.path().join("state");
+    let log = temp_dir.path().join("calls");
+    std::fs::write(&state, "running").unwrap();
+    std::fs::write(
+        &fake_cli,
+        format!(
+            "#!/bin/sh\n\
+             printf '%s\\n' \"$*\" >> '{}'\n\
+             if [ \"$1\" = \"inspect\" ]; then\n\
+               case \"$3\" in\n\
+                 *State.Running*) [ \"$(cat '{}')\" = \"running\" ] && printf 'true\\n' || printf 'false\\n' ;;\n\
+                 *Config.Labels*) printf 'nested\\n' ;;\n\
+               esac\n\
+               exit 0\n\
+             fi\n\
+             if [ \"$1\" = \"rm\" ]; then printf 'stopped' > '{}'; exit 0; fi\n\
+             if [ \"$1\" = \"image\" ]; then exit 0; fi\n\
+             if [ \"$1\" = \"run\" ]; then printf 'running' > '{}'; exit 0; fi\n\
+             exit 0\n",
+            log.display(),
+            state.display(),
+            state.display(),
+            state.display(),
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&fake_cli).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_cli, permissions).unwrap();
+
+    let cli: &'static str = Box::leak(fake_cli.display().to_string().into_boxed_str());
+    let sandbox = DockerSandbox::podman_with_cli(
+        SandboxConfig {
+            image: Some("moltis-sandbox:test".to_string()),
+            network: NetworkPolicy::Blocked,
+            workspace_mount: WorkspaceMount::None,
+            home_persistence: HomePersistence::Off,
+            ..Default::default()
+        },
+        cli,
+    );
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "mode-transition".to_string(),
+    };
+
+    sandbox.ensure_ready(&id, None).await.unwrap();
+
+    let calls = std::fs::read_to_string(log).unwrap();
+    assert!(calls.contains("rm -f moltis-sandbox-mode-transition"));
+    assert!(calls.contains("--label org.moltis.podman-mode=hardened"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_podman_socket_validation_requires_live_unix_socket() {
+    use std::os::unix::net::UnixListener;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let socket_path = temp_dir.path().join("podman.sock");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+
+    assert!(DockerSandbox::is_usable_podman_socket(&socket_path).await);
+    assert!(!DockerSandbox::is_usable_podman_socket(temp_dir.path()).await);
+    let regular_file = temp_dir.path().join("regular");
+    std::fs::write(&regular_file, "not a socket").unwrap();
+    assert!(!DockerSandbox::is_usable_podman_socket(&regular_file).await);
+    assert!(!DockerSandbox::is_usable_podman_socket(std::path::Path::new("relative.sock")).await);
+
+    drop(listener);
+    let stale_probe = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        DockerSandbox::is_usable_podman_socket(&socket_path),
+    )
+    .await
+    .unwrap();
+    assert!(!stale_probe);
 }
 
 #[test]
@@ -177,6 +310,7 @@ fn test_podman_rootless_reexec_error_gets_actionable_context() {
 
     assert!(formatted.contains("NoNewPrivileges=true"));
     assert!(formatted.contains("Rootless Podman"));
+    assert!(formatted.contains("moltis-podman.conf"));
     assert!(formatted.contains("allow_host_podman=true"));
     assert!(formatted.contains("allow_nested_podman=true"));
 }

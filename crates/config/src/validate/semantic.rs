@@ -218,8 +218,16 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             severity: Severity::Warning,
             category: "security",
             path: "tools.exec.sandbox.allow_host_podman".into(),
-            message: "allow_host_podman exposes the host Podman socket to sandboxed commands"
-                .into(),
+            message: "allow_host_podman removes the sandbox boundary: commands can use the host Podman API to mount host paths and execute code with the Podman service user's access".into(),
+        });
+    }
+
+    if cfg!(not(target_os = "linux")) && config.tools.exec.sandbox.allow_host_podman {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: "tools.exec.sandbox.allow_host_podman".into(),
+            message: "allow_host_podman is supported only on Linux hosts".into(),
         });
     }
 
@@ -229,6 +237,27 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             category: "security",
             path: "tools.exec.sandbox.allow_nested_podman".into(),
             message: "allow_nested_podman relaxes Podman sandbox hardening and starts the sandbox with privileged container settings".into(),
+        });
+    }
+
+    let podman_escape_hatch_enabled = config.tools.exec.sandbox.allow_host_podman
+        || config.tools.exec.sandbox.allow_nested_podman;
+    if podman_escape_hatch_enabled && config.tools.exec.sandbox.backend != "podman" {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: "tools.exec.sandbox.backend".into(),
+            message: "Podman escape hatches require backend = \"podman\"".into(),
+        });
+    }
+
+    if config.tools.exec.sandbox.allow_host_podman && config.tools.exec.sandbox.allow_nested_podman
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: "tools.exec.sandbox".into(),
+            message: "allow_host_podman and allow_nested_podman are mutually exclusive".into(),
         });
     }
 

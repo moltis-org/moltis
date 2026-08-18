@@ -14,10 +14,10 @@ RestartSec=5
 Environment=MOLTIS_DATA_DIR=/var/lib/moltis
 Environment=MOLTIS_CONFIG_DIR=/etc/moltis
 
-# Harden the service. Do not set NoNewPrivileges=true or ProtectHome=true here:
-# rootless Podman needs user namespace re-exec and access to the moltis user's
-# container storage under $HOME.
+# Harden the service. Rootless Podman users must install moltis-podman.conf.
+NoNewPrivileges=true
 ProtectSystem=strict
+ProtectHome=true
 ReadWritePaths=/var/lib/moltis /etc/moltis
 PrivateTmp=true
 
