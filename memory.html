@@ -125,6 +125,9 @@ watching pipeline as the built-in backend.</p>
 <li>You want the simplest possible setup with zero external build steps</li>
 </ul>
 <p><strong>Setup:</strong></p>
+<p>The Docker image and default source build include zvec. Standalone release
+packages use the self-contained <code>portable</code> feature set and currently omit zvec
+because its native runtime is not available for every supported target.</p>
 <ol>
 <li>
 <p>Build moltis with the <code>zvec</code> feature flag:</p>
