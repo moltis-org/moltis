@@ -291,6 +291,10 @@ fn map_error(error: ConnectorManagerError) -> ErrorShape {
             tracing::warn!(error = ?error, "Himalaya connector RPC operation failed");
             map_himalaya_error(error)
         },
+        ConnectorManagerError::TeslaProvider(error) => {
+            tracing::warn!(error = ?error, "Tesla connector RPC operation failed");
+            map_tesla_error(error)
+        },
         ConnectorManagerError::Channel(error) => {
             tracing::warn!(error = ?error, "channel history RPC operation failed");
             match error {
@@ -309,6 +313,45 @@ fn map_error(error: ConnectorManagerError) -> ErrorShape {
         error @ ConnectorManagerError::Internal(_) => {
             tracing::warn!(error = ?error, "connector RPC operation failed");
             ErrorShape::new(error_codes::INTERNAL, "connector operation failed")
+        },
+    }
+}
+
+fn map_tesla_error(error: moltis_connector_tesla::TeslaConnectorError) -> ErrorShape {
+    use moltis_connector_tesla::TeslaConnectorError;
+
+    match error {
+        TeslaConnectorError::AccountConfig(message)
+        | TeslaConnectorError::DatasetConfig(message) => {
+            ErrorShape::new(error_codes::INVALID_REQUEST, message)
+        },
+        // Setup problems are reported verbatim: the message names the step the
+        // user still has to complete on Tesla's side.
+        error @ (TeslaConnectorError::PartnerRegistrationMissing
+        | TeslaConnectorError::Unauthorized) => {
+            ErrorShape::new(error_codes::UNAUTHORIZED, error.to_string())
+        },
+        TeslaConnectorError::OAuth(_) => ErrorShape::new(
+            error_codes::UNAUTHORIZED,
+            "Tesla authentication failed; re-enter the refresh token for this connection",
+        ),
+        TeslaConnectorError::RateLimited => ErrorShape::new(
+            error_codes::UNAVAILABLE,
+            "Tesla Fleet API rate limit reached; sync less frequently",
+        ),
+        TeslaConnectorError::Timeout => {
+            ErrorShape::new(error_codes::TIMEOUT, "Tesla request timed out")
+        },
+        TeslaConnectorError::Http(error) if error.is_timeout() => {
+            ErrorShape::new(error_codes::TIMEOUT, "Tesla request timed out")
+        },
+        TeslaConnectorError::Http(_)
+        | TeslaConnectorError::ApiStatus(_)
+        | TeslaConnectorError::ServerResponse(_) => {
+            ErrorShape::new(error_codes::UNAVAILABLE, "Tesla request failed")
+        },
+        TeslaConnectorError::Serialization(_) => {
+            ErrorShape::new(error_codes::INTERNAL, "failed to store Tesla data")
         },
     }
 }

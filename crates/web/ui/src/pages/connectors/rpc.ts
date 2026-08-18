@@ -5,6 +5,7 @@ import type {
 	ConnectorProjections,
 	HimalayaBackend,
 	JsonValue,
+	TeslaRegion,
 } from "../../types/connector";
 import type { RpcMethodMap } from "../../types/rpc-methods";
 
@@ -37,6 +38,14 @@ export interface ConnectorRpcParams {
 				himalayaAccountName: string;
 				himalayaBackend: HimalayaBackend;
 				enabled: boolean;
+		  }
+		| {
+				kind: "tesla";
+				name: string;
+				teslaRegion: TeslaRegion;
+				teslaClientId: string;
+				teslaRefreshToken: string;
+				enabled: boolean;
 		  };
 	"connectors.accounts.update":
 		| {
@@ -48,6 +57,14 @@ export interface ConnectorRpcParams {
 				timeoutSeconds: number;
 				allowInsecureHttp: boolean;
 				allowPrivateNetwork: boolean;
+				enabled: boolean;
+		  }
+		| {
+				id: string;
+				name: string;
+				teslaRegion: TeslaRegion;
+				teslaClientId: string;
+				teslaRefreshToken?: string;
 				enabled: boolean;
 		  }
 		| { id: string; name: string; enabled: boolean };

@@ -53,6 +53,7 @@ async function installConnectorsRpcMock(page) {
 								{ kind: "channel_history", displayName: "Channel history" },
 								{ kind: "gmail", displayName: "Gmail" },
 								{ kind: "himalaya", displayName: "Himalaya" },
+								{ kind: "tesla", displayName: "Tesla" },
 							],
 						},
 					};
@@ -86,6 +87,14 @@ async function installConnectorsRpcMock(page) {
 							himalayaBackend: params.himalayaBackend,
 							credentialSource: "himalaya",
 						};
+					} else if (params.kind === "tesla") {
+						account = {
+							...shared,
+							teslaRegion: params.teslaRegion,
+							teslaClientId: params.teslaClientId,
+							hasPassword: Boolean(params.teslaRefreshToken),
+							credentialSource: "tesla_fleet_api",
+						};
 					} else {
 						account = {
 							...shared,
@@ -114,6 +123,13 @@ async function installConnectorsRpcMock(page) {
 						});
 						if (params.password) account.hasPassword = true;
 					}
+					if (account.kind === "tesla") {
+						Object.assign(account, {
+							teslaRegion: params.teslaRegion,
+							teslaClientId: params.teslaClientId,
+						});
+						if (params.teslaRefreshToken) account.hasPassword = true;
+					}
 					return { ok: true, payload: structuredClone(account) };
 				}
 				case "connectors.accounts.remove":
@@ -134,6 +150,17 @@ async function installConnectorsRpcMock(page) {
 								mailboxes: [
 									{ id: "INBOX", displayName: "Inbox" },
 									{ id: "Archive/2026", displayName: "2026 archive" },
+								],
+							},
+						};
+					}
+					if (kind === "tesla") {
+						return {
+							ok: true,
+							payload: {
+								vehicles: [
+									{ vin: "5YJ3E1EAXKF123456", displayName: "Roadtripper", state: "online" },
+									{ vin: "5YJ3E1EAXKF999999", state: "asleep" },
 								],
 							},
 						};
@@ -869,6 +896,149 @@ test.describe("Settings > Connectors", () => {
 		await page.getByRole("tab", { name: "Datasets", exact: true }).click();
 		const datasetCard = cardForHeading(page, "Configured archive");
 		await expect(datasetCard.getByRole("button", { name: "Run now", exact: true })).toBeDisabled();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("adds a Tesla connection, keeps the stored token, and lists vehicles", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/connectors");
+		await waitForWsConnected(page);
+		await installConnectorsRpcMock(page);
+
+		await page.getByRole("button", { name: "Add Tesla connection", exact: true }).click();
+		let modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Tesla Fleet API connection", exact: true }),
+		});
+		await expect(modal.getByText(/complete partner registration/)).toBeVisible();
+		await modal.getByLabel("Connection name", { exact: true }).fill("My Tesla");
+		await modal.getByLabel("Tesla account region", { exact: true }).selectOption("europe");
+		await modal.getByLabel("Client ID", { exact: true }).fill("tesla-client-id");
+		await modal.getByLabel("Refresh token", { exact: true }).fill("tesla-refresh-token");
+		await modal.getByRole("button", { name: "Add connection", exact: true }).click();
+
+		const addRequest = await page.evaluate(() =>
+			window.__connectorRpcState.requests.findLast((request) => request.method === "connectors.accounts.add"),
+		);
+		expect(addRequest.params.kind).toBe("tesla");
+		expect(addRequest.params.teslaRegion).toBe("europe");
+		expect(addRequest.params.teslaRefreshToken).toBe("tesla-refresh-token");
+
+		const accountCard = cardForHeading(page, "My Tesla");
+		await expect(accountCard.getByText("Refresh token stored", { exact: true })).toBeVisible();
+		await expect(
+			accountCard.getByText("Europe, Middle East & Africa · tesla-client-id", { exact: true }),
+		).toBeVisible();
+
+		// Editing without retyping the token must not send a credential at all.
+		await accountCard.getByRole("button", { name: "Edit", exact: true }).click();
+		modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Tesla Fleet API connection", exact: true }),
+		});
+		await expect(modal.getByLabel("Refresh token", { exact: true })).toHaveValue("");
+		await modal.getByLabel("Connection name", { exact: true }).fill("Model 3");
+		await modal.getByRole("button", { name: "Save connection", exact: true }).click();
+		const updateRequest = await page.evaluate(() =>
+			window.__connectorRpcState.requests.findLast((request) => request.method === "connectors.accounts.update"),
+		);
+		expect(updateRequest.params.name).toBe("Model 3");
+		expect(updateRequest.params).not.toHaveProperty("teslaRefreshToken");
+
+		await cardForHeading(page, "Model 3").getByRole("button", { name: "Test connection", exact: true }).click();
+		const testModal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Tesla connection readiness", exact: true }),
+		});
+		await expect(testModal.getByText("Roadtripper", { exact: true })).toBeVisible();
+		await expect(testModal.getByText("Online", { exact: true })).toBeVisible();
+		await expect(testModal.getByText("Asleep", { exact: true })).toBeVisible();
+		await testModal.getByRole("button", { name: "Close", exact: true }).click();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("creates a Tesla history dataset without compiling an instruction", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/connectors");
+		await waitForWsConnected(page);
+		await installConnectorsRpcMock(page);
+		await page.evaluate(() => {
+			window.__connectorRpcState.accounts = [
+				{
+					id: "tesla-account",
+					kind: "tesla",
+					name: "My Tesla",
+					teslaRegion: "north_america",
+					teslaClientId: "tesla-client-id",
+					hasPassword: true,
+					credentialSource: "tesla_fleet_api",
+					managed: false,
+					enabled: true,
+					createdAt: "2026-08-06T10:00:00Z",
+					updatedAt: "2026-08-06T10:00:00Z",
+				},
+			];
+		});
+		await page.getByRole("button", { name: "Refresh", exact: true }).click();
+		await page.getByRole("tab", { name: "Datasets", exact: true }).click();
+		await page.getByRole("button", { name: "Add dataset", exact: true }).click();
+
+		const modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Tesla dataset", exact: true }),
+		});
+		await expect(modal.getByText(/skipped rather than woken/)).toBeVisible();
+		await modal.getByLabel("Dataset name", { exact: true }).fill("Charge history");
+		await modal.getByLabel("What to store", { exact: true }).selectOption("history");
+		await modal.getByLabel("Vehicle VINs", { exact: true }).fill("5yj3e1eaxkf123456");
+		await modal.getByLabel("Precise location", { exact: true }).check();
+		await modal.getByLabel("Readings to keep per vehicle", { exact: true }).fill("750");
+		await modal.getByRole("button", { name: "Create dataset", exact: true }).click();
+
+		const addRequest = await page.evaluate(() =>
+			window.__connectorRpcState.requests.findLast((request) => request.method === "connectors.datasets.add"),
+		);
+		expect(addRequest.params.config.mode).toBe("history");
+		expect(addRequest.params.config.maxSamples).toBe(750);
+		expect(addRequest.params.config.vins).toEqual(["5YJ3E1EAXKF123456"]);
+		expect(addRequest.params.config.endpoints).toContain("location_data");
+		await expect(cardForHeading(page, "Charge history")).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("rejects a malformed VIN before sending a Tesla dataset request", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/connectors");
+		await waitForWsConnected(page);
+		await installConnectorsRpcMock(page);
+		await page.evaluate(() => {
+			window.__connectorRpcState.accounts = [
+				{
+					id: "tesla-account",
+					kind: "tesla",
+					name: "My Tesla",
+					teslaRegion: "north_america",
+					teslaClientId: "tesla-client-id",
+					hasPassword: true,
+					credentialSource: "tesla_fleet_api",
+					managed: false,
+					enabled: true,
+					createdAt: "2026-08-06T10:00:00Z",
+					updatedAt: "2026-08-06T10:00:00Z",
+				},
+			];
+		});
+		await page.getByRole("button", { name: "Refresh", exact: true }).click();
+		await page.getByRole("tab", { name: "Datasets", exact: true }).click();
+		await page.getByRole("button", { name: "Add dataset", exact: true }).click();
+
+		const modal = page.locator(".modal-box").filter({
+			has: page.getByRole("heading", { name: "Tesla dataset", exact: true }),
+		});
+		await modal.getByLabel("Dataset name", { exact: true }).fill("Bad VIN");
+		await modal.getByLabel("Vehicle VINs", { exact: true }).fill("TOO-SHORT");
+		await modal.getByRole("button", { name: "Create dataset", exact: true }).click();
+		await expect(modal.getByText(/17-character alphanumeric VINs/)).toBeVisible();
+		const requested = await page.evaluate(() =>
+			window.__connectorRpcState.requests.some((request) => request.method === "connectors.datasets.add"),
+		);
+		expect(requested).toBe(false);
 		expect(pageErrors).toEqual([]);
 	});
 

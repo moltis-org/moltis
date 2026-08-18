@@ -36,6 +36,7 @@ moltis-config           = { workspace = true }
 moltis-connector-caldav = { optional = true, workspace = true }
 moltis-connector-gmail  = { optional = true, workspace = true }
 moltis-connector-himalaya = { optional = true, workspace = true }
+moltis-connector-tesla  = { optional = true, workspace = true }
 moltis-connectors       = { optional = true, workspace = true }
 moltis-cron             = { workspace = true }
 moltis-discord          = { optional = true, workspace = true }
@@ -123,6 +124,7 @@ connectors = [
   "dep:moltis-connector-caldav",
   "dep:moltis-connector-gmail",
   "dep:moltis-connector-himalaya",
+  "dep:moltis-connector-tesla",
   "dep:moltis-connectors",
 ]
 default = [
@@ -201,6 +203,7 @@ metrics = [
   "moltis-connector-caldav?/metrics",
   "moltis-connector-gmail?/metrics",
   "moltis-connector-himalaya?/metrics",
+  "moltis-connector-tesla?/metrics",
   "moltis-connectors?/metrics",
   "moltis-discord?/metrics",
   "moltis-matrix?/metrics",

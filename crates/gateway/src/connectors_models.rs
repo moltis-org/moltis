@@ -5,6 +5,7 @@ use {
     moltis_connector_caldav::{CalDavDatasetConfig, CalDavFilters, CalendarSelection},
     moltis_connector_gmail::{GmailAccountConfig, GmailDatasetConfig},
     moltis_connector_himalaya::{HimalayaAccountConfig, HimalayaBackend, HimalayaDatasetConfig},
+    moltis_connector_tesla::{TeslaDatasetConfig, TeslaRegion, TeslaVehicleOnlineState},
     moltis_connectors::{
         Account, ConnectorItem, ConnectorKind, Dataset, ProjectionConfig, SyncRun,
     },
@@ -42,6 +43,12 @@ pub struct AccountCreateRequest {
     pub himalaya_account_name: Option<String>,
     #[serde(default)]
     pub himalaya_backend: Option<HimalayaBackend>,
+    #[serde(default)]
+    pub tesla_region: Option<TeslaRegion>,
+    #[serde(default)]
+    pub tesla_client_id: Option<String>,
+    #[serde(default)]
+    pub tesla_refresh_token: Option<Secret<String>>,
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: u64,
     #[serde(default)]
@@ -62,6 +69,12 @@ pub struct AccountUpdateRequest {
     pub username: String,
     #[serde(default)]
     pub password: Option<Secret<String>>,
+    #[serde(default)]
+    pub tesla_region: Option<TeslaRegion>,
+    #[serde(default)]
+    pub tesla_client_id: Option<String>,
+    #[serde(default)]
+    pub tesla_refresh_token: Option<Secret<String>>,
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: u64,
     #[serde(default)]
@@ -92,6 +105,10 @@ pub struct AccountView {
     pub himalaya_account_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub himalaya_backend: Option<HimalayaBackend>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tesla_region: Option<TeslaRegion>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tesla_client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential_source: Option<String>,
     pub managed: bool,
@@ -163,6 +180,7 @@ pub enum ConnectorDatasetConfigView {
     Himalaya(HimalayaDatasetConfig),
     CalDav(CalDavDatasetConfigView),
     Gmail(GmailDatasetConfig),
+    Tesla(TeslaDatasetConfig),
 }
 
 impl From<CalDavDatasetConfigView> for ConnectorDatasetConfigView {
@@ -298,6 +316,31 @@ pub enum AccountTestView {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         mailboxes: Vec<HimalayaMailboxView>,
     },
+    Vehicles {
+        vehicles: Vec<TeslaVehicleView>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeslaVehicleView {
+    pub vin: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub state: TeslaVehicleOnlineState,
+}
+
+/// Reads a stored Tesla account without touching the credential, which may be
+/// a plaintext string or a vault envelope depending on the vault's state.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeslaStoredAccountConfig {
+    #[serde(default)]
+    pub region: TeslaRegion,
+    #[serde(default)]
+    pub client_id: String,
+    #[serde(default)]
+    pub refresh_token: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -392,38 +435,47 @@ pub struct ChannelSourceView {
     pub display_name: String,
 }
 
+/// Per-kind projection of a stored account config onto the shared
+/// [`AccountView`]. Named fields keep each connector arm readable as the number
+/// of kind-specific fields grows.
+#[derive(Default)]
+struct AccountViewFields {
+    server_url: String,
+    username: String,
+    timeout_seconds: u64,
+    allow_insecure_http: bool,
+    allow_private_network: bool,
+    has_password: bool,
+    channel_type: Option<ChannelType>,
+    channel_account_id: Option<String>,
+    himalaya_account_name: Option<String>,
+    himalaya_backend: Option<HimalayaBackend>,
+    tesla_region: Option<TeslaRegion>,
+    tesla_client_id: Option<String>,
+    credential_source: Option<String>,
+}
+
+impl AccountViewFields {
+    fn new() -> Self {
+        Self {
+            timeout_seconds: default_timeout_seconds(),
+            ..Self::default()
+        }
+    }
+}
+
 pub(super) fn account_view(account: Account) -> Result<AccountView> {
-    let (
-        server_url,
-        username,
-        timeout_seconds,
-        allow_insecure_http,
-        allow_private_network,
-        has_password,
-        channel_type,
-        channel_account_id,
-        himalaya_account_name,
-        himalaya_backend,
-        credential_source,
-    ) = match account.kind {
+    let fields = match account.kind {
         ConnectorKind::ChannelHistory => {
             let config: ChannelHistoryAccountConfig =
                 serde_json::from_value(account.config.clone()).map_err(|error| {
                     internal(error, "deserialize channel connector account view")
                 })?;
-            (
-                String::new(),
-                String::new(),
-                default_timeout_seconds(),
-                false,
-                false,
-                false,
-                Some(config.channel_type),
-                Some(config.channel_account_id),
-                None,
-                None,
-                None,
-            )
+            AccountViewFields {
+                channel_type: Some(config.channel_type),
+                channel_account_id: Some(config.channel_account_id),
+                ..AccountViewFields::new()
+            }
         },
         ConnectorKind::Gmail => {
             let config: GmailAccountConfig = serde_json::from_value(account.config.clone())
@@ -431,19 +483,10 @@ pub(super) fn account_view(account: Account) -> Result<AccountView> {
             config
                 .validate()
                 .map_err(|error| internal(error, "validate Gmail account view"))?;
-            (
-                String::new(),
-                String::new(),
-                default_timeout_seconds(),
-                false,
-                false,
-                false,
-                None,
-                None,
-                None,
-                None,
-                Some("google_workspace".to_owned()),
-            )
+            AccountViewFields {
+                credential_source: Some("google_workspace".to_owned()),
+                ..AccountViewFields::new()
+            }
         },
         ConnectorKind::Himalaya => {
             let config: HimalayaAccountConfig = serde_json::from_value(account.config.clone())
@@ -451,54 +494,58 @@ pub(super) fn account_view(account: Account) -> Result<AccountView> {
             config
                 .validate()
                 .map_err(|error| internal(error, "validate Himalaya account view"))?;
-            (
-                String::new(),
-                String::new(),
-                default_timeout_seconds(),
-                false,
-                false,
-                false,
-                None,
-                None,
-                Some(config.account_name),
-                Some(config.backend),
-                Some("himalaya".to_owned()),
-            )
+            AccountViewFields {
+                himalaya_account_name: Some(config.account_name),
+                himalaya_backend: Some(config.backend),
+                credential_source: Some("himalaya".to_owned()),
+                ..AccountViewFields::new()
+            }
+        },
+        ConnectorKind::Tesla => {
+            let config: TeslaStoredAccountConfig =
+                serde_json::from_value(account.config.clone())
+                    .map_err(|error| internal(error, "deserialize Tesla connector account view"))?;
+            AccountViewFields {
+                // The refresh token never leaves the server; the view only
+                // reports whether one is stored.
+                has_password: stored_secret_present(&config.refresh_token)?,
+                tesla_region: Some(config.region),
+                tesla_client_id: Some(config.client_id),
+                credential_source: Some("tesla_fleet_api".to_owned()),
+                ..AccountViewFields::new()
+            }
         },
         ConnectorKind::Caldav => {
             let config: StoredAccountConfigView = serde_json::from_value(account.config.clone())
                 .map_err(|error| internal(error, "deserialize connector account view"))?;
-            let has_password = stored_secret_present(&config.password)?;
-            (
-                config.server_url,
-                config.username,
-                config.timeout_seconds,
-                config.allow_insecure_http,
-                config.allow_private_network,
-                has_password,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
+            AccountViewFields {
+                has_password: stored_secret_present(&config.password)?,
+                server_url: config.server_url,
+                username: config.username,
+                timeout_seconds: config.timeout_seconds,
+                allow_insecure_http: config.allow_insecure_http,
+                allow_private_network: config.allow_private_network,
+                ..AccountViewFields::new()
+            }
         },
     };
     Ok(AccountView {
         id: account.id,
         kind: account.kind,
         name: account.name,
-        server_url,
-        username,
-        timeout_seconds,
-        allow_insecure_http,
-        allow_private_network,
-        has_password,
-        channel_type,
-        channel_account_id,
-        himalaya_account_name,
-        himalaya_backend,
-        credential_source,
+        server_url: fields.server_url,
+        username: fields.username,
+        timeout_seconds: fields.timeout_seconds,
+        allow_insecure_http: fields.allow_insecure_http,
+        allow_private_network: fields.allow_private_network,
+        has_password: fields.has_password,
+        channel_type: fields.channel_type,
+        channel_account_id: fields.channel_account_id,
+        himalaya_account_name: fields.himalaya_account_name,
+        himalaya_backend: fields.himalaya_backend,
+        tesla_region: fields.tesla_region,
+        tesla_client_id: fields.tesla_client_id,
+        credential_source: fields.credential_source,
         managed: account.source_key.is_some(),
         enabled: account.enabled,
         created_at: account.created_at,
@@ -528,6 +575,10 @@ pub(super) fn dataset_view(
         ConnectorKind::Himalaya => ConnectorDatasetConfigView::Himalaya(
             serde_json::from_value(dataset.config)
                 .map_err(|error| internal(error, "deserialize Himalaya dataset view"))?,
+        ),
+        ConnectorKind::Tesla => ConnectorDatasetConfigView::Tesla(
+            serde_json::from_value(dataset.config)
+                .map_err(|error| internal(error, "deserialize Tesla dataset view"))?,
         ),
     };
     let projection_path = if dataset.projections.jsonl || dataset.projections.markdown {

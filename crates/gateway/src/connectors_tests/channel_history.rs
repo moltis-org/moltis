@@ -223,6 +223,9 @@ async fn channel_history_reuses_registry_fetch_and_commits_native_message_ids() 
 
     let account = manager
         .add_account(AccountCreateRequest {
+            tesla_region: None,
+            tesla_client_id: None,
+            tesla_refresh_token: None,
             kind: ConnectorKind::ChannelHistory,
             name: "Slack planning".to_owned(),
             server_url: String::new(),

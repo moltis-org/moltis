@@ -1316,6 +1316,9 @@ pub(super) async fn complete_startup(
             tool_registry.register(Box::new(moltis_connector_gmail::GmailConnectorTool::new(
                 Arc::clone(&reader),
             )));
+            tool_registry.register(Box::new(moltis_connector_tesla::TeslaConnectorTool::new(
+                Arc::clone(&reader),
+            )));
             tool_registry.register(Box::new(
                 moltis_connector_himalaya::HimalayaConnectorTool::new(reader),
             ));

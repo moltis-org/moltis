@@ -113,6 +113,7 @@ function ConnectorsPage({ initialTab }: ConnectorsPageProps): VNode {
 						channelHistoryAvailable={available.some((connector) => connector.kind === "channel_history")}
 						gmailAvailable={available.some((connector) => connector.kind === "gmail")}
 						himalayaAvailable={available.some((connector) => connector.kind === "himalaya")}
+						teslaAvailable={available.some((connector) => connector.kind === "tesla")}
 						channelSources={channelSources}
 						onChanged={refreshAfterMutation}
 					/>

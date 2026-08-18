@@ -233,7 +233,8 @@ fn planner_messages(
             },
             crate::connectors::ConnectorDatasetConfigView::ChannelHistory(_)
             | crate::connectors::ConnectorDatasetConfigView::Gmail(_)
-            | crate::connectors::ConnectorDatasetConfigView::Himalaya(_) => Value::Null,
+            | crate::connectors::ConnectorDatasetConfigView::Himalaya(_)
+            | crate::connectors::ConnectorDatasetConfigView::Tesla(_) => Value::Null,
         };
         alias_existing_selection(&mut config, calendars);
         json!({

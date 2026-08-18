@@ -47,6 +47,7 @@
 - [Browser Automation](browser-automation.md)
 - [Connectors](connectors.md)
   - [Email Connectors](email-connectors.md)
+  - [Tesla](tesla.md)
 - [CalDAV (Calendars)](caldav.md)
 - [GraphQL API](graphql.md)
 - [Session State](session-state.md)

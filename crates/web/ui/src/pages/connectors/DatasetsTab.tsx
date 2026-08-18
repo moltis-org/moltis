@@ -23,6 +23,12 @@ import type {
 } from "../../types/connector";
 import { ConfirmDialog, Modal, requestConfirm, showToast } from "../../ui";
 import { connectorRpc } from "./rpc";
+import {
+	buildTeslaDatasetPayload,
+	defaultTeslaValues,
+	TeslaDatasetFields,
+	type TeslaDatasetValues,
+} from "./TeslaDatasetFields";
 
 const PREVIEW_LIMIT = 25;
 const PREVIEW_TEXT_LIMIT = 12_000;
@@ -85,7 +91,9 @@ function AccountSelector({ accounts, accountId, disabled, onChange }: AccountSel
 									? `${account.channelType} · ${account.channelAccountId}`
 									: account.kind === "gmail"
 										? "Google Workspace"
-										: `${account.himalayaBackend} · ${account.himalayaAccountName}`}
+										: account.kind === "tesla"
+											? `${t(`connections.teslaRegions.${account.teslaRegion}`)} · ${account.teslaClientId}`
+											: `${account.himalayaBackend} · ${account.himalayaAccountName}`}
 						</div>
 					</button>
 				))}
@@ -195,6 +203,7 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 				? dataset.config.includeBodies
 				: true,
 	);
+	const [tesla, setTesla] = useState<TeslaDatasetValues>(() => defaultTeslaValues(dataset));
 	const [name, setName] = useState(dataset?.name ?? "");
 	const [schedule, setSchedule] = useState(
 		dataset?.scheduleMinutes === null || dataset?.scheduleMinutes === undefined ? "" : String(dataset.scheduleMinutes),
@@ -224,6 +233,7 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 		dataset?.kind === "himalaya" ||
 		selectedAccount?.kind === "gmail" ||
 		selectedAccount?.kind === "himalaya";
+	const teslaDataset = dataset?.kind === "tesla" || selectedAccount?.kind === "tesla";
 
 	function invalidate(): void {
 		revision.current += 1;
@@ -316,6 +326,43 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 				} else {
 					setError(caught instanceof Error ? caught.message : String(caught));
 				}
+			} finally {
+				setSaving(false);
+			}
+			return;
+		}
+		if (teslaDataset) {
+			if (!(name.trim() && selectedAccount?.kind === "tesla")) {
+				setError(t("datasets.teslaRequired"));
+				return;
+			}
+			const built = buildTeslaDatasetPayload(tesla);
+			if ("errorKey" in built) {
+				setError(t(built.errorKey));
+				return;
+			}
+			const scheduleMinutes = schedule.trim() ? Number(schedule) : null;
+			if (scheduleMinutes !== null && !(Number.isSafeInteger(scheduleMinutes) && scheduleMinutes > 0)) {
+				setError(t("datasets.scheduleInvalid"));
+				return;
+			}
+			setSaving(true);
+			setError(null);
+			try {
+				const values = {
+					...built.payload,
+					name: name.trim(),
+					scheduleMinutes,
+					projections: { jsonl, markdown },
+					enabled,
+				};
+				if (dataset) await connectorRpc("connectors.datasets.update", { id: dataset.id, ...values });
+				else await connectorRpc("connectors.datasets.add", { accountId, ...values });
+				await onSaved();
+				showToast(t("datasets.saved"), "success");
+				onClose();
+			} catch (caught: unknown) {
+				setError(caught instanceof Error ? caught.message : String(caught));
 			} finally {
 				setSaving(false);
 			}
@@ -425,9 +472,13 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 						? dataset
 							? t("datasets.editEmailTitle")
 							: t("datasets.addEmailTitle")
-						: dataset
-							? t("datasets.editTitle")
-							: t("datasets.addTitle")
+						: teslaDataset
+							? dataset
+								? t("datasets.editTeslaTitle")
+								: t("datasets.addTeslaTitle")
+							: dataset
+								? t("datasets.editTitle")
+								: t("datasets.addTitle")
 			}
 		>
 			<form onSubmit={submit} className="flex flex-col gap-1">
@@ -563,6 +614,34 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 						</fieldset>
 						<CheckboxField label={t("datasets.enabled")} checked={enabled} onChange={setEnabled} />
 					</>
+				) : teslaDataset ? (
+					<>
+						<TextField
+							id="connector-tesla-dataset-name"
+							label={t("datasets.name")}
+							value={name}
+							onInput={setName}
+							placeholder={t("datasets.teslaNamePlaceholder")}
+							required
+						/>
+						<TeslaDatasetFields values={tesla} onChange={setTesla} />
+						<TextField
+							id="connector-tesla-schedule"
+							label={t("datasets.schedule")}
+							type="number"
+							value={schedule}
+							onInput={setSchedule}
+							help={t("datasets.teslaScheduleHelp")}
+						/>
+						<fieldset className="mb-2">
+							<legend className="mb-2 text-xs text-[var(--muted)]">{t("datasets.projections")}</legend>
+							<div className="flex flex-wrap gap-4">
+								<CheckboxField label={t("datasets.jsonl")} checked={jsonl} onChange={setJsonl} />
+								<CheckboxField label={t("datasets.markdown")} checked={markdown} onChange={setMarkdown} />
+							</div>
+						</fieldset>
+						<CheckboxField label={t("datasets.enabled")} checked={enabled} onChange={setEnabled} />
+					</>
 				) : (
 					<>
 						<TextAreaField
@@ -625,7 +704,7 @@ function DatasetFormModal({ accounts, dataset, onClose, onSaved }: DatasetFormMo
 					<SaveButton
 						type="submit"
 						saving={saving}
-						disabled={channelHistory || emailDataset ? !accountId : !(compiled && preview)}
+						disabled={channelHistory || emailDataset || teslaDataset ? !accountId : !(compiled && preview)}
 						label={dataset ? t("datasets.save") : t("datasets.create")}
 					/>
 				</div>
@@ -772,11 +851,21 @@ export function DatasetsTab({ accounts, datasets, onChanged }: DatasetsTabProps)
 										query: dataset.config.query || t("datasets.allMail"),
 										limit: dataset.config.maxMessages,
 									})
-								: t("datasets.himalayaScope", {
-										mailboxes: dataset.config.mailboxIds.join(", "),
-										limit: dataset.config.maxMessages,
-									});
-				const canRun = account?.enabled === true && (account.kind !== "caldav" || account.hasPassword);
+								: dataset.kind === "tesla"
+									? t(dataset.config.mode === "history" ? "datasets.teslaHistoryScope" : "datasets.teslaStateScope", {
+											vehicles:
+												dataset.config.vins.length > 0
+													? dataset.config.vins.join(", ")
+													: t("datasets.teslaAllVehicles"),
+											limit: dataset.config.maxSamples,
+										})
+									: t("datasets.himalayaScope", {
+											mailboxes: dataset.config.mailboxIds.join(", "),
+											limit: dataset.config.maxMessages,
+										});
+				const canRun =
+					account?.enabled === true &&
+					(account.kind === "caldav" || account.kind === "tesla" ? account.hasPassword : true);
 				return (
 					<SettingsCard key={dataset.id} className="bg-[var(--surface)] border border-[var(--border)] rounded-lg p-4">
 						<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
