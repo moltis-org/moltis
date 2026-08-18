@@ -107,6 +107,30 @@ allow_host_podman = true
     }));
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn host_podman_escape_hatch_accepted_on_linux() {
+    let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+allow_host_podman = true
+"#;
+    let result = validate_toml_str(toml);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.severity != Severity::Error)
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.path == "tools.exec.sandbox.allow_host_podman")
+    );
+}
+
 #[test]
 fn podman_escape_hatches_require_podman_backend() {
     let toml = r#"

@@ -222,7 +222,8 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         });
     }
 
-    if cfg!(not(target_os = "linux")) && config.tools.exec.sandbox.allow_host_podman {
+    #[cfg(not(target_os = "linux"))]
+    if config.tools.exec.sandbox.allow_host_podman {
         diagnostics.push(Diagnostic {
             severity: Severity::Error,
             category: "invalid-value",
