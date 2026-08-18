@@ -55,15 +55,15 @@ interface CronStatusInfo {
 interface HeartbeatConfig {
 	enabled?: boolean;
 	every?: string;
-	model?: string;
-	prompt?: string;
+	model?: string | null;
+	prompt?: string | null;
 	ack_max_chars?: number;
 	deliver?: boolean;
-	channel?: string;
-	to?: string;
+	channel?: string | null;
+	to?: string | null;
 	active_hours?: { start?: string; end?: string; timezone?: string };
 	sandbox_enabled?: boolean;
-	sandbox_image?: string;
+	sandbox_image?: string | null;
 }
 
 interface HeartbeatStatusInfo {
@@ -266,23 +266,27 @@ function cronTimezoneHelpText(): string {
 		: "Leave blank to use UTC. Enter a timezone like Europe/Paris to use your local timezone.";
 }
 
+// heartbeat.update merges its payload onto the config already in effect, so a
+// key that is absent means "leave this alone". JSON.stringify drops undefined
+// properties, so an emptied optional field has to go out as an explicit null to
+// clear it.
 function collectHeartbeatForm(form: Element): HeartbeatConfig {
 	return {
 		enabled: (form.querySelector("[data-hb=enabled]") as HTMLInputElement).checked,
 		every: (form.querySelector("[data-hb=every]") as HTMLInputElement).value.trim() || "30m",
-		model: heartbeatModel.value || undefined,
-		prompt: (form.querySelector("[data-hb=prompt]") as HTMLTextAreaElement).value.trim() || undefined,
+		model: heartbeatModel.value || null,
+		prompt: (form.querySelector("[data-hb=prompt]") as HTMLTextAreaElement).value.trim() || null,
 		ack_max_chars: parseInt((form.querySelector("[data-hb=ackMax]") as HTMLInputElement).value, 10) || 300,
 		deliver: (form.querySelector("[data-hb=deliver]") as HTMLInputElement).checked,
-		channel: (form.querySelector("[data-hb=channel]") as HTMLInputElement).value.trim() || undefined,
-		to: (form.querySelector("[data-hb=to]") as HTMLInputElement).value.trim() || undefined,
+		channel: (form.querySelector("[data-hb=channel]") as HTMLInputElement).value.trim() || null,
+		to: (form.querySelector("[data-hb=to]") as HTMLInputElement).value.trim() || null,
 		active_hours: {
 			start: (form.querySelector("[data-hb=ahStart]") as HTMLInputElement).value.trim() || "08:00",
 			end: (form.querySelector("[data-hb=ahEnd]") as HTMLInputElement).value.trim() || "24:00",
 			timezone: (form.querySelector("[data-hb=ahTz]") as HTMLSelectElement).value.trim() || "local",
 		},
 		sandbox_enabled: (form.querySelector("[data-hb=sandboxEnabled]") as HTMLInputElement).checked,
-		sandbox_image: heartbeatSandboxImage.value || undefined,
+		sandbox_image: heartbeatSandboxImage.value || null,
 	};
 }
 
