@@ -369,6 +369,32 @@ home_persistence = "session"   # "off", "session", or "shared" (default)
 
 Moltis stores persisted homes under `data_dir()/sandbox/home/`.
 
+## Managed Files mount
+
+[Managed Files](managed-files.md) use a separate mount from the Moltis
+workspace and sandbox home:
+
+```toml
+[tools.exec.sandbox]
+managed_files_mount = "ro" # "none", "ro" (default), or "rw"
+```
+
+Docker, Podman, and Apple Container mount the host's `<data_dir>/files` at
+`/home/sandbox/files`. `none` makes that tree unavailable, `ro` permits reads,
+and `rw` permits mutations. WASM and remote sandbox backends do not yet support
+this mount.
+
+Although `/home/sandbox/files` is below the home path, it is an independent
+mount. `home_persistence = "shared"` does not enable Managed Files, and changing
+`managed_files_mount` does not change how sandbox caches, credentials, or other
+home files persist. Moltis advertises the effective path and mount mode to the
+agent and sets `MOLTIS_FILES_DIR` for `exec`.
+
+The default `ro` mode prevents a sandboxed command from changing Managed Files,
+but every agent session whose tool and channel policy permits reads sees the
+same tree. See the [Managed Files privacy warning](managed-files.md#privacy)
+before storing sensitive data.
+
 ## Docker-in-Docker workspace mounts
 
 When Moltis runs inside a container and launches Docker-backed sandboxes via a
@@ -435,5 +461,6 @@ How resource limits are applied depends on the backend:
 | Resource limits | ✅ | ✅ | ✅ fuel + epoch | ✅ ulimit | ❌ |
 | Image building | ✅ (via Docker) | ✅ | ❌ | ❌ | ❌ |
 | Shell commands | ✅ full shell | ✅ full shell | ~20 built-ins | ✅ full shell | ✅ full shell |
+| Managed Files mount | yes: `none`/`ro`/`rw` | yes: `none`/`ro`/`rw` | not yet | host path, no mount | host path, no mount |
 | Platform | macOS 26+ | any | any | any | any |
 | Overhead | low | medium | minimal | minimal | none |

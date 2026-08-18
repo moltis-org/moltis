@@ -41,6 +41,8 @@ pub(crate) fn tail_lines(text: &str, n: usize) -> String {
 
 /// Default container image used when none is configured.
 pub const DEFAULT_SANDBOX_IMAGE: &str = "ubuntu:25.10";
+/// Canonical managed Files path inside local sandboxes.
+pub const SANDBOX_FILES_DIR: &str = "/home/sandbox/files";
 
 /// Sandbox mode controlling when sandboxing is applied.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,6 +135,8 @@ pub enum WorkspaceMount {
     Rw,
 }
 
+pub use moltis_config::schema::ManagedFilesMountConfig as ManagedFilesMount;
+
 impl std::fmt::Display for WorkspaceMount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -194,6 +198,7 @@ pub struct SandboxConfig {
     pub mode: SandboxMode,
     pub scope: SandboxScope,
     pub workspace_mount: WorkspaceMount,
+    pub managed_files_mount: ManagedFilesMount,
     /// Host-visible path for Moltis `data_dir()` when running container-backed
     /// sandboxes from inside another container.
     pub host_data_dir: Option<PathBuf>,
@@ -279,6 +284,7 @@ impl Default for SandboxConfig {
             mode: SandboxMode::default(),
             scope: SandboxScope::default(),
             workspace_mount: WorkspaceMount::default(),
+            managed_files_mount: ManagedFilesMount::default(),
             host_data_dir: None,
             home_persistence: HomePersistence::default(),
             shared_home_dir: None,
@@ -336,6 +342,7 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
                 "none" => WorkspaceMount::None,
                 _ => WorkspaceMount::Ro,
             },
+            managed_files_mount: cfg.managed_files_mount,
             host_data_dir: cfg
                 .host_data_dir
                 .as_deref()
@@ -483,6 +490,11 @@ pub trait Sandbox: Send + Sync {
     /// restrictions when true filesystem isolation is unavailable.
     fn provides_fs_isolation(&self) -> bool {
         false
+    }
+
+    /// Whether commands in this backend can access the managed Files mount.
+    fn exposes_managed_files(&self) -> bool {
+        matches!(self.backend_name(), "docker" | "podman" | "apple-container")
     }
 
     /// The default workspace/home directory inside this backend.

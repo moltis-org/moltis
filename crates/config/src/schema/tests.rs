@@ -675,8 +675,28 @@ fn sandbox_defaults_include_go_runtime() {
     let sandbox = SandboxConfig::default();
     assert!(sandbox.packages.iter().any(|pkg| pkg == "golang-go"));
     assert_eq!(sandbox.home_persistence, HomePersistenceConfig::Shared);
+    assert_eq!(sandbox.managed_files_mount, ManagedFilesMountConfig::Ro);
     assert!(sandbox.host_data_dir.is_none());
     assert!(sandbox.wasm_tool_limits.is_none());
+}
+
+#[test]
+fn sandbox_managed_files_mount_deserializes_all_modes() {
+    for (value, expected) in [
+        ("none", ManagedFilesMountConfig::None),
+        ("ro", ManagedFilesMountConfig::Ro),
+        ("rw", ManagedFilesMountConfig::Rw),
+    ] {
+        let config: SandboxConfig =
+            toml::from_str(&format!("managed_files_mount = \"{value}\"")).unwrap();
+        assert_eq!(config.managed_files_mount, expected);
+    }
+}
+
+#[test]
+fn sandbox_managed_files_mount_rejects_unknown_mode() {
+    let result = toml::from_str::<SandboxConfig>("managed_files_mount = \"write\"");
+    assert!(result.is_err());
 }
 
 #[test]

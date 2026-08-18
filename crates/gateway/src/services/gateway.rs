@@ -29,6 +29,8 @@ pub struct GatewayServices {
     pub local_llm: Arc<dyn LocalLlmService>,
     pub external_agent: Arc<dyn ExternalAgentService>,
     pub network_audit: Arc<dyn crate::network_audit::NetworkAuditService>,
+    /// Capability-scoped storage for user-managed files.
+    pub files: Option<Arc<crate::files::LocalFilesService>>,
     /// Optional channel registry for direct plugin access (thread context, etc.).
     pub channel_registry: Option<Arc<moltis_channels::ChannelRegistry>>,
     /// Optional persisted channel store for safe config mutations.
@@ -165,6 +167,7 @@ impl GatewayServices {
             local_llm: Arc::new(NoopLocalLlmService),
             external_agent: Arc::new(NoopExternalAgentService),
             network_audit: Arc::new(crate::network_audit::NoopNetworkAuditService),
+            files: None,
             channel_registry: None,
             channel_store: None,
             channel_outbound: None,
@@ -191,6 +194,11 @@ impl GatewayServices {
         svc: Arc<dyn crate::network_audit::NetworkAuditService>,
     ) -> Self {
         self.network_audit = svc;
+        self
+    }
+
+    pub fn with_files(mut self, files: Arc<crate::files::LocalFilesService>) -> Self {
+        self.files = Some(files);
         self
     }
 

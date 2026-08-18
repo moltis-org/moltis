@@ -663,6 +663,26 @@ pub enum HomePersistenceConfig {
     Shared,
 }
 
+/// Access mode for managed Files inside local sandboxes.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ManagedFilesMountConfig {
+    None,
+    #[default]
+    Ro,
+    Rw,
+}
+
+impl std::fmt::Display for ManagedFilesMountConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => f.write_str("none"),
+            Self::Ro => f.write_str("ro"),
+            Self::Rw => f.write_str("rw"),
+        }
+    }
+}
+
 /// Sandbox configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -670,6 +690,8 @@ pub struct SandboxConfig {
     pub mode: String,
     pub scope: String,
     pub workspace_mount: String,
+    /// Access to managed Files at `/home/sandbox/files` in local sandboxes.
+    pub managed_files_mount: ManagedFilesMountConfig,
     /// Optional host-visible path for Moltis `data_dir()` when creating
     /// sandbox containers from inside another container.
     pub host_data_dir: Option<String>,
@@ -973,6 +995,7 @@ impl Default for SandboxConfig {
             mode: "all".into(),
             scope: "session".into(),
             workspace_mount: "ro".into(),
+            managed_files_mount: ManagedFilesMountConfig::default(),
             host_data_dir: None,
             home_persistence: HomePersistenceConfig::default(),
             shared_home_dir: None,

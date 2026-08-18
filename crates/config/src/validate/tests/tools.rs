@@ -167,6 +167,23 @@ allow_nested_podman = true
 }
 
 #[test]
+fn managed_files_mount_is_recognized_by_schema_validation() {
+    let result = validate_toml_str(
+        r#"
+[tools.exec.sandbox]
+managed_files_mount = "rw"
+"#,
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.path != "tools.exec.sandbox.managed_files_mount"),
+        "managed_files_mount should be a recognized typed field"
+    );
+}
+
+#[test]
 fn unknown_security_level_warned() {
     let toml = r#"
 [tools.exec]

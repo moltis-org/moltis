@@ -324,6 +324,11 @@ fn build_sub_agent_prompt(
         prompt.push_str("You are a sub-agent spawned to handle a specific task. ");
     }
     prompt.push_str("Complete the task thoroughly and return a clear result.\n\n");
+    prompt.push_str(&format!(
+        "Managed Files: use $MOLTIS_FILES_DIR when it is set (host: {}; supported container sandboxes: {}).\n\n",
+        moltis_config::managed_files_dir().display(),
+        crate::sandbox::SANDBOX_FILES_DIR,
+    ));
 
     // Inject persistent memory if configured.
     if let Some(p) = preset

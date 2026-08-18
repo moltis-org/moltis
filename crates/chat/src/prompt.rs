@@ -440,9 +440,16 @@ pub(crate) async fn build_prompt_runtime_context(
                 return None;
             }
             let config = router.config();
-            let backend_name = router.backend_name();
+            let backend = router.resolve_backend(session_key).await;
+            let backend_name = backend.backend_name();
             let workspace_mount = config.workspace_mount.to_string();
             let workspace_path = (workspace_mount != "none").then(|| data_dir_display.clone());
+            let exposes_managed_files = matches!(
+                moltis_tools::sandbox::SandboxBackendId::from_name(backend_name),
+                moltis_tools::sandbox::SandboxBackendId::Docker
+                    | moltis_tools::sandbox::SandboxBackendId::Podman
+                    | moltis_tools::sandbox::SandboxBackendId::AppleContainer
+            );
             Some(PromptSandboxRuntimeContext {
                 exec_sandboxed: true,
                 mode: Some(config.mode.to_string()),
@@ -452,6 +459,9 @@ pub(crate) async fn build_prompt_runtime_context(
                 home: Some("/home/sandbox".to_string()),
                 workspace_mount: Some(workspace_mount),
                 workspace_path,
+                files_path: exposes_managed_files
+                    .then(|| moltis_tools::sandbox::SANDBOX_FILES_DIR.to_string()),
+                files_mount: exposes_managed_files.then(|| config.managed_files_mount.to_string()),
                 no_network: prompt_sandbox_no_network_state(backend_name, config.no_network),
                 session_override: session_entry.and_then(|entry| entry.sandbox_enabled),
             })
@@ -490,6 +500,7 @@ pub(crate) async fn build_prompt_runtime_context(
         channel_chat_id: channel_context.chat_id,
         channel_chat_type: channel_context.chat_type,
         data_dir: Some(data_dir_display),
+        files_dir: Some(moltis_config::managed_files_dir().display().to_string()),
         docs_path: docs_reference
             .as_ref()
             .map(|reference| reference.docs_dir.display().to_string()),

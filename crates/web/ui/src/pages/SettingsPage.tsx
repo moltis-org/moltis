@@ -41,6 +41,7 @@ import {
 } from "./sections/_shared";
 import { ConfigSection, GraphqlSection } from "./sections/ConfigSection";
 import { EnvironmentSection } from "./sections/EnvironmentSection";
+import { FilesSection } from "./sections/FilesSection";
 import { IdentitySection } from "./sections/IdentitySection";
 import { ImportSection } from "./sections/ImportSection";
 import { InstrumentationSection } from "./sections/InstrumentationSection";
@@ -80,6 +81,11 @@ const sections: SectionItem[] = [
 		label: "Projects",
 		icon: <span className="icon icon-folder" />,
 		page: true,
+	},
+	{
+		id: "files",
+		label: "Files",
+		icon: <span className="icon icon-files" />,
 	},
 	{
 		id: "environment",
@@ -223,14 +229,6 @@ function getVisibleSections(): SectionItem[] {
 		if (!s.id) return true;
 		if (s.id === "graphql" && !gon.get("graphql_enabled")) return false;
 		if (s.id === "connectors" && !gon.get("connectors_enabled")) return false;
-		if (
-			s.id === "import" &&
-			!gon.get("openclaw_detected") &&
-			!gon.get("claude_detected") &&
-			!gon.get("codex_detected") &&
-			!gon.get("hermes_detected")
-		)
-			return false;
 		if (s.id === "vault" && (!vs || vs === "disabled")) return false;
 		return true;
 	});
@@ -402,6 +400,7 @@ function SettingsPage(): VNode {
 						)
 					) : null}
 					{section === "profile" ? <IdentitySection /> : null}
+					{section === "files" ? <FilesSection /> : null}
 					{section === "memory" ? <MemorySection /> : null}
 					{section === "environment" ? <EnvironmentSection /> : null}
 					{section === "tools" ? <ToolsSection /> : null}

@@ -468,6 +468,11 @@ All settings can be overridden via environment variables:
 | `MOLTIS_TOOLS__AGENT_TIMEOUT_SECS` | Agent run timeout override |
 | `MOLTIS_TOOLS__AGENT_MAX_ITERATIONS` | Agent loop iteration cap override |
 
+`MOLTIS_FILES_DIR` is different from these startup overrides: Moltis supplies
+it to local command agents and `exec` as the resolved
+[Managed Files](managed-files.md) path. Use it instead of assuming
+`<data_dir>/files`.
+
 ## CLI Flags
 
 ```bash

@@ -224,6 +224,23 @@ respect_gitignore = true
 require_approval = true
 ```
 
+## Managed Files
+
+[Managed Files](managed-files.md) are a storage surface, not another native
+filesystem tool. `Read`, `Write`, `Edit`, `MultiEdit`, `Glob`, and `Grep` can
+operate on that surface only when their normal tool policy and path policy
+allow it.
+
+Use the host path reported as `Host: files_dir=...` when filesystem tools run
+on the gateway host. In Docker, Podman, or Apple Container sandboxes, use
+`/home/sandbox/files`; `tools.exec.sandbox.managed_files_mount` determines
+whether that path is unavailable, read-only, or read-write. `MOLTIS_FILES_DIR`
+provides the corresponding path to `exec`.
+
+Files placed there are not automatically read, indexed as memory, or added to
+the prompt. The path is advertised so the agent can access a requested file
+deliberately.
+
 ## Structured Audit
 
 Every tool invocation is a structured event through moltis's existing

@@ -121,8 +121,8 @@ project-specific instructions override workspace-level ones.
 Injected as compact key=value lines under a `## Runtime` heading:
 
 ```
-Host: host=moltis-devbox | os=macos | arch=aarch64 | shell=zsh | time=2026-02-17 16:18:00 CET | today=2026-02-17 | provider=openai | model=gpt-5 | session=main | sudo_non_interactive=true | timezone=Europe/Paris
-Sandbox(exec): enabled=true | mode=all | backend=docker | scope=session | image=moltis-sandbox:abc123 | workspace_mount=ro | network=disabled
+Host: host=moltis-devbox | os=macos | arch=aarch64 | shell=zsh | time=2026-02-17 16:18:00 CET | today=2026-02-17 | provider=openai | model=gpt-5 | session=main | data_dir=/home/user/.moltis | files_dir=/home/user/.moltis/files | sudo_non_interactive=true | timezone=Europe/Paris
+Sandbox(exec): enabled=true | mode=all | backend=docker | scope=session | image=moltis-sandbox:abc123 | workspace_mount=ro | files_path=/home/sandbox/files | files_mount=ro | network=disabled
 ```
 
 For channel-bound sessions, the host line also includes surface metadata so the
@@ -146,6 +146,12 @@ The runtime context is populated at request time in `chat.rs` by detecting:
 - Timezone and accept-language from the browser
 - Geolocation (from browser or `USER.md`)
 - Sandbox configuration from the sandbox router
+
+Managed Files contribute paths and access state only. The host line advertises
+the resolved `files_dir`; supported local container backends also advertise
+`files_path` and `files_mount` (`none`, `ro`, or `rw`). Moltis supplies the
+matching path through `MOLTIS_FILES_DIR`. File names and contents are not
+automatically inserted into the prompt, indexed, or searched.
 
 ### Skills
 

@@ -16,9 +16,10 @@ use {
 
 use super::handlers::is_same_origin;
 
-/// 2 MiB global request body limit -- sufficient for any JSON API payload, small
-/// enough to limit abuse. The upload endpoint has its own 25 MiB limit.
+/// 2 MiB default extractor body limit -- sufficient for any JSON API payload,
+/// while routes for uploads and imports can override it explicitly.
 pub(super) const REQUEST_BODY_LIMIT: usize = 2 * 1024 * 1024;
+const STREAMING_REQUEST_BODY_LIMIT: usize = 2 * 1024 * 1024 * 1024;
 
 /// Build the CORS layer with dynamic host-based origin validation.
 ///
@@ -54,7 +55,7 @@ pub(super) fn build_cors_layer() -> CorsLayer {
 /// 5. `CorsLayer` -- handles preflight; logged by trace
 /// 6. `PropagateRequestIdLayer` -- copies x-request-id to response
 /// 7. Security response headers -- X-Content-Type-Options, X-Frame-Options, etc.
-/// 8. `RequestBodyLimitLayer` -- rejects oversized bodies
+/// 8. Body limits -- 2 MiB buffered by default and a 2 GiB streaming backstop
 /// 9. `CompressionLayer` (innermost) -- compresses response body
 pub(super) fn apply_middleware_stack<S>(
     router: Router<S>,
@@ -70,8 +71,9 @@ where
     let router = router
         .layer(CompressionLayer::new())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
-            REQUEST_BODY_LIMIT,
+            STREAMING_REQUEST_BODY_LIMIT,
         ))
+        .layer(axum::extract::DefaultBodyLimit::max(REQUEST_BODY_LIMIT))
         .layer(SetResponseHeaderLayer::overriding(
             header::HeaderName::from_static("x-content-type-options"),
             HeaderValue::from_static("nosniff"),
@@ -145,5 +147,49 @@ where
         router.layer(http_trace)
     } else {
         router
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use {
+        super::*,
+        axum::{
+            body::{Body, Bytes},
+            http::{Request, StatusCode},
+            routing::post,
+        },
+        tower::ServiceExt,
+    };
+
+    #[tokio::test]
+    async fn ordinary_limit_rejects_oversize_and_route_override_accepts_it() {
+        let body = vec![0_u8; REQUEST_BODY_LIMIT + 1];
+        let app = Router::new()
+            .route("/ordinary", post(|_: Bytes| async { StatusCode::OK }))
+            .route(
+                "/elevated",
+                post(|_: Bytes| async { StatusCode::OK })
+                    .layer(axum::extract::DefaultBodyLimit::max(body.len())),
+            )
+            .layer(axum::extract::DefaultBodyLimit::max(REQUEST_BODY_LIMIT));
+
+        let ordinary = app
+            .clone()
+            .oneshot(
+                Request::post("/ordinary")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ordinary.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        let elevated = app
+            .oneshot(Request::post("/elevated").body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(elevated.status(), StatusCode::OK);
     }
 }

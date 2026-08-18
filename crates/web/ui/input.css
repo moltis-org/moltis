@@ -1930,6 +1930,10 @@
     -webkit-mask-image: url("./icons/masks/mask-9efc91f08692af1a.svg");
     mask-image: url("./icons/masks/mask-9efc91f08692af1a.svg");
   }
+  .icon-files {
+    -webkit-mask-image: url("./icons/masks/files.svg");
+    mask-image: url("./icons/masks/files.svg");
+  }
 
   /* Navigation icons */
   .icon-channels {

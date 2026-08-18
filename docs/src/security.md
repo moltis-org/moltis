@@ -107,6 +107,38 @@ provides a proxy-filtered allowlist — only connections to explicitly approved
 domains are permitted. All requests (allowed and denied) are recorded in the
 network audit log for review.
 
+### Managed Files privacy boundary
+
+[Managed Files](managed-files.md) are one shared tree at `<data_dir>/files`,
+not a per-session store. The deliberate product policy is that **all agent
+sessions, including channel-originated sessions, can read that tree whenever
+their available tools and sandbox mount permit it**. Channel sessions remain
+subject to channel authorization and tool policy, but there is no additional
+Files-level partition after access is permitted.
+
+This is especially important for health information and other private data. Do
+not upload such files unless every agent session and channel operator with tool
+access may read them. To prevent local container sandboxes from seeing the
+tree, set:
+
+```toml
+[tools.exec.sandbox]
+managed_files_mount = "none"
+```
+
+The default is `ro`, which prevents sandbox writes but still permits reads.
+`rw` also permits agent mutations. Docker, Podman, and Apple Container support
+these mount modes initially; WASM and remote backends do not yet mount Managed
+Files. Host-side tools need separate restriction through tool/channel policy
+and, for the native filesystem tools, `[tools.fs]` path rules.
+
+The Settings UI and `/api/files/*` remain behind normal gateway
+authentication. Read operations require an API identity with `operator.read`
+(or admin), while uploads, renames, moves, and deletes require
+`operator.write` (or admin). The service rejects path traversal, symbolic
+links, and special files, caps each upload at 1 GiB, and forces browser
+downloads to use attachment disposition.
+
 ## Channel Authorization
 
 Channels (Telegram, Slack, etc.) allow external parties to interact with your

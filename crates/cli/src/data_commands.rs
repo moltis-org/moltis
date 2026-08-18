@@ -14,6 +14,9 @@ pub enum DataAction {
         /// Include session media files (audio, images). Can make archives large.
         #[arg(long, default_value_t = false)]
         include_media: bool,
+        /// Include the managed Files library. Can make archives very large.
+        #[arg(long, default_value_t = false)]
+        include_files: bool,
         /// Exclude provider API keys from the export.
         #[arg(long, default_value_t = false)]
         no_provider_keys: bool,
@@ -47,8 +50,9 @@ pub async fn handle_data(action: DataAction) -> anyhow::Result<()> {
         DataAction::Export {
             output,
             include_media,
+            include_files,
             no_provider_keys,
-        } => handle_export(output, include_media, no_provider_keys).await,
+        } => handle_export(output, include_media, include_files, no_provider_keys).await,
         DataAction::Import {
             archive,
             dry_run,
@@ -62,6 +66,7 @@ pub async fn handle_data(action: DataAction) -> anyhow::Result<()> {
 async fn handle_export(
     output: Option<PathBuf>,
     include_media: bool,
+    include_files: bool,
     no_provider_keys: bool,
 ) -> anyhow::Result<()> {
     let config_dir =
@@ -71,6 +76,7 @@ async fn handle_export(
     let opts = moltis_portable::ExportOptions {
         include_provider_keys: !no_provider_keys,
         include_media,
+        include_files,
     };
 
     let output_path = output.unwrap_or_else(|| {
@@ -98,6 +104,13 @@ async fn handle_export(
     println!("  Sessions: {}", manifest.inventory.session_count());
     if include_media {
         println!("  Media files: {}", manifest.inventory.media_count());
+    }
+    if include_files {
+        println!(
+            "  Managed Files: {} files, {} bytes",
+            manifest.inventory.managed_files.files.len(),
+            manifest.inventory.managed_files.total_bytes
+        );
     }
     println!("  moltis.db: {}", manifest.inventory.has_moltis_db);
     println!("  memory.db: {}", manifest.inventory.has_memory_db);

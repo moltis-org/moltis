@@ -735,6 +735,9 @@ fn test_no_identity_uses_default_prompt() {
 
     assert!(prompt.contains("You are a sub-agent"));
     assert!(prompt.contains("Task: do work"));
+    assert!(prompt.contains("Managed Files: use $MOLTIS_FILES_DIR"));
+    assert!(prompt.contains(crate::sandbox::SANDBOX_FILES_DIR));
+    assert!(prompt.contains(&moltis_config::managed_files_dir().display().to_string()));
     assert!(!prompt.contains("Context:"));
 }
 

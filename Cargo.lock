@@ -7778,6 +7778,8 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
+ "cap-fs-ext 4.0.2",
+ "cap-std 4.0.2",
  "chrono",
  "chrono-tz",
  "dashmap 6.1.0",
@@ -7853,6 +7855,7 @@ dependencies = [
  "qrcode",
  "rand 0.10.1",
  "reqwest 0.13.2",
+ "rustix 1.1.4",
  "secrecy 0.8.0",
  "serde",
  "serde_json",
@@ -7992,6 +7995,7 @@ dependencies = [
  "tokio-tungstenite 0.26.2",
  "tokio-util",
  "toml 0.8.23",
+ "tower",
  "tower-http",
  "tracing",
  "url",
@@ -8374,6 +8378,8 @@ name = "moltis-portable"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cap-fs-ext 4.0.2",
+ "cap-std 4.0.2",
  "flate2",
  "hex",
  "moltis-config",
@@ -8386,6 +8392,7 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "uuid",
  "walkdir",
 ]
 

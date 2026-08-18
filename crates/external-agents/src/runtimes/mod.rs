@@ -13,4 +13,5 @@ pub mod pi_agent;
 #[cfg(feature = "acp")]
 pub mod acp;
 
+mod env;
 mod process;

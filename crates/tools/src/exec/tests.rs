@@ -71,6 +71,44 @@ fn host_exec_injects_the_resolved_moltis_data_dir() {
     )]);
 }
 
+#[test]
+fn host_exec_injects_the_resolved_managed_files_dir() {
+    let mut env = vec![("MOLTIS_FILES_DIR".to_owned(), "stale".to_owned())];
+    inject_moltis_files_dir(
+        &mut env,
+        Some(
+            moltis_config::managed_files_dir()
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    );
+
+    assert_eq!(env, vec![(
+        "MOLTIS_FILES_DIR".to_owned(),
+        moltis_config::managed_files_dir()
+            .to_string_lossy()
+            .into_owned(),
+    )]);
+}
+
+#[test]
+fn sandbox_exec_injects_the_guest_managed_files_dir() {
+    let mut env = Vec::new();
+    inject_moltis_files_dir(&mut env, Some(crate::sandbox::SANDBOX_FILES_DIR.to_owned()));
+
+    assert_eq!(env, vec![(
+        "MOLTIS_FILES_DIR".to_owned(),
+        crate::sandbox::SANDBOX_FILES_DIR.to_owned(),
+    )]);
+}
+
+#[test]
+fn unsupported_sandbox_omits_the_managed_files_dir() {
+    let mut env = vec![("MOLTIS_FILES_DIR".to_owned(), "stale".to_owned())];
+    inject_moltis_files_dir(&mut env, None);
+    assert!(env.is_empty());
+}
+
 #[tokio::test]
 async fn test_exec_stderr() {
     let result = exec_command("echo err >&2", &ExecOpts::default())

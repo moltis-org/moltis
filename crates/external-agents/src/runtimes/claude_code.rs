@@ -8,7 +8,7 @@ use {
 };
 
 use crate::{
-    runtimes::process::build_process_input,
+    runtimes::{env::inject_managed_files_dir, process::build_process_input},
     transport::{ExternalAgentSession, ExternalAgentTransport},
     types::{
         AgentTransportKind, ContextSnapshot, ExternalAgentEvent, ExternalAgentSpec,
@@ -159,6 +159,7 @@ impl ExternalAgentSession for ClaudeCodeSession {
             command.current_dir(working_dir);
         }
         command.envs(&self.env);
+        inject_managed_files_dir(&mut command);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());

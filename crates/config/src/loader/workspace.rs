@@ -27,6 +27,11 @@ pub fn agent_workspace_dir(agent_id: &str) -> PathBuf {
     data_dir().join("agents").join(agent_id)
 }
 
+/// Return the root for files managed by the Files service.
+pub fn managed_files_dir() -> PathBuf {
+    data_dir().join("files")
+}
+
 /// Load identity values from `IDENTITY.md` frontmatter if present.
 pub fn load_identity() -> Option<AgentIdentity> {
     let path = identity_path();

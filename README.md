@@ -123,6 +123,7 @@ Verify releases with `gh attestation verify <artifact> -R moltis-org/moltis` or 
 - **AI Gateway** — Multi-provider LLM support (OpenAI Codex, GitHub Copilot, Local), streaming responses, agent loop with sub-agent delegation, session modes, parallel tool execution
 - **Communication** — Web UI with command-palette agent prompts and Markdown copy/export, Telegram, Signal, Microsoft Teams, Discord, Slack with native live tool cards, Nostr DMs + NIP-29 group chat (incl. Block's Buzz channels), API access, voice I/O (8 TTS + 7 STT providers), mobile PWA with push notifications
 - **Memory & Recall** — Per-agent memory workspaces, embeddings-powered long-term memory, hybrid vector + full-text search, session persistence with auto-compaction, cross-session recall, Cursor-compatible project context, context-file safety scanning
+- **Managed Files** - Authenticated nested file management in Settings, with an agent-advertised host path and independent read-only-by-default mounts for Docker, Podman, and Apple Container sandboxes
 - **Safer Agent Editing** — Automatic checkpoints before built-in skill and memory mutations, restore tooling, session branching
 - **Extensibility** — MCP servers (stdio + HTTP/SSE), skill system, 15 lifecycle hook events with circuit breaker, destructive command guard
 - **Agent Client Protocol** — drives external ACP agents (`codex-acp`, `claude-agent-acp`, Cursor), and serves Moltis to ACP clients over stdio via `moltis acp`
