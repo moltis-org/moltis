@@ -237,7 +237,7 @@ See [Cloud Deploy docs](https://docs.moltis.org/cloud-deploy.html) for details.
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=moltis-org/moltis&type=date&legend=top-left)](https://www.star-history.com/#moltis-org/moltis&type=date&legend=top-left)
+[![Star History Chart](https://star-history.dera.page/svg?repos=moltis-org/moltis&type=date&legend=top-left)](https://star-history.dera.page/#moltis-org/moltis&type=date&legend=top-left)
 
 ## License
 
