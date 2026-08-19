@@ -123,6 +123,8 @@ pub(crate) fn apple_container_run_args(
     volumes: &[String],
     resource_limits: &ResourceLimits,
 ) -> Result<Vec<String>> {
+    validate_apple_container_resource_limits(resource_limits)?;
+
     let mut args = vec![
         "run".to_string(),
         "-d".to_string(),
@@ -139,16 +141,6 @@ pub(crate) fn apple_container_run_args(
         args.extend(["--memory".to_string(), memory.clone()]);
     }
     if let Some(cpus) = resource_limits.cpu_quota {
-        let cpus = cpus.to_string().parse::<i64>().map_err(|_| {
-            Error::message(format!(
-                "Apple Container requires cpu_quota to be a positive whole number, got {cpus}"
-            ))
-        })?;
-        if cpus < 1 {
-            return Err(Error::message(format!(
-                "Apple Container requires cpu_quota to be a positive whole number, got {cpus}"
-            )));
-        }
         args.extend(["--cpus".to_string(), cpus.to_string()]);
     }
     if let Some(pids) = resource_limits.pids_max {
@@ -165,6 +157,25 @@ pub(crate) fn apple_container_run_args(
         apple_container_bootstrap_command(),
     ]);
     Ok(args)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn validate_apple_container_resource_limits(
+    resource_limits: &ResourceLimits,
+) -> Result<()> {
+    let Some(cpus) = resource_limits.cpu_quota else {
+        return Ok(());
+    };
+    let valid = cpus.is_finite()
+        && cpus >= 1.0
+        && cpus.fract() == 0.0
+        && cpus.to_string().parse::<i64>().is_ok();
+    if !valid {
+        return Err(Error::message(format!(
+            "Apple Container requires cpu_quota to be a positive whole number, got {cpus}"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "macos", test))]

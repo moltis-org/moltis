@@ -320,6 +320,30 @@ fn test_apple_container_run_args_reject_fractional_cpu_quota() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn test_apple_container_policy_fingerprint_includes_resource_limits() {
+    let first = AppleContainerSandbox::new(SandboxConfig {
+        resource_limits: ResourceLimits {
+            pids_max: Some(256),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let second = AppleContainerSandbox::new(SandboxConfig {
+        resource_limits: ResourceLimits {
+            pids_max: Some(512),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+
+    assert_ne!(
+        first.container_policy_fingerprint(),
+        second.container_policy_fingerprint()
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn test_apple_container_managed_files_mount_coexists_with_home_persistence() {
     let temp_dir = tempfile::tempdir().unwrap();
     let host_data_dir = temp_dir.path().join("moltis-data");

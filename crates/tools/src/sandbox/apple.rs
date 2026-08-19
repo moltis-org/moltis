@@ -1,7 +1,7 @@
 //! Apple Container sandbox backend (macOS 26+, Apple Silicon).
 
 #[cfg(target_os = "macos")]
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 #[cfg(target_os = "macos")]
@@ -22,6 +22,7 @@ use super::containers::{
     apple_container_run_state_from_inspect, is_apple_container_daemon_stale_error,
     is_apple_container_exists_error, is_apple_container_service_error,
     rebuildable_sandbox_image_tag, sandbox_image_exists, unmark_zombie,
+    validate_apple_container_resource_limits,
 };
 #[cfg(target_os = "macos")]
 use super::host::provision_packages;
@@ -53,7 +54,7 @@ use crate::sandbox::file_system::{
 pub struct AppleContainerSandbox {
     pub config: SandboxConfig,
     name_generations: RwLock<HashMap<String, u32>>,
-    mount_policy_validated: Mutex<HashSet<String>>,
+    container_policy_fingerprints: Mutex<HashMap<String, String>>,
     /// Cached host gateway IP for proxy routing in Trusted mode.
     host_gateway_cache: RwLock<Option<String>>,
 }
@@ -64,7 +65,7 @@ impl AppleContainerSandbox {
         Self {
             config,
             name_generations: RwLock::new(HashMap::new()),
-            mount_policy_validated: Mutex::new(HashSet::new()),
+            container_policy_fingerprints: Mutex::new(HashMap::new()),
             host_gateway_cache: RwLock::new(None),
         }
     }
@@ -125,6 +126,13 @@ impl AppleContainerSandbox {
             .container_prefix
             .as_deref()
             .unwrap_or("moltis-sandbox")
+    }
+
+    pub(crate) fn container_policy_fingerprint(&self) -> String {
+        format!(
+            "{:?}\0{:?}",
+            self.config.managed_files_mount, self.config.resource_limits
+        )
     }
 
     fn base_container_name(&self, id: &SandboxId) -> String {
@@ -782,25 +790,28 @@ impl Sandbox for AppleContainerSandbox {
     }
 
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+        validate_apple_container_resource_limits(&self.config.resource_limits)?;
+
         let mut name = self.container_name(id).await;
         // This state lock also serializes Apple Container creation. The CLI has
         // no atomic create-or-inspect primitive, so releasing it after policy
         // validation would let a concurrent caller remove the fresh winner.
-        let mut validated = self.mount_policy_validated.lock().await;
-        if !validated.contains(&name) {
+        let mut fingerprints = self.container_policy_fingerprints.lock().await;
+        let desired_fingerprint = self.container_policy_fingerprint();
+        if fingerprints.get(&name) != Some(&desired_fingerprint) {
             if Self::container_exists(&name).await? {
                 warn!(
                     name,
-                    "recreating existing apple container to apply managed Files mount policy"
+                    "recreating existing apple container to apply sandbox policy"
                 );
                 Self::force_remove_and_wait(&name).await;
                 if Self::container_exists(&name).await? {
                     return Err(Error::message(format!(
-                        "failed to remove apple container '{name}' after managed Files mount policy changed"
+                        "failed to remove apple container '{name}' after sandbox policy changed"
                     )));
                 }
             }
-            validated.insert(name.clone());
+            fingerprints.insert(name.clone(), desired_fingerprint);
         }
         let requested_image = image_override.unwrap_or_else(|| self.image());
         let image = self.resolve_local_image(requested_image).await?;
