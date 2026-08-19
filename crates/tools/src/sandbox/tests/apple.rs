@@ -185,7 +185,14 @@ fn test_apple_container_bootstrap_command_uses_portable_sleep() {
 
 #[test]
 fn test_apple_container_run_args_pin_workdir_and_bootstrap_home() {
-    let args = apple_container_run_args("moltis-sandbox-test", "ubuntu:25.10", Some("UTC"), &[]);
+    let args = apple_container_run_args(
+        "moltis-sandbox-test",
+        "ubuntu:25.10",
+        Some("UTC"),
+        &[],
+        &ResourceLimits::default(),
+    )
+    .unwrap();
     let expected = vec![
         "run",
         "-d",
@@ -208,9 +215,14 @@ fn test_apple_container_run_args_pin_workdir_and_bootstrap_home() {
 
 #[test]
 fn test_apple_container_run_args_with_home_volume() {
-    let args = apple_container_run_args("moltis-sandbox-test", "ubuntu:25.10", Some("UTC"), &[
-        "/tmp/home:/home/sandbox".to_string(),
-    ]);
+    let args = apple_container_run_args(
+        "moltis-sandbox-test",
+        "ubuntu:25.10",
+        Some("UTC"),
+        &["/tmp/home:/home/sandbox".to_string()],
+        &ResourceLimits::default(),
+    )
+    .unwrap();
     let expected = vec![
         "run",
         "-d",
@@ -239,7 +251,14 @@ fn test_apple_container_run_args_with_multiple_volumes() {
         "/tmp/home:/home/sandbox".to_string(),
         "/tmp/files:/home/sandbox/files:ro".to_string(),
     ];
-    let args = apple_container_run_args("moltis-sandbox-test", "ubuntu:25.10", None, &volumes);
+    let args = apple_container_run_args(
+        "moltis-sandbox-test",
+        "ubuntu:25.10",
+        None,
+        &volumes,
+        &ResourceLimits::default(),
+    )
+    .unwrap();
 
     assert_eq!(
         args.windows(2)
@@ -247,6 +266,55 @@ fn test_apple_container_run_args_with_multiple_volumes() {
             .map(|window| window[1].as_str())
             .collect::<Vec<_>>(),
         volumes.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_apple_container_run_args_apply_resource_limits() {
+    let args = apple_container_run_args(
+        "moltis-sandbox-test",
+        "ubuntu:25.10",
+        None,
+        &[],
+        &ResourceLimits {
+            memory_limit: Some("1G".into()),
+            cpu_quota: Some(2.0),
+            pids_max: Some(512),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        args.windows(2)
+            .filter(|window| matches!(window[0].as_str(), "--memory" | "--cpus" | "--ulimit"))
+            .map(|window| (window[0].as_str(), window[1].as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("--memory", "1G"),
+            ("--cpus", "2"),
+            ("--ulimit", "nproc=512")
+        ]
+    );
+}
+
+#[test]
+fn test_apple_container_run_args_reject_fractional_cpu_quota() {
+    let error = apple_container_run_args(
+        "moltis-sandbox-test",
+        "ubuntu:25.10",
+        None,
+        &[],
+        &ResourceLimits {
+            cpu_quota: Some(0.5),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("cpu_quota to be a positive whole number")
     );
 }
 

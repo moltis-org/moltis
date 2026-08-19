@@ -33,8 +33,9 @@ use super::paths::{
 };
 #[cfg(target_os = "macos")]
 use super::types::{
-    BuildImageResult, DEFAULT_SANDBOX_IMAGE, ManagedFilesMount, NetworkPolicy, SANDBOX_FILES_DIR,
-    SANDBOX_HOME_DIR, Sandbox, SandboxConfig, SandboxId, truncate_output_for_display,
+    BuildImageResult, DEFAULT_SANDBOX_IMAGE, ManagedFilesMount, NetworkPolicy, ResourceLimits,
+    SANDBOX_FILES_DIR, SANDBOX_HOME_DIR, Sandbox, SandboxConfig, SandboxId,
+    truncate_output_for_display,
 };
 #[cfg(target_os = "macos")]
 use crate::error::{Error, Result};
@@ -466,8 +467,10 @@ impl AppleContainerSandbox {
         image: &str,
         tz: Option<&str>,
         volumes: &[String],
+        resource_limits: &ResourceLimits,
     ) -> std::result::Result<(), CreateError> {
-        let args = apple_container_run_args(name, image, tz, volumes);
+        let args = apple_container_run_args(name, image, tz, volumes, resource_limits)
+            .map_err(|error| CreateError::Other(error.to_string()))?;
 
         let output = tokio::process::Command::new("container")
             .args(&args)
@@ -865,7 +868,9 @@ impl Sandbox for AppleContainerSandbox {
 
             // Phase 2: Create a new container.
             info!(name, image = %image, attempt, "creating apple container");
-            match Self::run_container(&name, &image, tz, &volumes).await {
+            match Self::run_container(&name, &image, tz, &volumes, &self.config.resource_limits)
+                .await
+            {
                 Ok(()) => {},
                 Err(CreateError::AlreadyExists) => {
                     warn!(
