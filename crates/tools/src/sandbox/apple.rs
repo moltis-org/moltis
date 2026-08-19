@@ -18,10 +18,10 @@ use tokio::sync::{Mutex, RwLock};
 
 #[cfg(target_os = "macos")]
 use super::containers::{
-    apple_container_exec_args, apple_container_run_args, apple_container_status_from_inspect,
-    is_apple_container_daemon_stale_error, is_apple_container_exists_error,
-    is_apple_container_service_error, rebuildable_sandbox_image_tag, sandbox_image_exists,
-    unmark_zombie,
+    ContainerRunState, apple_container_exec_args, apple_container_run_args,
+    apple_container_run_state_from_inspect, is_apple_container_daemon_stale_error,
+    is_apple_container_exists_error, is_apple_container_service_error,
+    rebuildable_sandbox_image_tag, sandbox_image_exists, unmark_zombie,
 };
 #[cfg(target_os = "macos")]
 use super::host::provision_packages;
@@ -317,9 +317,9 @@ impl AppleContainerSandbox {
             match output {
                 Ok(output) if output.status.success() => {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    match apple_container_status_from_inspect(&stdout) {
-                        Some("running") => return Ok(()),
-                        Some("stopped") => {
+                    match apple_container_run_state_from_inspect(&stdout) {
+                        Some(ContainerRunState::Running) => return Ok(()),
+                        Some(ContainerRunState::Stopped | ContainerRunState::Exited) => {
                             return Err(Error::message(format!(
                                 "container {name} failed to stay running after startup"
                             )));
@@ -453,9 +453,9 @@ impl AppleContainerSandbox {
             return ContainerState::NotFound;
         }
 
-        match apple_container_status_from_inspect(&stdout) {
-            Some("running") => ContainerState::Running,
-            Some("stopped") => ContainerState::Stopped,
+        match apple_container_run_state_from_inspect(&stdout) {
+            Some(ContainerRunState::Running) => ContainerState::Running,
+            Some(ContainerRunState::Stopped | ContainerRunState::Exited) => ContainerState::Stopped,
             _ => ContainerState::Unknown,
         }
     }
