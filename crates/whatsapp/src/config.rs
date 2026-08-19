@@ -74,6 +74,12 @@ pub struct WhatsAppAccountConfig {
     /// Group JID allowlist.
     pub group_allowlist: Vec<String>,
 
+    /// Name this client asserts for itself on WhatsApp.
+    ///
+    /// Overrides `[identity] name`. Unset on both falls back to `Moltis`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_name: Option<String>,
+
     /// Enable OTP self-approval for non-allowlisted DM users (default: true).
     pub otp_self_approval: bool,
 
@@ -189,6 +195,7 @@ impl Default for WhatsAppAccountConfig {
             allowlist: Vec::new(),
             operators: Vec::new(),
             group_allowlist: Vec::new(),
+            push_name: None,
             otp_self_approval: true,
             otp_cooldown_secs: 300,
             channel_overrides: HashMap::new(),

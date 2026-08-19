@@ -147,6 +147,7 @@ pub(crate) async fn init_channels(
         }
         let whatsapp_plugin = Arc::new(tokio::sync::RwLock::new(
             moltis_whatsapp::WhatsAppPlugin::new(wa_data_dir)
+                .with_identity_name(config.identity.name.clone())
                 .with_message_log(Arc::clone(&message_log))
                 .with_event_sink(Arc::clone(&channel_sink)),
         ));

@@ -138,6 +138,7 @@ Each WhatsApp account is a named entry under `[channels.whatsapp]`:
 | `group_allowlist` | array | `[]` | Group JIDs allowed for bot responses |
 | `otp_self_approval` | bool | `true` | Allow non-allowlisted users to self-approve via OTP |
 | `otp_cooldown_secs` | int | `300` | Cooldown seconds after 3 failed OTP attempts |
+| `push_name` | string | — | Name this client asserts on WhatsApp, shown to anyone without the number saved. Falls back to `[identity] name`, then `"Moltis"` |
 
 ### Full Example
 
