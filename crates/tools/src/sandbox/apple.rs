@@ -798,20 +798,19 @@ impl Sandbox for AppleContainerSandbox {
         // validation would let a concurrent caller remove the fresh winner.
         let mut fingerprints = self.container_policy_fingerprints.lock().await;
         let desired_fingerprint = self.container_policy_fingerprint();
-        if fingerprints.get(&name) != Some(&desired_fingerprint) {
+        if fingerprints.get(&name) != Some(&desired_fingerprint)
+            && Self::container_exists(&name).await?
+        {
+            warn!(
+                name,
+                "recreating existing apple container to apply sandbox policy"
+            );
+            Self::force_remove_and_wait(&name).await;
             if Self::container_exists(&name).await? {
-                warn!(
-                    name,
-                    "recreating existing apple container to apply sandbox policy"
-                );
-                Self::force_remove_and_wait(&name).await;
-                if Self::container_exists(&name).await? {
-                    return Err(Error::message(format!(
-                        "failed to remove apple container '{name}' after sandbox policy changed"
-                    )));
-                }
+                return Err(Error::message(format!(
+                    "failed to remove apple container '{name}' after sandbox policy changed"
+                )));
             }
-            fingerprints.insert(name.clone(), desired_fingerprint);
         }
         let requested_image = image_override.unwrap_or_else(|| self.image());
         let image = self.resolve_local_image(requested_image).await?;
@@ -830,6 +829,7 @@ impl Sandbox for AppleContainerSandbox {
                     info!(name, "apple container already running");
                     match Self::wait_for_container_exec_ready(&name).await {
                         Ok(()) => {
+                            fingerprints.insert(name.clone(), desired_fingerprint.clone());
                             unmark_zombie(&name);
                             return Ok(());
                         },
@@ -850,6 +850,7 @@ impl Sandbox for AppleContainerSandbox {
                         info!(name, "apple container restarted");
                         match Self::wait_for_container_exec_ready(&name).await {
                             Ok(()) => {
+                                fingerprints.insert(name.clone(), desired_fingerprint.clone());
                                 unmark_zombie(&name);
                                 return Ok(());
                             },
@@ -945,6 +946,7 @@ impl Sandbox for AppleContainerSandbox {
                         provision_packages("container", &name, &self.config.packages).await?;
                     }
 
+                    fingerprints.insert(name.clone(), desired_fingerprint.clone());
                     return Ok(());
                 },
                 Err(error) => {
@@ -976,6 +978,7 @@ impl Sandbox for AppleContainerSandbox {
                                         )
                                         .await?;
                                     }
+                                    fingerprints.insert(name.clone(), desired_fingerprint.clone());
                                     return Ok(());
                                 },
                                 Err(restart_error) => {
