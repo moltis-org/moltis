@@ -677,7 +677,7 @@ mod tests {
     fn openai_reasoning_with_tools_uses_responses_api() {
         let mut provider = OpenAiProvider::new(
             secrecy::Secret::new("test-key".to_string()),
-            "gpt-5.6-sol".to_string(),
+            "gpt-5.6-luna".to_string(),
             "https://api.openai.com/v1".to_string(),
         );
         provider.reasoning_effort = Some(ReasoningEffort::High);
