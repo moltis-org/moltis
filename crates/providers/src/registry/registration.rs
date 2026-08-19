@@ -50,7 +50,15 @@ fn resolve_openai_base_url(
 }
 
 pub(crate) fn openai_builtin_capabilities(base_url: &str) -> openai::OpenAiProviderCapabilities {
-    if base_url.trim().trim_end_matches('/') != OPENAI_DEFAULT_BASE_URL {
+    let is_openai_platform = reqwest::Url::parse(base_url.trim()).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.host_str() == Some("api.openai.com")
+            && url.port_or_known_default() == Some(443)
+            && url.path().trim_end_matches('/') == "/v1"
+            && url.query().is_none()
+            && url.fragment().is_none()
+    });
+    if !is_openai_platform {
         return openai::OpenAiProviderCapabilities::DEFAULT;
     }
     openai::OpenAiProviderCapabilities {
