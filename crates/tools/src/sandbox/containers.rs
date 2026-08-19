@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use {
-    serde::Serialize,
+    serde::{Deserialize, Serialize},
     sha2::{Digest, Sha256},
     tracing::warn,
 };
@@ -433,6 +433,42 @@ pub enum ContainerRunState {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AppleContainerState {
+    Running,
+    Stopped,
+    Exited,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum AppleContainerStatus {
+    Legacy(AppleContainerState),
+    Current { state: AppleContainerState },
+}
+
+impl AppleContainerStatus {
+    fn run_state(&self) -> ContainerRunState {
+        match self {
+            Self::Legacy(state) | Self::Current { state } => match state {
+                AppleContainerState::Running => ContainerRunState::Running,
+                AppleContainerState::Stopped => ContainerRunState::Stopped,
+                AppleContainerState::Exited => ContainerRunState::Exited,
+                AppleContainerState::Unknown => ContainerRunState::Unknown,
+            },
+        }
+    }
+}
+
+fn apple_container_run_state(entry: &serde_json::Value) -> Option<ContainerRunState> {
+    let status =
+        serde_json::from_value::<AppleContainerStatus>(entry.get("status")?.clone()).ok()?;
+    Some(status.run_state())
+}
+
 /// Which container backend manages this container.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -524,16 +560,7 @@ pub async fn list_running_containers_for_prefixes(
                 {
                     continue;
                 }
-                let state_str = entry
-                    .pointer("/status/state")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
-                let state = match state_str {
-                    "running" => ContainerRunState::Running,
-                    "stopped" => ContainerRunState::Stopped,
-                    "exited" => ContainerRunState::Exited,
-                    _ => ContainerRunState::Unknown,
-                };
+                let state = apple_container_run_state(&entry).unwrap_or(ContainerRunState::Unknown);
                 let image = entry
                     .pointer("/configuration/image/reference")
                     .and_then(|v| v.as_str())
@@ -845,8 +872,8 @@ pub async fn remove_container(name: &str) -> Result<()> {
         match inspect {
             Ok(ref ins) if ins.status.success() => {
                 let stdout = String::from_utf8_lossy(&ins.stdout);
-                let status = apple_container_status_from_inspect(&stdout);
-                if status == Some("running") {
+                let status = apple_container_run_state_from_inspect(&stdout);
+                if status == Some(ContainerRunState::Running) {
                     // Container is genuinely running — return the rm error.
                     let stderr = output
                         .as_ref()
@@ -946,21 +973,14 @@ pub async fn restart_container_daemon() -> Result<()> {
     ))
 }
 
-pub(crate) fn apple_container_status_from_inspect(stdout: &str) -> Option<&'static str> {
+pub(crate) fn apple_container_run_state_from_inspect(stdout: &str) -> Option<ContainerRunState> {
     let inspect = stdout.trim();
     if inspect.is_empty() || inspect == "[]" {
         return None;
     }
 
-    if inspect.contains(r#""status":"running""#) {
-        return Some("running");
-    }
-
-    if inspect.contains(r#""status":"stopped""#) || inspect.contains(r#""status":"exited""#) {
-        return Some("stopped");
-    }
-
-    None
+    let entries = serde_json::from_str::<Vec<serde_json::Value>>(inspect).ok()?;
+    entries.first().and_then(apple_container_run_state)
 }
 
 pub(crate) fn is_apple_container_service_error(stderr: &str) -> bool {

@@ -327,19 +327,60 @@ fn test_container_exec_shell_args_docker_keeps_standard_exec_shape() {
 }
 
 #[test]
-fn test_apple_container_status_from_inspect() {
+fn test_apple_container_run_state_from_legacy_inspect() {
     assert_eq!(
-        apple_container_status_from_inspect(
+        apple_container_run_state_from_inspect(
             r#"[{"id":"abc","status":"running","configuration":{}}]"#
         ),
-        Some("running")
+        Some(ContainerRunState::Running)
     );
     assert_eq!(
-        apple_container_status_from_inspect(r#"[{"id":"abc","status":"stopped"}]"#),
-        Some("stopped")
+        apple_container_run_state_from_inspect(r#"[{"id":"abc","status":"stopped"}]"#),
+        Some(ContainerRunState::Stopped)
     );
-    assert_eq!(apple_container_status_from_inspect("[]"), None);
-    assert_eq!(apple_container_status_from_inspect(""), None);
+    assert_eq!(
+        apple_container_run_state_from_inspect(r#"[{"id":"abc","status":"exited"}]"#),
+        Some(ContainerRunState::Exited)
+    );
+}
+
+#[test]
+fn test_apple_container_run_state_from_current_inspect() {
+    assert_eq!(
+        apple_container_run_state_from_inspect(
+            r#"[
+                {
+                    "id": "abc",
+                    "status": { "state": "running" },
+                    "configuration": {}
+                }
+            ]"#
+        ),
+        Some(ContainerRunState::Running)
+    );
+    assert_eq!(
+        apple_container_run_state_from_inspect(r#"[{"id":"abc","status":{"state":"stopped"}}]"#),
+        Some(ContainerRunState::Stopped)
+    );
+    assert_eq!(
+        apple_container_run_state_from_inspect(r#"[{"id":"abc","status":{"state":"exited"}}]"#),
+        Some(ContainerRunState::Exited)
+    );
+}
+
+#[test]
+fn test_apple_container_run_state_rejects_missing_or_malformed_inspect() {
+    assert_eq!(
+        apple_container_run_state_from_inspect(r#"[{"id":"abc","status":{"state":"starting"}}]"#),
+        Some(ContainerRunState::Unknown)
+    );
+    assert_eq!(apple_container_run_state_from_inspect("[]"), None);
+    assert_eq!(apple_container_run_state_from_inspect(""), None);
+    assert_eq!(apple_container_run_state_from_inspect("not json"), None);
+    assert_eq!(
+        apple_container_run_state_from_inspect(r#"[{"id":"abc"}]"#),
+        None
+    );
 }
 
 #[test]
