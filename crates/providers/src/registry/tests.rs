@@ -18,7 +18,17 @@ const FIREWORKS_KIMI_ROUTER: &str = "accounts/fireworks/routers/kimi-k2p5-turbo"
 
 #[test]
 fn openai_default_base_url_enables_responses_websocket() {
-    let capabilities = openai_builtin_capabilities(false);
+    let capabilities = openai_builtin_capabilities("https://api.openai.com/v1");
+    assert_eq!(
+        capabilities.responses_websocket_policy,
+        ResponsesWebSocketPolicy::OpenAiPlatform,
+    );
+    assert!(capabilities.responses_required_for_reasoning_tools);
+}
+
+#[test]
+fn openai_explicit_default_base_url_enables_responses_routing() {
+    let capabilities = openai_builtin_capabilities(" https://api.openai.com/v1/ ");
     assert_eq!(
         capabilities.responses_websocket_policy,
         ResponsesWebSocketPolicy::OpenAiPlatform,
@@ -28,7 +38,7 @@ fn openai_default_base_url_enables_responses_websocket() {
 
 #[test]
 fn openai_custom_base_url_disables_responses_websocket() {
-    let capabilities = openai_builtin_capabilities(true);
+    let capabilities = openai_builtin_capabilities("https://openai-compatible.example/v1");
     assert_eq!(
         capabilities.responses_websocket_policy,
         ResponsesWebSocketPolicy::Unsupported,

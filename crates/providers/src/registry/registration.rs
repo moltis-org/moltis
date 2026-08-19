@@ -39,20 +39,18 @@ const OPENAI_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 fn resolve_openai_base_url(
     config: &ProvidersConfig,
     env_overrides: &HashMap<String, String>,
-) -> (String, bool) {
+) -> String {
     if let Some(base_url) = config.get("openai").and_then(|e| e.base_url.clone()) {
-        return (base_url, true);
+        return base_url;
     }
     if let Some(base_url) = env_value(env_overrides, "OPENAI_BASE_URL") {
-        return (base_url, true);
+        return base_url;
     }
-    (OPENAI_DEFAULT_BASE_URL.into(), false)
+    OPENAI_DEFAULT_BASE_URL.into()
 }
 
-pub(crate) fn openai_builtin_capabilities(
-    base_url_overridden: bool,
-) -> openai::OpenAiProviderCapabilities {
-    if base_url_overridden {
+pub(crate) fn openai_builtin_capabilities(base_url: &str) -> openai::OpenAiProviderCapabilities {
+    if base_url.trim().trim_end_matches('/') != OPENAI_DEFAULT_BASE_URL {
         return openai::OpenAiProviderCapabilities::DEFAULT;
     }
     openai::OpenAiProviderCapabilities {
@@ -116,8 +114,8 @@ impl ProviderRegistry {
             && config.is_enabled("openai")
             && let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY", env_overrides)
         {
-            let (base_url, base_url_overridden) = resolve_openai_base_url(config, env_overrides);
-            let capabilities = openai_builtin_capabilities(base_url_overridden);
+            let base_url = resolve_openai_base_url(config, env_overrides);
+            let capabilities = openai_builtin_capabilities(&base_url);
             let alias = config.get("openai").and_then(|e| e.alias.clone());
             let provider_label = alias.unwrap_or_else(|| "openai".into());
             let stream_transport = config
@@ -493,7 +491,7 @@ impl ProviderRegistry {
             return;
         };
 
-        let (base_url, _) = resolve_openai_base_url(config, env_overrides);
+        let base_url = resolve_openai_base_url(config, env_overrides);
 
         let model_id = configured_models_for_provider(config, "openai")
             .into_iter()
@@ -825,8 +823,8 @@ impl ProviderRegistry {
         if config.is_enabled("openai")
             && let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY", env_overrides)
         {
-            let (base_url, base_url_overridden) = resolve_openai_base_url(config, env_overrides);
-            let capabilities = openai_builtin_capabilities(base_url_overridden);
+            let base_url = resolve_openai_base_url(config, env_overrides);
+            let capabilities = openai_builtin_capabilities(&base_url);
 
             // Get alias if configured (for metrics differentiation).
             let alias = config.get("openai").and_then(|e| e.alias.clone());
