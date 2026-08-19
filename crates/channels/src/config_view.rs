@@ -1,4 +1,33 @@
-use crate::gating::{DmPolicy, GroupPolicy};
+use {
+    crate::gating::{DmPolicy, GroupPolicy},
+    serde::{Deserialize, Serialize},
+};
+
+/// Tool audience ceiling for a turn that is not an operator in a proven direct
+/// chat. Defaults to the fail-closed [`Self::Public`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UntrustedAudience {
+    /// Only tools registered for the public audience are visible.
+    #[default]
+    Public,
+    /// No audience ceiling. MCP, WASM, and other trusted tools become visible,
+    /// leaving the name policy layers as the only limit on the turn.
+    Trusted,
+}
+
+/// Name policy applied to a turn that is not an operator in a proven direct
+/// chat. Defaults to the fail-closed [`Self::DenyAll`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UntrustedTools {
+    /// Deny every tool by name, on top of the audience ceiling.
+    #[default]
+    DenyAll,
+    /// Add no name policy of its own and let the configured policy layers
+    /// decide, the same way they decide for an operator direct chat.
+    Policy,
+}
 
 /// Typed read-only view of common channel account config fields.
 ///
@@ -25,6 +54,20 @@ pub trait ChannelConfigView: Send + Sync + std::fmt::Debug {
     /// An empty list grants nobody privileged access.
     fn operators(&self) -> &[String] {
         &[]
+    }
+
+    /// Tool audience ceiling for untrusted turns on this account. Raise it to
+    /// let a known group reach MCP and other trusted tools, then narrow with
+    /// the tool policy layers.
+    fn untrusted_audience(&self) -> UntrustedAudience {
+        UntrustedAudience::default()
+    }
+
+    /// Name policy for untrusted turns on this account. [`UntrustedTools::Policy`]
+    /// removes the blanket denial and leaves the configured policy layers in
+    /// charge.
+    fn untrusted_tools(&self) -> UntrustedTools {
+        UntrustedTools::default()
     }
 
     /// DM access policy.

@@ -26,10 +26,21 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
         let sender_role =
             resolve_sender_role(state, &reply_to.account_id, meta.sender_id.as_deref()).await;
 
+        let trusted_channel_turn = is_trusted_channel_turn(sender_role, &reply_to);
+        let (untrusted_audience, untrusted_tools) =
+            resolve_untrusted_ceiling(state, &reply_to.account_id).await;
+
         // `/sh <cmd>` is deliberately not a registered channel command — it
         // falls through to the agent, which force-executes it. Stop it here
         // for guests, before it reaches the runner.
-        let trusted_channel_turn = is_trusted_channel_turn(sender_role, &reply_to);
+        //
+        // This stays tied to `trusted_channel_turn` rather than to the
+        // configured ceiling. `run_explicit_shell_command` takes `exec`
+        // straight from the request registry, which the `[tools.policy]`
+        // layers never touch: they are applied in `apply_runtime_tool_filters`
+        // on the agent-run path, which `/sh` returns before reaching. So
+        // letting the ceiling widen this guard would hand out an `exec` that
+        // no `deny` can take back.
         if !trusted_channel_turn && moltis_agents::runner::explicit_shell_command(text).is_some() {
             warn!(
                 account_id = %reply_to.account_id,
@@ -180,14 +191,15 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             "_native_channel_request": true,
         });
 
-        // Only an operator in a proven direct chat receives tools and private
-        // context. This is the single condition on purpose: an earlier version
+        // Only an operator in a proven direct chat is trusted outright; every
+        // other turn gets a ceiling, whose tightness comes from the account
+        // config. This is the single condition on purpose: an earlier version
         // also skipped the ceiling for anything that parsed as `/sh`, on the
         // assumption that the guard above had already rejected every untrusted
         // `/sh`. That made the ceiling depend on a rejection 60 lines away, so
         // narrowing that guard would have silently opened this one.
         if !trusted_channel_turn {
-            apply_untrusted_channel_context(&mut params);
+            apply_untrusted_channel_context_with(&mut params, untrusted_audience, untrusted_tools);
         }
 
         // Carry this message's acknowledgment identity into the run so the

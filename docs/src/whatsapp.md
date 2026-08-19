@@ -138,6 +138,8 @@ Each WhatsApp account is a named entry under `[channels.whatsapp]`:
 | `group_allowlist` | array | `[]` | Group JIDs allowed for bot responses |
 | `otp_self_approval` | bool | `true` | Allow non-allowlisted users to self-approve via OTP |
 | `otp_cooldown_secs` | int | `300` | Cooldown seconds after 3 failed OTP attempts |
+| `untrusted_audience` | string | `"public"` | Tool audience ceiling for turns outside an operator direct chat: `"public"` or `"trusted"` |
+| `untrusted_tools` | string | `"deny_all"` | Tool name policy for those turns: `"deny_all"`, or `"policy"` to let `[tools.policy]` decide |
 
 ### Full Example
 
