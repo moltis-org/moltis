@@ -157,8 +157,10 @@ Use the recovery key to unseal the vault when you've forgotten your
 password:
 
 ```bash
+# Requires an authenticated session (or API key); log in first.
 curl -X POST http://localhost:18789/api/auth/vault/recovery \
   -H "Content-Type: application/json" \
+  -H "Cookie: moltis_session=$MOLTIS_SESSION" \
   -d '{"recovery_key": "ABCD-EFGH-JKLM-NPQR-STUV-WXYZ-2345-6789"}'
 ```
 
@@ -222,15 +224,19 @@ Allowed through regardless of vault state:
 
 ## API Endpoints
 
-Vault unlock endpoints are under `/api/auth/vault/`. Unlock and recovery are
-available before login so a sealed vault can be opened during authentication.
-Disabling the vault requires an authenticated session.
+Vault unlock endpoints are under `/api/auth/vault/`. Every endpoint that can
+change vault state — unlock, recovery, initialize, disable — requires an
+authenticated session, because unsealing decrypts all stored secrets. Only
+`status` is readable without a session. Logging in already unseals the vault
+with your password, so the unlock endpoints are only needed when the vault
+password differs from the login password or when recovering with the key.
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/api/auth/vault/status` | Returns `{"status": "uninitialized"\|"sealed"\|"unsealed"\|"disabled"}` |
-| `POST` | `/api/auth/vault/unlock` | Unseal with password: `{"password": "..."}` |
-| `POST` | `/api/auth/vault/recovery` | Unseal with recovery key: `{"recovery_key": "..."}` |
+| `POST` | `/api/auth/vault/initialize` | Initialize the vault for the current login password (session required) |
+| `POST` | `/api/auth/vault/unlock` | Unseal with password: `{"password": "..."}` (session required) |
+| `POST` | `/api/auth/vault/recovery` | Unseal with recovery key: `{"recovery_key": "..."}` (session required) |
 | `POST` | `/api/auth/vault/disable` | Decrypt stored secrets and set `auth.vault_enabled = false`; accepts `{"password":"..."}` when sealed. |
 
 ## Disabling The Vault
