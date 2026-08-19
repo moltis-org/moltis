@@ -209,7 +209,7 @@ WhatsApp uses the same access control model as Telegram channels.
 | Mode | Behavior |
 |------|----------|
 | `always` | Bot may respond to allowed group messages without an @mention |
-| `mention` | Bot only responds in allowed groups when the account is @mentioned |
+| `mention` | Bot only responds in allowed groups when the account is @mentioned, or when someone replies to one of its messages |
 | `none` | Bot never responds in groups |
 
 ### OTP Self-Approval
