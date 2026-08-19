@@ -674,19 +674,26 @@ mod tests {
     }
 
     #[test]
-    fn openai_reasoning_with_tools_uses_responses_api() {
-        let mut provider = OpenAiProvider::new(
-            secrecy::Secret::new("test-key".to_string()),
-            "gpt-5.6-luna".to_string(),
-            "https://api.openai.com/v1".to_string(),
-        );
-        provider.reasoning_effort = Some(ReasoningEffort::High);
+    fn openai_gpt_5_6_reasoning_with_tools_uses_responses_api() {
+        for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            let mut provider = OpenAiProvider::new(
+                secrecy::Secret::new("test-key".to_string()),
+                model.to_string(),
+                "https://api.openai.com/v1".to_string(),
+            );
+            provider.reasoning_effort = Some(ReasoningEffort::High);
 
-        assert_eq!(provider.wire_api_for_request(true), WireApi::Responses);
-        assert_eq!(
-            provider.wire_api_for_request(false),
-            WireApi::ChatCompletions
-        );
+            assert_eq!(
+                provider.wire_api_for_request(true),
+                WireApi::Responses,
+                "{model}",
+            );
+            assert_eq!(
+                provider.wire_api_for_request(false),
+                WireApi::ChatCompletions,
+                "{model}",
+            );
+        }
     }
 
     #[test]
