@@ -6,14 +6,28 @@
 pub(crate) fn markdown_to_whatsapp(markdown: &str) -> String {
     let mut output = String::with_capacity(markdown.len());
     let mut in_code_fence = false;
+    let segments: Vec<_> = markdown.split_inclusive('\n').map(split_segment).collect();
+    let mut index = 0;
 
-    for segment in markdown.split_inclusive('\n') {
-        let (line, has_newline) = match segment.strip_suffix('\n') {
-            Some(line) => (line.strip_suffix('\r').unwrap_or(line), true),
-            None => (segment, false),
-        };
+    while index < segments.len() {
+        let (line, has_newline) = segments[index];
         let trimmed = line.trim_start();
-        if !in_code_fence && is_table_separator(trimmed) {
+
+        if !in_code_fence
+            && !trimmed.starts_with("```")
+            && let Some(column_count) = table_column_count(&segments, index)
+        {
+            render_table_row(&mut output, trimmed, has_newline);
+            index += 2; // The validated separator row is structural, not content.
+
+            while let Some(&(row, row_has_newline)) = segments.get(index) {
+                let row = row.trim_start();
+                if !is_table_row(row) || table_cells(row).len() != column_count {
+                    break;
+                }
+                render_table_row(&mut output, row, row_has_newline);
+                index += 1;
+            }
             continue;
         }
 
@@ -22,13 +36,12 @@ pub(crate) fn markdown_to_whatsapp(markdown: &str) -> String {
             in_code_fence = !in_code_fence;
         } else if in_code_fence {
             output.push_str(line);
-        } else if is_table_row(trimmed) {
-            let cells = table_cells(trimmed);
-            output.push_str(&convert_inline(&cells.join(" · ")));
         } else if let Some((indent, heading)) = markdown_heading(line) {
             output.push_str(indent);
             let heading = convert_inline(heading);
-            if heading.starts_with('*') && heading.ends_with('*') {
+            // Preserve an existing bold run instead of creating overlapping
+            // WhatsApp delimiters around only part of the heading.
+            if heading.contains('*') {
                 output.push_str(&heading);
             } else {
                 output.push('*');
@@ -42,9 +55,17 @@ pub(crate) fn markdown_to_whatsapp(markdown: &str) -> String {
         if has_newline {
             output.push('\n');
         }
+        index += 1;
     }
 
     output
+}
+
+fn split_segment(segment: &str) -> (&str, bool) {
+    match segment.strip_suffix('\n') {
+        Some(line) => (line.strip_suffix('\r').unwrap_or(line), true),
+        None => (segment, false),
+    }
 }
 
 fn markdown_heading(line: &str) -> Option<(&str, &str)> {
@@ -62,11 +83,7 @@ fn is_table_row(line: &str) -> bool {
 }
 
 fn table_cells(line: &str) -> Vec<&str> {
-    line.trim_matches('|')
-        .split('|')
-        .map(str::trim)
-        .filter(|cell| !cell.is_empty())
-        .collect()
+    line.trim_matches('|').split('|').map(str::trim).collect()
 }
 
 fn is_table_separator(line: &str) -> bool {
@@ -77,6 +94,30 @@ fn is_table_separator(line: &str) -> bool {
         let cell = cell.trim_matches(':');
         cell.len() >= 3 && cell.bytes().all(|byte| byte == b'-')
     })
+}
+
+fn table_column_count(segments: &[(&str, bool)], index: usize) -> Option<usize> {
+    let &(header, header_has_newline) = segments.get(index)?;
+    let &(separator, _) = segments.get(index + 1)?;
+    if !header_has_newline {
+        return None;
+    }
+
+    let header = header.trim_start();
+    let separator = separator.trim_start();
+    if !is_table_row(header) || !is_table_separator(separator) {
+        return None;
+    }
+
+    let column_count = table_cells(header).len();
+    (column_count == table_cells(separator).len()).then_some(column_count)
+}
+
+fn render_table_row(output: &mut String, row: &str, has_newline: bool) {
+    output.push_str(&convert_inline(&table_cells(row).join(" · ")));
+    if has_newline {
+        output.push('\n');
+    }
 }
 
 fn convert_inline(input: &str) -> String {
@@ -311,6 +352,18 @@ mod tests {
     }
 
     #[test]
+    fn preserves_isolated_pipe_rows_and_ascii_borders() {
+        let input = "Diagram:\n|---|---|\n| left | right |\nEnd";
+        assert_eq!(markdown_to_whatsapp(input), input);
+    }
+
+    #[test]
+    fn requires_matching_header_and_separator_columns_for_tables() {
+        let input = "| First | Second |\n|---|\n| value | another |";
+        assert_eq!(markdown_to_whatsapp(input), input);
+    }
+
+    #[test]
     fn leaves_bare_urls_and_native_whatsapp_markup_unchanged() {
         let input = "*Atenção* https://example.com/a_b?q=1";
         assert_eq!(markdown_to_whatsapp(input), input);
@@ -368,8 +421,16 @@ mod tests {
     }
 
     #[test]
-    fn avoids_double_wrapping_preformatted_headings() {
+    fn headings_with_inline_emphasis_do_not_overlap_markers() {
         assert_eq!(markdown_to_whatsapp("## **Título**"), "*Título*");
+        assert_eq!(
+            markdown_to_whatsapp("## This is *important*"),
+            "This is *important*"
+        );
+        assert_eq!(
+            markdown_to_whatsapp("## This is **important**"),
+            "This is *important*"
+        );
         assert_eq!(markdown_to_whatsapp("  ### Título"), "  *Título*");
     }
 
