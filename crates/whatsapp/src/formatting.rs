@@ -26,7 +26,7 @@ pub(crate) fn markdown_to_whatsapp(markdown: &str) -> String {
                 let Some(cells) = table_cells(row) else {
                     break;
                 };
-                if cells.len() != column_count {
+                if cells.len() != column_count || is_table_separator(&cells) {
                     break;
                 }
                 render_table_row(&mut output, &cells, row_has_newline);
@@ -45,7 +45,7 @@ pub(crate) fn markdown_to_whatsapp(markdown: &str) -> String {
             let heading = convert_inline(heading);
             // Preserve an existing bold run instead of creating overlapping
             // WhatsApp delimiters around only part of the heading.
-            if heading.contains('*') {
+            if contains_whatsapp_emphasis(&heading) {
                 output.push_str(&heading);
             } else {
                 output.push('*');
@@ -82,6 +82,55 @@ fn markdown_heading(line: &str) -> Option<(&str, &str)> {
     Some((&line[..indent_len], trimmed[hashes + 1..].trim()))
 }
 
+fn contains_whatsapp_emphasis(input: &str) -> bool {
+    let mut chars = input.chars().peekable();
+    let mut code_ticks = None;
+    let mut has_opening = false;
+    let mut has_content = false;
+    let mut previous = None;
+
+    while let Some(ch) = chars.next() {
+        if ch == '`' {
+            let ticks = consume_run(&mut chars, '`');
+            match code_ticks {
+                None => code_ticks = Some(ticks),
+                Some(opening_ticks) if opening_ticks == ticks => code_ticks = None,
+                Some(_) => {},
+            }
+            has_content |= has_opening;
+            previous = Some('`');
+            continue;
+        }
+        if code_ticks.is_some() {
+            has_content |= has_opening;
+            previous = Some(ch);
+            continue;
+        }
+        if ch == '\\' {
+            previous = chars.next().or(Some(ch));
+            has_content |= has_opening;
+            continue;
+        }
+        if ch == '*' {
+            if has_opening
+                && has_content
+                && previous.is_some_and(|value: char| !value.is_whitespace())
+            {
+                return true;
+            }
+            has_opening = chars
+                .peek()
+                .is_some_and(|value| !value.is_whitespace() && *value != '*');
+            has_content = false;
+        } else if has_opening {
+            has_content = true;
+        }
+        previous = Some(ch);
+    }
+
+    false
+}
+
 fn table_cells(line: &str) -> Option<Vec<String>> {
     let mut chars = line.trim_end().strip_prefix('|')?.chars().peekable();
     let mut cells = Vec::new();
@@ -89,18 +138,26 @@ fn table_cells(line: &str) -> Option<Vec<String>> {
     let mut code_ticks = None;
 
     while let Some(ch) = chars.next() {
-        if ch == '\\' && code_ticks.is_none() && chars.peek() == Some(&'|') {
-            chars.next();
-            cell.push('|');
+        if ch == '\\' && code_ticks.is_none() {
+            let backslashes = consume_run(&mut chars, '\\');
+            let escaped = chars
+                .peek()
+                .copied()
+                .filter(|next| matches!(next, '|' | '`'));
+            if let Some(escaped) = escaped {
+                cell.extend(std::iter::repeat_n('\\', backslashes / 2));
+                if backslashes % 2 == 1 {
+                    chars.next();
+                    cell.push(escaped);
+                }
+            } else {
+                cell.extend(std::iter::repeat_n('\\', backslashes));
+            }
             continue;
         }
 
         if ch == '`' {
-            let mut ticks = 1;
-            while chars.peek() == Some(&'`') {
-                chars.next();
-                ticks += 1;
-            }
+            let ticks = consume_run(&mut chars, '`');
             cell.extend(std::iter::repeat_n('`', ticks));
             match code_ticks {
                 None => code_ticks = Some(ticks),
@@ -125,6 +182,18 @@ fn table_cells(line: &str) -> Option<Vec<String>> {
     None
 }
 
+fn consume_run<I>(chars: &mut std::iter::Peekable<I>, expected: char) -> usize
+where
+    I: Iterator<Item = char>,
+{
+    let mut count = 1;
+    while chars.peek() == Some(&expected) {
+        chars.next();
+        count += 1;
+    }
+    count
+}
+
 fn is_table_separator(cells: &[String]) -> bool {
     cells.iter().all(|cell| {
         let cell = cell.trim_matches(':');
@@ -146,6 +215,12 @@ fn table_header_cells(segments: &[(&str, bool)], index: usize) -> Option<Vec<Str
     if !is_table_separator(&separator_cells) || header_cells.len() != separator_cells.len() {
         return None;
     }
+    if index > 0
+        && let Some(previous_cells) = table_cells(segments[index - 1].0.trim_start())
+        && is_table_separator(&previous_cells)
+    {
+        return None;
+    }
 
     Some(header_cells)
 }
@@ -160,7 +235,7 @@ fn render_table_row(output: &mut String, cells: &[String], has_newline: bool) {
 fn convert_inline(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
-    let mut in_inline_code = false;
+    let mut inline_code_ticks = None;
     let mut in_bold = false;
     let mut in_underscore_bold = false;
     let mut in_strike = false;
@@ -168,11 +243,16 @@ fn convert_inline(input: &str) -> String {
 
     while let Some(ch) = chars.next() {
         if ch == '`' {
-            in_inline_code = !in_inline_code;
-            output.push(ch);
+            let ticks = consume_run(&mut chars, '`');
+            output.extend(std::iter::repeat_n('`', ticks));
+            match inline_code_ticks {
+                None => inline_code_ticks = Some(ticks),
+                Some(opening_ticks) if opening_ticks == ticks => inline_code_ticks = None,
+                Some(_) => {},
+            }
             continue;
         }
-        if in_inline_code {
+        if inline_code_ticks.is_some() {
             output.push(ch);
             continue;
         }
@@ -295,20 +375,34 @@ where
     let Some(rest) = remaining.strip_prefix(&delimiter[1..]) else {
         return false;
     };
-    let bytes = rest.as_bytes();
-    let delimiter = delimiter.as_bytes();
-    let mut in_code = false;
-    let mut index = 0;
+    let mut chars = rest.chars().peekable();
+    let mut code_ticks = None;
 
-    while index < bytes.len() {
-        match bytes[index] {
-            b'\\' => index += 2,
-            b'`' => {
-                in_code = !in_code;
-                index += 1;
-            },
-            _ if !in_code && bytes[index..].starts_with(delimiter) => return true,
-            _ => index += 1,
+    while let Some(ch) = chars.next() {
+        if ch == '`' {
+            let ticks = consume_run(&mut chars, '`');
+            match code_ticks {
+                None => code_ticks = Some(ticks),
+                Some(opening_ticks) if opening_ticks == ticks => code_ticks = None,
+                Some(_) => {},
+            }
+            continue;
+        }
+        if code_ticks.is_some() {
+            continue;
+        }
+        if ch == '\\' {
+            chars.next();
+            continue;
+        }
+        if ch == delimiter.chars().next().unwrap_or_default() {
+            let mut lookahead = chars.clone();
+            if delimiter[1..]
+                .chars()
+                .all(|expected| lookahead.next() == Some(expected))
+            {
+                return true;
+            }
         }
     }
     false
@@ -395,6 +489,19 @@ mod tests {
     }
 
     #[test]
+    fn preserves_pipe_content_enclosed_by_ascii_borders() {
+        let input = "|---|---|\n| A | B |\n|---|---|";
+        assert_eq!(markdown_to_whatsapp(input), input);
+    }
+
+    #[test]
+    fn does_not_render_a_closing_border_as_table_content() {
+        let input = "| First | Second |\n|---|---|\n| A | B |\n|---|---|";
+        let expected = "First · Second\nA · B\n|---|---|";
+        assert_eq!(markdown_to_whatsapp(input), expected);
+    }
+
+    #[test]
     fn requires_matching_header_and_separator_columns_for_tables() {
         let input = "| First | Second |\n|---|\n| value | another |";
         assert_eq!(markdown_to_whatsapp(input), input);
@@ -411,6 +518,20 @@ mod tests {
     fn preserves_escaped_pipes_as_table_cell_content() {
         let input = "| A \\| B | Meaning |\n|---|---|\n| left \\| right | choice |";
         let expected = "A | B · Meaning\nleft | right · choice";
+        assert_eq!(markdown_to_whatsapp(input), expected);
+    }
+
+    #[test]
+    fn even_backslashes_do_not_escape_table_delimiters() {
+        let input = "| First | Second |\n|---|---|\n| left \\\\| right |";
+        let expected = "First · Second\nleft \\ · right";
+        assert_eq!(markdown_to_whatsapp(input), expected);
+    }
+
+    #[test]
+    fn preserves_markdown_inside_multi_backtick_table_code_spans() {
+        let input = "| Code | Meaning |\n|---|---|\n| ``**literal** | [link](url)`` | untouched |";
+        let expected = "Code · Meaning\n``**literal** | [link](url)`` · untouched";
         assert_eq!(markdown_to_whatsapp(input), expected);
     }
 
@@ -483,6 +604,16 @@ mod tests {
             "This is *important*"
         );
         assert_eq!(markdown_to_whatsapp("  ### Título"), "  *Título*");
+    }
+
+    #[test]
+    fn literal_asterisks_do_not_disable_heading_emphasis() {
+        assert_eq!(markdown_to_whatsapp("## 2 * 3 = 6"), "*2 * 3 = 6*");
+        assert_eq!(markdown_to_whatsapp("## `*` operator"), "*`*` operator*");
+        assert_eq!(
+            markdown_to_whatsapp("## Use ** as glob"),
+            "*Use ** as glob*"
+        );
     }
 
     #[test]
