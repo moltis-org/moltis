@@ -43,14 +43,14 @@ pub(crate) fn markdown_to_whatsapp(markdown: &str) -> String {
         } else if let Some((indent, heading)) = markdown_heading(line) {
             output.push_str(indent);
             let heading = convert_inline(heading);
-            // Preserve an existing bold run instead of creating overlapping
-            // WhatsApp delimiters around only part of the heading.
-            if contains_whatsapp_emphasis(&heading) {
+            // Only add outer bold when it cannot overlap existing emphasis or
+            // an unspaced literal asterisk in the heading text.
+            if heading_can_use_outer_bold(&heading) {
+                output.push('*');
                 output.push_str(&heading);
+                output.push('*');
             } else {
-                output.push('*');
                 output.push_str(&heading);
-                output.push('*');
             }
         } else {
             output.push_str(&convert_inline(line));
@@ -82,11 +82,12 @@ fn markdown_heading(line: &str) -> Option<(&str, &str)> {
     Some((&line[..indent_len], trimmed[hashes + 1..].trim()))
 }
 
-fn contains_whatsapp_emphasis(input: &str) -> bool {
+fn heading_can_use_outer_bold(input: &str) -> bool {
     let mut chars = input.chars().peekable();
     let mut code_ticks = None;
     let mut has_opening = false;
     let mut has_content = false;
+    let mut has_unsafe_literal = false;
     let mut previous = None;
 
     while let Some(ch) = chars.next() {
@@ -116,8 +117,11 @@ fn contains_whatsapp_emphasis(input: &str) -> bool {
                 && has_content
                 && previous.is_some_and(|value: char| !value.is_whitespace())
             {
-                return true;
+                return false;
             }
+            let previous_is_text = previous.is_none_or(|value: char| !value.is_whitespace());
+            let next_is_text = chars.peek().is_none_or(|value| !value.is_whitespace());
+            has_unsafe_literal |= previous_is_text || next_is_text;
             has_opening = chars
                 .peek()
                 .is_some_and(|value| !value.is_whitespace() && *value != '*');
@@ -128,7 +132,7 @@ fn contains_whatsapp_emphasis(input: &str) -> bool {
         previous = Some(ch);
     }
 
-    false
+    !has_unsafe_literal
 }
 
 fn table_cells(line: &str) -> Option<Vec<String>> {
@@ -610,10 +614,13 @@ mod tests {
     fn literal_asterisks_do_not_disable_heading_emphasis() {
         assert_eq!(markdown_to_whatsapp("## 2 * 3 = 6"), "*2 * 3 = 6*");
         assert_eq!(markdown_to_whatsapp("## `*` operator"), "*`*` operator*");
-        assert_eq!(
-            markdown_to_whatsapp("## Use ** as glob"),
-            "*Use ** as glob*"
-        );
+    }
+
+    #[test]
+    fn unspaced_literal_asterisks_prevent_unsafe_heading_wrapping() {
+        assert_eq!(markdown_to_whatsapp("## 2*3 = 6"), "2*3 = 6");
+        assert_eq!(markdown_to_whatsapp("## Use ** as glob"), "Use ** as glob");
+        assert_eq!(markdown_to_whatsapp("## trailing*"), "trailing*");
     }
 
     #[test]
