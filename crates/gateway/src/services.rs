@@ -13,8 +13,12 @@ pub use {moltis_service_traits::*, skills::NoopSkillsService};
 use {
     async_trait::async_trait,
     serde_json::Value,
-    std::{path::Path, sync::Arc},
+    std::{path::Path, process::Stdio, sync::Arc},
 };
+
+const UVX_EXECUTABLE: &str = "uvx";
+const SNYK_AGENT_SCAN_REQUIREMENT: &str = "snyk-agent-scan==0.5.17";
+const SNYK_AGENT_SCAN_EXECUTABLE: &str = "snyk-agent-scan";
 
 mod browser;
 mod gateway;
@@ -56,37 +60,41 @@ async fn command_available(command: &str) -> bool {
         .unwrap_or(false)
 }
 
-async fn run_mcp_scan(installed_dir: &Path) -> anyhow::Result<Value> {
-    let mut cmd = if command_available("uvx").await {
-        let mut c = tokio::process::Command::new("uvx");
-        c.arg("mcp-scan@latest");
-        c
-    } else {
-        tokio::process::Command::new("mcp-scan")
-    };
-
-    cmd.arg("--skills")
-        .arg(installed_dir)
+fn snyk_agent_scan_command(installed_dir: &Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(UVX_EXECUTABLE);
+    command
+        .arg("--from")
+        .arg(SNYK_AGENT_SCAN_REQUIREMENT)
+        .arg(SNYK_AGENT_SCAN_EXECUTABLE)
+        .arg("scan")
         .arg("--json")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .arg(installed_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    command
+}
 
-    let output = tokio::time::timeout(std::time::Duration::from_secs(300), cmd.output())
+async fn run_snyk_agent_scan(installed_dir: &Path) -> anyhow::Result<Value> {
+    let mut command = snyk_agent_scan_command(installed_dir);
+
+    let output = tokio::time::timeout(std::time::Duration::from_secs(300), command.output())
         .await
-        .map_err(|_| anyhow::anyhow!("mcp-scan timed out after 5 minutes"))??;
+        .map_err(|_| anyhow::anyhow!("Snyk Agent Scan timed out after 5 minutes"))??;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         anyhow::bail!(if stderr.is_empty() {
-            "mcp-scan failed".to_string()
+            "Snyk Agent Scan failed".to_string()
         } else {
-            format!("mcp-scan failed: {stderr}")
+            format!("Snyk Agent Scan failed: {stderr}")
         });
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let parsed: Value = serde_json::from_str(&stdout)
-        .map_err(|e| anyhow::anyhow!("invalid mcp-scan JSON output: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("invalid Snyk Agent Scan JSON output: {e}"))?;
     Ok(parsed)
 }
 
@@ -181,4 +189,33 @@ pub(crate) fn markdown_to_html(md: &str) -> String {
     let mut html_output = String::new();
     html::push_html(&mut html_output, parser);
     html_output
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, std::ffi::OsString};
+
+    #[test]
+    fn snyk_agent_scan_command_uses_pinned_distribution_and_explicit_executable() {
+        let installed_dir = Path::new("/tmp/installed skills");
+        let command = snyk_agent_scan_command(installed_dir);
+        let std_command = command.as_std();
+
+        assert_eq!(std_command.get_program(), UVX_EXECUTABLE);
+        assert_eq!(
+            std_command
+                .get_args()
+                .map(OsString::from)
+                .collect::<Vec<_>>(),
+            vec![
+                OsString::from("--from"),
+                OsString::from(SNYK_AGENT_SCAN_REQUIREMENT),
+                OsString::from(SNYK_AGENT_SCAN_EXECUTABLE),
+                OsString::from("scan"),
+                OsString::from("--json"),
+                installed_dir.as_os_str().to_owned(),
+            ]
+        );
+        assert!(command.get_kill_on_drop());
+    }
 }

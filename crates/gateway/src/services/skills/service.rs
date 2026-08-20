@@ -17,6 +17,16 @@ use super::super::*;
 
 pub struct NoopSkillsService;
 
+fn snyk_agent_scan_status_payload(installed_dir: &Path, uvx_available: bool) -> Value {
+    serde_json::json!({
+        "mcp_scan_available": false,
+        "uvx_available": uvx_available,
+        "supported": uvx_available,
+        "installed_skills_dir": installed_dir,
+        "install_hint": "Install uv (https://docs.astral.sh/uv/) to run Snyk Agent Scan skill security scans",
+    })
+}
+
 #[async_trait]
 impl SkillsService for NoopSkillsService {
     async fn status(&self) -> ServiceResult {
@@ -978,15 +988,11 @@ impl SkillsService for NoopSkillsService {
     async fn security_status(&self) -> ServiceResult {
         let installed_dir =
             moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
-        let mcp_scan_available = command_available("mcp-scan").await;
-        let uvx_available = command_available("uvx").await;
-        Ok(serde_json::json!({
-            "mcp_scan_available": mcp_scan_available,
-            "uvx_available": uvx_available,
-            "supported": mcp_scan_available || uvx_available,
-            "installed_skills_dir": installed_dir,
-            "install_hint": "Install uv (https://docs.astral.sh/uv/) or mcp-scan to run skill security scans",
-        }))
+        let uvx_available = command_available(UVX_EXECUTABLE).await;
+        Ok(snyk_agent_scan_status_payload(
+            &installed_dir,
+            uvx_available,
+        ))
     }
 
     async fn security_scan(&self) -> ServiceResult {
@@ -1006,10 +1012,12 @@ impl SkillsService for NoopSkillsService {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         if !supported {
-            return Err("mcp-scan is not available. Install uvx or mcp-scan binary first".into());
+            return Err(
+                "Snyk Agent Scan requires uv. Install uv (https://docs.astral.sh/uv/) first".into(),
+            );
         }
 
-        let results = run_mcp_scan(&installed_dir)
+        let results = run_snyk_agent_scan(&installed_dir)
             .await
             .map_err(ServiceError::message)?;
         security_audit(
@@ -1156,6 +1164,21 @@ mod tests {
     #[test]
     fn risky_install_pattern_allows_plain_package_install() {
         assert_eq!(risky_install_pattern("cargo install ripgrep"), None);
+    }
+
+    #[test]
+    fn snyk_agent_scan_status_depends_only_on_uvx() {
+        let installed_dir = Path::new("/tmp/installed skills");
+
+        let unavailable = snyk_agent_scan_status_payload(installed_dir, false);
+        assert_eq!(unavailable["mcp_scan_available"], false);
+        assert_eq!(unavailable["uvx_available"], false);
+        assert_eq!(unavailable["supported"], false);
+
+        let available = snyk_agent_scan_status_payload(installed_dir, true);
+        assert_eq!(available["mcp_scan_available"], false);
+        assert_eq!(available["uvx_available"], true);
+        assert_eq!(available["supported"], true);
     }
 
     #[cfg(feature = "bundled-skills")]
