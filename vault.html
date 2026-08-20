@@ -162,10 +162,14 @@ transcription errors. The key is case-insensitive.</p>
 <aside class="admonition admonition-warning"><div class="admonition-title">Warning</div><div class="admonition-body"><p>The recovery key is shown <strong>exactly once</strong> when the vault is initialized.<br>Store it in a safe place (password manager, printed copy in a safe, etc.).<br>If you lose both your password and recovery key, encrypted data cannot be<br>recovered.</p></div></aside>
 <p>Use the recovery key to unseal the vault when you’ve forgotten your
 password:</p>
-<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="bash" data-code="curl -X POST http://localhost:18789/api/auth/vault/recovery \
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="bash" data-code="# Requires an authenticated session (or API key); log in first.
+curl -X POST http://localhost:18789/api/auth/vault/recovery \
   -H &#x22;Content-Type: application/json&#x22; \
-  -d &#x27;{&#x22;recovery_key&#x22;: &#x22;ABCD-EFGH-JKLM-NPQR-STUV-WXYZ-2345-6789&#x22;}&#x27;"><code><span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="color:#2B5581;--shiki-dark:#79B8FF"> -X</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> POST</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> http://localhost:18789/api/auth/vault/recovery</span><span style="color:#24292EFF;--shiki-dark:#79B8FF"> \</span></span>
+  -H &#x22;Cookie: moltis_session=$MOLTIS_SESSION&#x22; \
+  -d &#x27;{&#x22;recovery_key&#x22;: &#x22;ABCD-EFGH-JKLM-NPQR-STUV-WXYZ-2345-6789&#x22;}&#x27;"><code><span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Requires an authenticated session (or API key); log in first.</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="color:#2B5581;--shiki-dark:#79B8FF"> -X</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> POST</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> http://localhost:18789/api/auth/vault/recovery</span><span style="color:#24292EFF;--shiki-dark:#79B8FF"> \</span></span>
 <span class="line"><span style="color:#2B5581;--shiki-dark:#79B8FF">  -H</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "Content-Type: application/json"</span><span style="color:#24292EFF;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="color:#2B5581;--shiki-dark:#79B8FF">  -H</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "Cookie: moltis_session=</span><span style="color:#22863A;--shiki-dark:#E1E4E8">$MOLTIS_SESSION</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"</span><span style="color:#24292EFF;--shiki-dark:#79B8FF"> \</span></span>
 <span class="line"><span style="color:#2B5581;--shiki-dark:#79B8FF">  -d</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> '{"recovery_key": "ABCD-EFGH-JKLM-NPQR-STUV-WXYZ-2345-6789"}'</span></span></code></pre>
 <h2 id="what-gets-encrypted">What Gets Encrypted</h2>
 <p>Currently encrypted:</p>
@@ -238,9 +242,12 @@ initial setup.</p>
 <li>Non-API routes — static assets, HTML pages, health check</li>
 </ul>
 <h2 id="api-endpoints">API Endpoints</h2>
-<p>Vault unlock endpoints are under <code>/api/auth/vault/</code>. Unlock and recovery are
-available before login so a sealed vault can be opened during authentication.
-Disabling the vault requires an authenticated session.</p>
+<p>Vault unlock endpoints are under <code>/api/auth/vault/</code>. Every endpoint that can
+change vault state — unlock, recovery, initialize, disable — requires an
+authenticated session, because unsealing decrypts all stored secrets. Only
+<code>status</code> is readable without a session. Logging in already unseals the vault
+with your password, so the unlock endpoints are only needed when the vault
+password differs from the login password or when recovering with the key.</p>
 
 
 
@@ -271,7 +278,12 @@ Disabling the vault requires an authenticated session.</p>
 
 
 
-<table><thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead><tbody><tr><td><code>GET</code></td><td><code>/api/auth/vault/status</code></td><td>Returns <code>{"status": "uninitialized"|"sealed"|"unsealed"|"disabled"}</code></td></tr><tr><td><code>POST</code></td><td><code>/api/auth/vault/unlock</code></td><td>Unseal with password: <code>{"password": "..."}</code></td></tr><tr><td><code>POST</code></td><td><code>/api/auth/vault/recovery</code></td><td>Unseal with recovery key: <code>{"recovery_key": "..."}</code></td></tr><tr><td><code>POST</code></td><td><code>/api/auth/vault/disable</code></td><td>Decrypt stored secrets and set <code>auth.vault_enabled = false</code>; accepts <code>{"password":"..."}</code> when sealed.</td></tr></tbody></table>
+
+
+
+
+
+<table><thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead><tbody><tr><td><code>GET</code></td><td><code>/api/auth/vault/status</code></td><td>Returns <code>{"status": "uninitialized"|"sealed"|"unsealed"|"disabled"}</code></td></tr><tr><td><code>POST</code></td><td><code>/api/auth/vault/initialize</code></td><td>Initialize the vault for the current login password (session required)</td></tr><tr><td><code>POST</code></td><td><code>/api/auth/vault/unlock</code></td><td>Unseal with password: <code>{"password": "..."}</code> (session required)</td></tr><tr><td><code>POST</code></td><td><code>/api/auth/vault/recovery</code></td><td>Unseal with recovery key: <code>{"recovery_key": "..."}</code> (session required)</td></tr><tr><td><code>POST</code></td><td><code>/api/auth/vault/disable</code></td><td>Decrypt stored secrets and set <code>auth.vault_enabled = false</code>; accepts <code>{"password":"..."}</code> when sealed.</td></tr></tbody></table>
 <h2 id="disabling-the-vault">Disabling The Vault</h2>
 <p>Use <strong>Settings > Encryption > Disable encryption at rest</strong> to opt out of the
 vault while keeping password login. Moltis decrypts all known vault-backed data

@@ -478,7 +478,17 @@ header snippet and passkey migration guidance.</p>
 
 
 
-<table><thead><tr><th>Operation</th><th>Endpoint</th><th>Auth required</th></tr></thead><tbody><tr><td>Check status</td><td><code>GET /api/auth/status</code></td><td>No</td></tr><tr><td>Set password (setup)</td><td><code>POST /api/auth/setup</code></td><td>Setup code</td></tr><tr><td>Login with password</td><td><code>POST /api/auth/login</code></td><td>No (validates password)</td></tr><tr><td>Login with passkey</td><td><code>POST /api/auth/passkey/auth/*</code></td><td>No (validates passkey)</td></tr><tr><td>Logout</td><td><code>POST /api/auth/logout</code></td><td>Session</td></tr><tr><td>Change password</td><td><code>POST /api/auth/password/change</code></td><td>Session</td></tr><tr><td>List API keys</td><td><code>GET /api/auth/api-keys</code></td><td>Session</td></tr><tr><td>Create API key</td><td><code>POST /api/auth/api-keys</code></td><td>Session</td></tr><tr><td>Revoke API key</td><td><code>DELETE /api/auth/api-keys/{id}</code></td><td>Session</td></tr><tr><td>Register passkey</td><td><code>POST /api/auth/passkey/register/*</code></td><td>Session</td></tr><tr><td>Remove passkey</td><td><code>DELETE /api/auth/passkeys/{id}</code></td><td>Session</td></tr><tr><td>Remove all auth</td><td><code>POST /api/auth/reset</code></td><td>Session</td></tr><tr><td>Vault status</td><td><code>GET /api/auth/vault/status</code></td><td>No</td></tr><tr><td>Vault unlock</td><td><code>POST /api/auth/vault/unlock</code></td><td>No</td></tr><tr><td>Vault recovery</td><td><code>POST /api/auth/vault/recovery</code></td><td>No</td></tr></tbody></table>
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Operation</th><th>Endpoint</th><th>Auth required</th></tr></thead><tbody><tr><td>Check status</td><td><code>GET /api/auth/status</code></td><td>No</td></tr><tr><td>Set password (setup)</td><td><code>POST /api/auth/setup</code></td><td>Setup code</td></tr><tr><td>Login with password</td><td><code>POST /api/auth/login</code></td><td>No (validates password)</td></tr><tr><td>Login with passkey</td><td><code>POST /api/auth/passkey/auth/*</code></td><td>No (validates passkey)</td></tr><tr><td>Logout</td><td><code>POST /api/auth/logout</code></td><td>Session</td></tr><tr><td>Change password</td><td><code>POST /api/auth/password/change</code></td><td>Session</td></tr><tr><td>List API keys</td><td><code>GET /api/auth/api-keys</code></td><td>Session</td></tr><tr><td>Create API key</td><td><code>POST /api/auth/api-keys</code></td><td>Session</td></tr><tr><td>Revoke API key</td><td><code>DELETE /api/auth/api-keys/{id}</code></td><td>Session</td></tr><tr><td>Register passkey</td><td><code>POST /api/auth/passkey/register/*</code></td><td>Session</td></tr><tr><td>Remove passkey</td><td><code>DELETE /api/auth/passkeys/{id}</code></td><td>Session</td></tr><tr><td>Remove all auth</td><td><code>POST /api/auth/reset</code></td><td>Session</td></tr><tr><td>Vault status</td><td><code>GET /api/auth/vault/status</code></td><td>No</td></tr><tr><td>Vault unlock</td><td><code>POST /api/auth/vault/unlock</code></td><td>Session</td></tr><tr><td>Vault recovery</td><td><code>POST /api/auth/vault/recovery</code></td><td>Session</td></tr><tr><td>Vault initialize</td><td><code>POST /api/auth/vault/initialize</code></td><td>Session</td></tr><tr><td>Vault disable</td><td><code>POST /api/auth/vault/disable</code></td><td>Session</td></tr></tbody></table>
 <h2 id="encryption-at-rest">Encryption at Rest</h2>
 <p>Environment variables and other sensitive data are encrypted at rest using
 the vault. The vault initializes automatically during password setup and

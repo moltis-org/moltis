@@ -519,7 +519,10 @@ pids_max = 256"><code><span class="line"><span style="color:#24292EFF;--shiki-da
 
 
 
-<table><thead><tr><th>Limit</th><th>Docker</th><th>Apple Container</th><th>WASM</th><th>Restricted Host</th><th>cgroup (Linux)</th></tr></thead><tbody><tr><td><code>memory_limit</code></td><td><code>--memory</code></td><td><code>--memory</code></td><td>Wasmtime reservation</td><td><code>ulimit -v</code></td><td><code>MemoryMax=</code></td></tr><tr><td><code>cpu_quota</code></td><td><code>--cpus</code></td><td><code>--cpus</code></td><td>epoch timeout</td><td><code>ulimit -t</code> (seconds)</td><td><code>CPUQuota=</code></td></tr><tr><td><code>pids_max</code></td><td><code>--pids-limit</code></td><td><code>--pids-limit</code></td><td>n/a</td><td><code>ulimit -u</code></td><td><code>TasksMax=</code></td></tr></tbody></table>
+<table><thead><tr><th>Limit</th><th>Docker</th><th>Apple Container</th><th>WASM</th><th>Restricted Host</th><th>cgroup (Linux)</th></tr></thead><tbody><tr><td><code>memory_limit</code></td><td><code>--memory</code></td><td><code>--memory</code></td><td>Wasmtime reservation</td><td><code>ulimit -v</code></td><td><code>MemoryMax=</code></td></tr><tr><td><code>cpu_quota</code></td><td><code>--cpus</code></td><td><code>--cpus</code></td><td>epoch timeout</td><td><code>ulimit -t</code> (seconds)</td><td><code>CPUQuota=</code></td></tr><tr><td><code>pids_max</code></td><td><code>--pids-limit</code></td><td><code>--ulimit nproc=</code></td><td>n/a</td><td><code>ulimit -u</code></td><td><code>TasksMax=</code></td></tr></tbody></table>
+<p>Apple Container requires version 0.9 or newer to apply <code>pids_max</code>.
+Its <code>--cpus</code> option only accepts positive whole CPU counts, so fractional
+<code>cpu_quota</code> values are not supported by that backend.</p>
 <h2 id="comparison">Comparison</h2>
 
 
