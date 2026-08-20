@@ -15,17 +15,21 @@ pub(crate) fn markdown_to_whatsapp(markdown: &str) -> String {
 
         if !in_code_fence
             && !trimmed.starts_with("```")
-            && let Some(column_count) = table_column_count(&segments, index)
+            && let Some(header_cells) = table_header_cells(&segments, index)
         {
-            render_table_row(&mut output, trimmed, has_newline);
+            let column_count = header_cells.len();
+            render_table_row(&mut output, &header_cells, has_newline);
             index += 2; // The validated separator row is structural, not content.
 
             while let Some(&(row, row_has_newline)) = segments.get(index) {
                 let row = row.trim_start();
-                if !is_table_row(row) || table_cells(row).len() != column_count {
+                let Some(cells) = table_cells(row) else {
+                    break;
+                };
+                if cells.len() != column_count {
                     break;
                 }
-                render_table_row(&mut output, row, row_has_newline);
+                render_table_row(&mut output, &cells, row_has_newline);
                 index += 1;
             }
             continue;
@@ -78,25 +82,57 @@ fn markdown_heading(line: &str) -> Option<(&str, &str)> {
     Some((&line[..indent_len], trimmed[hashes + 1..].trim()))
 }
 
-fn is_table_row(line: &str) -> bool {
-    line.starts_with('|') && line.ends_with('|') && line.matches('|').count() >= 2
-}
+fn table_cells(line: &str) -> Option<Vec<String>> {
+    let mut chars = line.trim_end().strip_prefix('|')?.chars().peekable();
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut code_ticks = None;
 
-fn table_cells(line: &str) -> Vec<&str> {
-    line.trim_matches('|').split('|').map(str::trim).collect()
-}
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && code_ticks.is_none() && chars.peek() == Some(&'|') {
+            chars.next();
+            cell.push('|');
+            continue;
+        }
 
-fn is_table_separator(line: &str) -> bool {
-    if !is_table_row(line) {
-        return false;
+        if ch == '`' {
+            let mut ticks = 1;
+            while chars.peek() == Some(&'`') {
+                chars.next();
+                ticks += 1;
+            }
+            cell.extend(std::iter::repeat_n('`', ticks));
+            match code_ticks {
+                None => code_ticks = Some(ticks),
+                Some(opening_ticks) if opening_ticks == ticks => code_ticks = None,
+                Some(_) => {},
+            }
+            continue;
+        }
+
+        if ch == '|' && code_ticks.is_none() {
+            cells.push(cell.trim().to_owned());
+            cell.clear();
+            if chars.peek().is_none() {
+                return Some(cells);
+            }
+            continue;
+        }
+
+        cell.push(ch);
     }
-    table_cells(line).iter().all(|cell| {
+
+    None
+}
+
+fn is_table_separator(cells: &[String]) -> bool {
+    cells.iter().all(|cell| {
         let cell = cell.trim_matches(':');
         cell.len() >= 3 && cell.bytes().all(|byte| byte == b'-')
     })
 }
 
-fn table_column_count(segments: &[(&str, bool)], index: usize) -> Option<usize> {
+fn table_header_cells(segments: &[(&str, bool)], index: usize) -> Option<Vec<String>> {
     let &(header, header_has_newline) = segments.get(index)?;
     let &(separator, _) = segments.get(index + 1)?;
     if !header_has_newline {
@@ -105,16 +141,17 @@ fn table_column_count(segments: &[(&str, bool)], index: usize) -> Option<usize> 
 
     let header = header.trim_start();
     let separator = separator.trim_start();
-    if !is_table_row(header) || !is_table_separator(separator) {
+    let header_cells = table_cells(header)?;
+    let separator_cells = table_cells(separator)?;
+    if !is_table_separator(&separator_cells) || header_cells.len() != separator_cells.len() {
         return None;
     }
 
-    let column_count = table_cells(header).len();
-    (column_count == table_cells(separator).len()).then_some(column_count)
+    Some(header_cells)
 }
 
-fn render_table_row(output: &mut String, row: &str, has_newline: bool) {
-    output.push_str(&convert_inline(&table_cells(row).join(" · ")));
+fn render_table_row(output: &mut String, cells: &[String], has_newline: bool) {
+    output.push_str(&convert_inline(&cells.join(" · ")));
     if has_newline {
         output.push('\n');
     }
@@ -361,6 +398,20 @@ mod tests {
     fn requires_matching_header_and_separator_columns_for_tables() {
         let input = "| First | Second |\n|---|\n| value | another |";
         assert_eq!(markdown_to_whatsapp(input), input);
+    }
+
+    #[test]
+    fn preserves_pipes_inside_table_code_spans() {
+        let input = "| Expression | Meaning |\n|---|---|\n| `left | right` | choice |";
+        let expected = "Expression · Meaning\n`left | right` · choice";
+        assert_eq!(markdown_to_whatsapp(input), expected);
+    }
+
+    #[test]
+    fn preserves_escaped_pipes_as_table_cell_content() {
+        let input = "| A \\| B | Meaning |\n|---|---|\n| left \\| right | choice |";
+        let expected = "A | B · Meaning\nleft | right · choice";
+        assert_eq!(markdown_to_whatsapp(input), expected);
     }
 
     #[test]
