@@ -1,7 +1,7 @@
 //! Apple Container sandbox backend (macOS 26+, Apple Silicon).
 
 #[cfg(target_os = "macos")]
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 #[cfg(target_os = "macos")]
@@ -18,10 +18,11 @@ use tokio::sync::{Mutex, RwLock};
 
 #[cfg(target_os = "macos")]
 use super::containers::{
-    apple_container_exec_args, apple_container_run_args, apple_container_status_from_inspect,
-    is_apple_container_daemon_stale_error, is_apple_container_exists_error,
-    is_apple_container_service_error, rebuildable_sandbox_image_tag, sandbox_image_exists,
-    unmark_zombie,
+    ContainerRunState, apple_container_exec_args, apple_container_run_args,
+    apple_container_run_state_from_inspect, is_apple_container_daemon_stale_error,
+    is_apple_container_exists_error, is_apple_container_service_error,
+    rebuildable_sandbox_image_tag, sandbox_image_exists, unmark_zombie,
+    validate_apple_container_resource_limits,
 };
 #[cfg(target_os = "macos")]
 use super::host::provision_packages;
@@ -33,8 +34,9 @@ use super::paths::{
 };
 #[cfg(target_os = "macos")]
 use super::types::{
-    BuildImageResult, DEFAULT_SANDBOX_IMAGE, ManagedFilesMount, NetworkPolicy, SANDBOX_FILES_DIR,
-    SANDBOX_HOME_DIR, Sandbox, SandboxConfig, SandboxId, truncate_output_for_display,
+    BuildImageResult, DEFAULT_SANDBOX_IMAGE, ManagedFilesMount, NetworkPolicy, ResourceLimits,
+    SANDBOX_FILES_DIR, SANDBOX_HOME_DIR, Sandbox, SandboxConfig, SandboxId,
+    truncate_output_for_display,
 };
 #[cfg(target_os = "macos")]
 use crate::error::{Error, Result};
@@ -52,7 +54,7 @@ use crate::sandbox::file_system::{
 pub struct AppleContainerSandbox {
     pub config: SandboxConfig,
     name_generations: RwLock<HashMap<String, u32>>,
-    mount_policy_validated: Mutex<HashSet<String>>,
+    container_policy_fingerprints: Mutex<HashMap<String, String>>,
     /// Cached host gateway IP for proxy routing in Trusted mode.
     host_gateway_cache: RwLock<Option<String>>,
 }
@@ -63,7 +65,7 @@ impl AppleContainerSandbox {
         Self {
             config,
             name_generations: RwLock::new(HashMap::new()),
-            mount_policy_validated: Mutex::new(HashSet::new()),
+            container_policy_fingerprints: Mutex::new(HashMap::new()),
             host_gateway_cache: RwLock::new(None),
         }
     }
@@ -124,6 +126,13 @@ impl AppleContainerSandbox {
             .container_prefix
             .as_deref()
             .unwrap_or("moltis-sandbox")
+    }
+
+    pub(crate) fn container_policy_fingerprint(&self) -> String {
+        format!(
+            "{:?}\0{:?}",
+            self.config.managed_files_mount, self.config.resource_limits
+        )
     }
 
     fn base_container_name(&self, id: &SandboxId) -> String {
@@ -316,9 +325,9 @@ impl AppleContainerSandbox {
             match output {
                 Ok(output) if output.status.success() => {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    match apple_container_status_from_inspect(&stdout) {
-                        Some("running") => return Ok(()),
-                        Some("stopped") => {
+                    match apple_container_run_state_from_inspect(&stdout) {
+                        Some(ContainerRunState::Running) => return Ok(()),
+                        Some(ContainerRunState::Stopped | ContainerRunState::Exited) => {
                             return Err(Error::message(format!(
                                 "container {name} failed to stay running after startup"
                             )));
@@ -452,9 +461,9 @@ impl AppleContainerSandbox {
             return ContainerState::NotFound;
         }
 
-        match apple_container_status_from_inspect(&stdout) {
-            Some("running") => ContainerState::Running,
-            Some("stopped") => ContainerState::Stopped,
+        match apple_container_run_state_from_inspect(&stdout) {
+            Some(ContainerRunState::Running) => ContainerState::Running,
+            Some(ContainerRunState::Stopped | ContainerRunState::Exited) => ContainerState::Stopped,
             _ => ContainerState::Unknown,
         }
     }
@@ -466,8 +475,10 @@ impl AppleContainerSandbox {
         image: &str,
         tz: Option<&str>,
         volumes: &[String],
+        resource_limits: &ResourceLimits,
     ) -> std::result::Result<(), CreateError> {
-        let args = apple_container_run_args(name, image, tz, volumes);
+        let args = apple_container_run_args(name, image, tz, volumes, resource_limits)
+            .map_err(|error| CreateError::Other(error.to_string()))?;
 
         let output = tokio::process::Command::new("container")
             .args(&args)
@@ -779,25 +790,27 @@ impl Sandbox for AppleContainerSandbox {
     }
 
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+        validate_apple_container_resource_limits(&self.config.resource_limits)?;
+
         let mut name = self.container_name(id).await;
         // This state lock also serializes Apple Container creation. The CLI has
         // no atomic create-or-inspect primitive, so releasing it after policy
         // validation would let a concurrent caller remove the fresh winner.
-        let mut validated = self.mount_policy_validated.lock().await;
-        if !validated.contains(&name) {
+        let mut fingerprints = self.container_policy_fingerprints.lock().await;
+        let desired_fingerprint = self.container_policy_fingerprint();
+        if fingerprints.get(&name) != Some(&desired_fingerprint)
+            && Self::container_exists(&name).await?
+        {
+            warn!(
+                name,
+                "recreating existing apple container to apply sandbox policy"
+            );
+            Self::force_remove_and_wait(&name).await;
             if Self::container_exists(&name).await? {
-                warn!(
-                    name,
-                    "recreating existing apple container to apply managed Files mount policy"
-                );
-                Self::force_remove_and_wait(&name).await;
-                if Self::container_exists(&name).await? {
-                    return Err(Error::message(format!(
-                        "failed to remove apple container '{name}' after managed Files mount policy changed"
-                    )));
-                }
+                return Err(Error::message(format!(
+                    "failed to remove apple container '{name}' after sandbox policy changed"
+                )));
             }
-            validated.insert(name.clone());
         }
         let requested_image = image_override.unwrap_or_else(|| self.image());
         let image = self.resolve_local_image(requested_image).await?;
@@ -816,6 +829,7 @@ impl Sandbox for AppleContainerSandbox {
                     info!(name, "apple container already running");
                     match Self::wait_for_container_exec_ready(&name).await {
                         Ok(()) => {
+                            fingerprints.insert(name.clone(), desired_fingerprint.clone());
                             unmark_zombie(&name);
                             return Ok(());
                         },
@@ -836,6 +850,7 @@ impl Sandbox for AppleContainerSandbox {
                         info!(name, "apple container restarted");
                         match Self::wait_for_container_exec_ready(&name).await {
                             Ok(()) => {
+                                fingerprints.insert(name.clone(), desired_fingerprint.clone());
                                 unmark_zombie(&name);
                                 return Ok(());
                             },
@@ -865,7 +880,9 @@ impl Sandbox for AppleContainerSandbox {
 
             // Phase 2: Create a new container.
             info!(name, image = %image, attempt, "creating apple container");
-            match Self::run_container(&name, &image, tz, &volumes).await {
+            match Self::run_container(&name, &image, tz, &volumes, &self.config.resource_limits)
+                .await
+            {
                 Ok(()) => {},
                 Err(CreateError::AlreadyExists) => {
                     warn!(
@@ -929,6 +946,7 @@ impl Sandbox for AppleContainerSandbox {
                         provision_packages("container", &name, &self.config.packages).await?;
                     }
 
+                    fingerprints.insert(name.clone(), desired_fingerprint.clone());
                     return Ok(());
                 },
                 Err(error) => {
@@ -960,6 +978,7 @@ impl Sandbox for AppleContainerSandbox {
                                         )
                                         .await?;
                                     }
+                                    fingerprints.insert(name.clone(), desired_fingerprint.clone());
                                     return Ok(());
                                 },
                                 Err(restart_error) => {

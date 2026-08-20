@@ -378,10 +378,16 @@ separately.
 ```
 
 Untrusted tool restrictions stack with the per-channel tool policy
-(`channels.<type>.<account>.tools.groups.<chat_type>`). Those policies can
-further restrict an operator DM, but cannot enable tools for a guest, shared
-room, or unknown chat. Grant eligibility for privileged access by adding the
-sender to `operators`; the sender must still use a proven direct chat.
+(`channels.<type>.<account>.tools.groups.<chat_type>`). By default those
+policies can further restrict an operator DM, but cannot enable tools for a
+guest, shared room, or unknown chat: the untrusted ceiling denies everything
+before they are consulted. An account that raises its ceiling with
+`untrusted_audience` and `untrusted_tools` (WhatsApp only for now) hands the
+decision back to those policies for its own untrusted turns. The `/sh`
+shortcut stays restricted to operator direct chats either way.
+
+Grant eligibility for privileged access by adding the sender to `operators`;
+the sender must still use a proven direct chat.
 
 ### OTP Self-Approval
 

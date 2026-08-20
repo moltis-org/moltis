@@ -8,21 +8,29 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use {
     futures::StreamExt,
-    moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent, ToolCall},
+    moltis_agents::model::{ChatMessage, LlmProvider, ReasoningEffort, StreamEvent, ToolCall},
     moltis_providers::openai::OpenAiProvider,
     secrecy::{ExposeSecret, Secret},
 };
 
 const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const TEST_MODEL: &str = "gpt-5-mini";
+const LUNA_MODEL: &str = "gpt-5.6-luna";
 
 /// Known OpenAI models we catalog. Keep in sync with `DEFAULT_OPENAI_MODELS`
-/// in `crates/providers/src/openai.rs`.
-const KNOWN_MODELS: &[&str] = &["gpt-5.2", "gpt-5.2-chat-latest", "gpt-5-mini"];
+/// in `crates/providers/src/openai/catalog.rs`.
+const KNOWN_MODELS: &[&str] = &[
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    LUNA_MODEL,
+    "gpt-5.2",
+    "gpt-5.2-chat-latest",
+    TEST_MODEL,
+];
 
 fn api_key() -> Secret<String> {
     let key =
@@ -32,6 +40,12 @@ fn api_key() -> Secret<String> {
 
 fn make_provider(model: &str) -> OpenAiProvider {
     OpenAiProvider::new(api_key(), model.to_string(), OPENAI_BASE_URL.to_string())
+}
+
+fn make_provider_with_reasoning(model: &str, effort: ReasoningEffort) -> Arc<dyn LlmProvider> {
+    Arc::new(make_provider(model))
+        .with_reasoning_effort(effort)
+        .expect("OpenAI provider should support reasoning_effort")
 }
 
 fn weather_tool() -> serde_json::Value {
@@ -172,6 +186,37 @@ async fn tool_call_round_trip_streaming() {
 
 #[tokio::test]
 #[ignore]
+async fn luna_reasoning_tool_call_uses_responses_api() {
+    let p = make_provider_with_reasoning(LUNA_MODEL, ReasoningEffort::High);
+    let messages = vec![ChatMessage::user(
+        "What's the weather in Paris? Use the get_weather tool.",
+    )];
+
+    let mut stream = p.stream_with_tools(messages, vec![weather_tool()]);
+    let mut saw_tool_start = false;
+    let mut saw_done = false;
+
+    while let Some(event) = stream.next().await {
+        match event {
+            StreamEvent::ToolCallStart { name, .. } => {
+                assert_eq!(name, "get_weather");
+                saw_tool_start = true;
+            },
+            StreamEvent::Done(_) => {
+                saw_done = true;
+                break;
+            },
+            StreamEvent::Error(err) => panic!("stream error: {err}"),
+            _ => {},
+        }
+    }
+
+    assert!(saw_done, "Luna reasoning tool stream must emit Done");
+    assert!(saw_tool_start, "Luna should call get_weather");
+}
+
+#[tokio::test]
+#[ignore]
 async fn multi_turn_tool_use() {
     let p = make_provider(TEST_MODEL);
     let tools = vec![weather_tool()];
@@ -261,6 +306,7 @@ async fn catalog_models_are_live() {
     eprintln!("==================================\n");
 
     assert!(alive.contains(&TEST_MODEL), "{TEST_MODEL} should be live");
+    assert!(alive.contains(&LUNA_MODEL), "{LUNA_MODEL} should be live");
 }
 
 #[tokio::test]

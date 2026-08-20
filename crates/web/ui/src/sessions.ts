@@ -8,7 +8,7 @@ import { switchSession } from "./sessions/session-switch";
 import * as S from "./state";
 import { projectStore } from "./stores/project-store";
 import { clearSessionHistory } from "./stores/session-history-cache";
-import { type Session, sessionStore } from "./stores/session-store";
+import { markSessionRunStateChanged, type Session, sessionStore } from "./stores/session-store";
 import type { SessionMeta } from "./types";
 import { confirmDialog } from "./ui";
 
@@ -312,6 +312,7 @@ function ensureSessionListScrollBinding(): void {
 
 export function markSessionLocallyCleared(key: string): void {
 	if (!key) return;
+	markSessionRunStateChanged(key);
 	const now = Date.now();
 
 	const session = sessionStore.getByKey(key);
@@ -352,6 +353,7 @@ export function renderSessionList(): void {
 // ── Status helpers ──────────────────────────────────────────
 
 export function setSessionReplying(key: string, replying: boolean): void {
+	markSessionRunStateChanged(key);
 	// Update store signal -- Preact SessionList re-renders automatically.
 	const session = sessionStore.getByKey(key);
 	if (session) session.replying.value = replying;
@@ -371,6 +373,7 @@ export function clearSessionSendErrors(key: string): void {
 }
 
 export function setSessionActiveRunId(key: string, runId: string | null): void {
+	markSessionRunStateChanged(key);
 	const session = sessionStore.getByKey(key);
 	if (session) session.activeRunId.value = runId || null;
 	const entry = (S.sessions as SessionMeta[]).find((s) => s.key === key);

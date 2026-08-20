@@ -10,6 +10,7 @@ use {
     moltis_channels::{
         ChannelAckOutcome, ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelMessageMeta,
         ChannelReplyTarget, Error as ChannelError, Result as ChannelResult, SavedChannelFile,
+        config_view::{UntrustedAudience, UntrustedTools},
     },
     moltis_sessions::metadata::{SessionEntry, SqliteSessionMetadata},
     moltis_tools::approval::PendingApprovalView,
@@ -155,14 +156,51 @@ async fn resolve_sender_role(
     moltis_channels::operators::resolve_sender_role(sender_id, config.operators())
 }
 
+/// Read the account's untrusted-turn ceiling. A missing registry or an unknown
+/// account falls back to the defaults, which are the unconfigured behaviour.
+async fn resolve_untrusted_ceiling(
+    state: &Arc<GatewayState>,
+    account_id: &str,
+) -> (UntrustedAudience, UntrustedTools) {
+    let Some(ref registry) = state.services.channel_registry else {
+        return Default::default();
+    };
+    let Some(config) = registry.account_config(account_id).await else {
+        return Default::default();
+    };
+    (config.untrusted_audience(), config.untrusted_tools())
+}
+
 /// Apply the fail-closed context used for every untrusted channel turn.
 ///
 /// The audience ceiling excludes trusted tools, while the deny-all name policy
 /// also removes explicitly public tools. Configured policies may narrow this
 /// context further but cannot widen it.
 fn apply_untrusted_channel_context(params: &mut serde_json::Value) {
-    params["_tool_audience"] = serde_json::json!("public");
-    params["_tool_policy"] = serde_json::json!({ "deny": ["*"] });
+    apply_untrusted_channel_context_with(
+        params,
+        UntrustedAudience::default(),
+        UntrustedTools::default(),
+    );
+}
+
+/// Apply the untrusted channel context at the account's configured ceiling. The
+/// defaults reproduce [`apply_untrusted_channel_context`] exactly.
+///
+/// `_private_context` is deliberately not configurable: owner memory, profile
+/// and project context describe the owner rather than the conversation, so a
+/// room with other people in it never receives them.
+fn apply_untrusted_channel_context_with(
+    params: &mut serde_json::Value,
+    audience: UntrustedAudience,
+    tools: UntrustedTools,
+) {
+    if audience == UntrustedAudience::Public {
+        params["_tool_audience"] = serde_json::json!("public");
+    }
+    if tools == UntrustedTools::DenyAll {
+        params["_tool_policy"] = serde_json::json!({ "deny": ["*"] });
+    }
     params["_private_context"] = serde_json::json!(false);
 }
 

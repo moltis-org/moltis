@@ -834,12 +834,21 @@ fn context_info_mentions_owner(
     own_lid: Option<&Jid>,
 ) -> bool {
     context.is_some_and(|context| {
-        context.mentioned_jid.iter().any(|mentioned| {
+        let mentioned = context.mentioned_jid.iter().any(|mentioned| {
             mentioned
                 .parse::<Jid>()
                 .ok()
                 .is_some_and(|jid| is_owner_user(&jid, own_pn, own_lid))
-        })
+        });
+        // A reply is the other way to address someone in a group. It sets
+        // `participant` to the quoted message's author and leaves
+        // `mentioned_jid` empty, so checking mentions alone drops every reply.
+        let replied_to = context
+            .participant
+            .as_deref()
+            .and_then(|participant| participant.parse::<Jid>().ok())
+            .is_some_and(|jid| is_owner_user(&jid, own_pn, own_lid));
+        mentioned || replied_to
     })
 }
 
@@ -1167,6 +1176,40 @@ async fn handle_otp_flow(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use {super::*, wacore::types::message::MessageSource};
+
+    fn reply_context(participant: &str) -> wa::ContextInfo {
+        wa::ContextInfo {
+            participant: Some(participant.to_owned()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn reply_to_the_bot_counts_as_a_mention() {
+        let own_pn: Jid = "15551234567@s.whatsapp.net".parse().unwrap();
+        let ctx = reply_context("15551234567@s.whatsapp.net");
+
+        assert!(ctx.mentioned_jid.is_empty(), "a reply carries no mention");
+        assert!(context_info_mentions_owner(Some(&ctx), Some(&own_pn), None));
+    }
+
+    #[test]
+    fn reply_to_anyone_else_does_not() {
+        let own_pn: Jid = "15551234567@s.whatsapp.net".parse().unwrap();
+        let own_lid: Jid = "259557842534599@lid".parse().unwrap();
+
+        for ctx in [
+            reply_context("11111111111@s.whatsapp.net"),
+            reply_context("not a jid"),
+            wa::ContextInfo::default(),
+        ] {
+            assert!(!context_info_mentions_owner(
+                Some(&ctx),
+                Some(&own_pn),
+                Some(&own_lid)
+            ));
+        }
+    }
 
     #[test]
     fn owner_self_chat_detected_without_is_from_me_when_sender_and_chat_are_owner() {

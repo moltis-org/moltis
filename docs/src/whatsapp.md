@@ -139,6 +139,8 @@ Each WhatsApp account is a named entry under `[channels.whatsapp]`:
 | `otp_self_approval` | bool | `true` | Allow non-allowlisted users to self-approve via OTP |
 | `otp_cooldown_secs` | int | `300` | Cooldown seconds after 3 failed OTP attempts |
 | `push_name` | string | — | Name this client asserts on WhatsApp, shown to anyone without the number saved. Falls back to `[identity] name`, then `"Moltis"` |
+| `untrusted_audience` | string | `"public"` | Tool audience ceiling for turns outside an operator direct chat: `"public"` or `"trusted"` |
+| `untrusted_tools` | string | `"deny_all"` | Tool name policy for those turns: `"deny_all"`, or `"policy"` to let `[tools.policy]` decide |
 
 ### Full Example
 
@@ -210,7 +212,7 @@ WhatsApp uses the same access control model as Telegram channels.
 | Mode | Behavior |
 |------|----------|
 | `always` | Bot may respond to allowed group messages without an @mention |
-| `mention` | Bot only responds in allowed groups when the account is @mentioned |
+| `mention` | Bot only responds in allowed groups when the account is @mentioned, or when someone replies to one of its messages |
 | `none` | Bot never responds in groups |
 
 ### OTP Self-Approval
