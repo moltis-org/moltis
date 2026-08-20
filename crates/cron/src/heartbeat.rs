@@ -158,6 +158,39 @@ pub fn is_within_active_hours(start: &str, end: &str, timezone: &str) -> bool {
     }
 }
 
+/// Milliseconds until the active-hours window next opens.
+///
+/// Only meaningful when [`is_within_active_hours`] has just returned `false`;
+/// it answers "how long until it would return `true`". `None` means the window
+/// never opens, either because a bound does not parse or because an equal
+/// start and end leaves no minute in it.
+///
+/// The result is never zero, so a caller using it as a next-run time always
+/// moves the schedule forward.
+#[must_use]
+pub fn ms_until_active_hours(start: &str, end: &str, timezone: &str) -> Option<u64> {
+    let start_time = parse_hhmm(start)?;
+    let end_time = parse_hhmm(end)?;
+    let start_minutes = start_time.hour() * 60 + start_time.minute();
+    let end_minutes = end_time.hour() * 60 + end_time.minute();
+    if start_minutes == end_minutes {
+        return None;
+    }
+    Some(minutes_until(start_minutes, current_minutes(timezone)) * 60_000)
+}
+
+/// Minutes from `now_minutes` forward to `target_minutes`, wrapping past
+/// midnight. Never zero: landing exactly on the target means a whole day.
+fn minutes_until(target_minutes: u32, now_minutes: u32) -> u64 {
+    const DAY: u32 = 24 * 60;
+    let delta = (target_minutes + DAY - now_minutes % DAY) % DAY;
+    u64::from(if delta == 0 {
+        DAY
+    } else {
+        delta
+    })
+}
+
 /// Resolve the heartbeat prompt with precedence:
 ///
 /// 1. Explicit config prompt (`custom`)
@@ -384,6 +417,49 @@ mod tests {
         // which is what the config validator already warns about.
         assert!(!is_within_active_hours("12:00", "12:00", "local"));
         assert!(!is_within_active_hours("00:00", "00:00", "UTC"));
+    }
+
+    // ── minutes_until / ms_until_active_hours ────────────────────────────
+
+    #[test]
+    fn minutes_until_counts_forward_within_the_day() {
+        // 02:00 → 08:00 is six hours.
+        assert_eq!(minutes_until(8 * 60, 2 * 60), 360);
+    }
+
+    #[test]
+    fn minutes_until_wraps_past_midnight() {
+        // 23:00 → 08:00 is nine hours, not a negative number of them.
+        assert_eq!(minutes_until(8 * 60, 23 * 60), 540);
+    }
+
+    #[test]
+    fn minutes_until_never_returns_zero() {
+        // A next-run time of `now` stays due, and `ms_until_next_wake` turns a
+        // due job into a zero-length sleep — so returning zero here would spin
+        // the timer loop instead of deferring anything.
+        assert_eq!(minutes_until(8 * 60, 8 * 60), 24 * 60);
+    }
+
+    #[test]
+    fn an_empty_window_never_opens() {
+        assert!(ms_until_active_hours("12:00", "12:00", "UTC").is_none());
+    }
+
+    #[test]
+    fn an_unparseable_bound_never_opens() {
+        // Matches `is_within_active_hours`, which treats an unparseable bound
+        // as "always active" and so never reaches this function.
+        assert!(ms_until_active_hours("08:00", "not-a-time", "UTC").is_none());
+    }
+
+    #[test]
+    fn a_real_window_opens_within_a_day() {
+        let ms = ms_until_active_hours("08:00", "22:00", "UTC");
+        assert!(
+            ms.is_some_and(|ms| ms > 0 && ms <= 24 * 60 * 60_000),
+            "expected an opening within a day, got {ms:?}"
+        );
     }
 
     // ── resolve_heartbeat_prompt ─────────────────────────────────────────

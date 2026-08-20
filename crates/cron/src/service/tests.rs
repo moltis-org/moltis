@@ -1088,13 +1088,13 @@ fn make_svc_with_active_hours(
     )
 }
 
-/// Add a heartbeat job and make it due right now.
-async fn add_due_heartbeat(svc: &Arc<CronService>) {
+/// Add a heartbeat job on an `every_ms` interval and make it due right now.
+async fn add_due_heartbeat_every(svc: &Arc<CronService>, every_ms: u64) {
     svc.add(CronJobCreate {
         id: Some("__heartbeat__".into()),
         name: "__heartbeat__".into(),
         schedule: CronSchedule::Every {
-            every_ms: 30_000,
+            every_ms,
             anchor_ms: None,
         },
         payload: CronPayload::AgentTurn {
@@ -1119,6 +1119,24 @@ async fn add_due_heartbeat(svc: &Arc<CronService>) {
 
     let mut jobs = svc.jobs.write().await;
     jobs[0].state.next_run_at_ms = Some(now_ms());
+}
+
+/// Add a heartbeat due right now on the usual short interval.
+async fn add_due_heartbeat(svc: &Arc<CronService>) {
+    add_due_heartbeat_every(svc, 30_000).await;
+}
+
+/// A window that is shut right now and opens `hours` from now, local time.
+///
+/// Derived from the clock rather than hard-coded so the test means the same
+/// thing whenever it runs.
+fn window_shut_now_opening_in(hours: u32) -> (String, String) {
+    use chrono::Timelike;
+    let start = (chrono::Local::now().hour() + hours) % 24;
+    (
+        format!("{start:02}:00"),
+        format!("{:02}:00", (start + 1) % 24),
+    )
 }
 
 #[tokio::test]
@@ -1149,7 +1167,10 @@ async fn heartbeat_outside_active_hours_is_skipped_and_rescheduled() {
 
 #[tokio::test]
 async fn heartbeat_inside_active_hours_still_runs() {
-    // The control for the test above: 00:00–24:00 covers every minute.
+    // The control for the test above. Note *why* this is always active:
+    // "24:00" is not a valid `%H:%M` time, so `is_within_active_hours` takes
+    // its invalid-config branch and reports active. It is not that the window
+    // is parsed as covering the whole day.
     let svc = make_svc_with_active_hours(
         Arc::new(InMemoryStore::new()),
         noop_agent_turn(),
@@ -1181,4 +1202,88 @@ async fn heartbeat_without_configured_hours_runs() {
 
     let jobs = svc.jobs.read().await;
     assert!(jobs[0].state.running_at_ms.is_some());
+}
+
+#[tokio::test]
+async fn an_explicit_wake_is_not_swallowed_by_the_active_hours_gate() {
+    // `wake` only marks the heartbeat due; the run itself happens in
+    // `process_due_jobs`, which is also where the gate is. Without the pending
+    // flag the gate does not merely defer the wake, it overwrites the due time
+    // and the wake is gone.
+    let svc = make_svc_with_active_hours(
+        Arc::new(InMemoryStore::new()),
+        noop_agent_turn(),
+        "12:00",
+        "12:00",
+    );
+    add_due_heartbeat(&svc).await;
+
+    svc.wake(WAKE_REASON_CRON_EVENT).await;
+    svc.process_due_jobs().await;
+
+    let jobs = svc.jobs.read().await;
+    assert!(
+        jobs[0].state.running_at_ms.is_some(),
+        "an explicit wake was suppressed by the active-hours window"
+    );
+}
+
+#[tokio::test]
+async fn a_wake_is_spent_by_the_run_it_asks_for() {
+    // The flag must not stay raised, or the next scheduled firing rides in on
+    // a wake that was already served.
+    let svc = make_svc_with_active_hours(
+        Arc::new(InMemoryStore::new()),
+        noop_agent_turn(),
+        "12:00",
+        "12:00",
+    );
+    add_due_heartbeat(&svc).await;
+
+    svc.wake(WAKE_REASON_CRON_EVENT).await;
+    svc.process_due_jobs().await;
+    {
+        // Clear the run so the job is eligible again, as completion would.
+        let mut jobs = svc.jobs.write().await;
+        jobs[0].state.running_at_ms = None;
+        jobs[0].state.next_run_at_ms = Some(now_ms());
+    }
+    svc.process_due_jobs().await;
+
+    let jobs = svc.jobs.read().await;
+    assert!(
+        jobs[0].state.running_at_ms.is_none(),
+        "a spent wake let a scheduled firing through the window"
+    );
+}
+
+#[tokio::test]
+async fn a_daily_heartbeat_outside_the_window_is_deferred_to_it_not_past_it() {
+    // Rolling the schedule forward by its own interval lands a whole-day
+    // interval on the same excluded wall-clock time every day, so it never
+    // runs again. The skip has to aim at the window instead.
+    const DAY_MS: u64 = 24 * 60 * 60 * 1000;
+    let (start, end) = window_shut_now_opening_in(2);
+    let svc = make_svc_with_active_hours(
+        Arc::new(InMemoryStore::new()),
+        noop_agent_turn(),
+        &start,
+        &end,
+    );
+    add_due_heartbeat_every(&svc, DAY_MS).await;
+
+    let before = now_ms();
+    svc.process_due_jobs().await;
+
+    let jobs = svc.jobs.read().await;
+    assert!(
+        jobs[0].state.running_at_ms.is_none(),
+        "ran outside {start}-{end}"
+    );
+    let next = jobs[0].state.next_run_at_ms.expect("still scheduled");
+    assert!(next > before, "skipped heartbeat stayed due");
+    assert!(
+        next < before + DAY_MS,
+        "deferred a full day to {next} instead of to the window opening"
+    );
 }
