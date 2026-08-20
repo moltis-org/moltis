@@ -374,7 +374,6 @@ pub struct AuthSession(pub AuthIdentity);
 impl<S> FromRequestParts<S> for AuthSession
 where
     S: Send + Sync,
-    Arc<CredentialStore>: FromRef<S>,
     Arc<GatewayState>: FromRef<S>,
 {
     type Rejection = (StatusCode, &'static str);
@@ -387,15 +386,17 @@ where
 
         // Fallback for auth routes (allowlisted, middleware skipped):
         // validate session cookie directly, or check the local-bypass logic.
-        let store = Arc::<CredentialStore>::from_ref(state);
         let gw = Arc::<GatewayState>::from_ref(state);
+        let Some(store) = gw.credential_store.as_ref() else {
+            return Err((StatusCode::UNAUTHORIZED, "not authenticated"));
+        };
 
         let is_local = parts
             .extensions
             .get::<ConnectInfo<SocketAddr>>()
             .is_some_and(|ci| is_local_connection(&parts.headers, ci.0, gw.behind_proxy));
 
-        match check_auth(&store, &parts.headers, is_local).await {
+        match check_auth(store, &parts.headers, is_local).await {
             AuthResult::Allowed(identity) => Ok(AuthSession(identity)),
             _ => Err((StatusCode::UNAUTHORIZED, "not authenticated")),
         }
@@ -414,7 +415,6 @@ pub struct RequireAdmin(pub AuthIdentity);
 impl<S> FromRequestParts<S> for RequireAdmin
 where
     S: Send + Sync,
-    Arc<CredentialStore>: FromRef<S>,
     Arc<GatewayState>: FromRef<S>,
 {
     type Rejection = (StatusCode, &'static str);
@@ -464,6 +464,55 @@ pub fn parse_cookie<'a>(header: &'a str, name: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
+
+    #[derive(Clone)]
+    struct ExtractorTestState {
+        gateway: Arc<GatewayState>,
+    }
+
+    impl FromRef<ExtractorTestState> for Arc<GatewayState> {
+        fn from_ref(state: &ExtractorTestState) -> Self {
+            Arc::clone(&state.gateway)
+        }
+    }
+
+    #[tokio::test]
+    async fn require_admin_checks_extension_identity_scope() {
+        let state = ExtractorTestState {
+            gateway: GatewayState::new(
+                moltis_gateway::auth::resolve_auth(None, None),
+                moltis_gateway::services::GatewayServices::noop(),
+            ),
+        };
+        let mut read_parts = axum::http::Request::new(axum::body::Body::empty())
+            .into_parts()
+            .0;
+        read_parts.extensions.insert(AuthIdentity {
+            method: AuthMethod::ApiKey,
+            scopes: vec!["operator.read".to_string()],
+        });
+        let read_result = RequireAdmin::from_request_parts(&mut read_parts, &state).await;
+        assert!(matches!(read_result, Err((StatusCode::FORBIDDEN, _))));
+
+        let mut admin_parts = axum::http::Request::new(axum::body::Body::empty())
+            .into_parts()
+            .0;
+        admin_parts.extensions.insert(AuthIdentity {
+            method: AuthMethod::ApiKey,
+            scopes: vec!["operator.admin".to_string()],
+        });
+        let admin_result = RequireAdmin::from_request_parts(&mut admin_parts, &state).await;
+        assert!(admin_result.is_ok());
+
+        let mut fallback_parts = axum::http::Request::new(axum::body::Body::empty())
+            .into_parts()
+            .0;
+        let fallback_result = AuthSession::from_request_parts(&mut fallback_parts, &state).await;
+        assert!(matches!(
+            fallback_result,
+            Err((StatusCode::UNAUTHORIZED, _))
+        ));
+    }
 
     #[cfg(all(feature = "slack", feature = "web-ui"))]
     #[test]

@@ -9,6 +9,7 @@ pub mod api;
 pub mod assets;
 pub mod error;
 pub mod gon;
+mod image_input;
 pub mod oauth;
 pub mod share;
 pub mod share_render;

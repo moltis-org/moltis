@@ -56,6 +56,12 @@ pub struct AppState {
     pub graphql_schema: moltis_graphql::MoltisSchema,
 }
 
+impl axum::extract::FromRef<AppState> for Arc<GatewayState> {
+    fn from_ref(state: &AppState) -> Self {
+        Arc::clone(&state.gateway)
+    }
+}
+
 /// Function signature for adding extra routes (e.g. web-UI) to the gateway.
 pub type RouteEnhancer = fn() -> Router<AppState>;
 
