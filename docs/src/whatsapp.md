@@ -323,6 +323,16 @@ prevent infinite reply loops:
 
 Both checks are automatic — no configuration needed.
 
+## Message Formatting
+
+Outbound replies are converted from common Markdown to WhatsApp's supported
+markup before they are sent. Markdown headings, strong emphasis, strikeout,
+links, code blocks, and simple tables are rendered in a mobile-friendly form;
+plain URLs remain visible so WhatsApp can create link previews.
+
+Formatting conversion applies only to WhatsApp delivery. The original Markdown
+is retained in the Moltis session history and remains unchanged in the web UI.
+
 ## Media Handling
 
 WhatsApp supports rich media messages. Moltis handles each type:

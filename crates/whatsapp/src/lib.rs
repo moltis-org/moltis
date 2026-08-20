@@ -7,6 +7,7 @@ pub mod access;
 pub mod config;
 pub mod connection;
 pub mod error;
+mod formatting;
 pub mod handlers;
 pub mod memory_store;
 pub mod otp;
