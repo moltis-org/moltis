@@ -881,6 +881,12 @@ port = {port}                           # Port number (auto-generated for this i
 # [channels]
 # offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]
 
+# Example WhatsApp account. Pair the account by scanning the QR code after startup.
+# [channels.whatsapp.my-bot]
+# push_name = "Moltis"        # Falls back to [identity] name, then "Moltis".
+# dm_policy = "allowlist"
+# allowlist = []
+
 # Example Slack account. api_base_url defaults to Slack; set it only for
 # Slack-compatible proxies, mock servers, or gateways.
 # [channels.slack.my-bot]
