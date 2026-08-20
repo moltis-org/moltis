@@ -473,10 +473,15 @@ usernames, and partial IDs do not grant privilege. For WhatsApp use the full
 JID; for Matrix use the full Matrix user ID.</p>
 <aside class="admonition admonition-note"><div class="admonition-title">Interaction with OTP self-approval</div><div class="admonition-body"><p>OTP self-approval appends the approved sender to <code>allowlist</code> only. It never<br>promotes the sender to operator; privileged access must be configured<br>separately.</p></div></aside>
 <p>Untrusted tool restrictions stack with the per-channel tool policy
-(<code>channels.&#x3C;type>.&#x3C;account>.tools.groups.&#x3C;chat_type></code>). Those policies can
-further restrict an operator DM, but cannot enable tools for a guest, shared
-room, or unknown chat. Grant eligibility for privileged access by adding the
-sender to <code>operators</code>; the sender must still use a proven direct chat.</p>
+(<code>channels.&#x3C;type>.&#x3C;account>.tools.groups.&#x3C;chat_type></code>). By default those
+policies can further restrict an operator DM, but cannot enable tools for a
+guest, shared room, or unknown chat: the untrusted ceiling denies everything
+before they are consulted. An account that raises its ceiling with
+<code>untrusted_audience</code> and <code>untrusted_tools</code> (WhatsApp only for now) hands the
+decision back to those policies for its own untrusted turns. The <code>/sh</code>
+shortcut stays restricted to operator direct chats either way.</p>
+<p>Grant eligibility for privileged access by adding the sender to <code>operators</code>;
+the sender must still use a proven direct chat.</p>
 <h3 id="otp-self-approval">OTP Self-Approval</h3>
 <p>Channels that support OTP (Telegram, Microsoft Teams, Slack, Discord, Matrix, WhatsApp) allow non-allowlisted
 users to self-approve by entering a 6-digit code. The code appears in the web UI
