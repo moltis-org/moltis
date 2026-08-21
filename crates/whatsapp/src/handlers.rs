@@ -19,6 +19,7 @@ use moltis_channels::{
 use crate::{
     access::{self, AccessDenied},
     config::WhatsAppAccountConfig,
+    inbound_media::{MAX_SAVED_INBOUND_FILE_BYTES, save_inbound_file},
     otp::{OTP_CHALLENGE_MSG, OtpInitResult, OtpVerifyResult},
     state::{AccountState, AccountStateMap, has_bot_watermark},
 };
@@ -528,7 +529,7 @@ async fn handle_photo(
     client: &Client,
     account_id: &str,
     reply_to: ChannelReplyTarget,
-    meta: ChannelMessageMeta,
+    mut meta: ChannelMessageMeta,
     _chat_jid: &Jid,
     state: &AccountState,
 ) {
@@ -541,6 +542,21 @@ async fn handle_photo(
     match client.download(img.as_ref()).await {
         Ok(image_data) => {
             debug!(account_id, size = image_data.len(), %mime, "downloaded WhatsApp image");
+
+            if image_data.len() <= MAX_SAVED_INBOUND_FILE_BYTES
+                && let Some(ref sink) = state.event_sink
+            {
+                meta.documents = save_inbound_file(
+                    sink,
+                    &reply_to,
+                    &image_data,
+                    None,
+                    &mime,
+                    img.file_sha256.as_deref(),
+                )
+                .await
+                .map(|document| vec![document]);
+            }
 
             let (final_data, media_type) = match moltis_media::image_ops::optimize_for_llm(
                 &image_data,
@@ -726,14 +742,14 @@ async fn handle_video(
     }
 }
 
-/// Handle an inbound document message: dispatch with caption.
+/// Handle an inbound document message: download, save, and dispatch its local path.
 #[allow(clippy::too_many_arguments)]
 async fn handle_document(
     msg: &wa::Message,
-    _client: &Client,
+    client: &Client,
     account_id: &str,
     reply_to: ChannelReplyTarget,
-    meta: ChannelMessageMeta,
+    mut meta: ChannelMessageMeta,
     _chat_jid: &Jid,
     state: &AccountState,
 ) {
@@ -754,8 +770,79 @@ async fn handle_document(
     } else {
         format!("{caption}\n[Document: {filename} ({mime})]")
     };
-    if let Some(ref sink) = state.event_sink {
-        sink.dispatch_to_chat(&text, reply_to, meta).await;
+
+    if doc
+        .file_length
+        .is_some_and(|size| size > MAX_SAVED_INBOUND_FILE_BYTES as u64)
+    {
+        warn!(
+            account_id,
+            filename,
+            size = ?doc.file_length,
+            limit = MAX_SAVED_INBOUND_FILE_BYTES,
+            "skipping oversized WhatsApp document"
+        );
+        if let Some(ref sink) = state.event_sink {
+            sink.dispatch_to_chat(
+                &format!("{text}\n[Document was not downloaded: file exceeds the 20 MB limit]"),
+                reply_to,
+                meta,
+            )
+            .await;
+        }
+        return;
+    }
+
+    match client.download(doc.as_ref()).await {
+        Ok(document_data) if document_data.len() <= MAX_SAVED_INBOUND_FILE_BYTES => {
+            debug!(
+                account_id,
+                filename,
+                size = document_data.len(),
+                "downloaded WhatsApp document"
+            );
+            if let Some(ref sink) = state.event_sink {
+                meta.documents = save_inbound_file(
+                    sink,
+                    &reply_to,
+                    &document_data,
+                    Some(filename),
+                    mime,
+                    doc.file_sha256.as_deref(),
+                )
+                .await
+                .map(|document| vec![document]);
+                sink.dispatch_to_chat(&text, reply_to, meta).await;
+            }
+        },
+        Ok(document_data) => {
+            warn!(
+                account_id,
+                filename,
+                size = document_data.len(),
+                limit = MAX_SAVED_INBOUND_FILE_BYTES,
+                "discarding oversized WhatsApp document"
+            );
+            if let Some(ref sink) = state.event_sink {
+                sink.dispatch_to_chat(
+                    &format!("{text}\n[Document was not saved: file exceeds the 20 MB limit]"),
+                    reply_to,
+                    meta,
+                )
+                .await;
+            }
+        },
+        Err(error) => {
+            warn!(account_id, filename, %error, "failed to download WhatsApp document");
+            if let Some(ref sink) = state.event_sink {
+                sink.dispatch_to_chat(
+                    &format!("{text}\n[Document download failed]"),
+                    reply_to,
+                    meta,
+                )
+                .await;
+            }
+        },
     }
 }
 

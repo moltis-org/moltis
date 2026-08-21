@@ -340,11 +340,11 @@ WhatsApp supports rich media messages. Moltis handles each type:
 | Message Type | Handling |
 |--------------|----------|
 | **Text** | Dispatched directly to the LLM |
-| **Image** | Downloaded, optimized for LLM consumption (resized if needed), sent as attachment |
+| **Image** | Downloaded, saved in session media up to 20 MB for local tools, optimized for LLM consumption (resized if needed), sent as attachment |
 | **Voice** | Downloaded and transcribed via STT (if configured); falls back to text guidance |
 | **Audio** | Same as voice, but classified separately (non-PTT audio files) |
 | **Video** | Thumbnail extracted and sent as image attachment with caption |
-| **Document** | Caption and filename/MIME metadata dispatched as text |
+| **Document** | Downloaded up to 20 MB, saved in session media for local tools, and filename/MIME metadata dispatched as text |
 | **Location** | Resolves pending location tool requests, or dispatches coordinates to LLM |
 
 ```admonish info title="Voice Transcription"
