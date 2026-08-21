@@ -41,7 +41,7 @@ export default {
 	// ── Metric card titles ─────────────────────────────────
 	cards: {
 		uptime: "執行時間",
-		connectedClients: "已連線的用戶端",
+		connectedClients: "目前連線數",
 		activeSessions: "使用中的工作階段",
 		httpRequests: "HTTP 請求",
 		processMemory: "Moltis 使用的記憶體",
