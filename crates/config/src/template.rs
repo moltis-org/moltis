@@ -527,6 +527,7 @@ port = {port}                           # Port number (auto-generated for this i
 # device_scale_factor = 2.0         # HiDPI/Retina scaling
 # max_instances = 3                 # Maximum concurrent browser instances
 # idle_timeout_secs = 300           # Close idle browsers after this many seconds
+# screenshot_each_step = false      # Set true to auto-capture a screenshot after each action, incl. failures (per-step timeline)
 # sandbox = false                   # Run browser in container for isolation
 # allowed_domains = []              # Domain restrictions (empty = all allowed)
 # chrome_path = "/path/to/chrome"   # Custom Chrome binary path

@@ -110,6 +110,12 @@ impl BrowserManager {
             "executing browser action"
         );
 
+        // Whether to attach a screenshot of the page state if this action
+        // fails. Computed before `request.action` is moved into the dispatcher.
+        // (`request.browser` is `Copy`, so it stays usable in the error arm.)
+        let want_failure_shot =
+            self.config.screenshot_each_step && request.action.is_state_changing();
+
         let start = Instant::now();
         let timeout_duration = Duration::from_millis(request.timeout_ms);
 
@@ -141,11 +147,48 @@ impl BrowserManager {
                         )
                         .increment(1);
 
-                        BrowserResponse::error(
-                            request.session_id.unwrap_or_default(),
+                        let mut resp = BrowserResponse::error(
+                            request.session_id.clone().unwrap_or_default(),
                             e.to_string(),
                             duration_ms,
-                        )
+                        );
+
+                        // Best-effort: capture the page state at the moment of
+                        // failure so the step timeline shows *why* it failed,
+                        // not just the error text. Skipped for dead-connection
+                        // errors (the session is gone; a screenshot would spin
+                        // up a blank one) and bounded so a wedged page can't
+                        // hang the error path.
+                        if want_failure_shot
+                            && !e.is_connection_error()
+                            && let Some(sid) =
+                                request.session_id.as_deref().filter(|s| !s.is_empty())
+                        {
+                            match timeout(
+                                Duration::from_secs(15),
+                                self.screenshot(Some(sid), false, None, sandbox, request.browser),
+                            )
+                            .await
+                            {
+                                Ok(Ok((_, shot))) => {
+                                    if let (Some(data), Some(scale)) =
+                                        (shot.screenshot, shot.screenshot_scale)
+                                    {
+                                        resp = resp.with_screenshot(data, scale);
+                                    }
+                                },
+                                Ok(Err(err)) => debug!(
+                                    session_id = sid,
+                                    error = %err,
+                                    "failure-state screenshot failed; returning error without screenshot"
+                                ),
+                                Err(_) => {
+                                    debug!(session_id = sid, "failure-state screenshot timed out")
+                                },
+                            }
+                        }
+
+                        resp
                     },
                 }
             },
@@ -215,9 +258,18 @@ impl BrowserManager {
         // Navigate has its own retry-with-fresh-session logic, so handle it
         // separately to avoid double-cleanup.
         if let BrowserAction::Navigate { ref url } = action {
-            return self.navigate(session_id, url, sandbox, browser).await;
+            let (sid, response) = self.navigate(session_id, url, sandbox, browser).await?;
+            let response = if self.config.screenshot_each_step {
+                self.attach_step_screenshot(&sid, response, sandbox, browser)
+                    .await
+            } else {
+                response
+            };
+            return Ok((sid, response));
         }
 
+        // Capture before `action` is consumed by the match below.
+        let wants_step_screenshot = self.config.screenshot_each_step && action.is_state_changing();
         let action_name = action.to_string();
 
         let result = match action {
@@ -255,12 +307,60 @@ impl BrowserManager {
         };
 
         // Detect stale connections for all non-Navigate actions
-        match result {
+        let (sid, response) = match result {
             Err(ref e) if e.is_connection_error() => {
                 let sid = session_id.unwrap_or("unknown");
-                Err(self.cleanup_stale_session(sid, &action_name).await)
+                return Err(self.cleanup_stale_session(sid, &action_name).await);
             },
-            other => other,
+            other => other?,
+        };
+
+        let response = if wants_step_screenshot {
+            self.attach_step_screenshot(&sid, response, sandbox, browser)
+                .await
+        } else {
+            response
+        };
+
+        Ok((sid, response))
+    }
+
+    /// Capture a screenshot after a *successful* state-changing action and
+    /// attach it to the action's response so chat clients can render a per-step
+    /// timeline. (The failure case is handled in `handle_request`, which has the
+    /// error response in hand.)
+    ///
+    /// Best-effort: if the response already carries a screenshot it is returned
+    /// unchanged, and any capture error (e.g. renderless browser kinds whose
+    /// `supports_screenshots()` is false) is ignored so the action never fails
+    /// because the auto-screenshot failed.
+    async fn attach_step_screenshot(
+        &self,
+        sid: &str,
+        response: BrowserResponse,
+        sandbox: bool,
+        browser: Option<BrowserPreference>,
+    ) -> BrowserResponse {
+        if response.screenshot.is_some() {
+            return response;
+        }
+
+        match self
+            .screenshot(Some(sid), false, None, sandbox, browser)
+            .await
+        {
+            Ok((_, shot)) => match (shot.screenshot, shot.screenshot_scale) {
+                (Some(data), Some(scale)) => response.with_screenshot(data, scale),
+                _ => response,
+            },
+            Err(e) => {
+                debug!(
+                    session_id = sid,
+                    error = %e,
+                    "auto step screenshot failed; returning response without screenshot"
+                );
+                response
+            },
         }
     }
 

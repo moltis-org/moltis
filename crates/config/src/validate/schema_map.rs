@@ -194,6 +194,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ("profile_dir", Leaf),
             ("container_host", Leaf),
             ("browserless_api_version", Leaf),
+            ("screenshot_each_step", Leaf),
         ]))
     };
 
