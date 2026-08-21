@@ -456,7 +456,7 @@ impl CronService {
     }
 
     /// Force-run a job immediately.
-    pub async fn run(self: &Arc<Self>, id: &str, force: bool) -> Result<()> {
+    pub async fn run(self: &Arc<Self>, id: &str, force: bool) -> Result<CronRunRecord> {
         let job = {
             let jobs = self.jobs.read().await;
             jobs.iter()
@@ -478,8 +478,7 @@ impl CronService {
         })
         .await;
 
-        self.execute_job(&job).await;
-        Ok(())
+        Ok(self.execute_job(&job).await)
     }
 
     /// Get run history for a job.
@@ -577,12 +576,12 @@ impl CronService {
             let svc = Arc::clone(self);
             let job_clone = job.clone();
             tokio::spawn(async move {
-                svc.execute_job(&job_clone).await;
+                let _run = svc.execute_job(&job_clone).await;
             });
         }
     }
 
-    async fn execute_job(self: &Arc<Self>, job: &CronJob) {
+    async fn execute_job(self: &Arc<Self>, job: &CronJob) -> CronRunRecord {
         let started = now_ms();
         info!(id = %job.id, name = %job.name, "executing cron job");
 
@@ -730,6 +729,7 @@ impl CronService {
             duration_ms,
             "cron job finished"
         );
+        run
     }
 
     async fn update_job_state<F: FnOnce(&mut CronJobState)>(&self, id: &str, f: F) {

@@ -24,6 +24,14 @@ pub fn from_service<T: serde::de::DeserializeOwned>(
     serde_json::from_value(value).map_err(parse_err)
 }
 
+/// Convert any successful service response into the conventional mutation
+/// result. Use this when the backing service returns the created/updated value
+/// instead of an `{ "ok": true }` envelope.
+pub fn from_service_ok(result: ServiceResult) -> async_graphql::Result<crate::types::BoolResult> {
+    result.map_err(gql_err)?;
+    Ok(crate::types::BoolResult { ok: true })
+}
+
 /// Convert a `ServiceResult` into a raw JSON GraphQL result.
 ///
 /// Returns the JSON value as-is, wrapped in the `Json` scalar. Use this for

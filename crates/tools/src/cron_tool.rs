@@ -18,6 +18,9 @@ use {
     },
 };
 
+mod current_channel;
+mod schema;
+
 /// The cron tool exposed to LLM agents.
 pub struct CronTool {
     service: Arc<CronService>,
@@ -589,7 +592,7 @@ fn rescue_stringified_object(v: &mut Value) {
     }
 }
 
-fn normalize_job_value(job: &Value) -> Result<Value> {
+fn normalize_job_value(job: &Value, channel_context: Option<&Value>) -> Result<Value> {
     let mut normalized = job.clone();
     rescue_stringified_object(&mut normalized);
     prune_null_fields(&mut normalized);
@@ -597,6 +600,10 @@ fn normalize_job_value(job: &Value) -> Result<Value> {
         .as_object_mut()
         .ok_or_else(|| Error::message("job must be an object"))?;
     normalize_session_target_field(obj);
+    if let Some(payload) = obj.get_mut("payload") {
+        rescue_stringified_object(payload);
+    }
+    current_channel::apply(obj, channel_context)?;
     normalize_sandbox_field(obj)?;
     normalize_wake_mode_field(obj)?;
 
@@ -618,7 +625,7 @@ fn normalize_job_value(job: &Value) -> Result<Value> {
     Ok(normalized)
 }
 
-fn normalize_patch_value(patch: &Value) -> Result<Value> {
+fn normalize_patch_value(patch: &Value, channel_context: Option<&Value>) -> Result<Value> {
     let mut normalized = patch.clone();
     rescue_stringified_object(&mut normalized);
     prune_null_fields(&mut normalized);
@@ -626,6 +633,10 @@ fn normalize_patch_value(patch: &Value) -> Result<Value> {
         .as_object_mut()
         .ok_or_else(|| Error::message("patch must be an object"))?;
     normalize_session_target_field(obj);
+    if let Some(payload) = obj.get_mut("payload") {
+        rescue_stringified_object(payload);
+    }
+    current_channel::apply(obj, channel_context)?;
     normalize_sandbox_field(obj)?;
     normalize_wake_mode_field(obj)?;
 
@@ -666,7 +677,13 @@ impl AgentTool for CronTool {
          - payload.kind: \"agentTurn\"\n\
          - payload.message: the prompt for the isolated agent run\n\
          \n\
-         To deliver the agent output to a channel (e.g. Telegram) after the run:\n\
+         When the request comes from a messaging channel and the user wants the \
+         scheduled result sent back to that same conversation, set:\n\
+         - payload.deliver_to_current_chat: true\n\
+         The host securely resolves the exact account and destination and forces \
+         an isolated agentTurn; do not ask the user for channel IDs.\n\
+         \n\
+         To deliver to a different channel or recipient after the run:\n\
          - payload.deliver: true\n\
          - payload.channel: the channel account identifier (e.g. the Telegram \
            bot username like \"my_telegram_bot\")\n\
@@ -678,7 +695,11 @@ impl AgentTool for CronTool {
          - sessionTarget \"main\" requires payload kind \"systemEvent\"\n\
          - sessionTarget \"isolated\" requires payload kind \"agentTurn\"\n\
          - When the user asks to send output to a channel, always use \
-           sessionTarget \"isolated\" + kind \"agentTurn\" + deliver fields\n\
+           deliver_to_current_chat for the current conversation, or explicit \
+           sessionTarget \"isolated\" + kind \"agentTurn\" + deliver fields for a \
+           different destination\n\
+         - In cron expressions, prefer named weekdays such as MON-FRI because \
+           numeric weekday mappings differ across cron implementations\n\
          \n\
          Optional execution controls for agent turns:\n\
          - payload.model: model id for this job\n\
@@ -687,113 +708,7 @@ impl AgentTool for CronTool {
     }
 
     fn parameters_schema(&self) -> Value {
-        let time_field = |description: &str| {
-            json!({
-                "type": ["integer", "string"],
-                "description": description
-            })
-        };
-        json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["status", "list", "add", "update", "remove", "run", "runs"],
-                    "description": "The action to perform"
-                },
-                "job": {
-                    "type": "object",
-                    "description": "Job specification (for 'add' action)",
-                    "properties": {
-                        "name": { "type": "string", "description": "Human-readable job name" },
-                        "schedule": {
-                            "type": ["object", "string", "integer"],
-                            "description": "Schedule object. For one-off jobs use {kind:'at', delay_ms} where delay_ms is milliseconds from now (e.g. 600000 for 10 min) — never compute at_ms yourself. For recurring use {kind:'every', every_ms} or {kind:'cron', expr, tz?}.",
-                            "properties": {
-                                "kind": { "type": "string", "enum": ["at", "every", "cron"] },
-                                "delay_ms": time_field("Milliseconds from now to run the job. Accepts integer milliseconds or a duration string like '10m'. Preferred over at_ms."),
-                                "at_ms": time_field("Absolute epoch milliseconds or ISO-8601 timestamp. Use delay_ms instead unless you have an exact timestamp."),
-                                "every_ms": time_field("Recurring interval when kind='every'. Accepts integer milliseconds or a duration string like '15m'."),
-                                "anchor_ms": time_field("Optional anchor when kind='every'. Accepts epoch milliseconds or ISO-8601 timestamp."),
-                                "expr": { "type": "string", "description": "Cron expression used when kind='cron'" },
-                                "tz": { "type": "string", "description": "Optional timezone used when kind='cron'" }
-                            },
-                            "required": ["kind"]
-                        },
-                        "payload": {
-                            "type": ["object", "string"],
-                            "description": "What to do. Use {kind:'systemEvent', text} for main-session reminders or {kind:'agentTurn', message, model?, timeout_secs?, active_tools?, tool_choice?, deliver?, channel?, to?}. `payload.model` selects the LLM for that job. This tool also accepts a shorthand message string at runtime.",
-                            "properties": {
-                                "kind": { "type": "string", "enum": ["systemEvent", "agentTurn"] },
-                                "text": { "type": "string" },
-                                "message": { "type": "string" },
-                                "model": { "type": "string" },
-                                "timeout_secs": {
-                                    "type": ["integer", "string"],
-                                    "description": "Optional timeout in seconds. Accepts an integer number of seconds or a duration string like '2m'."
-                                },
-                                "active_tools": {
-                                    "type": "array",
-                                    "items": { "type": "string" },
-                                    "description": "Optional per-turn whitelist of tools visible to the scheduled agent."
-                                },
-                                "tool_choice": {
-                                    "type": "object",
-                                    "description": "Optional provider tool choice, e.g. {type:'tool', name:'classify_destination'}.",
-                                    "properties": {
-                                        "type": { "type": "string", "enum": ["auto", "any", "none", "tool"] },
-                                        "name": { "type": "string" }
-                                    },
-                                    "required": ["type"]
-                                },
-                                "deliver": { "type": "boolean", "description": "Set to true to deliver the agent output to a channel (e.g. Telegram) after the run. Requires channel and to." },
-                                "channel": { "type": "string", "description": "Channel account identifier for delivery (e.g. the Telegram bot username like 'my_telegram_bot'). Required when deliver=true." },
-                                "to": { "type": "string", "description": "Recipient chat ID for delivery (e.g. '123456789' for Telegram). Required when deliver=true." }
-                            },
-                            "required": ["kind"]
-                        },
-                        "sessionTarget": { "type": "string", "enum": ["main", "isolated"], "default": "isolated" },
-                        "sandbox": {
-                            "type": "object",
-                            "description": "Execution environment for agent turns. Use {enabled:false} for host execution, or {enabled:true, image?} for sandbox execution.",
-                            "properties": {
-                                "enabled": { "type": "boolean", "description": "true = sandbox execution, false = host execution" },
-                                "image": { "type": "string", "description": "Optional sandbox image tag when sandbox is enabled" }
-                            }
-                        },
-                        "execution": {
-                            "type": "object",
-                            "description": "Alias for sandbox settings. Use {target:'host'|'sandbox', image?}.",
-                            "properties": {
-                                "target": { "type": "string", "enum": ["host", "sandbox"] },
-                                "image": { "type": "string" }
-                            }
-                        },
-                        "deleteAfterRun": { "type": "boolean", "default": false },
-                        "enabled": { "type": "boolean", "default": true },
-                        "wakeMode": { "type": "string", "enum": ["now", "nextHeartbeat"], "default": "nextHeartbeat", "description": "Whether to trigger an immediate heartbeat after this job fires" }
-                    },
-                    "required": ["name", "schedule", "payload"]
-                },
-                "patch": {
-                    "type": "object",
-                    "description": "Fields to update (for 'update' action)"
-                },
-                "id": {
-                    "type": "string",
-                    "description": "Job ID (for update/remove/run/runs)"
-                },
-                "force": {
-                    "type": "boolean",
-                    "description": "Force-run even if disabled (for 'run' action)"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max run records to return (for 'runs' action, default 20)"
-                }
-            },
-            "required": ["action"]
-        })
+        schema::parameters()
     }
 
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
@@ -835,7 +750,7 @@ impl AgentTool for CronTool {
                         }
                     },
                 };
-                let normalized = normalize_job_value(&job_val)?;
+                let normalized = normalize_job_value(&job_val, params.get("_channel"))?;
                 let create: CronJobCreate = serde_json::from_value(normalized)
                     .map_err(|e| Error::message(format!("invalid job spec: {e}")))?;
                 let job = self.service.add(create).await?;
@@ -849,7 +764,7 @@ impl AgentTool for CronTool {
                 let patch_val = params
                     .get("patch")
                     .ok_or_else(|| Error::message("missing 'patch' for update"))?;
-                let normalized = normalize_patch_value(patch_val)?;
+                let normalized = normalize_patch_value(patch_val, params.get("_channel"))?;
                 let patch: CronJobPatch = serde_json::from_value(normalized)
                     .map_err(|e| Error::message(format!("invalid patch: {e}")))?;
                 let job = self.service.update(id, patch).await?;
@@ -872,8 +787,8 @@ impl AgentTool for CronTool {
                     .get("force")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                self.service.run(id, force).await?;
-                Ok(json!({ "ran": id }))
+                let run = self.service.run(id, force).await?;
+                Ok(json!({ "ran": id, "run": run }))
             },
             "runs" => {
                 let id = params

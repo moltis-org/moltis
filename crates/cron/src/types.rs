@@ -25,7 +25,7 @@ pub enum CronSchedule {
         #[serde(skip_serializing_if = "Option::is_none")]
         anchor_ms: Option<u64>,
     },
-    /// Cron expression (5-field standard or 6-field with seconds).
+    /// Cron expression (5 fields, or the extended form accepted by the parser).
     Cron {
         expr: String,
         #[serde(skip_serializing_if = "Option::is_none")]

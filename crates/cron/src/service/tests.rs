@@ -249,10 +249,53 @@ async fn test_force_run() {
         .await
         .unwrap();
 
-    svc.run(&job.id, false).await.unwrap();
-    // Give the spawned task a moment.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let run = svc.run(&job.id, false).await.unwrap();
+    assert_eq!(run.status, RunStatus::Ok);
+    assert_eq!(run.output.as_deref(), Some("done"));
     assert_eq!(counter.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn test_run_returns_recorded_agent_failure() {
+    let agent_turn: AgentTurnFn =
+        Arc::new(|_| Box::pin(async { Err(Error::message("delivery failed")) }));
+    let svc = make_svc(
+        Arc::new(InMemoryStore::new()),
+        noop_system_event(),
+        agent_turn,
+    );
+    let job = svc
+        .add(CronJobCreate {
+            id: None,
+            name: "failing".into(),
+            schedule: CronSchedule::Every {
+                every_ms: 60_000,
+                anchor_ms: None,
+            },
+            payload: CronPayload::AgentTurn {
+                message: "go".into(),
+                model: None,
+                agent_id: None,
+                timeout_secs: None,
+                tool_controls: Default::default(),
+                deliver: true,
+                channel: Some("main".into()),
+                to: Some("recipient".into()),
+            },
+            session_target: SessionTarget::Isolated,
+            delete_after_run: false,
+            enabled: true,
+            system: false,
+            sandbox: CronSandboxConfig::default(),
+            wake_mode: CronWakeMode::default(),
+        })
+        .await
+        .unwrap();
+
+    let run = svc.run(&job.id, false).await.unwrap();
+
+    assert_eq!(run.status, RunStatus::Error);
+    assert_eq!(run.error.as_deref(), Some("delivery failed"));
 }
 
 #[tokio::test]

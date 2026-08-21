@@ -415,6 +415,7 @@ impl From<&ChannelReplyTarget> for ChannelBinding {
             channel_type: Some(channel_type),
             account_id: Some(target.account_id.clone()),
             chat_id: Some(target.chat_id.clone()),
+            outbound_to: Some(target.outbound_to().into_owned()),
             chat_type: target.channel_type.classify_chat(&target.chat_id),
             sender_id: None,
         }
@@ -1358,6 +1359,7 @@ mod tests {
         assert_eq!(binding.channel_type.as_deref(), Some("telegram"));
         assert_eq!(binding.account_id.as_deref(), Some("bot1"));
         assert_eq!(binding.chat_id.as_deref(), Some("-100999"));
+        assert_eq!(binding.outbound_to.as_deref(), Some("-100999:42"));
         assert_eq!(binding.chat_type.as_deref(), Some("channel_or_supergroup"));
         assert!(binding.sender_id.is_none());
     }

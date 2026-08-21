@@ -875,8 +875,13 @@ pub async fn prepare_gateway_core_with_profile(
                 text.clone()
             };
 
+            if req.deliver && !is_heartbeat_turn && delivery_text.trim().is_empty() {
+                return Err(moltis_cron::Error::message(
+                    "cron agent produced an empty response; nothing was delivered",
+                ));
+            }
             maybe_deliver_cron_output(state.services.channel_outbound_arc(), &req, &delivery_text)
-                .await;
+                .await?;
 
             Ok(moltis_cron::service::AgentTurnResult {
                 output: text,

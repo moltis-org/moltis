@@ -98,6 +98,10 @@ Jobs support several schedule kinds:
 | `cron` | `expr`, optional `tz` | Standard cron expression (e.g. `"0 */6 * * *"`) |
 | `at` | `at_ms` | Run once at a specific Unix timestamp (ms) |
 
+Prefer named weekdays such as `MON-FRI` in cron expressions. Numeric weekday
+values are not portable across cron implementations because some number Sunday
+as zero while others number it as one.
+
 ## Cron Tool
 
 The agent manages jobs through the built-in `cron` tool. Available actions:
@@ -120,7 +124,25 @@ one-time tasks (reminders, follow-ups).
 Background agent turns can deliver their final output to a configured channel
 account/chat after the run completes.
 
-Use all of the following together:
+When asking the agent from WhatsApp, Telegram, or another messaging channel to
+send a scheduled result back to the same conversation, the agent can use the
+transient tool shortcut:
+
+```json
+{
+  "payload": {
+    "message": "Prepare and send the daily summary.",
+    "deliver_to_current_chat": true
+  }
+}
+```
+
+Moltis resolves the account and destination from trusted session context,
+converts the payload to an isolated `agentTurn`, and stores the normal
+`deliver`, `channel`, and `to` fields. The shortcut itself is not persisted.
+It returns an error outside a messaging-channel conversation.
+
+For a different or explicitly selected destination, use all of the following:
 
 - `sessionTarget: "isolated"`
 - `payload.kind: "agentTurn"`
@@ -150,7 +172,9 @@ Example:
 
 Channel delivery is separate from session targeting. The cron job still runs in
 an isolated cron session, then Moltis forwards the finished output to the
-requested channel destination.
+requested channel destination. Delivery failures and empty non-heartbeat
+outputs are recorded as failed cron runs. The `run` action returns that run
+record so callers can distinguish execution from successful delivery.
 
 ## Session Targeting
 

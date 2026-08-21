@@ -168,6 +168,28 @@ mod tests {
     }
 
     #[test]
+    fn test_cron_named_weekdays_with_timezone() {
+        let schedule = CronSchedule::Cron {
+            expr: "0 17 * * MON-FRI".into(),
+            tz: Some("America/Sao_Paulo".into()),
+        };
+        // Friday 2024-02-02 at 18:00 in São Paulo.
+        let now_ms = Utc
+            .with_ymd_and_hms(2024, 2, 2, 21, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+
+        let next = compute_next_run(&schedule, now_ms).unwrap().unwrap();
+        let expected = Utc
+            .with_ymd_and_hms(2024, 2, 5, 20, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+        assert_eq!(next, expected, "next run should be Monday at 17:00 BRT");
+    }
+
+    #[test]
     fn test_cron_invalid_expr() {
         let s = CronSchedule::Cron {
             expr: "not valid".into(),
