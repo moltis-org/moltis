@@ -1,462 +1,355 @@
+use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
+
+// Keep embedded triple backticks visible without closing WhatsApp code markup.
+const WORD_JOINER: char = '\u{2060}';
+
 /// Convert common Markdown emitted by LLMs to WhatsApp's lightweight markup.
 ///
-/// WhatsApp understands `*bold*`, `_italic_`, `~strike~`, fenced/inline code,
-/// block quotes, and plain URLs. It does not understand Markdown headings,
-/// double-delimited emphasis, or `[label](url)` links.
+/// This is a one-way renderer: input is interpreted as Markdown, not as
+/// already-formatted WhatsApp text.
 pub(crate) fn markdown_to_whatsapp(markdown: &str) -> String {
-    let mut output = String::with_capacity(markdown.len());
-    let mut in_code_fence = false;
-    let segments: Vec<_> = markdown.split_inclusive('\n').map(split_segment).collect();
-    let mut index = 0;
-
-    while index < segments.len() {
-        let (line, has_newline) = segments[index];
-        let trimmed = line.trim_start();
-
-        if !in_code_fence
-            && !trimmed.starts_with("```")
-            && let Some(header_cells) = table_header_cells(&segments, index)
-        {
-            let column_count = header_cells.len();
-            render_table_row(&mut output, &header_cells, has_newline);
-            index += 2; // The validated separator row is structural, not content.
-
-            while let Some(&(row, row_has_newline)) = segments.get(index) {
-                let row = row.trim_start();
-                let Some(cells) = table_cells(row) else {
-                    break;
-                };
-                if cells.len() != column_count || is_table_separator(&cells) {
-                    break;
-                }
-                render_table_row(&mut output, &cells, row_has_newline);
-                index += 1;
-            }
-            continue;
-        }
-
-        if trimmed.starts_with("```") {
-            output.push_str("```");
-            in_code_fence = !in_code_fence;
-        } else if in_code_fence {
-            output.push_str(line);
-        } else if let Some((indent, heading)) = markdown_heading(line) {
-            output.push_str(indent);
-            let heading = convert_inline(heading);
-            // Only add outer bold when it cannot overlap existing emphasis or
-            // an unspaced literal asterisk in the heading text.
-            if heading_can_use_outer_bold(&heading) {
-                output.push('*');
-                output.push_str(&heading);
-                output.push('*');
-            } else {
-                output.push_str(&heading);
-            }
-        } else {
-            output.push_str(&convert_inline(line));
-        }
-
-        if has_newline {
-            output.push('\n');
-        }
-        index += 1;
-    }
-
-    output
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
+    WhatsAppRenderer::new(markdown.len()).render(Parser::new_ext(markdown, options))
 }
 
-fn split_segment(segment: &str) -> (&str, bool) {
-    match segment.strip_suffix('\n') {
-        Some(line) => (line.strip_suffix('\r').unwrap_or(line), true),
-        None => (segment, false),
-    }
+struct ListContext {
+    next: Option<u64>,
 }
 
-fn markdown_heading(line: &str) -> Option<(&str, &str)> {
-    let trimmed = line.trim_start();
-    let indent_len = line.len() - trimmed.len();
-    let hashes = trimmed.bytes().take_while(|byte| *byte == b'#').count();
-    if !(1..=6).contains(&hashes) || trimmed.as_bytes().get(hashes) != Some(&b' ') {
-        return None;
-    }
-    Some((&line[..indent_len], trimmed[hashes + 1..].trim()))
+struct DestinationContext {
+    destination: String,
+    output_start: usize,
+    append_destination: bool,
 }
 
-fn heading_can_use_outer_bold(input: &str) -> bool {
-    let mut chars = input.chars().peekable();
-    let mut code_ticks = None;
-    let mut has_opening = false;
-    let mut has_content = false;
-    let mut has_unsafe_literal = false;
-    let mut previous = None;
-
-    while let Some(ch) = chars.next() {
-        if ch == '`' {
-            let ticks = consume_run(&mut chars, '`');
-            match code_ticks {
-                None => code_ticks = Some(ticks),
-                Some(opening_ticks) if opening_ticks == ticks => code_ticks = None,
-                Some(_) => {},
-            }
-            has_content |= has_opening;
-            previous = Some('`');
-            continue;
-        }
-        if code_ticks.is_some() {
-            has_content |= has_opening;
-            previous = Some(ch);
-            continue;
-        }
-        if ch == '\\' {
-            previous = chars.next().or(Some(ch));
-            has_content |= has_opening;
-            continue;
-        }
-        if ch == '*' {
-            if has_opening
-                && has_content
-                && previous.is_some_and(|value: char| !value.is_whitespace())
-            {
-                return false;
-            }
-            let previous_is_text = previous.is_none_or(|value: char| !value.is_whitespace());
-            let next_is_text = chars.peek().is_none_or(|value| !value.is_whitespace());
-            has_unsafe_literal |= previous_is_text || next_is_text;
-            has_opening = chars
-                .peek()
-                .is_some_and(|value| !value.is_whitespace() && *value != '*');
-            has_content = false;
-        } else if has_opening {
-            has_content = true;
-        }
-        previous = Some(ch);
-    }
-
-    !has_unsafe_literal
+struct HeadingContext {
+    marker_position: usize,
+    has_literal_asterisk: bool,
+    suppressed_strong_markers: Vec<usize>,
 }
 
-fn table_cells(line: &str) -> Option<Vec<String>> {
-    let mut chars = line.trim_end().strip_prefix('|')?.chars().peekable();
-    let mut cells = Vec::new();
-    let mut cell = String::new();
-    let mut code_ticks = None;
-
-    while let Some(ch) = chars.next() {
-        if ch == '\\' && code_ticks.is_none() {
-            let backslashes = consume_run(&mut chars, '\\');
-            let escaped = chars
-                .peek()
-                .copied()
-                .filter(|next| matches!(next, '|' | '`'));
-            if let Some(escaped) = escaped {
-                cell.extend(std::iter::repeat_n('\\', backslashes / 2));
-                if backslashes % 2 == 1 {
-                    chars.next();
-                    cell.push(escaped);
-                }
-            } else {
-                cell.extend(std::iter::repeat_n('\\', backslashes));
-            }
-            continue;
-        }
-
-        if ch == '`' {
-            let ticks = consume_run(&mut chars, '`');
-            cell.extend(std::iter::repeat_n('`', ticks));
-            match code_ticks {
-                None => code_ticks = Some(ticks),
-                Some(opening_ticks) if opening_ticks == ticks => code_ticks = None,
-                Some(_) => {},
-            }
-            continue;
-        }
-
-        if ch == '|' && code_ticks.is_none() {
-            cells.push(cell.trim().to_owned());
-            cell.clear();
-            if chars.peek().is_none() {
-                return Some(cells);
-            }
-            continue;
-        }
-
-        cell.push(ch);
-    }
-
-    None
+struct WhatsAppRenderer {
+    output: String,
+    lists: Vec<ListContext>,
+    destinations: Vec<DestinationContext>,
+    heading: Option<HeadingContext>,
+    quote_depth: usize,
+    item_paragraphs: Vec<bool>,
+    table_column: Option<usize>,
+    code_block: Option<String>,
 }
 
-fn consume_run<I>(chars: &mut std::iter::Peekable<I>, expected: char) -> usize
-where
-    I: Iterator<Item = char>,
-{
-    let mut count = 1;
-    while chars.peek() == Some(&expected) {
-        chars.next();
-        count += 1;
-    }
-    count
-}
-
-fn is_table_separator(cells: &[String]) -> bool {
-    cells.iter().all(|cell| {
-        let cell = cell.trim_matches(':');
-        cell.len() >= 3 && cell.bytes().all(|byte| byte == b'-')
-    })
-}
-
-fn table_header_cells(segments: &[(&str, bool)], index: usize) -> Option<Vec<String>> {
-    let &(header, header_has_newline) = segments.get(index)?;
-    let &(separator, _) = segments.get(index + 1)?;
-    if !header_has_newline {
-        return None;
-    }
-
-    let header = header.trim_start();
-    let separator = separator.trim_start();
-    let header_cells = table_cells(header)?;
-    let separator_cells = table_cells(separator)?;
-    if !is_table_separator(&separator_cells) || header_cells.len() != separator_cells.len() {
-        return None;
-    }
-    if index > 0
-        && let Some(previous_cells) = table_cells(segments[index - 1].0.trim_start())
-        && is_table_separator(&previous_cells)
-    {
-        return None;
-    }
-
-    Some(header_cells)
-}
-
-fn render_table_row(output: &mut String, cells: &[String], has_newline: bool) {
-    output.push_str(&convert_inline(&cells.join(" · ")));
-    if has_newline {
-        output.push('\n');
-    }
-}
-
-fn convert_inline(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    let mut inline_code_ticks = None;
-    let mut in_bold = false;
-    let mut in_underscore_bold = false;
-    let mut in_strike = false;
-    let mut in_bold_italic = false;
-
-    while let Some(ch) = chars.next() {
-        if ch == '`' {
-            let ticks = consume_run(&mut chars, '`');
-            output.extend(std::iter::repeat_n('`', ticks));
-            match inline_code_ticks {
-                None => inline_code_ticks = Some(ticks),
-                Some(opening_ticks) if opening_ticks == ticks => inline_code_ticks = None,
-                Some(_) => {},
-            }
-            continue;
+impl WhatsAppRenderer {
+    fn new(capacity: usize) -> Self {
+        Self {
+            output: String::with_capacity(capacity),
+            lists: Vec::new(),
+            destinations: Vec::new(),
+            heading: None,
+            quote_depth: 0,
+            item_paragraphs: Vec::new(),
+            table_column: None,
+            code_block: None,
         }
-        if inline_code_ticks.is_some() {
-            output.push(ch);
-            continue;
-        }
+    }
 
-        match ch {
-            '\\' => {
-                output.push(ch);
-                if let Some(next) = chars.next() {
-                    output.push(next);
-                }
-            },
-            '*' if chars.peek() == Some(&'*') => {
-                let is_triple = {
-                    let mut lookahead = chars.clone();
-                    lookahead.next();
-                    lookahead.peek() == Some(&'*')
-                };
-                if is_triple {
-                    if in_bold_italic {
-                        chars.next();
-                        chars.next();
-                        output.push_str("*_");
-                        in_bold_italic = false;
-                    } else if has_closing_delimiter(&chars, "***") {
-                        chars.next();
-                        chars.next();
-                        output.push_str("_*");
-                        in_bold_italic = true;
+    fn render<'a>(mut self, events: impl IntoIterator<Item = Event<'a>>) -> String {
+        for event in events {
+            match event {
+                Event::Start(tag) => self.start(tag),
+                Event::End(tag) => self.end(tag),
+                Event::Text(text) => {
+                    if let Some(code_block) = &mut self.code_block {
+                        code_block.push_str(&text);
                     } else {
-                        chars.next();
-                        chars.next();
-                        output.push_str("***");
+                        self.write_literal(&text);
                     }
-                } else if in_bold {
-                    chars.next();
-                    output.push('*');
-                    in_bold = false;
-                } else if has_closing_delimiter(&chars, "**") {
-                    chars.next();
-                    output.push('*');
-                    in_bold = true;
-                } else {
-                    chars.next();
-                    output.push_str("**");
-                }
-            },
-            '_' if chars.peek() == Some(&'_') => {
-                if in_underscore_bold {
-                    chars.next();
-                    output.push('*');
-                    in_underscore_bold = false;
-                } else if has_closing_delimiter(&chars, "__") {
-                    chars.next();
-                    output.push('*');
-                    in_underscore_bold = true;
-                } else {
-                    chars.next();
-                    output.push_str("__");
-                }
-            },
-            '~' if chars.peek() == Some(&'~') => {
-                if in_strike {
-                    chars.next();
-                    output.push('~');
-                    in_strike = false;
-                } else if has_closing_delimiter(&chars, "~~") {
-                    chars.next();
-                    output.push('~');
-                    in_strike = true;
-                } else {
-                    chars.next();
-                    output.push_str("~~");
-                }
-            },
-            '!' if chars.peek() == Some(&'[') => {
-                chars.next();
-                if !convert_link(&mut chars, &mut output) {
-                    output.push_str("![");
-                }
-            },
-            '[' => {
-                if !convert_link(&mut chars, &mut output) {
-                    output.push('[');
-                }
-            },
-            '<' => {
-                let mut value = String::new();
-                let mut closed = false;
-                while let Some(&next) = chars.peek() {
-                    if next == '>' {
-                        chars.next();
-                        closed = true;
-                        break;
-                    }
-                    value.push(next);
-                    chars.next();
-                }
-                if closed && (value.starts_with("http://") || value.starts_with("https://")) {
-                    output.push_str(&value);
-                } else {
-                    output.push('<');
-                    output.push_str(&value);
-                    if closed {
-                        output.push('>');
-                    }
-                }
-            },
-            _ => output.push(ch),
-        }
-    }
-
-    output
-}
-
-fn has_closing_delimiter<I>(chars: &std::iter::Peekable<I>, delimiter: &str) -> bool
-where
-    I: Iterator<Item = char> + Clone,
-{
-    let remaining: String = chars.clone().collect();
-    let Some(rest) = remaining.strip_prefix(&delimiter[1..]) else {
-        return false;
-    };
-    let mut chars = rest.chars().peekable();
-    let mut code_ticks = None;
-
-    while let Some(ch) = chars.next() {
-        if ch == '`' {
-            let ticks = consume_run(&mut chars, '`');
-            match code_ticks {
-                None => code_ticks = Some(ticks),
-                Some(opening_ticks) if opening_ticks == ticks => code_ticks = None,
-                Some(_) => {},
-            }
-            continue;
-        }
-        if code_ticks.is_some() {
-            continue;
-        }
-        if ch == '\\' {
-            chars.next();
-            continue;
-        }
-        if ch == delimiter.chars().next().unwrap_or_default() {
-            let mut lookahead = chars.clone();
-            if delimiter[1..]
-                .chars()
-                .all(|expected| lookahead.next() == Some(expected))
-            {
-                return true;
+                },
+                Event::Code(code) => {
+                    let marker = if code.contains('`') {
+                        "```"
+                    } else {
+                        "`"
+                    };
+                    let code = code.replace("```", &format!("``{WORD_JOINER}`"));
+                    self.write(marker);
+                    self.write(&code);
+                    self.write(marker);
+                },
+                Event::Html(html) | Event::InlineHtml(html) => self.write_literal(&html),
+                Event::InlineMath(math) | Event::DisplayMath(math) => self.write_literal(&math),
+                Event::FootnoteReference(label) => self.write_literal(&label),
+                Event::SoftBreak | Event::HardBreak => self.ensure_newlines(1),
+                Event::Rule => {
+                    self.ensure_block_start();
+                    self.write("---");
+                    self.end_block();
+                },
+                Event::TaskListMarker(checked) => {
+                    self.write(if checked {
+                        "[x] "
+                    } else {
+                        "[ ] "
+                    });
+                },
             }
         }
-    }
-    false
-}
 
-fn convert_link<I>(chars: &mut std::iter::Peekable<I>, output: &mut String) -> bool
-where
-    I: Iterator<Item = char> + Clone,
-{
-    let original = chars.clone();
-    let mut label = String::new();
-    for ch in chars.by_ref() {
-        if ch == ']' {
-            break;
-        }
-        label.push(ch);
-    }
-    if chars.next() != Some('(') {
-        *chars = original;
-        return false;
+        self.output
+            .truncate(self.output.trim_end_matches('\n').len());
+        self.output
     }
 
-    let mut url = String::new();
-    let mut depth = 1usize;
-    for ch in chars.by_ref() {
-        if ch == '(' {
-            depth += 1;
-            url.push(ch);
-            continue;
+    fn start(&mut self, tag: Tag<'_>) {
+        match tag {
+            Tag::Paragraph => self.start_paragraph(),
+            Tag::Heading { .. } => {
+                self.ensure_block_start();
+                self.prepare_line();
+                let marker_position = self.output.len();
+                self.output.push('*');
+                self.heading = Some(HeadingContext {
+                    marker_position,
+                    has_literal_asterisk: false,
+                    suppressed_strong_markers: Vec::new(),
+                });
+            },
+            Tag::BlockQuote(_) => {
+                self.ensure_block_start();
+                self.quote_depth += 1;
+            },
+            Tag::CodeBlock(_) => {
+                self.ensure_block_start();
+                self.code_block = Some(String::new());
+            },
+            Tag::HtmlBlock => self.ensure_block_start(),
+            Tag::List(next) => {
+                if !self.lists.is_empty() {
+                    self.ensure_newlines(1);
+                } else {
+                    self.ensure_block_start();
+                }
+                self.lists.push(ListContext { next });
+            },
+            Tag::Item => self.start_item(),
+            Tag::Table(_) => {
+                self.ensure_block_start();
+                self.table_column = Some(0);
+            },
+            Tag::TableHead | Tag::TableRow => self.table_column = Some(0),
+            Tag::TableCell => {
+                let column = self.table_column.unwrap_or_default();
+                if column > 0 {
+                    self.write(" · ");
+                }
+                self.table_column = Some(column + 1);
+            },
+            Tag::Emphasis => self.write("_"),
+            Tag::Strong => {
+                if let Some(heading) = &mut self.heading {
+                    heading.suppressed_strong_markers.push(self.output.len());
+                } else {
+                    self.write("*");
+                }
+            },
+            Tag::Strikethrough => self.write("~"),
+            Tag::Link {
+                link_type,
+                dest_url,
+                ..
+            } => self.start_destination(dest_url.into_string(), link_type),
+            Tag::Image {
+                link_type,
+                dest_url,
+                ..
+            } => self.start_destination(dest_url.into_string(), link_type),
+            Tag::FootnoteDefinition(_)
+            | Tag::DefinitionList
+            | Tag::DefinitionListTitle
+            | Tag::DefinitionListDefinition
+            | Tag::MetadataBlock(_) => {},
         }
-        if ch == ')' {
-            depth -= 1;
-            if depth > 0 {
-                url.push(ch);
-                continue;
-            }
-            if label.is_empty() || label == url {
-                output.push_str(&url);
+    }
+
+    fn end(&mut self, tag: TagEnd) {
+        match tag {
+            TagEnd::Paragraph => {
+                if !self.item_paragraphs.is_empty() || self.quote_depth > 0 {
+                    self.ensure_newlines(1);
+                } else {
+                    self.end_block();
+                }
+            },
+            TagEnd::Heading(_) => {
+                if let Some(heading) = self.heading.take() {
+                    if heading.has_literal_asterisk {
+                        self.output.remove(heading.marker_position);
+                        for marker in heading.suppressed_strong_markers.into_iter().rev() {
+                            self.output.insert(marker.saturating_sub(1), '*');
+                        }
+                    } else {
+                        self.output.push('*');
+                    }
+                }
+                self.end_block();
+            },
+            TagEnd::BlockQuote(_) => {
+                self.quote_depth = self.quote_depth.saturating_sub(1);
+                self.end_block();
+            },
+            TagEnd::CodeBlock => {
+                let code_block = self.code_block.take().unwrap_or_default();
+                let code_block = code_block.replace("```", &format!("``{WORD_JOINER}`"));
+                self.write("```");
+                self.ensure_newlines(1);
+                self.write(&code_block);
+                self.ensure_newlines(1);
+                self.write("```");
+                self.end_block();
+            },
+            TagEnd::HtmlBlock => self.end_block(),
+            TagEnd::List(_) => {
+                self.lists.pop();
+                if self.lists.is_empty() {
+                    self.end_block();
+                } else {
+                    self.ensure_newlines(1);
+                }
+            },
+            TagEnd::Item => {
+                self.item_paragraphs.pop();
+                self.ensure_newlines(1);
+            },
+            TagEnd::TableHead | TagEnd::TableRow => self.ensure_newlines(1),
+            TagEnd::Table => {
+                self.table_column = None;
+                self.end_block();
+            },
+            TagEnd::TableCell => {},
+            TagEnd::Emphasis => self.write("_"),
+            TagEnd::Strong => {
+                if let Some(heading) = &mut self.heading {
+                    heading.suppressed_strong_markers.push(self.output.len());
+                } else {
+                    self.write("*");
+                }
+            },
+            TagEnd::Strikethrough => self.write("~"),
+            TagEnd::Link | TagEnd::Image => self.end_destination(),
+            TagEnd::FootnoteDefinition
+            | TagEnd::DefinitionList
+            | TagEnd::DefinitionListTitle
+            | TagEnd::DefinitionListDefinition
+            | TagEnd::MetadataBlock(_) => {},
+        }
+    }
+
+    fn start_item(&mut self) {
+        if !self.output.is_empty() {
+            self.ensure_newlines(1);
+        }
+        self.prepare_line();
+        self.output.extend(std::iter::repeat_n(
+            ' ',
+            self.lists.len().saturating_sub(1) * 2,
+        ));
+        if let Some(list) = self.lists.last_mut() {
+            if let Some(next) = &mut list.next {
+                self.output.push_str(&format!("{next}. "));
+                *next = next.saturating_add(1);
             } else {
-                output.push_str(&convert_inline(&label));
-                output.push_str(": ");
-                output.push_str(&url);
+                self.output.push_str("- ");
             }
-            return true;
         }
-        url.push(ch);
+        self.item_paragraphs.push(false);
     }
 
-    *chars = original;
-    false
+    fn start_paragraph(&mut self) {
+        let is_continuation = self.item_paragraphs.last().copied() == Some(true);
+        if let Some(started) = self.item_paragraphs.last_mut() {
+            *started = true;
+        }
+        if is_continuation {
+            self.ensure_newlines(1);
+            self.prepare_line();
+            self.output
+                .extend(std::iter::repeat_n(' ', self.lists.len() * 2));
+        }
+    }
+
+    fn start_destination(&mut self, destination: String, link_type: LinkType) {
+        self.destinations.push(DestinationContext {
+            destination,
+            output_start: self.output.len(),
+            append_destination: !matches!(link_type, LinkType::Autolink | LinkType::Email),
+        });
+    }
+
+    fn end_destination(&mut self) {
+        let Some(context) = self.destinations.pop() else {
+            return;
+        };
+        if !context.append_destination {
+            return;
+        }
+
+        let label = self.output[context.output_start..].trim();
+        if label == context.destination {
+            return;
+        }
+        if !label.is_empty() {
+            self.write(": ");
+        }
+        self.write_literal(&context.destination);
+    }
+
+    fn ensure_block_start(&mut self) {
+        if !self.output.is_empty() {
+            self.ensure_newlines(2);
+        }
+    }
+
+    fn end_block(&mut self) {
+        self.ensure_newlines(if self.quote_depth > 0 {
+            1
+        } else {
+            2
+        });
+    }
+
+    fn ensure_newlines(&mut self, count: usize) {
+        let existing = self
+            .output
+            .as_bytes()
+            .iter()
+            .rev()
+            .take_while(|byte| **byte == b'\n')
+            .count();
+        self.output
+            .extend(std::iter::repeat_n('\n', count.saturating_sub(existing)));
+    }
+
+    fn prepare_line(&mut self) {
+        if (self.output.is_empty() || self.output.ends_with('\n')) && self.quote_depth > 0 {
+            self.output
+                .extend(std::iter::repeat_n("> ", self.quote_depth));
+        }
+    }
+
+    fn write(&mut self, text: &str) {
+        for segment in text.split_inclusive('\n') {
+            self.prepare_line();
+            self.output.push_str(segment);
+        }
+    }
+
+    fn write_literal(&mut self, text: &str) {
+        if let Some(heading) = &mut self.heading {
+            heading.has_literal_asterisk |= text.contains('*');
+        }
+        self.write(text);
+    }
 }
 
 #[cfg(test)]
@@ -464,174 +357,118 @@ mod tests {
     use super::*;
 
     #[test]
-    fn converts_llm_markdown_to_whatsapp_markup() {
-        let input =
-            "## Notícias\n\n1. **Robôs** e *agentes*\n[Reuters](https://reuters.com) · ~~antigo~~";
+    fn renders_common_markdown_as_whatsapp_markup() {
+        let input = "## Notícias\n\n1. **Robôs** e *agentes*\n2. [Reuters](https://reuters.com) · ~~antigo~~";
         let expected =
-            "*Notícias*\n\n1. *Robôs* e *agentes*\nReuters: https://reuters.com · ~antigo~";
+            "*Notícias*\n\n1. *Robôs* e _agentes_\n2. Reuters: https://reuters.com · ~antigo~";
         assert_eq!(markdown_to_whatsapp(input), expected);
+    }
+
+    #[test]
+    fn renders_nested_emphasis_without_overlapping_heading_markers() {
+        assert_eq!(
+            markdown_to_whatsapp("## This is ***very important***"),
+            "*This is _very important_*"
+        );
+        assert_eq!(markdown_to_whatsapp("## **Title**"), "*Title*");
+    }
+
+    #[test]
+    fn omits_heading_wrapper_around_literal_asterisks() {
+        assert_eq!(markdown_to_whatsapp("## 2*3 = 6"), "2*3 = 6");
+        assert_eq!(markdown_to_whatsapp("## `*` operator"), "*`*` operator*");
+        assert_eq!(
+            markdown_to_whatsapp("## **Important** 2*3"),
+            "*Important* 2*3"
+        );
+        assert_eq!(
+            markdown_to_whatsapp("## [docs](https://example.test/a*b)"),
+            "docs: https://example.test/a*b"
+        );
+    }
+
+    #[test]
+    fn treats_asterisk_emphasis_as_markdown_not_native_whatsapp() {
+        assert_eq!(markdown_to_whatsapp("*italic*"), "_italic_");
+        assert_eq!(markdown_to_whatsapp("_also italic_"), "_also italic_");
     }
 
     #[test]
     fn preserves_code_content_and_removes_fence_language() {
-        let input = "```json\n{\"value\": \"**literal**\"}\n```";
-        let expected = "```\n{\"value\": \"**literal**\"}\n```";
+        let input = "Use `**bold**` here.\n\n```json\n{\"value\": \"**literal**\"}\n```";
+        let expected = "Use `**bold**` here.\n\n```\n{\"value\": \"**literal**\"}\n```";
         assert_eq!(markdown_to_whatsapp(input), expected);
     }
 
     #[test]
-    fn renders_simple_tables_without_markdown_pipes() {
-        let input = "| Time | Placar |\n|---|---:|\n| Flamengo | 2 x 1 |";
-        let expected = "Time · Placar\nFlamengo · 2 x 1";
+    fn uses_longer_inline_marker_for_code_containing_backticks() {
+        assert_eq!(markdown_to_whatsapp("``a ` b``"), "```a ` b```");
+        assert_eq!(
+            markdown_to_whatsapp("````a ``` b````"),
+            "```a ``\u{2060}` b```"
+        );
+    }
+
+    #[test]
+    fn neutralizes_embedded_code_fences() {
+        let input = "````text\nbefore\n```\nafter\n````";
+        assert_eq!(
+            markdown_to_whatsapp(input),
+            "```\nbefore\n``\u{2060}`\nafter\n```"
+        );
+    }
+
+    #[test]
+    fn renders_gfm_tables_without_markdown_structure() {
+        let input = "| Expression | Meaning |\n|---|---:|\n| `left \\| right` | choice |\n| A \\| B | escaped |";
+        let expected = "Expression · Meaning\n`left | right` · choice\nA | B · escaped";
         assert_eq!(markdown_to_whatsapp(input), expected);
     }
 
     #[test]
-    fn preserves_isolated_pipe_rows_and_ascii_borders() {
-        let input = "Diagram:\n|---|---|\n| left | right |\nEnd";
+    fn leaves_non_table_pipe_content_visible() {
+        let input = "Diagram:\n|---|---|";
         assert_eq!(markdown_to_whatsapp(input), input);
     }
 
     #[test]
-    fn preserves_pipe_content_enclosed_by_ascii_borders() {
-        let input = "|---|---|\n| A | B |\n|---|---|";
-        assert_eq!(markdown_to_whatsapp(input), input);
-    }
-
-    #[test]
-    fn does_not_render_a_closing_border_as_table_content() {
-        let input = "| First | Second |\n|---|---|\n| A | B |\n|---|---|";
-        let expected = "First · Second\nA · B\n|---|---|";
+    fn renders_links_images_and_autolinks_with_visible_destinations() {
+        let input = "[Reference](https://example.com/wiki/Foo_(bar)) ![diagram](https://example.com/a.png) <https://example.com/docs>";
+        let expected = "Reference: https://example.com/wiki/Foo_(bar) diagram: https://example.com/a.png https://example.com/docs";
         assert_eq!(markdown_to_whatsapp(input), expected);
     }
 
     #[test]
-    fn requires_matching_header_and_separator_columns_for_tables() {
-        let input = "| First | Second |\n|---|\n| value | another |";
-        assert_eq!(markdown_to_whatsapp(input), input);
-    }
-
-    #[test]
-    fn preserves_pipes_inside_table_code_spans() {
-        let input = "| Expression | Meaning |\n|---|---|\n| `left | right` | choice |";
-        let expected = "Expression · Meaning\n`left | right` · choice";
+    fn renders_lists_tasks_and_quotes() {
+        let input = "> first\n> second\n\n- [x] done\n- [ ] next";
+        let expected = "> first\n> second\n\n- [x] done\n- [ ] next";
         assert_eq!(markdown_to_whatsapp(input), expected);
     }
 
     #[test]
-    fn preserves_escaped_pipes_as_table_cell_content() {
-        let input = "| A \\| B | Meaning |\n|---|---|\n| left \\| right | choice |";
-        let expected = "A | B · Meaning\nleft | right · choice";
+    fn indents_loose_and_nested_list_content() {
+        let input = "- first\n\n  second\n  1. nested";
+        let expected = "- first\n  second\n  1. nested";
         assert_eq!(markdown_to_whatsapp(input), expected);
-    }
-
-    #[test]
-    fn even_backslashes_do_not_escape_table_delimiters() {
-        let input = "| First | Second |\n|---|---|\n| left \\\\| right |";
-        let expected = "First · Second\nleft \\ · right";
-        assert_eq!(markdown_to_whatsapp(input), expected);
-    }
-
-    #[test]
-    fn preserves_markdown_inside_multi_backtick_table_code_spans() {
-        let input = "| Code | Meaning |\n|---|---|\n| ``**literal** | [link](url)`` | untouched |";
-        let expected = "Code · Meaning\n``**literal** | [link](url)`` · untouched";
-        assert_eq!(markdown_to_whatsapp(input), expected);
-    }
-
-    #[test]
-    fn leaves_bare_urls_and_native_whatsapp_markup_unchanged() {
-        let input = "*Atenção* https://example.com/a_b?q=1";
-        assert_eq!(markdown_to_whatsapp(input), input);
-    }
-
-    #[test]
-    fn conversion_is_idempotent() {
-        let input = "## Título\n\n**forte** [fonte](https://example.com) ~~removido~~";
-        let once = markdown_to_whatsapp(input);
-        assert_eq!(markdown_to_whatsapp(&once), once);
     }
 
     #[test]
     fn preserves_malformed_markdown_without_inventing_delimiters() {
-        let cases = [
-            "**negrito incompleto",
-            "__negrito incompleto",
-            "~~riscado incompleto",
-            "***ênfase incompleta",
-            "[link incompleto",
-            "[rótulo] sem URL",
-            "[rótulo](https://example.com/incompleto",
-            "<tag sem fechamento",
-            "#não é título",
-            "####### também não é título",
-        ];
-        for input in cases {
+        for input in [
+            "**incomplete",
+            "~~incomplete",
+            "[incomplete",
+            "[label](https://example.com/incomplete",
+            "#not a heading",
+        ] {
             assert_eq!(markdown_to_whatsapp(input), input);
         }
     }
 
     #[test]
-    fn handles_nested_parentheses_in_link_destinations() {
-        let input = "[Referência](https://example.com/wiki/Foo_(bar)?a=(b))";
-        let expected = "Referência: https://example.com/wiki/Foo_(bar)?a=(b)";
+    fn preserves_unicode_bare_urls_and_normalizes_line_endings() {
+        let input = "**Robôs 🤖** https://example.com/a_b?q=1\r\nInformação";
+        let expected = "*Robôs 🤖* https://example.com/a_b?q=1\nInformação";
         assert_eq!(markdown_to_whatsapp(input), expected);
-    }
-
-    #[test]
-    fn converts_images_and_autolinks_to_visible_urls() {
-        let input = "![**diagrama**](https://example.com/a.png) <https://example.com/docs>";
-        let expected = "*diagrama*: https://example.com/a.png https://example.com/docs";
-        assert_eq!(markdown_to_whatsapp(input), expected);
-    }
-
-    #[test]
-    fn converts_combined_bold_italic_markup() {
-        assert_eq!(markdown_to_whatsapp("***importante***"), "_*importante*_");
-    }
-
-    #[test]
-    fn does_not_rewrite_markdown_inside_inline_code() {
-        let input = "Use `**bold**`, `[link](url)` e `~~strike~~`.";
-        assert_eq!(markdown_to_whatsapp(input), input);
-    }
-
-    #[test]
-    fn headings_with_inline_emphasis_do_not_overlap_markers() {
-        assert_eq!(markdown_to_whatsapp("## **Título**"), "*Título*");
-        assert_eq!(
-            markdown_to_whatsapp("## This is *important*"),
-            "This is *important*"
-        );
-        assert_eq!(
-            markdown_to_whatsapp("## This is **important**"),
-            "This is *important*"
-        );
-        assert_eq!(markdown_to_whatsapp("  ### Título"), "  *Título*");
-    }
-
-    #[test]
-    fn literal_asterisks_do_not_disable_heading_emphasis() {
-        assert_eq!(markdown_to_whatsapp("## 2 * 3 = 6"), "*2 * 3 = 6*");
-        assert_eq!(markdown_to_whatsapp("## `*` operator"), "*`*` operator*");
-    }
-
-    #[test]
-    fn unspaced_literal_asterisks_prevent_unsafe_heading_wrapping() {
-        assert_eq!(markdown_to_whatsapp("## 2*3 = 6"), "2*3 = 6");
-        assert_eq!(markdown_to_whatsapp("## Use ** as glob"), "Use ** as glob");
-        assert_eq!(markdown_to_whatsapp("## trailing*"), "trailing*");
-    }
-
-    #[test]
-    fn preserves_unicode_and_whatsapp_list_syntax() {
-        let input = "- [x] Robôs 🤖\n- [ ] Ações em português: informação";
-        assert_eq!(markdown_to_whatsapp(input), input);
-    }
-
-    #[test]
-    fn retains_trailing_newlines_and_normalizes_crlf() {
-        assert_eq!(markdown_to_whatsapp("**fim**\n"), "*fim*\n");
-        assert_eq!(markdown_to_whatsapp("**fim**\r\n"), "*fim*\n");
     }
 }

@@ -9001,6 +9001,7 @@ dependencies = [
  "moltis-media",
  "moltis-metrics",
  "postcard",
+ "pulldown-cmark 0.12.2",
  "qrcode",
  "rand 0.10.1",
  "serde",
