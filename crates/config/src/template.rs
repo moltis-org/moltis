@@ -531,6 +531,7 @@ port = {port}                           # Port number (auto-generated for this i
 # allowed_domains = []              # Domain restrictions (empty = all allowed)
 # chrome_path = "/path/to/chrome"   # Custom Chrome binary path
 # obscura_path = "/path/to/obscura" # Custom Obscura binary path for browser = "obscura"
+# obscura_stealth = true             # Pass --stealth (full TLS mode needs a stealth build)
 # lightpanda_path = "/path/to/lightpanda" # Custom Lightpanda binary path for browser = "lightpanda"
 
 # ══════════════════════════════════════════════════════════════════════════════

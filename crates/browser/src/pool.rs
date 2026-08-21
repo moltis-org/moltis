@@ -814,7 +814,7 @@ impl BrowserPool {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
-        for arg in spec.serve_args(port) {
+        for arg in spec.serve_args(&self.config, port) {
             command.arg(arg);
         }
         let mut child = command.spawn().map_err(|e| {
@@ -961,9 +961,16 @@ impl SidecarBrowserSpec {
         }
     }
 
-    fn serve_args(self, port: u16) -> Vec<String> {
+    fn serve_args(self, config: &BrowserConfig, port: u16) -> Vec<String> {
         match self.kind {
-            BrowserKind::Obscura => vec!["--port".to_string(), port.to_string()],
+            BrowserKind::Obscura => {
+                let mut args = Vec::with_capacity(3);
+                if config.obscura_stealth {
+                    args.push("--stealth".to_string());
+                }
+                args.extend(["--port".to_string(), port.to_string()]);
+                args
+            },
             BrowserKind::Lightpanda => vec![
                 "--host".to_string(),
                 "127.0.0.1".to_string(),
@@ -1225,7 +1232,7 @@ mod tests {
         let spec = sidecar_browser_spec(BrowserPreference::Lightpanda)
             .unwrap_or_else(|| panic!("expected Lightpanda sidecar spec"));
 
-        assert_eq!(spec.serve_args(9222), vec![
+        assert_eq!(spec.serve_args(&test_config(), 9222), vec![
             "--host".to_string(),
             "127.0.0.1".to_string(),
             "--port".to_string(),
@@ -1235,11 +1242,12 @@ mod tests {
     }
 
     #[test]
-    fn obscura_sidecar_uses_browser_ws_endpoint() {
+    fn obscura_sidecar_enables_stealth_and_uses_browser_ws_endpoint() {
         let spec = sidecar_browser_spec(BrowserPreference::Obscura)
             .unwrap_or_else(|| panic!("expected Obscura sidecar spec"));
 
-        assert_eq!(spec.serve_args(9222), vec![
+        assert_eq!(spec.serve_args(&test_config(), 9222), vec![
+            "--stealth".to_string(),
             "--port".to_string(),
             "9222".to_string()
         ]);
@@ -1247,6 +1255,21 @@ mod tests {
             spec.websocket_url(9222),
             "ws://127.0.0.1:9222/devtools/browser"
         );
+    }
+
+    #[test]
+    fn obscura_sidecar_allows_stealth_to_be_disabled() {
+        let spec = sidecar_browser_spec(BrowserPreference::Obscura)
+            .unwrap_or_else(|| panic!("expected Obscura sidecar spec"));
+        let config = BrowserConfig {
+            obscura_stealth: false,
+            ..test_config()
+        };
+
+        assert_eq!(spec.serve_args(&config, 9222), vec![
+            "--port".to_string(),
+            "9222".to_string()
+        ]);
     }
 
     #[test]

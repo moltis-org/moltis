@@ -61,6 +61,7 @@ navigation_timeout_ms = 30000  # Page load timeout
 # Optional customization
 # chrome_path = "/path/to/chrome"  # Custom Chrome path
 # obscura_path = "/path/to/obscura"  # Custom Obscura path
+# obscura_stealth = true            # Pass --stealth to Obscura (default)
 # lightpanda_path = "/path/to/lightpanda"  # Custom Lightpanda path
 # user_agent = "Custom UA"         # Custom user agent
 # chrome_args = ["--disable-extensions"]  # Extra args
@@ -165,7 +166,14 @@ detection.
 
 `obscura` launches the Obscura sidecar binary from `obscura_path`, the
 `OBSCURA` environment variable, or `PATH`. It supports DOM-oriented browsing
-through CDP, but not pixel screenshots.
+through CDP, but not pixel screenshots. Moltis passes Obscura's
+[`--stealth` mode](https://github.com/h4ckf0r0day/obscura/wiki/Configure-stealth-and-proxies)
+flag by default, enabling the anti-detection behavior available in the
+installed binary. Full TLS impersonation requires Obscura 0.1.1 or newer built
+with its upstream `stealth` feature. Choose a release asset whose name includes
+`-stealth`, or add `--features stealth` when installing from source. Set
+`obscura_stealth = false` when tracker blocking or the stealth network stack is
+undesirable.
 
 `lightpanda` launches the Lightpanda sidecar binary from `lightpanda_path`, the
 `LIGHTPANDA` environment variable, or `PATH`. It supports DOM-oriented browsing

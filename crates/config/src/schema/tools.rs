@@ -434,6 +434,10 @@ pub struct BrowserConfig {
     /// Path to the Obscura binary (auto-detected from PATH if not set).
     /// Set `browser = "obscura"` in requests to use this lightweight headless browser.
     pub obscura_path: Option<String>,
+    /// Whether to enable Obscura's anti-detection mode.
+    /// Enabled by default. Full TLS impersonation requires an Obscura binary
+    /// built with its upstream `stealth` feature.
+    pub obscura_stealth: bool,
     /// Path to the Lightpanda binary (auto-detected from PATH if not set).
     /// Set `browser = "lightpanda"` in requests to use this lightweight headless browser.
     pub lightpanda_path: Option<String>,
@@ -530,6 +534,7 @@ impl Default for BrowserConfig {
             enabled: true,
             chrome_path: None,
             obscura_path: None,
+            obscura_stealth: true,
             lightpanda_path: None,
             headless: true,
             viewport_width: 2560,

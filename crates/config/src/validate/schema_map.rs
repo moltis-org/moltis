@@ -175,6 +175,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("chrome_path", Leaf),
             ("obscura_path", Leaf),
+            ("obscura_stealth", Leaf),
             ("lightpanda_path", Leaf),
             ("headless", Leaf),
             ("viewport_width", Leaf),
