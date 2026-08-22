@@ -5,6 +5,7 @@
 
 use std::{
     fmt::Display,
+    fs::{File, OpenOptions},
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -270,6 +271,40 @@ fn remove_stale_profile_singletons(dir: &Path) {
     }
 }
 
+fn lock_profile_dir(dir: &Path) -> Result<File> {
+    let lock_path = dir.join(".moltis.lock");
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("failed to open profile lock at {}", lock_path.display()))?;
+
+    lock.try_lock().map_err(|error| {
+        let message = match error {
+            std::fs::TryLockError::WouldBlock => format!(
+                "browser profile at {} is already in use by another Moltis browser container",
+                dir.display()
+            ),
+            std::fs::TryLockError::Error(error) => format!(
+                "failed to lock browser profile at {}: {error}",
+                dir.display()
+            ),
+        };
+        Error::LaunchFailed(message)
+    })?;
+
+    Ok(lock)
+}
+
+fn prepare_browserless_v2_profile(dir: &Path) -> Result<File> {
+    ensure_profile_dir(dir);
+    let lock = lock_profile_dir(dir)?;
+    remove_stale_profile_singletons(dir);
+    Ok(lock)
+}
+
 #[cfg(unix)]
 fn set_container_dir_permissions(dir: &Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -377,6 +412,8 @@ pub struct BrowserContainer {
     host: String,
     /// Version-aware WebSocket URL, including Browserless v2 launch options.
     websocket_url: String,
+    /// Exclusive profile lock held for the lifetime of a Browserless v2 container.
+    _profile_lock: Option<File>,
     /// The image used.
     #[allow(dead_code)]
     image: String,
@@ -528,21 +565,23 @@ impl BrowserContainer {
             &launch_args,
         )?;
 
-        match browserless_api_version {
+        let profile_lock = match browserless_api_version {
             BrowserlessApiVersion::V1 => {
                 if let Some(guest_dir) =
                     profile_precreate_dir(profile_dir, profile_mount_dir.as_deref())
                 {
                     ensure_profile_dir(guest_dir);
                 }
+                None
             },
             BrowserlessApiVersion::V2 => {
                 if let Some(guest_dir) = profile_dir {
-                    ensure_profile_dir(guest_dir);
-                    remove_stale_profile_singletons(guest_dir);
+                    Some(prepare_browserless_v2_profile(guest_dir)?)
+                } else {
+                    None
                 }
             },
-        }
+        };
 
         let container_id = match backend {
             ContainerBackend::Docker | ContainerBackend::Podman => start_oci_container(
@@ -652,6 +691,7 @@ impl BrowserContainer {
             host_port,
             host: container_host.to_string(),
             websocket_url,
+            _profile_lock: profile_lock,
             image: image.to_string(),
             backend,
         })

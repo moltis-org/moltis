@@ -182,6 +182,22 @@ fn remove_stale_profile_singletons_removes_dangling_symlinks() {
 }
 
 #[test]
+fn browser_profile_lock_prevents_live_singleton_cleanup() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let first_lock = prepare_browserless_v2_profile(temp_dir.path()).unwrap();
+    let singleton = temp_dir.path().join("SingletonLock");
+    std::fs::write(&singleton, "live-browser").unwrap();
+
+    let error = prepare_browserless_v2_profile(temp_dir.path()).unwrap_err();
+    assert!(error.to_string().contains("already in use"));
+    assert!(singleton.is_file());
+
+    drop(first_lock);
+    assert!(prepare_browserless_v2_profile(temp_dir.path()).is_ok());
+    assert!(!singleton.exists());
+}
+
+#[test]
 fn browser_profile_permission_hint_points_to_host_data_dir() {
     let logs = "Failed to create /data/browser-profile/SingletonLock: Permission denied (13)";
     let hint = browser_profile_permission_hint(
