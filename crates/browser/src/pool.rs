@@ -20,7 +20,8 @@ use {
 };
 
 use crate::{
-    container::{BrowserContainer, browserless_session_timeout_ms},
+    browserless::session_timeout_ms as browserless_session_timeout_ms,
+    container::BrowserContainer,
     error::Error,
     types::{BrowserConfig, BrowserKind, BrowserPreference, BrowserlessApiVersion},
 };
@@ -408,6 +409,7 @@ impl BrowserPool {
         let profile_dir = sandbox_profile_dir(self.config.resolved_profile_dir(), session_id);
         let host_data_dir = self.config.host_data_dir.clone();
         let container_host = self.config.container_host.clone();
+        let browserless_api_version = self.config.browserless_api_version;
 
         info!(
             session_id,
@@ -415,6 +417,7 @@ impl BrowserPool {
             container_host = %container_host,
             profile_dir = ?profile_dir,
             session_timeout_ms,
+            browserless_api_version = %browserless_api_version,
             "launching sandboxed browser container"
         );
 
@@ -457,7 +460,7 @@ impl BrowserPool {
             }
 
             // Start the container (includes readiness polling)
-            BrowserContainer::start(
+            BrowserContainer::start_with_api_version(
                 &image,
                 &prefix,
                 vw,
@@ -467,6 +470,7 @@ impl BrowserPool {
                 profile_dir.as_deref(),
                 host_data_dir.as_deref(),
                 &container_host,
+                browserless_api_version,
             )
             .map_err(|e| Error::LaunchFailed(format!("failed to start browser container: {e}")))
         })
@@ -1270,6 +1274,19 @@ mod tests {
             "ws://browser-host.local:45029/".to_string(),
             "ws://browser-host.local:45029/chrome".to_string(),
             "ws://browser-host.local:45029/chromium".to_string()
+        ]);
+    }
+
+    #[test]
+    fn websocket_candidates_v2_preserves_launch_query() {
+        let candidates = websocket_connect_candidates(
+            "ws://browser-host.local:45029/?launch=encoded-options",
+            BrowserlessApiVersion::V2,
+        );
+        assert_eq!(candidates, vec![
+            "ws://browser-host.local:45029/?launch=encoded-options".to_string(),
+            "ws://browser-host.local:45029/chrome?launch=encoded-options".to_string(),
+            "ws://browser-host.local:45029/chromium?launch=encoded-options".to_string()
         ]);
     }
 

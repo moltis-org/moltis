@@ -477,7 +477,8 @@ pub struct BrowserConfig {
     /// browser sandbox containers from inside another container.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_data_dir: Option<PathBuf>,
-    /// Browserless API compatibility mode (`v1` or `v2`).
+    /// Browserless container API compatibility mode (`v1` or `v2`).
+    /// Must match the configured sandbox image.
     pub browserless_api_version: BrowserlessApiVersion,
 }
 

@@ -527,11 +527,14 @@ port = {port}                           # Port number (auto-generated for this i
 # device_scale_factor = 2.0         # HiDPI/Retina scaling
 # max_instances = 3                 # Maximum concurrent browser instances
 # idle_timeout_secs = 300           # Close idle browsers after this many seconds
-# sandbox = false                   # Run browser in container for isolation
 # allowed_domains = []              # Domain restrictions (empty = all allowed)
 # chrome_path = "/path/to/chrome"   # Custom Chrome binary path
 # obscura_path = "/path/to/obscura" # Custom Obscura binary path for browser = "obscura"
 # lightpanda_path = "/path/to/lightpanda" # Custom Lightpanda binary path for browser = "lightpanda"
+# sandbox_image = "docker.io/browserless/chrome" # Default Browserless v1 image
+# browserless_api_version = "v1"    # Must match the Browserless image API
+# Browserless v2 example: set sandbox_image = "ghcr.io/browserless/chromium"
+# and browserless_api_version = "v2" together.
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SKILLS

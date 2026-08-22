@@ -489,9 +489,9 @@ pub struct BrowserConfig {
     /// Moltis can reach the sibling browser container via the host's port mapping.
     #[serde(default = "default_container_host")]
     pub container_host: String,
-    /// Browserless API compatibility mode for websocket endpoints.
-    /// - "v1" (default): connect to the base websocket URL.
-    /// - "v2": try Browserless v2 paths (`/chrome`, `/chromium`) when needed.
+    /// Browserless container API compatibility mode. Must match `sandbox_image`.
+    /// - "v1" (default): legacy environment-based launch settings.
+    /// - "v2": query-based launch settings and v2 websocket paths.
     #[serde(default = "default_browserless_api_version")]
     pub browserless_api_version: BrowserlessApiVersion,
 }

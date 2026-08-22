@@ -492,13 +492,13 @@ Default `tool_overrides` entries:
 | `navigation_timeout_ms` | integer | `30000` | Default navigation timeout in milliseconds. |
 | `user_agent` | optional string | `null` | Custom user agent string (uses Chrome default if not set). |
 | `chrome_args` | array | `[]` | Additional Chrome command-line arguments. |
-| `sandbox_image` | string | `"docker.io/browserless/chrome"` | Docker image for sandboxed browser instances. |
+| `sandbox_image` | string | `"docker.io/browserless/chrome"` | Docker image for sandboxed browser instances. Must match `browserless_api_version`. |
 | `allowed_domains` | array | `[]` | Allowed navigation domains (empty = all allowed). Supports wildcards (`"*.example.com"`). |
 | `low_memory_threshold_mb` | integer | `2048` | System RAM threshold (MB) below which memory-saving Chrome flags are injected (0 to disable). |
 | `persist_profile` | bool | `true` | Persist Chrome user profile (cookies, auth, local storage) across sessions. |
 | `profile_dir` | optional string | `null` | Custom path for persistent Chrome profile directory. Implies `persist_profile = true`. |
 | `container_host` | string | `"127.0.0.1"` | Hostname/IP to connect to the browser container from the host. Use `"host.docker.internal"` when Moltis runs inside Docker. |
-| `browserless_api_version` | enum: `"v1"`, `"v2"` | `"v1"` | Browserless API compatibility mode for websocket endpoints. |
+| `browserless_api_version` | enum: `"v1"`, `"v2"` | `"v1"` | Browserless container protocol for environment settings, launch options, and websocket paths. Must match `sandbox_image`. |
 
 ---
 

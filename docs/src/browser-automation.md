@@ -67,6 +67,7 @@ navigation_timeout_ms = 30000  # Page load timeout
 
 # Sandbox image (browser sandbox mode follows session sandbox mode)
 sandbox_image = "docker.io/browserless/chrome"  # Container image for sandboxed sessions
+browserless_api_version = "v1"                  # Must match the image API
 # allowed_domains = ["example.com", "*.trusted.org"]  # Restrict navigation
 
 # Container connectivity (for Moltis-in-Docker setups)
@@ -308,7 +309,21 @@ When the session is sandboxed, Chrome runs inside a Docker container with:
 ```toml
 [tools.browser]
 sandbox_image = "docker.io/browserless/chrome"  # Container image for sandboxed sessions
+browserless_api_version = "v1"
 ```
+
+The existing Browserless v1 image remains the default for upgrade compatibility.
+To use Browserless v2, change both settings together:
+
+```toml
+[tools.browser]
+sandbox_image = "ghcr.io/browserless/chromium"
+browserless_api_version = "v2"
+```
+
+Moltis passes viewport, low-memory, and persistent-profile launch arguments
+using the protocol expected by the selected version. Browserless v2 images no
+longer accept the legacy `DEFAULT_LAUNCH_ARGS` and `PREBOOT_CHROME` variables.
 
 Requirements:
 - Docker or Apple Container must be installed and running
