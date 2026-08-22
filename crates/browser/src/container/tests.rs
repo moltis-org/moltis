@@ -182,6 +182,7 @@ fn remove_stale_profile_singletons_removes_dangling_symlinks() {
 }
 
 #[test]
+#[serial_test::serial(browser_profile_lock)]
 fn browser_profile_lock_prevents_live_singleton_cleanup() {
     let temp_dir = tempfile::tempdir().unwrap();
     let first_lock = prepare_browserless_v2_profile(temp_dir.path()).unwrap();
@@ -193,8 +194,40 @@ fn browser_profile_lock_prevents_live_singleton_cleanup() {
     assert!(singleton.is_file());
 
     drop(first_lock);
-    assert!(prepare_browserless_v2_profile(temp_dir.path()).is_ok());
+    drop(prepare_browserless_v2_profile(temp_dir.path()).unwrap());
     assert!(!singleton.exists());
+}
+
+#[test]
+fn container_cleanup_is_confirmed_when_stop_or_remove_succeeds() {
+    assert!(!cleanup_was_confirmed(false, false));
+    assert!(cleanup_was_confirmed(true, false));
+    assert!(cleanup_was_confirmed(false, true));
+    assert!(cleanup_was_confirmed(true, true));
+}
+
+#[test]
+#[serial_test::serial(browser_profile_lock)]
+fn failed_cleanup_retains_browser_profile_lock() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let profile_lock = prepare_browserless_v2_profile(temp_dir.path()).unwrap();
+
+    let retained_lock = profile_lock_to_quarantine(Some(profile_lock), false);
+    let error = prepare_browserless_v2_profile(temp_dir.path()).unwrap_err();
+    assert!(error.to_string().contains("already in use"));
+
+    drop(retained_lock);
+    drop(prepare_browserless_v2_profile(temp_dir.path()).unwrap());
+}
+
+#[test]
+#[serial_test::serial(browser_profile_lock)]
+fn confirmed_cleanup_releases_browser_profile_lock() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let profile_lock = prepare_browserless_v2_profile(temp_dir.path()).unwrap();
+
+    assert!(profile_lock_to_quarantine(Some(profile_lock), true).is_none());
+    drop(prepare_browserless_v2_profile(temp_dir.path()).unwrap());
 }
 
 #[test]

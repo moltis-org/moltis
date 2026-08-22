@@ -533,7 +533,7 @@ port = {port}                           # Port number (auto-generated for this i
 # lightpanda_path = "/path/to/lightpanda" # Custom Lightpanda binary path for browser = "lightpanda"
 # sandbox_image = "docker.io/browserless/chrome" # Default Browserless v1 image
 # browserless_api_version = "v1"    # Must match the Browserless image API
-# Browserless v2 example: set sandbox_image = "ghcr.io/browserless/chromium"
+# Browserless v2 example: set sandbox_image = "ghcr.io/browserless/chromium:v2.56.0"
 # and browserless_api_version = "v2" together.
 
 # ══════════════════════════════════════════════════════════════════════════════

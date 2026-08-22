@@ -3,17 +3,24 @@
 //! Supports Docker, Podman, and Apple Container backends, auto-detecting the
 //! best available option (Apple Container on macOS → Podman → Docker).
 
+mod cleanup;
+
 use std::{
     fmt::Display,
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use {
     crate::{browserless, error::Error, types::BrowserlessApiVersion},
+    cleanup::{profile_lock_to_quarantine, quarantine_profile_lock, stop_container_by_id},
     tracing::{debug, info, warn},
 };
+
+#[cfg(test)]
+use cleanup::cleanup_was_confirmed;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -346,62 +353,6 @@ impl ContainerBackend {
     }
 }
 
-fn stop_container_by_id(backend: ContainerBackend, container_id: &str) {
-    let cli = backend.cli();
-    let result = Command::new(cli).args(["stop", container_id]).output();
-
-    match result {
-        Ok(output) if output.status.success() => {
-            debug!(container_id, backend = cli, "browser container stopped");
-        },
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(
-                container_id,
-                backend = cli,
-                error = %stderr.trim(),
-                "failed to stop browser container"
-            );
-        },
-        Err(e) => {
-            warn!(
-                container_id,
-                backend = cli,
-                error = %e,
-                "failed to run {} stop",
-                cli
-            );
-        },
-    }
-
-    // Containers are started without --rm so that logs and status remain
-    // available for diagnostics after a crash.  Explicitly remove the
-    // container after stopping it.
-    match Command::new(cli).args(["rm", container_id]).output() {
-        Ok(output) if output.status.success() => {
-            debug!(container_id, backend = cli, "browser container removed");
-        },
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(
-                container_id,
-                backend = cli,
-                error = %stderr.trim(),
-                "failed to remove browser container"
-            );
-        },
-        Err(e) => {
-            warn!(
-                container_id,
-                backend = cli,
-                error = %e,
-                "failed to run {} rm",
-                cli
-            );
-        },
-    }
-}
-
 /// A running browser container instance.
 pub struct BrowserContainer {
     /// Container ID or name.
@@ -414,6 +365,8 @@ pub struct BrowserContainer {
     websocket_url: String,
     /// Exclusive profile lock held for the lifetime of a Browserless v2 container.
     _profile_lock: Option<File>,
+    /// Whether the backend confirmed that this container stopped or was removed.
+    cleanup_confirmed: AtomicBool,
     /// The image used.
     #[allow(dead_code)]
     image: String,
@@ -565,7 +518,7 @@ impl BrowserContainer {
             &launch_args,
         )?;
 
-        let profile_lock = match browserless_api_version {
+        let mut profile_lock = match browserless_api_version {
             BrowserlessApiVersion::V1 => {
                 if let Some(guest_dir) =
                     profile_precreate_dir(profile_dir, profile_mount_dir.as_deref())
@@ -671,7 +624,10 @@ impl BrowserContainer {
                 );
             }
 
-            stop_container_by_id(backend, &container_id);
+            let cleanup_confirmed = stop_container_by_id(backend, &container_id);
+            if let Some(lock) = profile_lock_to_quarantine(profile_lock.take(), cleanup_confirmed) {
+                quarantine_profile_lock(lock, backend, &container_id, profile_dir);
+            }
             if let Some(hint) = permission_hint {
                 return Err(launch_error_with_hint(error, hint));
             }
@@ -692,6 +648,7 @@ impl BrowserContainer {
             host: container_host.to_string(),
             websocket_url,
             _profile_lock: profile_lock,
+            cleanup_confirmed: AtomicBool::new(false),
             image: image.to_string(),
             backend,
         })
@@ -711,12 +668,17 @@ impl BrowserContainer {
 
     /// Stop and remove the container.
     pub fn stop(&self) {
+        if self.cleanup_confirmed.load(Ordering::Relaxed) {
+            return;
+        }
         info!(
             container_id = %self.container_id,
             backend = self.backend.cli(),
             "stopping browser container"
         );
-        stop_container_by_id(self.backend, &self.container_id);
+        if stop_container_by_id(self.backend, &self.container_id) {
+            self.cleanup_confirmed.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Get the container ID.
@@ -735,6 +697,11 @@ impl BrowserContainer {
 impl Drop for BrowserContainer {
     fn drop(&mut self) {
         self.stop();
+        if !self.cleanup_confirmed.load(Ordering::Relaxed)
+            && let Some(lock) = profile_lock_to_quarantine(self._profile_lock.take(), false)
+        {
+            quarantine_profile_lock(lock, self.backend, &self.container_id, None);
+        }
     }
 }
 
