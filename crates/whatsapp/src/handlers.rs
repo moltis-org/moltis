@@ -19,6 +19,7 @@ use moltis_channels::{
 use crate::{
     access::{self, AccessDenied},
     config::WhatsAppAccountConfig,
+    inbound_documents::{self, DocumentReception, DownloadError, InboundDocumentDownloader},
     otp::{OTP_CHALLENGE_MSG, OtpInitResult, OtpVerifyResult},
     state::{AccountState, AccountStateMap, has_bot_watermark},
 };
@@ -484,7 +485,16 @@ async fn handle_message(
             handle_video(&msg, client, account_id, reply_to, meta, chat_jid, state).await;
         },
         ChannelMessageKind::Document => {
-            handle_document(&msg, client, account_id, reply_to, meta, chat_jid, state).await;
+            handle_document(
+                &msg,
+                client,
+                effective_config.download_inbound_documents,
+                account_id,
+                reply_to,
+                meta,
+                state,
+            )
+            .await;
         },
         ChannelMessageKind::Location => {
             handle_location(&msg, account_id, reply_to, meta, chat_jid, state).await;
@@ -726,37 +736,115 @@ async fn handle_video(
     }
 }
 
-/// Handle an inbound document message: dispatch with caption.
+/// Handle an inbound document message, optionally saving it to session media.
 #[allow(clippy::too_many_arguments)]
 async fn handle_document(
     msg: &wa::Message,
-    _client: &Client,
+    client: &Client,
+    download_enabled: bool,
     account_id: &str,
     reply_to: ChannelReplyTarget,
     meta: ChannelMessageMeta,
-    _chat_jid: &Jid,
     state: &AccountState,
 ) {
     let Some(ref doc) = msg.document_message else {
         return;
     };
-    let caption = doc.caption.as_deref().unwrap_or("").to_string();
-    let filename = doc.file_name.as_deref().unwrap_or("unknown");
-    let mime = doc
-        .mimetype
-        .as_deref()
-        .unwrap_or("application/octet-stream");
+    let Some(sink) = state.event_sink.as_ref() else {
+        return;
+    };
+    dispatch_document(
+        doc,
+        client,
+        download_enabled,
+        account_id,
+        reply_to,
+        meta,
+        sink,
+    )
+    .await;
+}
 
-    info!(account_id, filename, mime, "received document message");
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_document(
+    doc: &wa::message::DocumentMessage,
+    downloader: &dyn InboundDocumentDownloader,
+    download_enabled: bool,
+    account_id: &str,
+    reply_to: ChannelReplyTarget,
+    mut meta: ChannelMessageMeta,
+    sink: &Arc<dyn moltis_channels::ChannelEventSink>,
+) {
+    let caption = doc.caption.as_deref().unwrap_or("").to_string();
+    let document_metadata =
+        inbound_documents::metadata(doc.file_name.as_deref(), doc.mimetype.as_deref());
+
+    info!(account_id, "received document message");
 
     let text = if caption.is_empty() {
-        format!("[Document received: {filename} ({mime})]")
+        format!(
+            "[Document received: {} ({})]",
+            document_metadata.display_name, document_metadata.media_type
+        )
     } else {
-        format!("{caption}\n[Document: {filename} ({mime})]")
+        format!(
+            "{caption}\n[Document: {} ({})]",
+            document_metadata.display_name, document_metadata.media_type
+        )
     };
-    if let Some(ref sink) = state.event_sink {
-        sink.dispatch_to_chat(&text, reply_to, meta).await;
+
+    let rejection = match inbound_documents::reception_for(download_enabled, doc.file_length) {
+        DocumentReception::Disabled => Some(
+            "[Document was not downloaded: inbound document downloads are disabled for this WhatsApp account]",
+        ),
+        DocumentReception::Empty => {
+            Some("[Document was not downloaded: the reported file is empty]")
+        },
+        DocumentReception::TooLarge => {
+            Some("[Document was not downloaded: file exceeds the 20 MB limit]")
+        },
+        DocumentReception::Download => None,
+    };
+    if let Some(rejection) = rejection {
+        sink.dispatch_to_chat(&format!("{text}\n{rejection}"), reply_to, meta)
+            .await;
+        return;
     }
+
+    let data = match downloader.download_document(doc).await {
+        Ok(data) => data,
+        Err(DownloadError::TooLarge) => {
+            warn!(account_id, "discarded oversized WhatsApp document");
+            sink.dispatch_to_chat(
+                &format!("{text}\n[Document was not saved: file exceeds the 20 MB limit]"),
+                reply_to,
+                meta,
+            )
+            .await;
+            return;
+        },
+        Err(DownloadError::Empty | DownloadError::Download) => {
+            warn!(account_id, "failed to download WhatsApp document");
+            sink.dispatch_to_chat(
+                &format!("{text}\n[Document download failed]"),
+                reply_to,
+                meta,
+            )
+            .await;
+            return;
+        },
+    };
+
+    meta.documents = inbound_documents::save(sink, &reply_to, &data, &document_metadata)
+        .await
+        .map(|document| vec![document]);
+    let text = if meta.documents.is_some() {
+        text
+    } else {
+        warn!(account_id, "failed to save WhatsApp document");
+        format!("{text}\n[Document was downloaded but could not be saved]")
+    };
+    sink.dispatch_to_chat(&text, reply_to, meta).await;
 }
 
 /// Handle an inbound location or live location message.
@@ -1171,6 +1259,11 @@ async fn handle_otp_flow(
         },
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+#[path = "handlers_document_tests.rs"]
+mod document_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

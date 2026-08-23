@@ -138,6 +138,7 @@ Each WhatsApp account is a named entry under `[channels.whatsapp]`:
 | `group_allowlist` | array | `[]` | Group JIDs allowed for bot responses |
 | `otp_self_approval` | bool | `true` | Allow non-allowlisted users to self-approve via OTP |
 | `otp_cooldown_secs` | int | `300` | Cooldown seconds after 3 failed OTP attempts |
+| `download_inbound_documents` | bool | `false` | Download document messages up to 20 MB into persistent session media and expose their local path to agent tools |
 | `push_name` | string | — | Name this client asserts on WhatsApp, shown to anyone without the number saved. Falls back to `[identity] name`, then `"Moltis"` |
 | `untrusted_audience` | string | `"public"` | Tool audience ceiling for turns outside an operator direct chat: `"public"` or `"trusted"` |
 | `untrusted_tools` | string | `"deny_all"` | Tool name policy for those turns: `"deny_all"`, or `"policy"` to let `[tools.policy]` decide |
@@ -344,8 +345,23 @@ WhatsApp supports rich media messages. Moltis handles each type:
 | **Voice** | Downloaded and transcribed via STT (if configured); falls back to text guidance |
 | **Audio** | Same as voice, but classified separately (non-PTT audio files) |
 | **Video** | Thumbnail extracted and sent as image attachment with caption |
-| **Document** | Caption and filename/MIME metadata dispatched as text |
+| **Document** | Caption and filename/MIME metadata dispatched as text. When `download_inbound_documents = true`, files up to 20 MB are also saved to session media and exposed to agent tools |
 | **Location** | Resolves pending location tool requests, or dispatches coordinates to LLM |
+
+Inbound document downloads are disabled by default because received files may be
+sensitive or untrusted and session media persists on disk. To enable them for an
+existing account, open **Settings > Channels**, edit the WhatsApp account, and
+select **Download inbound documents**. For manually managed accounts:
+
+```toml
+[channels.whatsapp."my-whatsapp"]
+download_inbound_documents = true
+```
+
+Stored filenames are randomized so user-provided names never become local paths,
+downloads are bounded to 20 MB while streaming, and download or persistence
+failures are reported to the conversation instead of presenting a nonexistent
+local path to the agent.
 
 ```admonish info title="Voice Transcription"
 Voice message transcription requires an STT provider to be configured.
@@ -378,6 +394,7 @@ The Channels page shows all connected accounts across all channel types
 Click **Edit** on a channel card to modify:
 - DM and group policies
 - Allowlist entries
+- Inbound document downloads
 - Default model
 
 Changes take effect immediately — no restart needed.

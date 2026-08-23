@@ -51,6 +51,7 @@ export function EditChannelModal(): VNode | null {
 	const editSlackAckReactions = useSignal(true);
 	const editSlackReactionTriggers = useSignal(false);
 	const editSlackRichBlocks = useSignal(false);
+	const editWhatsAppDownloadInboundDocuments = useSignal(false);
 	const editChannelNamePatterns = useSignal<string[]>([]);
 	const editCategoryAllowlist = useSignal<string[]>([]);
 	const editAdvancedConfigPatch = useSignal("");
@@ -83,6 +84,7 @@ export function EditChannelModal(): VNode | null {
 		editSlackAckReactions.value = ch?.config?.ack_reactions !== false;
 		editSlackReactionTriggers.value = ch?.config?.reaction_triggers === true;
 		editSlackRichBlocks.value = ch?.config?.rich_blocks === true;
+		editWhatsAppDownloadInboundDocuments.value = ch?.config?.download_inbound_documents === true;
 		editChannelNamePatterns.value = (ch?.config?.channel_name_patterns || []) as string[];
 		editCategoryAllowlist.value = (ch?.config?.category_allowlist || []) as string[];
 		editAdvancedConfigPatch.value = "";
@@ -207,6 +209,9 @@ export function EditChannelModal(): VNode | null {
 			updateConfig.ack_reactions = editSlackAckReactions.value;
 			updateConfig.reaction_triggers = editSlackReactionTriggers.value;
 			updateConfig.rich_blocks = editSlackRichBlocks.value;
+		}
+		if (isWhatsApp) {
+			updateConfig.download_inbound_documents = editWhatsAppDownloadInboundDocuments.value;
 		}
 		addChannelCredentials(updateConfig, form);
 		addModelToConfig(updateConfig);
@@ -673,6 +678,25 @@ export function EditChannelModal(): VNode | null {
 					{!isWhatsApp && <option value="open">Open (anyone)</option>}
 					<option value="disabled">Disabled</option>
 				</select>
+				{isWhatsApp && (
+					<div className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3">
+						<label className="flex cursor-pointer items-start gap-2 text-xs text-[var(--text-strong)]">
+							<input
+								type="checkbox"
+								className="mt-0.5"
+								checked={editWhatsAppDownloadInboundDocuments.value}
+								onChange={(e) => {
+									editWhatsAppDownloadInboundDocuments.value = targetChecked(e);
+								}}
+							/>
+							<span>Download inbound documents</span>
+						</label>
+						<div className="mt-1 pl-5 text-xs text-[var(--muted)]">
+							Disabled by default. Downloads files up to 20 MB into persistent session storage and makes their local
+							path available to agent tools.
+						</div>
+					</div>
+				)}
 				{!isWhatsApp && (
 					<>
 						<label className="text-xs text-[var(--muted)]">Group Mention Mode</label>

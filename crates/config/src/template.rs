@@ -886,6 +886,7 @@ port = {port}                           # Port number (auto-generated for this i
 # push_name = "Moltis"        # Falls back to [identity] name, then "Moltis".
 # dm_policy = "allowlist"
 # allowlist = []
+# download_inbound_documents = false # Opt in to persisting WhatsApp documents (max 20 MB).
 
 # Example Slack account. api_base_url defaults to Slack; set it only for
 # Slack-compatible proxies, mock servers, or gateways.
