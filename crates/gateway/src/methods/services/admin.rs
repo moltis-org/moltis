@@ -888,22 +888,16 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 let memory = &config.memory;
                 let chat = &config.chat;
 
-                // Report the active backend (runtime), not the configured one
-                // (a zvec→builtin fallback keeps the config as zvec but the
-                // manager runs the builtin store).
-                let active_backend = ctx
-                    .state
-                    .memory_manager
-                    .as_ref()
-                    .map(|mm| mm.backend_name())
-                    .unwrap_or_else(|| match memory.backend {
-                        moltis_config::MemoryBackend::Builtin => "builtin",
-                        moltis_config::MemoryBackend::Qmd => "qmd",
-                        #[cfg(feature = "zvec")]
-                        moltis_config::MemoryBackend::Zvec => "zvec",
-                        #[cfg(not(feature = "zvec"))]
-                        moltis_config::MemoryBackend::Zvec => "builtin",
-                    });
+                // Report the active backend using the editable config value.
+                // The builtin runtime identifies its SQLite implementation as
+                // "sqlite", while memory.config.update accepts "builtin".
+                let active_backend = editable_memory_backend_name(
+                    memory.backend,
+                    ctx.state
+                        .memory_manager
+                        .as_ref()
+                        .map(|manager| manager.backend_name()),
+                );
                 Ok(serde_json::json!({
                     "style": match memory.style {
                         moltis_config::MemoryStyle::Hybrid => "hybrid",
@@ -980,20 +974,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .params
                     .get("backend")
                     .and_then(|v| v.as_str())
-                    .unwrap_or(match current_memory.backend {
-                        moltis_config::MemoryBackend::Builtin => "builtin",
-                        moltis_config::MemoryBackend::Qmd => "qmd",
-                        moltis_config::MemoryBackend::Zvec => {
-                            #[cfg(feature = "zvec")]
-                            {
-                                "zvec"
-                            }
-                            #[cfg(not(feature = "zvec"))]
-                            {
-                                "builtin"
-                            }
-                        },
-                    });
+                    .unwrap_or_else(|| configured_memory_backend_name(current_memory.backend));
                 let agent_write_mode = ctx
                     .params
                     .get("agent_write_mode")
