@@ -95,7 +95,7 @@ Jobs support several schedule kinds:
 | Kind | Fields | Description |
 |------|--------|-------------|
 | `every` | `every_ms` | Repeat at a fixed interval (milliseconds) |
-| `cron` | `expr`, optional `tz` | Standard cron expression (e.g. `"0 */6 * * *"`) |
+| `cron` | `expr`, optional `tz` | A standard 5-field cron expression, or 6/7 fields with leading seconds and an optional trailing year |
 | `at` | `at_ms` | Run once at a specific Unix timestamp (ms) |
 
 Prefer named weekdays such as `MON-FRI` in cron expressions. Numeric weekday
@@ -174,7 +174,12 @@ Channel delivery is separate from session targeting. The cron job still runs in
 an isolated cron session, then Moltis forwards the finished output to the
 requested channel destination. Delivery failures and empty non-heartbeat
 outputs are recorded as failed cron runs. The `run` action returns that run
-record so callers can distinguish execution from successful delivery.
+record with the completed output, token usage, and session key intact so callers
+can distinguish agent execution from successful delivery.
+
+Existing jobs with `deliver: true` but without both `channel` and `to` are
+recorded as failed runs. Earlier versions silently skipped delivery for these
+incomplete destinations.
 
 ## Session Targeting
 

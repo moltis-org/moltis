@@ -32,6 +32,8 @@ pub struct AgentTurnResult {
     pub output_tokens: Option<u64>,
     /// The session key used for this turn (links to the session store).
     pub session_key: Option<String>,
+    /// Failure that occurred after the agent turn completed while delivering its output.
+    pub delivery_error: Option<String>,
 }
 
 /// Callback for running an isolated agent turn.
@@ -598,6 +600,7 @@ impl CronService {
                     input_tokens: None,
                     output_tokens: None,
                     session_key: None,
+                    delivery_error: None,
                 })
             },
             CronPayload::AgentTurn {
@@ -639,9 +642,22 @@ impl CronService {
                         counter!(cron_metrics::OUTPUT_TOKENS_TOTAL).increment(output);
                     }
                 }
+                let (status, error_msg) = match &r.delivery_error {
+                    Some(delivery_error) => {
+                        error!(
+                            id = %job.id,
+                            error = %delivery_error,
+                            "cron output delivery failed"
+                        );
+                        #[cfg(feature = "metrics")]
+                        counter!(cron_metrics::ERRORS_TOTAL).increment(1);
+                        (RunStatus::Error, Some(delivery_error.clone()))
+                    },
+                    None => (RunStatus::Ok, None),
+                };
                 (
-                    RunStatus::Ok,
-                    None,
+                    status,
+                    error_msg,
                     Some(r.output.clone()),
                     r.input_tokens,
                     r.output_tokens,

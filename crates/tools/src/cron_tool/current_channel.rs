@@ -122,6 +122,7 @@ mod tests {
                     input_tokens: None,
                     output_tokens: None,
                     session_key: None,
+                    delivery_error: None,
                 })
             })
         });

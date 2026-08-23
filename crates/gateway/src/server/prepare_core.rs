@@ -762,6 +762,7 @@ pub async fn prepare_gateway_core_with_profile(
                         input_tokens: None,
                         output_tokens: None,
                         session_key: None,
+                        delivery_error: None,
                     });
                 }
             }
@@ -875,19 +876,26 @@ pub async fn prepare_gateway_core_with_profile(
                 text.clone()
             };
 
-            if req.deliver && !is_heartbeat_turn && delivery_text.trim().is_empty() {
-                return Err(moltis_cron::Error::message(
-                    "cron agent produced an empty response; nothing was delivered",
-                ));
-            }
-            maybe_deliver_cron_output(state.services.channel_outbound_arc(), &req, &delivery_text)
-                .await?;
+            let delivery_error =
+                if req.deliver && !is_heartbeat_turn && delivery_text.trim().is_empty() {
+                    Some("cron agent produced an empty response; nothing was delivered".to_string())
+                } else {
+                    maybe_deliver_cron_output(
+                        state.services.channel_outbound_arc(),
+                        &req,
+                        &delivery_text,
+                    )
+                    .await
+                    .err()
+                    .map(|error| error.to_string())
+                };
 
             Ok(moltis_cron::service::AgentTurnResult {
                 output: text,
                 input_tokens,
                 output_tokens,
                 session_key: Some(session_key),
+                delivery_error,
             })
         })
     });

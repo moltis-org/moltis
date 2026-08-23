@@ -154,6 +154,37 @@ mod tests {
     }
 
     #[test]
+    fn test_cron_six_field_with_seconds() {
+        let schedule = CronSchedule::Cron {
+            expr: "30 0 9 * * *".into(),
+            tz: None,
+        };
+        let now_ms = 1_706_745_600_000; // 2024-02-01T00:00:00Z
+
+        let next = compute_next_run(&schedule, now_ms).unwrap().unwrap();
+        let dt = DateTime::from_timestamp_millis(next as i64).unwrap();
+
+        assert_eq!(dt.format("%H:%M:%S").to_string(), "09:00:30");
+    }
+
+    #[test]
+    fn test_cron_seven_field_with_year() {
+        let schedule = CronSchedule::Cron {
+            expr: "0 0 9 1 2 * 2025".into(),
+            tz: None,
+        };
+        let now_ms = 1_706_745_600_000; // 2024-02-01T00:00:00Z
+
+        let next = compute_next_run(&schedule, now_ms).unwrap().unwrap();
+        let dt = DateTime::from_timestamp_millis(next as i64).unwrap();
+
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2025-02-01 09:00:00"
+        );
+    }
+
+    #[test]
     fn test_cron_with_timezone() {
         let s = CronSchedule::Cron {
             expr: "0 9 * * *".into(),
