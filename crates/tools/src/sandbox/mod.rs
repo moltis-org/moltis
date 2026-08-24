@@ -57,6 +57,6 @@ pub use {
     types::{
         BuildImageResult, DEFAULT_SANDBOX_IMAGE, HomePersistence, ManagedFilesMount, NetworkPolicy,
         ResourceLimits, SANDBOX_FILES_DIR, Sandbox, SandboxBackendId, SandboxConfig, SandboxId,
-        SandboxMode, SandboxScope, WorkspaceMount,
+        SandboxMode, SandboxRuntimeInfo, SandboxScope, WorkspaceMount,
     },
 };

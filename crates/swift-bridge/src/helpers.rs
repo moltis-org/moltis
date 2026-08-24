@@ -5,7 +5,7 @@ use std::ffi::{CStr, CString, c_char};
 use {moltis_config::validate::Severity, serde::Serialize};
 
 use crate::{
-    state::BRIDGE,
+    state::{BRIDGE, HTTPD},
     types::{
         ErrorEnvelope, ErrorPayload, SandboxSharedHomeConfigResponse, SandboxStatusResponse,
         ValidationSummary,
@@ -164,10 +164,14 @@ pub(crate) fn sandbox_status_from_config(
 }
 
 pub(crate) fn sandbox_container_prefix(config: &moltis_config::MoltisConfig) -> String {
-    let runtime_cfg = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
-    runtime_cfg
-        .container_prefix
-        .unwrap_or_else(|| "moltis-sandbox".to_owned())
+    let runtime_prefix = HTTPD
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_ref()
+        .and_then(|handle| handle.state.sandbox_router.as_ref())
+        .and_then(|router| router.config().container_prefix.clone());
+    runtime_prefix
+        .unwrap_or_else(|| moltis_gateway::server::sandbox_container_prefix_for_config(config))
 }
 
 pub(crate) fn sandbox_shared_home_config_from_config(

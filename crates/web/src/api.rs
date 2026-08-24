@@ -17,7 +17,10 @@ use {
     tracing::warn,
 };
 
-use crate::templates::{build_nav_counts, onboarding_completed};
+use crate::{
+    container_management::{managed_container_name, managed_container_prefixes},
+    templates::{build_nav_counts, onboarding_completed},
+};
 
 const MCP_LIST_FAILED: &str = "MCP_LIST_FAILED";
 const IMAGE_CACHE_DELETE_FAILED: &str = "IMAGE_CACHE_DELETE_FAILED";
@@ -62,41 +65,10 @@ fn configured_secret(secret: &Option<Secret<String>>) -> bool {
         .is_some_and(|secret| !secret.expose_secret().is_empty())
 }
 
-fn sandbox_container_prefix_from_config(config: &moltis_config::MoltisConfig) -> String {
-    config
-        .tools
-        .exec
-        .sandbox
-        .container_prefix
-        .clone()
-        .unwrap_or_else(|| "moltis-sandbox".to_string())
-}
-
-fn browser_container_prefix_from_config(config: &moltis_config::MoltisConfig) -> String {
-    let _ = config;
-    "moltis-browser".to_string()
-}
-
-fn managed_container_prefixes(config: &moltis_config::MoltisConfig) -> Vec<String> {
-    let sandbox_prefix = sandbox_container_prefix_from_config(config);
-    let browser_prefix = browser_container_prefix_from_config(config);
-    if sandbox_prefix == browser_prefix {
-        vec![sandbox_prefix]
-    } else {
-        vec![sandbox_prefix, browser_prefix]
-    }
-}
-
 fn browser_image_repository(config: &moltis_config::MoltisConfig) -> Option<String> {
     let image = config.tools.browser.sandbox_image.trim();
     let (repo, _) = image.rsplit_once(':').unwrap_or((image, "latest"));
     (!repo.is_empty()).then(|| repo.to_string())
-}
-
-fn managed_container_name(config: &moltis_config::MoltisConfig, name: &str) -> bool {
-    managed_container_prefixes(config).iter().any(|prefix| {
-        name.starts_with(prefix) || moltis_tools::sandbox::has_apple_container_prefix(name, prefix)
-    })
 }
 
 #[derive(serde::Deserialize)]
@@ -1317,9 +1289,11 @@ WORKDIR /home/sandbox\n"
 
 // ── Containers ───────────────────────────────────────────────────────────────
 
-pub async fn api_list_containers_handler() -> impl IntoResponse {
-    let config = moltis_config::discover_and_load();
-    let prefixes = managed_container_prefixes(&config);
+pub async fn api_list_containers_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let prefixes = managed_container_prefixes(
+        &state.gateway.config,
+        state.gateway.sandbox_router.as_deref(),
+    );
     match moltis_tools::sandbox::list_running_containers_for_prefixes(&prefixes).await {
         Ok(containers) => Json(serde_json::json!({ "containers": containers })).into_response(),
         Err(e) => api_error_response(
@@ -1330,9 +1304,15 @@ pub async fn api_list_containers_handler() -> impl IntoResponse {
     }
 }
 
-pub async fn api_stop_container_handler(Path(name): Path<String>) -> impl IntoResponse {
-    let config = moltis_config::discover_and_load();
-    if !managed_container_name(&config, &name) {
+pub async fn api_stop_container_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    if !managed_container_name(
+        &state.gateway.config,
+        state.gateway.sandbox_router.as_deref(),
+        &name,
+    ) {
         return api_error_response(
             StatusCode::FORBIDDEN,
             SANDBOX_CONTAINER_PREFIX_MISMATCH,
@@ -1349,9 +1329,15 @@ pub async fn api_stop_container_handler(Path(name): Path<String>) -> impl IntoRe
     }
 }
 
-pub async fn api_remove_container_handler(Path(name): Path<String>) -> impl IntoResponse {
-    let config = moltis_config::discover_and_load();
-    if !managed_container_name(&config, &name) {
+pub async fn api_remove_container_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    if !managed_container_name(
+        &state.gateway.config,
+        state.gateway.sandbox_router.as_deref(),
+        &name,
+    ) {
         return api_error_response(
             StatusCode::FORBIDDEN,
             SANDBOX_CONTAINER_PREFIX_MISMATCH,
@@ -1368,10 +1354,12 @@ pub async fn api_remove_container_handler(Path(name): Path<String>) -> impl Into
     }
 }
 
-pub async fn api_clean_all_containers_handler() -> impl IntoResponse {
-    let config = moltis_config::discover_and_load();
+pub async fn api_clean_all_containers_handler(State(state): State<AppState>) -> impl IntoResponse {
     let mut removed = 0usize;
-    for prefix in managed_container_prefixes(&config) {
+    for prefix in managed_container_prefixes(
+        &state.gateway.config,
+        state.gateway.sandbox_router.as_deref(),
+    ) {
         match moltis_tools::sandbox::clean_all_containers(&prefix).await {
             Ok(count) => removed += count,
             Err(e) => {

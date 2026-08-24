@@ -689,6 +689,7 @@ impl ChatService for LiveChatService {
             };
             let id = router.sandbox_id_for(&session_key);
             let resolved_backend = router.resolve_backend(&session_key).await;
+            let runtime_info = resolved_backend.runtime_info(&id).await;
             let container_name = {
                 let fallback = format!(
                     "{}-{}",
@@ -698,11 +699,11 @@ impl ChatService for LiveChatService {
                         .unwrap_or("moltis-sandbox"),
                     id.key
                 );
-                resolved_backend.runtime_name(&id).await.unwrap_or(fallback)
+                runtime_info.runtime_name.unwrap_or(fallback)
             };
             serde_json::json!({
                 "enabled": is_sandboxed,
-                "backend": resolved_backend.backend_name(),
+                "backend": runtime_info.backend_name,
                 "mode": config.mode,
                 "scope": config.scope,
                 "workspaceMount": config.workspace_mount,

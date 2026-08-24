@@ -148,6 +148,10 @@ pub(crate) fn sandbox_container_prefix(instance_slug: &str) -> String {
     format!("moltis-{instance_slug}-sandbox")
 }
 
+pub fn sandbox_container_prefix_for_config(config: &moltis_config::MoltisConfig) -> String {
+    sandbox_container_prefix(&instance_slug(config))
+}
+
 pub(crate) fn browser_container_prefix(instance_slug: &str) -> String {
     format!("moltis-{instance_slug}-browser")
 }

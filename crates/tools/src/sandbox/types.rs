@@ -426,6 +426,13 @@ pub struct BuildImageResult {
     pub built: bool,
 }
 
+/// Active backend and runtime resource name captured from one routing decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxRuntimeInfo {
+    pub backend_name: &'static str,
+    pub runtime_name: Option<String>,
+}
+
 /// Trait for sandbox implementations (Docker, cgroups, Apple Container, etc.).
 #[async_trait]
 pub trait Sandbox: Send + Sync {
@@ -435,6 +442,14 @@ pub trait Sandbox: Send + Sync {
     /// Runtime resource name for operator-facing diagnostics, when applicable.
     async fn runtime_name(&self, _id: &SandboxId) -> Option<String> {
         None
+    }
+
+    /// Operator-facing runtime details from one backend selection snapshot.
+    async fn runtime_info(&self, id: &SandboxId) -> SandboxRuntimeInfo {
+        SandboxRuntimeInfo {
+            backend_name: self.backend_name(),
+            runtime_name: self.runtime_name(id).await,
+        }
     }
 
     /// Ensure the sandbox environment is ready (e.g., container started).

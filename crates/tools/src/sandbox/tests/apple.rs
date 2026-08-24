@@ -66,6 +66,9 @@ async fn apple_container_names_fit_runtime_limit() {
         Arc::new(DockerSandbox::new(SandboxConfig::default())),
     );
     assert_eq!(failover.runtime_name(&id).await, Some(initial));
+    let runtime_info = failover.runtime_info(&id).await;
+    assert_eq!(runtime_info.backend_name, "apple-container");
+    assert_eq!(runtime_info.runtime_name, failover.runtime_name(&id).await);
 }
 
 /// When both Docker and Apple Container are available, test that we can
@@ -589,6 +592,7 @@ async fn test_failover_sandbox_switches_from_apple_to_docker() {
 
     assert_eq!(primary.ensure_ready_calls(), 1);
     assert_eq!(fallback.ensure_ready_calls(), 2);
+    assert_eq!(sandbox.runtime_info(&id).await.backend_name, "docker");
 }
 
 #[tokio::test]
