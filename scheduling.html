@@ -118,7 +118,10 @@ surface in the next heartbeat turn.</p>
 
 
 
-<table><thead><tr><th>Kind</th><th>Fields</th><th>Description</th></tr></thead><tbody><tr><td><code>every</code></td><td><code>every_ms</code></td><td>Repeat at a fixed interval (milliseconds)</td></tr><tr><td><code>cron</code></td><td><code>expr</code>, optional <code>tz</code></td><td>Standard cron expression (e.g. <code>"0 */6 * * *"</code>)</td></tr><tr><td><code>at</code></td><td><code>at_ms</code></td><td>Run once at a specific Unix timestamp (ms)</td></tr></tbody></table>
+<table><thead><tr><th>Kind</th><th>Fields</th><th>Description</th></tr></thead><tbody><tr><td><code>every</code></td><td><code>every_ms</code></td><td>Repeat at a fixed interval (milliseconds)</td></tr><tr><td><code>cron</code></td><td><code>expr</code>, optional <code>tz</code></td><td>A standard 5-field cron expression, or 6/7 fields with leading seconds and an optional trailing year</td></tr><tr><td><code>at</code></td><td><code>at_ms</code></td><td>Run once at a specific Unix timestamp (ms)</td></tr></tbody></table>
+<p>Prefer named weekdays such as <code>MON-FRI</code> in cron expressions. Numeric weekday
+values are not portable across cron implementations because some number Sunday
+as zero while others number it as one.</p>
 <h2 id="cron-tool">Cron Tool</h2>
 <p>The agent manages jobs through the built-in <code>cron</code> tool. Available actions:</p>
 <ul>
@@ -136,7 +139,25 @@ one-time tasks (reminders, follow-ups).</p>
 <h2 id="channel-delivery">Channel Delivery</h2>
 <p>Background agent turns can deliver their final output to a configured channel
 account/chat after the run completes.</p>
-<p>Use all of the following together:</p>
+<p>When asking the agent from WhatsApp, Telegram, or another messaging channel to
+send a scheduled result back to the same conversation, the agent can use the
+transient tool shortcut:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="json" data-code="{
+  &#x22;payload&#x22;: {
+    &#x22;message&#x22;: &#x22;Prepare and send the daily summary.&#x22;,
+    &#x22;deliver_to_current_chat&#x22;: true
+  }
+}"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">{</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "payload"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">    "message"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "Prepare and send the daily summary."</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">    "deliver_to_current_chat"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+<p>Moltis resolves the account and destination from trusted session context,
+converts the payload to an isolated <code>agentTurn</code>, and stores the normal
+<code>deliver</code>, <code>channel</code>, and <code>to</code> fields. The shortcut itself is not persisted.
+It returns an error outside a messaging-channel conversation.</p>
+<p>For a different or explicitly selected destination, use all of the following:</p>
 <ul>
 <li><code>sessionTarget: "isolated"</code></li>
 <li><code>payload.kind: "agentTurn"</code></li>
@@ -176,7 +197,13 @@ account/chat after the run completes.</p>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">}</span></span></code></pre>
 <p>Channel delivery is separate from session targeting. The cron job still runs in
 an isolated cron session, then Moltis forwards the finished output to the
-requested channel destination.</p>
+requested channel destination. Delivery failures and empty non-heartbeat
+outputs are recorded as failed cron runs. The <code>run</code> action returns that run
+record with the completed output, token usage, and session key intact so callers
+can distinguish agent execution from successful delivery.</p>
+<p>Existing jobs with <code>deliver: true</code> but without both <code>channel</code> and <code>to</code> are
+recorded as failed runs. Earlier versions silently skipped delivery for these
+incomplete destinations.</p>
 <h2 id="session-targeting">Session Targeting</h2>
 <p>Each job specifies where its agent turn runs:</p>
 
