@@ -16,13 +16,13 @@ pub(crate) fn apple_container_prefix(prefix: &str) -> String {
     )
 }
 
-pub(crate) fn has_apple_container_prefix(name: &str, prefix: &str) -> bool {
+pub fn has_apple_container_prefix(name: &str, prefix: &str) -> bool {
     let prefix = apple_container_prefix(prefix);
     name.strip_prefix(&prefix)
         .is_some_and(|remainder| remainder.starts_with('-'))
 }
 
-pub(crate) fn apple_container_name(prefix: &str, key: &str, generation: u32) -> String {
+pub fn apple_container_name(prefix: &str, key: &str, generation: u32) -> String {
     let prefix = apple_container_prefix(prefix);
     let normalized_key = normalize_component(key, "sandbox");
     let suffix = if generation == 0 {

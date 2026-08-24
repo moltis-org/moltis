@@ -529,7 +529,9 @@ pub extern "C" fn moltis_sandbox_stop_container(request_json: *const c_char) -> 
 
         let config = moltis_config::discover_and_load();
         let prefix = sandbox_container_prefix(&config);
-        if !name.starts_with(&prefix) {
+        if !name.starts_with(&prefix)
+            && !moltis_tools::sandbox::has_apple_container_prefix(name, &prefix)
+        {
             record_error(
                 "moltis_sandbox_stop_container",
                 SANDBOX_CONTAINER_PREFIX_MISMATCH,
@@ -582,7 +584,9 @@ pub extern "C" fn moltis_sandbox_remove_container(request_json: *const c_char) -
 
         let config = moltis_config::discover_and_load();
         let prefix = sandbox_container_prefix(&config);
-        if !name.starts_with(&prefix) {
+        if !name.starts_with(&prefix)
+            && !moltis_tools::sandbox::has_apple_container_prefix(name, &prefix)
+        {
             record_error(
                 "moltis_sandbox_remove_container",
                 SANDBOX_CONTAINER_PREFIX_MISMATCH,

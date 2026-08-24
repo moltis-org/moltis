@@ -40,6 +40,7 @@ pub use vercel::{VercelSandbox, VercelSandboxConfig};
 #[cfg(feature = "wasm")]
 pub use wasm::WasmSandbox;
 pub use {
+    container_name::{apple_container_name, has_apple_container_prefix},
     containers::{
         ContainerBackend, ContainerDiskUsage, ContainerRunState, RunningContainer, SandboxImage,
         clean_all_containers, clean_sandbox_images, container_cli, container_disk_usage,
