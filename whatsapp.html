@@ -480,6 +480,12 @@ is retained in the Moltis session history and remains unchanged in the web UI.</
 
 
 <table><thead><tr><th>Message Type</th><th>Handling</th></tr></thead><tbody><tr><td><strong>Text</strong></td><td>Dispatched directly to the LLM</td></tr><tr><td><strong>Image</strong></td><td>Downloaded, saved in session media up to 20 MB for local tools, optimized for LLM consumption (resized if needed), sent as attachment</td></tr><tr><td><strong>Voice</strong></td><td>Downloaded and transcribed via STT (if configured); falls back to text guidance</td></tr><tr><td><strong>Audio</strong></td><td>Same as voice, but classified separately (non-PTT audio files)</td></tr><tr><td><strong>Video</strong></td><td>Thumbnail extracted and sent as image attachment with caption</td></tr><tr><td><strong>Document</strong></td><td>Downloaded up to 20 MB, saved in session media for local tools, and filename/MIME metadata dispatched as text</td></tr><tr><td><strong>Location</strong></td><td>Resolves pending location tool requests, or dispatches coordinates to LLM</td></tr></tbody></table>
+<p>The 20 MB limit for saved images and documents is enforced <em>while streaming</em>, so
+a sender who understates the file size in the message metadata cannot make Moltis
+buffer an oversized payload — the download aborts as soon as the limit is crossed.
+Sender-supplied MIME types are normalized to a bare <code>type/subtype</code> before they are
+stored or shown to the agent. Download and persistence failures are reported in the
+conversation rather than handing the agent a path that does not exist.</p>
 <aside class="admonition admonition-info"><div class="admonition-title">Voice Transcription</div><div class="admonition-body"><p>Voice message transcription requires an STT provider to be configured.<br>See <a href="/voice.html">Voice Services</a> for setup instructions. Without STT,<br>the bot replies asking the user to send a text message instead.</p></div></aside>
 <h2 id="managing-channels-in-the-web-ui">Managing Channels in the Web UI</h2>
 <h3 id="channels-tab">Channels Tab</h3>
