@@ -43,6 +43,8 @@ pub(crate) fn tail_lines(text: &str, n: usize) -> String {
 pub const DEFAULT_SANDBOX_IMAGE: &str = "ubuntu:25.10";
 /// Canonical managed Files path inside local sandboxes.
 pub const SANDBOX_FILES_DIR: &str = "/home/sandbox/files";
+/// Default ceiling for a single workspace-sync transfer (100 MB).
+pub const DEFAULT_MAX_TRANSFER_BYTES: u64 = 100 * 1024 * 1024;
 
 /// Sandbox mode controlling when sandboxing is applied.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -561,6 +563,16 @@ pub trait Sandbox: Send + Sync {
     /// this so workspace sync uses the same path as command execution.
     async fn workspace_dir_for(&self, _id: &SandboxId) -> String {
         self.workspace_dir().to_string()
+    }
+
+    /// Maximum number of bytes workspace sync may move through this backend
+    /// in a single transfer.
+    ///
+    /// Backends that stream files over a byte-oriented transport (the Coder
+    /// PTY channel, for example) buffer the whole payload in memory and must
+    /// advertise a lower ceiling than the shared default.
+    fn max_transfer_bytes(&self) -> u64 {
+        DEFAULT_MAX_TRANSFER_BYTES
     }
 
     /// Whether this backend manages an isolated filesystem that requires

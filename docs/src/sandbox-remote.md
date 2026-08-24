@@ -170,9 +170,44 @@ region = "us"
 
 - `backend = "auto"` detects `CODER_URL` and `CODER_SESSION_TOKEN` when no local Docker runtime is available
 - Each session creates an ephemeral Coder workspace
+- Moltis waits for the workspace agent to report lifecycle state `ready`, so
+  commands do not race the template's startup script. A workspace whose agent
+  reaches a terminal state (`start_error`, `off`, …) fails fast instead of
+  polling until the create timeout
 - Commands execute via Coder's reconnecting PTY WebSocket
-- File operations use shell commands over the same PTY transport
 - On cleanup, the Coder workspace is deleted
+
+### Command and File Transport
+
+Coder exposes no REST endpoint for a workspace filesystem, so commands and file
+payloads both travel over the agent PTY. The PTY URL's `command` parameter
+carries only a fixed ~200 byte bootstrap; the real script is streamed to the
+workspace on the PTY stdin channel. Payload size is therefore bounded by memory
+rather than by URL length, which is what makes `Write` and workspace sync work:
+
+| Limit | Value |
+|-------|-------|
+| Single `Write` through the PTY stream | 64 MB |
+| Workspace sync transfer (in or out) | 16 MB |
+
+Sync is capped lower than a single `Write` because sync-out reads the workspace
+tarball back as base64 on stdout, and that expansion has to fit the sandbox
+file service's output budget. Exceeding either limit produces an explicit
+"too large" error rather than a truncated transfer.
+
+The bootstrap puts the terminal into raw mode before any payload is streamed,
+which disables echo and `ONLCR` so the marker framing around stdout, stderr,
+and the exit code stays parseable. The PTY window is reported as 1000×200 so
+that programs which self-format to `COLUMNS` do not wrap their own output.
+
+### Workspace Names
+
+Coder validates workspace names against `^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$` with a
+32 character limit. Moltis derives the name from
+`coder_workspace_prefix` and the session key, lowercasing and collapsing every
+other character to `-`. Names that would exceed the limit are truncated with a
+short digest of the full session key appended, so sessions sharing a long
+prefix still map to distinct workspaces.
 
 ## Local Firecracker
 
@@ -246,5 +281,5 @@ installed, but subsequent sessions use cached images/snapshots:
 |---------|-----------------|
 | Vercel | Snapshot after first provisioning (instant subsequent boots) |
 | Daytona | Runtime provisioning on first session |
-| Coder | Template-defined image/packages |
+| Coder | Template-defined image/packages (Moltis waits for agent lifecycle `ready`) |
 | Firecracker | Pre-built rootfs with packages baked in |
