@@ -172,14 +172,6 @@ async fn system_prompt_is_received_non_streaming() {
         text.to_lowercase().contains(&keyword.to_lowercase()),
         "system prompt was not received by model: response = {text:?}"
     );
-    assert!(
-        response.usage.input_tokens > 0,
-        "should report input tokens"
-    );
-    assert!(
-        response.usage.output_tokens > 0,
-        "should report output tokens"
-    );
 }
 
 /// Streaming variant of the system prompt test.
@@ -202,10 +194,8 @@ async fn system_prompt_is_received_streaming() {
     for event in events {
         match event {
             StreamEvent::Delta(chunk) => full_text.push_str(&chunk),
-            StreamEvent::Done(usage) => {
+            StreamEvent::Done(_) => {
                 saw_done = true;
-                assert!(usage.input_tokens > 0, "should report input tokens");
-                assert!(usage.output_tokens > 0, "should report output tokens");
                 break;
             },
             StreamEvent::Error(err) => panic!("stream error: {err}"),

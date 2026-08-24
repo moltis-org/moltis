@@ -40,7 +40,7 @@ pub type ExecCompletionFn = Arc<dyn Fn(ExecCompletionEvent) + Send + Sync>;
 
 use crate::{
     approval::{ApprovalAction, ApprovalDecision, ApprovalManager},
-    sandbox::{NoSandbox, Sandbox, SandboxId, SandboxRouter},
+    sandbox::{ManagedFilesMount, NoSandbox, Sandbox, SandboxId, SandboxRouter},
 };
 
 const MAX_SANDBOX_RECOVERY_RETRIES: usize = 1;
@@ -225,6 +225,24 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
                 opts.timeout.as_secs()
             )))
         },
+    }
+}
+
+fn inject_moltis_data_dir(env: &mut Vec<(String, String)>, runs_on_host: bool) {
+    if !runs_on_host {
+        return;
+    }
+    env.retain(|(key, _)| key != "MOLTIS_DATA_DIR");
+    env.push((
+        "MOLTIS_DATA_DIR".to_owned(),
+        moltis_config::data_dir().to_string_lossy().into_owned(),
+    ));
+}
+
+fn inject_moltis_files_dir(env: &mut Vec<(String, String)>, files_dir: Option<String>) {
+    env.retain(|(key, _)| key != "MOLTIS_FILES_DIR");
+    if let Some(files_dir) = files_dir {
+        env.push(("MOLTIS_FILES_DIR".to_owned(), files_dir));
     }
 }
 
@@ -489,11 +507,15 @@ impl AgentTool for ExecTool {
         // "sandboxed".  Using /home/sandbox as the working directory would
         // fail with ENOENT on the host, so we must fall back to the host
         // data directory.
-        let has_container_backend = if let Some(ref router) = self.sandbox_router {
+        let (has_container_backend, backend_name) = if let Some(ref router) = self.sandbox_router {
             let sk = session_key.unwrap_or("main");
-            router.resolve_backend(sk).await.provides_fs_isolation()
+            let backend = router.resolve_backend(sk).await;
+            (backend.provides_fs_isolation(), backend.backend_name())
         } else {
-            self.sandbox.provides_fs_isolation()
+            (
+                self.sandbox.provides_fs_isolation(),
+                self.sandbox.backend_name(),
+            )
         };
 
         // Resolve working directory.  When sandboxed *with a real container
@@ -515,6 +537,23 @@ impl AgentTool for ExecTool {
             .or_else(|| self.working_dir.clone());
 
         let runs_on_host = !(is_sandboxed && has_container_backend);
+        let files_dir = if runs_on_host {
+            Some(
+                moltis_config::managed_files_dir()
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        } else if matches!(backend_name, "docker" | "podman" | "apple-container")
+            && if let Some(ref router) = self.sandbox_router {
+                router.config().managed_files_mount != ManagedFilesMount::None
+            } else {
+                self.sandbox.exposes_managed_files()
+            }
+        {
+            Some(crate::sandbox::SANDBOX_FILES_DIR.to_owned())
+        } else {
+            None
+        };
         let host_default_dir = || moltis_config::home_dir().unwrap_or_else(moltis_config::data_dir);
 
         // When running on the host, validate that the explicit working dir
@@ -625,10 +664,12 @@ impl AgentTool for ExecTool {
 
         // Expose secrets only at the injection boundary.
         use secrecy::ExposeSecret;
-        let env: Vec<(String, String)> = secret_env
+        let mut env: Vec<(String, String)> = secret_env
             .iter()
             .map(|(k, v)| (k.clone(), v.expose_secret().clone()))
             .collect();
+        inject_moltis_data_dir(&mut env, runs_on_host);
+        inject_moltis_files_dir(&mut env, files_dir);
 
         let opts = ExecOpts {
             timeout: Duration::from_secs(timeout_secs),
@@ -670,6 +711,19 @@ impl AgentTool for ExecTool {
                         });
                     }
                     return Err(error.into());
+                }
+                if backend.provides_fs_isolation() != has_container_backend {
+                    let error = "sandbox backend changed isolation mode during preparation; retry the command";
+                    if announce_prepare {
+                        router.clear_prepared_session(sk).await;
+                        router.emit_event(crate::sandbox::SandboxEvent::PrepareFailed {
+                            session_key: sk.to_string(),
+                            backend: backend.backend_name().to_string(),
+                            image: image.clone(),
+                            error: error.to_string(),
+                        });
+                    }
+                    return Err(Error::message(error).into());
                 }
 
                 if announce_prepare {

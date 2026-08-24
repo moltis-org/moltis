@@ -1367,7 +1367,13 @@ mod tests {
         assert_eq!(service.send_to_all(&payload).await.expect("send"), 0);
     }
 
-    #[tokio::test]
+    // The counts below tell a hung endpoint from a healthy one by whether its
+    // send crosses `send_timeout`, and the mock's delay only sits 6x inside
+    // that deadline. On the real clock a loaded machine can close that gap and
+    // bill a healthy endpoint as timed out. A paused clock only moves when the
+    // runtime is idle, so the delay stays well inside the timeout however long
+    // the test really takes, while the hung endpoint still never completes.
+    #[tokio::test(start_paused = true)]
     async fn fanout_is_bounded_and_times_out_a_hung_endpoint() {
         let (service, client, _dir) =
             mock_service(Duration::from_millis(30), Duration::from_millis(5)).await;

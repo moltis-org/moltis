@@ -1,0 +1,24 @@
+[Unit]
+Description=Moltis Podman API Service
+Before=moltis.service
+
+[Service]
+Type=exec
+User=moltis
+Group=moltis
+Environment=HOME=/var/lib/moltis
+Environment=XDG_DATA_HOME=/var/lib/moltis/.local/share
+Environment=XDG_CONFIG_HOME=/var/lib/moltis/.config
+Environment=XDG_RUNTIME_DIR=/run/moltis
+RuntimeDirectory=moltis
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+Delegate=yes
+ExecStartPre=/usr/bin/mkdir -p /run/moltis/podman
+ExecStartPre=/usr/bin/rm -f /run/moltis/podman/podman.sock
+ExecStart=/usr/bin/podman system service --time=0 unix:///run/moltis/podman/podman.sock
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

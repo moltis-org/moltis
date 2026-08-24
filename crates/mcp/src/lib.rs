@@ -12,6 +12,7 @@
 
 pub mod auth;
 pub mod client;
+mod client_slot;
 pub mod config_parsing;
 pub mod error;
 pub mod legacy_sse_transport;

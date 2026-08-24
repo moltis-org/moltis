@@ -81,6 +81,9 @@ export MOLTIS_DATA_DIR="${DATA_DIR}"
 export MOLTIS_SERVER__PORT="${PORT}"
 export HOME="${HOME_DIR}"
 export XDG_CONFIG_HOME="${HOME_DIR}/.config"
+# OAuth specs only exercise mocked provider authentication; avoid provisioning
+# container state under the temporary HOME during sandbox auto-detection.
+export MOLTIS_TOOLS__EXEC__SANDBOX__MODE="off"
 
 # Override OAuth config for openai-codex to point at the mock server.
 # Clear the redirect_uri so the gateway's /auth/callback is used instead of

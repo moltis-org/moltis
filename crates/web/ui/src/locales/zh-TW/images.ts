@@ -4,9 +4,9 @@ export default {
 	// ── Page-level ──────────────────────────────────────────
 	title: "沙盒",
 	description:
-		"Moltis 快取的容器映像檔，用於沙盒執行。您可以刪除個別映像檔或清除全部。也可以從基底映像檔搭配 apt 套件建置自訂映像檔。",
+		"Moltis 會快取沙盒使用的容器映像檔。您可以刪除個別映像檔、全部清除，或使用基底映像檔與 apt 套件建置自訂映像檔。",
 	appleContainerNote:
-		"Apple Container 會在虛擬機器中隔離執行，但不支援建置映像檔。需要同時安裝 Docker（或 OrbStack）才能建置和快取自訂映像檔。沙盒指令透過 Apple Container 執行；映像檔建置則使用 Docker。",
+		"Apple Container 會在虛擬機器中提供隔離環境，但無法建置映像檔。若要建置及快取自訂映像檔，還需安裝 Docker（或 OrbStack）。沙盒指令使用 Apple Container 執行，映像檔則由 Docker 建置。",
 	sandboxDisabledHint:
 		"在沒有容器執行環境的雲端部署中，沙盒功能已停用。請在具有 Docker 或 Apple Container 的 VM 上安裝以啟用此功能。",
 	noCachedImages: "沒有快取的映像檔。",
@@ -65,6 +65,9 @@ export default {
 		restrictedHostTip: "目前使用受限主機執行（env 清除、rlimits）。如需更強的隔離，請安裝 Docker 或 Apple Container。",
 		wasmTip: "目前使用 WASM 沙盒搭配檔案系統隔離。如需容器等級的隔離，請安裝 Docker 或 Apple Container。",
 	},
+
+	// ── Memory backends ─────────────────────────────────────
+	zvec: "Zvec（高速向量）",
 
 	// ── Alert labels ───────────────────────────────────────
 	alertWarning: "警告：",

@@ -86,11 +86,13 @@ impl CronServiceTrait for LiveCronService {
             .get("force")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        self.inner
+        let run = self
+            .inner
             .run(id, force)
             .await
             .map_err(ServiceError::message)?;
-        Ok(serde_json::json!({ "ran": id }))
+        let ok = run.status == moltis_cron::types::RunStatus::Ok;
+        Ok(serde_json::json!({ "ran": id, "ok": ok, "run": run }))
     }
 
     async fn runs(&self, params: Value) -> ServiceResult {

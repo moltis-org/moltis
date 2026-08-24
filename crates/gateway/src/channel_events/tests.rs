@@ -276,6 +276,86 @@ fn untrusted_channel_context_denies_every_tool_and_private_context() {
 }
 
 #[test]
+fn untrusted_ceiling_defaults_match_the_unconfigured_behaviour() {
+    let mut configured = serde_json::json!({});
+    let mut unconfigured = serde_json::json!({});
+
+    apply_untrusted_channel_context_with(
+        &mut configured,
+        UntrustedAudience::default(),
+        UntrustedTools::default(),
+    );
+    apply_untrusted_channel_context(&mut unconfigured);
+
+    assert_eq!(
+        configured, unconfigured,
+        "defaults must not change behaviour for an unconfigured account"
+    );
+}
+
+/// The most permissive ceiling leaves the params carrying no tool policy at
+/// all, so nothing on the request side can deny `exec`.
+///
+/// That is why the `/sh` guard in `dispatch_to_chat` stays tied to
+/// `trusted_channel_turn` and not to this ceiling. `run_explicit_shell_command`
+/// takes `exec` straight from the request registry, before the
+/// `[tools.policy]` layers are consulted, so a guard that widened with the
+/// ceiling would hand out an `exec` that no `deny` can take back.
+#[test]
+fn the_lifted_ceiling_cannot_deny_exec_on_the_request() {
+    let mut params = serde_json::json!({});
+
+    apply_untrusted_channel_context_with(
+        &mut params,
+        UntrustedAudience::Trusted,
+        UntrustedTools::Policy,
+    );
+
+    assert!(params.get("_tool_policy").is_none());
+    assert!(params.get("_tool_audience").is_none());
+    assert_eq!(params["_private_context"], false);
+}
+
+#[test]
+fn each_axis_is_lifted_on_its_own() {
+    let mut both = serde_json::json!({ "_private_context": true });
+    apply_untrusted_channel_context_with(
+        &mut both,
+        UntrustedAudience::Trusted,
+        UntrustedTools::Policy,
+    );
+    assert!(both.get("_tool_audience").is_none());
+    assert!(both.get("_tool_policy").is_none());
+    assert_eq!(
+        both["_private_context"], false,
+        "owner-private context is never configurable for a channel turn"
+    );
+
+    let mut audience_only = serde_json::json!({});
+    apply_untrusted_channel_context_with(
+        &mut audience_only,
+        UntrustedAudience::Trusted,
+        UntrustedTools::default(),
+    );
+    assert_eq!(
+        audience_only["_tool_policy"]["deny"],
+        serde_json::json!(["*"]),
+        "lifting the audience alone must still deny every tool by name"
+    );
+
+    let mut tools_only = serde_json::json!({});
+    apply_untrusted_channel_context_with(
+        &mut tools_only,
+        UntrustedAudience::default(),
+        UntrustedTools::Policy,
+    );
+    assert_eq!(
+        tools_only["_tool_audience"], "public",
+        "dropping the name policy alone must still hold the audience ceiling"
+    );
+}
+
+#[test]
 fn public_audience_tools_require_explicit_registration() {
     const REGISTRATION: &str = include_str!("../server/prepare_core/post_state.rs");
 

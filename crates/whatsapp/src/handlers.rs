@@ -19,6 +19,10 @@ use moltis_channels::{
 use crate::{
     access::{self, AccessDenied},
     config::WhatsAppAccountConfig,
+    inbound_media::{
+        DownloadError, MAX_SAVED_INBOUND_FILE_BYTES, download_bounded, safe_media_type,
+        save_inbound_file,
+    },
     otp::{OTP_CHALLENGE_MSG, OtpInitResult, OtpVerifyResult},
     state::{AccountState, AccountStateMap, has_bot_watermark},
 };
@@ -528,7 +532,7 @@ async fn handle_photo(
     client: &Client,
     account_id: &str,
     reply_to: ChannelReplyTarget,
-    meta: ChannelMessageMeta,
+    mut meta: ChannelMessageMeta,
     _chat_jid: &Jid,
     state: &AccountState,
 ) {
@@ -536,11 +540,24 @@ async fn handle_photo(
         return;
     };
     let caption = img.caption.as_deref().unwrap_or("").to_string();
-    let mime = img.mimetype.as_deref().unwrap_or("image/jpeg").to_string();
+    let mime = safe_media_type(Some(img.mimetype.as_deref().unwrap_or("image/jpeg")));
 
-    match client.download(img.as_ref()).await {
+    match download_bounded(client, img.as_ref()).await {
         Ok(image_data) => {
             debug!(account_id, size = image_data.len(), %mime, "downloaded WhatsApp image");
+
+            if let Some(ref sink) = state.event_sink {
+                meta.documents = save_inbound_file(
+                    sink,
+                    &reply_to,
+                    &image_data,
+                    None,
+                    &mime,
+                    img.file_sha256.as_deref(),
+                )
+                .await
+                .map(|document| vec![document]);
+            }
 
             let (final_data, media_type) = match moltis_media::image_ops::optimize_for_llm(
                 &image_data,
@@ -726,14 +743,14 @@ async fn handle_video(
     }
 }
 
-/// Handle an inbound document message: dispatch with caption.
+/// Handle an inbound document message: download, save, and dispatch its local path.
 #[allow(clippy::too_many_arguments)]
 async fn handle_document(
     msg: &wa::Message,
-    _client: &Client,
+    client: &Client,
     account_id: &str,
     reply_to: ChannelReplyTarget,
-    meta: ChannelMessageMeta,
+    mut meta: ChannelMessageMeta,
     _chat_jid: &Jid,
     state: &AccountState,
 ) {
@@ -742,20 +759,87 @@ async fn handle_document(
     };
     let caption = doc.caption.as_deref().unwrap_or("").to_string();
     let filename = doc.file_name.as_deref().unwrap_or("unknown");
-    let mime = doc
-        .mimetype
-        .as_deref()
-        .unwrap_or("application/octet-stream");
+    let mime = safe_media_type(doc.mimetype.as_deref());
 
-    info!(account_id, filename, mime, "received document message");
+    info!(account_id, filename, %mime, "received document message");
 
     let text = if caption.is_empty() {
         format!("[Document received: {filename} ({mime})]")
     } else {
         format!("{caption}\n[Document: {filename} ({mime})]")
     };
-    if let Some(ref sink) = state.event_sink {
-        sink.dispatch_to_chat(&text, reply_to, meta).await;
+
+    if doc
+        .file_length
+        .is_some_and(|size| size > MAX_SAVED_INBOUND_FILE_BYTES as u64)
+    {
+        warn!(
+            account_id,
+            filename,
+            size = ?doc.file_length,
+            limit = MAX_SAVED_INBOUND_FILE_BYTES,
+            "skipping oversized WhatsApp document"
+        );
+        if let Some(ref sink) = state.event_sink {
+            sink.dispatch_to_chat(
+                &format!("{text}\n[Document was not downloaded: file exceeds the 20 MB limit]"),
+                reply_to,
+                meta,
+            )
+            .await;
+        }
+        return;
+    }
+
+    match download_bounded(client, doc.as_ref()).await {
+        Ok(document_data) => {
+            debug!(
+                account_id,
+                filename,
+                size = document_data.len(),
+                "downloaded WhatsApp document"
+            );
+            if let Some(ref sink) = state.event_sink {
+                meta.documents = save_inbound_file(
+                    sink,
+                    &reply_to,
+                    &document_data,
+                    Some(filename),
+                    &mime,
+                    doc.file_sha256.as_deref(),
+                )
+                .await
+                .map(|document| vec![document]);
+                sink.dispatch_to_chat(&text, reply_to, meta).await;
+            }
+        },
+        Err(DownloadError::TooLarge) => {
+            warn!(
+                account_id,
+                filename,
+                limit = MAX_SAVED_INBOUND_FILE_BYTES,
+                "discarded oversized WhatsApp document"
+            );
+            if let Some(ref sink) = state.event_sink {
+                sink.dispatch_to_chat(
+                    &format!("{text}\n[Document was not saved: file exceeds the 20 MB limit]"),
+                    reply_to,
+                    meta,
+                )
+                .await;
+            }
+        },
+        Err(error) => {
+            warn!(account_id, filename, %error, "failed to download WhatsApp document");
+            if let Some(ref sink) = state.event_sink {
+                sink.dispatch_to_chat(
+                    &format!("{text}\n[Document download failed]"),
+                    reply_to,
+                    meta,
+                )
+                .await;
+            }
+        },
     }
 }
 
@@ -834,12 +918,21 @@ fn context_info_mentions_owner(
     own_lid: Option<&Jid>,
 ) -> bool {
     context.is_some_and(|context| {
-        context.mentioned_jid.iter().any(|mentioned| {
+        let mentioned = context.mentioned_jid.iter().any(|mentioned| {
             mentioned
                 .parse::<Jid>()
                 .ok()
                 .is_some_and(|jid| is_owner_user(&jid, own_pn, own_lid))
-        })
+        });
+        // A reply is the other way to address someone in a group. It sets
+        // `participant` to the quoted message's author and leaves
+        // `mentioned_jid` empty, so checking mentions alone drops every reply.
+        let replied_to = context
+            .participant
+            .as_deref()
+            .and_then(|participant| participant.parse::<Jid>().ok())
+            .is_some_and(|jid| is_owner_user(&jid, own_pn, own_lid));
+        mentioned || replied_to
     })
 }
 
@@ -1167,6 +1260,40 @@ async fn handle_otp_flow(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use {super::*, wacore::types::message::MessageSource};
+
+    fn reply_context(participant: &str) -> wa::ContextInfo {
+        wa::ContextInfo {
+            participant: Some(participant.to_owned()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn reply_to_the_bot_counts_as_a_mention() {
+        let own_pn: Jid = "15551234567@s.whatsapp.net".parse().unwrap();
+        let ctx = reply_context("15551234567@s.whatsapp.net");
+
+        assert!(ctx.mentioned_jid.is_empty(), "a reply carries no mention");
+        assert!(context_info_mentions_owner(Some(&ctx), Some(&own_pn), None));
+    }
+
+    #[test]
+    fn reply_to_anyone_else_does_not() {
+        let own_pn: Jid = "15551234567@s.whatsapp.net".parse().unwrap();
+        let own_lid: Jid = "259557842534599@lid".parse().unwrap();
+
+        for ctx in [
+            reply_context("11111111111@s.whatsapp.net"),
+            reply_context("not a jid"),
+            wa::ContextInfo::default(),
+        ] {
+            assert!(!context_info_mentions_owner(
+                Some(&ctx),
+                Some(&own_pn),
+                Some(&own_lid)
+            ));
+        }
+    }
 
     #[test]
     fn owner_self_chat_detected_without_is_from_me_when_sender_and_chat_are_owner() {

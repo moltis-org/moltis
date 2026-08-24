@@ -16,7 +16,7 @@ use {
 };
 
 use crate::{
-    runtimes::process::build_process_input,
+    runtimes::{env::inject_managed_files_dir, process::build_process_input},
     transport::{ExternalAgentSession, ExternalAgentTransport},
     types::{
         AgentTransportKind, ContextSnapshot, ExternalAgentEvent, ExternalAgentSpec,
@@ -71,6 +71,7 @@ impl ExternalAgentTransport for CodexTransport {
         } else {
             spec.args.clone()
         };
+        let args = args_with_model_and_effort(args, spec.model.as_deref(), spec.effort.as_deref());
         Ok(Box::new(
             CodexAppServerSession::start(
                 binary,
@@ -111,6 +112,7 @@ impl CodexAppServerSession {
             command.current_dir(working_dir);
         }
         command.envs(env);
+        inject_managed_files_dir(&mut command);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
@@ -394,6 +396,78 @@ fn extract_usage(value: &Value) -> Option<crate::types::TokenUsage> {
     })
 }
 
+fn args_with_model_and_effort(
+    mut args: Vec<String>,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> Vec<String> {
+    let insert_at = args.iter().position(|arg| arg == "app-server").unwrap_or(0);
+    let mut inserts = Vec::new();
+    if let Some(model) = model
+        && !has_model_arg(&args)
+    {
+        inserts.extend(["--model".to_string(), model.to_string()]);
+    }
+    if let Some(effort) = effort
+        && !has_effort_arg(&args)
+    {
+        inserts.extend([
+            "-c".to_string(),
+            format!("model_reasoning_effort=\"{effort}\""),
+        ]);
+    }
+    for (offset, arg) in inserts.into_iter().enumerate() {
+        args.insert(insert_at + offset, arg);
+    }
+    args
+}
+
+fn has_model_arg(args: &[String]) -> bool {
+    let mut iter = args.iter().peekable();
+    while let Some(arg) = iter.next() {
+        if matches!(arg.as_str(), "--model" | "-m")
+            || arg.starts_with("--model=")
+            || arg.starts_with("-m=")
+        {
+            return true;
+        }
+        if matches!(arg.as_str(), "--config" | "-c")
+            && iter
+                .peek()
+                .is_some_and(|next| next.trim_start().starts_with("model="))
+        {
+            return true;
+        }
+        if arg
+            .strip_prefix("--config=")
+            .is_some_and(|value| value.trim_start().starts_with("model="))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_effort_arg(args: &[String]) -> bool {
+    let mut iter = args.iter().peekable();
+    while let Some(arg) = iter.next() {
+        if matches!(arg.as_str(), "--config" | "-c")
+            && iter
+                .peek()
+                .is_some_and(|next| next.trim_start().starts_with("model_reasoning_effort="))
+        {
+            return true;
+        }
+        if arg
+            .strip_prefix("--config=")
+            .is_some_and(|value| value.trim_start().starts_with("model_reasoning_effort="))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn token_count_field(value: &Value, fields: &[&str]) -> Option<u32> {
     fields.iter().find_map(|field| {
         value
@@ -457,6 +531,44 @@ mod tests {
         .unwrap_or_default();
         assert_eq!(camel.input_tokens, 34);
         assert_eq!(camel.output_tokens, 55);
+    }
+
+    #[test]
+    fn inserts_model_and_effort_before_app_server_command() {
+        assert_eq!(
+            args_with_model_and_effort(
+                vec!["app-server".to_string()],
+                Some("gpt-5.5"),
+                Some("xhigh")
+            ),
+            vec![
+                "--model",
+                "gpt-5.5",
+                "-c",
+                "model_reasoning_effort=\"xhigh\"",
+                "app-server"
+            ]
+        );
+        assert_eq!(
+            args_with_model_and_effort(
+                vec![
+                    "--model".to_string(),
+                    "configured".to_string(),
+                    "-c".to_string(),
+                    "model_reasoning_effort=\"high\"".to_string(),
+                    "app-server".to_string()
+                ],
+                Some("ignored"),
+                Some("ignored"),
+            ),
+            vec![
+                "--model",
+                "configured",
+                "-c",
+                "model_reasoning_effort=\"high\"",
+                "app-server"
+            ]
+        );
     }
 
     #[tokio::test]
@@ -527,5 +639,48 @@ done
         session.shutdown().await?;
         fs::remove_dir_all(dir)?;
         Ok(())
+    }
+
+    #[test]
+    fn has_model_arg_detects_equals_form() {
+        for arg in ["--model=gpt-4", "-m=gpt-4"] {
+            assert!(has_model_arg(&[arg.to_string()]));
+        }
+    }
+
+    #[test]
+    fn has_model_arg_detects_flag_form() {
+        let args = vec!["--model".to_string(), "gpt-4".to_string()];
+        assert!(has_model_arg(&args));
+    }
+
+    #[test]
+    fn has_model_arg_detects_config_form() {
+        let args = vec!["-c".to_string(), "model=gpt-4".to_string()];
+        assert!(has_model_arg(&args));
+    }
+
+    #[test]
+    fn has_model_arg_false_when_absent() {
+        let args = vec!["--some-flag".to_string()];
+        assert!(!has_model_arg(&args));
+    }
+
+    #[test]
+    fn has_effort_arg_detects_config_form() {
+        let args = vec!["-c".to_string(), "model_reasoning_effort=high".to_string()];
+        assert!(has_effort_arg(&args));
+    }
+
+    #[test]
+    fn has_effort_arg_detects_config_equals_form() {
+        let args = vec!["--config=model_reasoning_effort=high".to_string()];
+        assert!(has_effort_arg(&args));
+    }
+
+    #[test]
+    fn has_effort_arg_false_when_absent() {
+        let args = vec!["--model".to_string()];
+        assert!(!has_effort_arg(&args));
     }
 }

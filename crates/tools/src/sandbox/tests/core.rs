@@ -17,7 +17,7 @@ fn test_sandbox_scope_display() {
 
 #[test]
 fn test_docker_hardening_args_prebuilt() {
-    let args = DockerSandbox::hardening_args(true, BackendKind::Docker);
+    let args = DockerSandbox::hardening_args(true, BackendKind::Docker, false);
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
     assert!(args.contains(&"--security-opt".to_string()));
@@ -50,7 +50,7 @@ fn test_docker_hardening_args_prebuilt() {
 
 #[test]
 fn test_docker_hardening_args_not_prebuilt() {
-    let args = DockerSandbox::hardening_args(false, BackendKind::Docker);
+    let args = DockerSandbox::hardening_args(false, BackendKind::Docker, false);
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
     assert!(args.contains(&"--security-opt".to_string()));
@@ -80,7 +80,7 @@ fn test_docker_hardening_args_not_prebuilt() {
 
 #[test]
 fn test_docker_hardening_args_podman() {
-    let args = DockerSandbox::hardening_args(true, BackendKind::Podman);
+    let args = DockerSandbox::hardening_args(true, BackendKind::Podman, false);
     // Core hardening flags must still be present
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
@@ -104,6 +104,225 @@ fn test_docker_hardening_args_podman() {
     assert!(!args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
     assert!(!args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
     assert!(!args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+}
+
+#[test]
+fn test_podman_nested_hardening_args_are_privileged() {
+    let args = DockerSandbox::hardening_args(true, BackendKind::Podman, true);
+
+    assert!(args.contains(&"--privileged".to_string()));
+    assert!(!args.contains(&"--cap-drop".to_string()));
+    assert!(!args.contains(&"no-new-privileges".to_string()));
+    assert!(!args.contains(&"--read-only".to_string()));
+}
+
+#[test]
+fn test_docker_ignores_nested_podman_hardening_flag() {
+    let args = DockerSandbox::hardening_args(true, BackendKind::Docker, true);
+
+    assert!(!args.contains(&"--privileged".to_string()));
+    assert!(args.contains(&"--cap-drop".to_string()));
+    assert!(args.contains(&"no-new-privileges".to_string()));
+    assert!(args.contains(&"--read-only".to_string()));
+}
+
+#[tokio::test]
+async fn test_podman_socket_args_disabled_by_default() {
+    let sandbox = DockerSandbox::podman(SandboxConfig::default());
+
+    assert!(sandbox.podman_socket_path().await.unwrap().is_none());
+    assert!(DockerSandbox::podman_socket_run_args_for_path(None).is_err());
+}
+
+#[test]
+fn test_podman_socket_run_args_include_matching_env() {
+    let args = DockerSandbox::podman_socket_run_args_for_path(Some(std::path::Path::new(
+        "/run/user/1000/podman/podman.sock",
+    )))
+    .unwrap();
+
+    assert_eq!(args, vec![
+        "-v".to_string(),
+        "/run/user/1000/podman/podman.sock:/tmp/moltis-host-podman.sock:rw".to_string(),
+        "--security-opt".to_string(),
+        "label=disable".to_string(),
+        "-e".to_string(),
+        "CONTAINER_HOST=unix:///tmp/moltis-host-podman.sock".to_string(),
+        "-e".to_string(),
+        "DOCKER_HOST=unix:///tmp/moltis-host-podman.sock".to_string(),
+    ]);
+}
+
+#[test]
+fn test_podman_mode_labels_detect_escape_hatch_transitions() {
+    let hardened = DockerSandbox::podman(SandboxConfig::default())
+        .podman_mode_label_value(None)
+        .unwrap();
+    let nested = DockerSandbox::podman(SandboxConfig {
+        allow_nested_podman: true,
+        ..Default::default()
+    })
+    .podman_mode_label_value(None)
+    .unwrap();
+
+    assert_eq!(hardened, "hardened");
+    assert_eq!(nested, "nested");
+    assert!(DockerSandbox::podman_mode_matches(
+        Some(&hardened),
+        &hardened
+    ));
+    assert!(!DockerSandbox::podman_mode_matches(
+        Some(&nested),
+        &hardened
+    ));
+    assert!(!DockerSandbox::podman_mode_matches(None, &hardened));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_podman_host_mode_changes_when_socket_is_recreated() {
+    use std::os::unix::net::UnixListener;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let socket_path = temp_dir.path().join("podman.sock");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+    let sandbox = DockerSandbox::podman(SandboxConfig {
+        allow_host_podman: true,
+        ..Default::default()
+    });
+    let first = sandbox.podman_mode_label_value(Some(&socket_path)).unwrap();
+
+    drop(listener);
+    std::fs::remove_file(&socket_path).unwrap();
+    let _replacement = UnixListener::bind(&socket_path).unwrap();
+    let second = sandbox.podman_mode_label_value(Some(&socket_path)).unwrap();
+
+    assert_ne!(first, second);
+    assert!(!DockerSandbox::podman_mode_matches(Some(&first), &second));
+    assert_eq!(DockerSandbox::podman_mode_label_args(&second), vec![
+        "--label".to_string(),
+        format!("org.moltis.podman-mode={second}"),
+    ]);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_podman_mode_mismatch_recreates_running_container() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let fake_cli = temp_dir.path().join("fake-podman");
+    let state = temp_dir.path().join("state");
+    let log = temp_dir.path().join("calls");
+    std::fs::write(&state, "running").unwrap();
+    std::fs::write(
+        &fake_cli,
+        format!(
+            "#!/bin/sh\n\
+             printf '%s\\n' \"$*\" >> '{}'\n\
+             if [ \"$1\" = \"inspect\" ]; then\n\
+               case \"$3\" in\n\
+                 *State.Running*) [ \"$(cat '{}')\" = \"running\" ] && printf 'true\\n' || printf 'false\\n' ;;\n\
+                 *Config.Labels*) printf 'nested\\n' ;;\n\
+               esac\n\
+               exit 0\n\
+             fi\n\
+             if [ \"$1\" = \"rm\" ]; then printf 'stopped' > '{}'; exit 0; fi\n\
+             if [ \"$1\" = \"image\" ]; then exit 0; fi\n\
+             if [ \"$1\" = \"run\" ]; then printf 'running' > '{}'; exit 0; fi\n\
+             exit 0\n",
+            log.display(),
+            state.display(),
+            state.display(),
+            state.display(),
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&fake_cli).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_cli, permissions).unwrap();
+
+    let cli: &'static str = Box::leak(fake_cli.display().to_string().into_boxed_str());
+    let sandbox = DockerSandbox::podman_with_cli(
+        SandboxConfig {
+            image: Some("moltis-sandbox:test".to_string()),
+            network: NetworkPolicy::Blocked,
+            workspace_mount: WorkspaceMount::None,
+            home_persistence: HomePersistence::Off,
+            ..Default::default()
+        },
+        cli,
+    );
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "mode-transition".to_string(),
+    };
+
+    sandbox.ensure_ready(&id, None).await.unwrap();
+
+    let calls = std::fs::read_to_string(log).unwrap();
+    assert!(calls.contains("rm -f moltis-sandbox-mode-transition"));
+    assert!(calls.contains("--label org.moltis.podman-mode=hardened"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_podman_socket_validation_requires_live_unix_socket() {
+    use std::os::unix::net::UnixListener;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let socket_path = temp_dir.path().join("podman.sock");
+    let listener = UnixListener::bind(&socket_path).unwrap();
+
+    assert!(DockerSandbox::is_usable_podman_socket(&socket_path).await);
+    assert!(!DockerSandbox::is_usable_podman_socket(temp_dir.path()).await);
+    let regular_file = temp_dir.path().join("regular");
+    std::fs::write(&regular_file, "not a socket").unwrap();
+    assert!(!DockerSandbox::is_usable_podman_socket(&regular_file).await);
+    assert!(!DockerSandbox::is_usable_podman_socket(std::path::Path::new("relative.sock")).await);
+
+    drop(listener);
+    let stale_probe = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        DockerSandbox::is_usable_podman_socket(&socket_path),
+    )
+    .await
+    .unwrap();
+    assert!(!stale_probe);
+}
+
+#[test]
+fn test_podman_rootless_reexec_restricted_detection() {
+    assert!(is_podman_rootless_reexec_restricted(
+        "cannot clone: Operation not permitted\nError: cannot re-exec process"
+    ));
+    assert!(!is_podman_rootless_reexec_restricted(
+        "Error: image not found"
+    ));
+}
+
+#[test]
+fn test_podman_rootless_reexec_error_gets_actionable_context() {
+    let formatted = format_container_run_stderr(
+        BackendKind::Podman,
+        "cannot clone: Operation not permitted\nError: cannot re-exec process",
+    );
+
+    assert!(formatted.contains("NoNewPrivileges=true"));
+    assert!(formatted.contains("Rootless Podman"));
+    assert!(formatted.contains("moltis-podman.conf"));
+    assert!(formatted.contains("allow_host_podman=true"));
+    assert!(formatted.contains("allow_nested_podman=true"));
+}
+
+#[test]
+fn test_docker_run_error_does_not_get_podman_context() {
+    let formatted = format_container_run_stderr(
+        BackendKind::Docker,
+        "cannot clone: Operation not permitted\nError: cannot re-exec process",
+    );
+
+    assert!(!formatted.contains("NoNewPrivileges=true"));
 }
 
 #[test]
@@ -188,8 +407,21 @@ fn test_sandbox_config_serde() {
     let config: SandboxConfig = serde_json::from_str(json).unwrap();
     assert_eq!(config.mode, SandboxMode::All);
     assert_eq!(config.workspace_mount, WorkspaceMount::Rw);
+    assert_eq!(config.managed_files_mount, ManagedFilesMount::Ro);
     assert!(config.no_network);
     assert_eq!(config.resource_limits.memory_limit.as_deref(), Some("1G"));
+}
+
+#[test]
+fn test_runtime_sandbox_config_converts_managed_files_mount() {
+    let config = moltis_config::schema::SandboxConfig {
+        managed_files_mount: moltis_config::schema::ManagedFilesMountConfig::Rw,
+        ..Default::default()
+    };
+
+    let runtime = SandboxConfig::from(&config);
+
+    assert_eq!(runtime.managed_files_mount, ManagedFilesMount::Rw);
 }
 
 #[test]
@@ -269,7 +501,7 @@ fn test_docker_workspace_args_uses_host_data_dir_override() {
 
 #[test]
 fn test_docker_hardening_args_enable_init_reaper() {
-    let args = DockerSandbox::hardening_args(true, BackendKind::Docker);
+    let args = DockerSandbox::hardening_args(true, BackendKind::Docker, false);
     assert!(
         args.contains(&"--init".to_string()),
         "Docker sandboxes must run with an init process so orphaned children are reaped"
@@ -278,7 +510,7 @@ fn test_docker_hardening_args_enable_init_reaper() {
 
 #[test]
 fn test_podman_hardening_args_do_not_require_host_init_binary() {
-    let args = DockerSandbox::hardening_args(true, BackendKind::Podman);
+    let args = DockerSandbox::hardening_args(true, BackendKind::Podman, false);
     assert!(!args.contains(&"--init".to_string()));
 }
 
@@ -290,6 +522,120 @@ fn test_docker_workspace_args_none() {
     };
     let docker = DockerSandbox::new(config);
     assert!(docker.workspace_args().is_empty());
+}
+
+#[test]
+fn test_docker_managed_files_args_ro_with_legacy_override() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    let args = docker.managed_files_args().unwrap();
+    let files_dir = moltis_config::managed_files_dir();
+
+    assert_eq!(args, vec![
+        "-v",
+        &format!("{}:{SANDBOX_FILES_DIR}:ro", files_dir.display()),
+        "-v",
+        &format!("{}:{}:ro", files_dir.display(), files_dir.display()),
+    ]);
+}
+
+#[test]
+fn test_docker_managed_files_args_rw_uses_host_data_dir_override() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let host_data_dir = temp_dir.path().join("host-moltis-data");
+    let docker = DockerSandbox::new(SandboxConfig {
+        managed_files_mount: ManagedFilesMount::Rw,
+        host_data_dir: Some(host_data_dir.clone()),
+        ..Default::default()
+    });
+    let args = docker.managed_files_args().unwrap();
+    let host_files = host_data_dir.join("files");
+
+    assert_eq!(args, vec![
+        "-v",
+        &format!("{}:{SANDBOX_FILES_DIR}:rw", host_files.display()),
+        "-v",
+        &format!(
+            "{}:{}:rw",
+            host_files.display(),
+            moltis_config::managed_files_dir().display()
+        ),
+    ]);
+}
+
+#[test]
+fn test_docker_managed_files_policy_changes_with_source_or_mode() {
+    let first = DockerSandbox::new(SandboxConfig {
+        host_data_dir: Some(PathBuf::from("/host/one")),
+        managed_files_mount: ManagedFilesMount::Ro,
+        ..Default::default()
+    });
+    let changed_source = DockerSandbox::new(SandboxConfig {
+        host_data_dir: Some(PathBuf::from("/host/two")),
+        managed_files_mount: ManagedFilesMount::Ro,
+        ..Default::default()
+    });
+    let changed_mode = DockerSandbox::new(SandboxConfig {
+        host_data_dir: Some(PathBuf::from("/host/one")),
+        managed_files_mount: ManagedFilesMount::Rw,
+        ..Default::default()
+    });
+    let changed_workspace_mount = DockerSandbox::new(SandboxConfig {
+        host_data_dir: Some(PathBuf::from("/host/one")),
+        managed_files_mount: ManagedFilesMount::Ro,
+        workspace_mount: WorkspaceMount::None,
+        ..Default::default()
+    });
+
+    assert_ne!(
+        first.managed_files_policy_fingerprint(),
+        changed_source.managed_files_policy_fingerprint()
+    );
+    assert_ne!(
+        first.managed_files_policy_fingerprint(),
+        changed_mode.managed_files_policy_fingerprint()
+    );
+    assert_ne!(
+        first.managed_files_policy_fingerprint(),
+        changed_workspace_mount.managed_files_policy_fingerprint()
+    );
+    assert!(first.exposes_managed_files());
+    assert!(
+        !DockerSandbox::new(SandboxConfig {
+            managed_files_mount: ManagedFilesMount::None,
+            ..Default::default()
+        })
+        .exposes_managed_files()
+    );
+}
+
+#[test]
+fn test_docker_managed_files_args_none_masks_canonical_and_legacy_paths() {
+    let docker = DockerSandbox::new(SandboxConfig {
+        managed_files_mount: ManagedFilesMount::None,
+        workspace_mount: WorkspaceMount::Rw,
+        ..Default::default()
+    });
+
+    assert_eq!(docker.managed_files_args().unwrap(), vec![
+        "--tmpfs",
+        &format!("{SANDBOX_FILES_DIR}:ro,nosuid,nodev,noexec,size=64k"),
+        "--tmpfs",
+        &format!(
+            "{}:ro,nosuid,nodev,noexec,size=64k",
+            moltis_config::managed_files_dir().display()
+        ),
+    ]);
+}
+
+#[test]
+fn test_docker_managed_files_args_omits_legacy_path_without_workspace_mount() {
+    let docker = DockerSandbox::new(SandboxConfig {
+        managed_files_mount: ManagedFilesMount::Ro,
+        workspace_mount: WorkspaceMount::None,
+        ..Default::default()
+    });
+
+    assert_eq!(docker.managed_files_args().unwrap().len(), 2);
 }
 
 #[test]
@@ -496,6 +842,71 @@ fn test_resolve_workspace_guest_path_on_host_uses_host_override() {
         resolve_workspace_guest_path_on_host(&config, Some("docker"), &guest_file).unwrap();
 
     assert_eq!(resolved, host_data_dir.join("notes/todo.txt"));
+}
+
+#[test]
+fn test_resolve_managed_files_path_precedes_canonical_and_legacy_mappings() {
+    let host_data_dir = PathBuf::from("/host/moltis-data");
+    let config = SandboxConfig {
+        managed_files_mount: ManagedFilesMount::Ro,
+        workspace_mount: WorkspaceMount::Rw,
+        host_data_dir: Some(host_data_dir.clone()),
+        ..Default::default()
+    };
+
+    for guest_file in [
+        PathBuf::from(SANDBOX_FILES_DIR).join("nested/note.txt"),
+        moltis_config::managed_files_dir().join("nested/note.txt"),
+        PathBuf::from("/home/sandbox/other/../files/nested/note.txt"),
+    ] {
+        assert_eq!(
+            resolve_managed_files_guest_path_on_host(&config, Some("docker"), &guest_file),
+            ManagedFilesPath::ReadOnly(host_data_dir.join("files/nested/note.txt"))
+        );
+    }
+}
+
+#[test]
+fn test_resolve_managed_files_path_none_is_unavailable_for_legacy_alias() {
+    let config = SandboxConfig {
+        managed_files_mount: ManagedFilesMount::None,
+        workspace_mount: WorkspaceMount::Rw,
+        ..Default::default()
+    };
+
+    assert_eq!(
+        resolve_managed_files_guest_path_on_host(
+            &config,
+            Some("docker"),
+            &moltis_config::managed_files_dir().join("private.txt"),
+        ),
+        ManagedFilesPath::Unavailable
+    );
+}
+
+#[tokio::test]
+async fn test_docker_managed_files_ro_rejects_canonical_and_legacy_writes() {
+    let docker = DockerSandbox::new(SandboxConfig {
+        managed_files_mount: ManagedFilesMount::Ro,
+        workspace_mount: WorkspaceMount::Rw,
+        ..Default::default()
+    });
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "managed-ro".into(),
+    };
+
+    for guest_file in [
+        PathBuf::from(SANDBOX_FILES_DIR).join("note.txt"),
+        moltis_config::managed_files_dir().join("note.txt"),
+    ] {
+        let payload = docker
+            .write_file(&id, &guest_file.display().to_string(), b"blocked")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(payload["kind"], "permission_denied");
+    }
 }
 
 #[test]

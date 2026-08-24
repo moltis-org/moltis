@@ -22,6 +22,7 @@ Supported agent kinds:
 | `acp-openclaw` | `openclaw acp` | OpenClaw ACP bridge. |
 | `acp-openhands` | `openhands acp` | OpenHands CLI ACP mode. |
 | `acp-kimi` | `kimi acp` | Kimi CLI ACP mode. |
+| `acp-minimax-code` | `mcode acp` | MiniMax Code ACP mode. |
 | `acp-stakpak` | `stakpak acp` | Stakpak ACP mode. |
 | `acp-fast-agent` | `fast-agent-acp` | fast-agent ACP server. |
 
@@ -42,6 +43,7 @@ External agent discovery is enabled by default. On startup, Moltis checks for th
 | `ACP: OpenClaw` | `acp-openclaw` | `openclaw acp` |
 | `ACP: OpenHands` | `acp-openhands` | `openhands acp` |
 | `ACP: Kimi` | `acp-kimi` | `kimi acp` |
+| `ACP: MiniMax Code` | `acp-minimax-code` | `mcode acp` |
 | `ACP: Stakpak` | `acp-stakpak` | `stakpak acp` |
 | `ACP: fast-agent` | `acp-fast-agent` | `fast-agent-acp` |
 
@@ -110,6 +112,10 @@ args = ["acp"]
 binary = "kimi"
 args = ["acp"]
 
+[external_agents.agents.acp-minimax-code]
+binary = "mcode"
+args = ["acp"]
+
 [external_agents.agents.acp-stakpak]
 binary = "stakpak"
 args = ["acp"]
@@ -120,6 +126,8 @@ args = []
 ```
 
 Claude ACP support is not provided by plain `claude`; Moltis detects the separate `claude-agent-acp` adapter binary. Install it from the upstream package/repository and ensure that binary is on the Moltis service `$PATH`, or set `binary = "/absolute/path/to/claude-agent-acp"`.
+
+MiniMax Code is available as the `@minimax-ai/code` npm package. Once its `mcode` binary is on the Moltis service `$PATH`, Moltis detects it automatically and launches `mcode acp` when selected.
 
 Cursor CLI supports ACP with `agent acp`, but Moltis does not auto-detect it because `agent` is a generic executable name that can collide with unrelated tools. Configure Cursor manually with the generic `acp` entry and an absolute `binary` path if you want to use it.
 

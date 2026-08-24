@@ -482,6 +482,12 @@ impl ChannelPlugin for MatrixPlugin {
         Some(&self.outbound)
     }
 
+    fn shared_thread_context(&self) -> Option<Arc<dyn ChannelThreadContext>> {
+        Some(Arc::new(MatrixOutbound {
+            accounts: Arc::clone(&self.accounts),
+        }))
+    }
+
     fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
         Some(self)
     }
@@ -772,9 +778,10 @@ mod tests {
     async fn pending_otp_challenges_are_exposed_via_provider_trait() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let state = test_account_state(cancel).await;
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            map.insert("test".into(), test_account_state(cancel).await);
+            map.insert("test".into(), state);
         }
 
         {
@@ -800,15 +807,15 @@ mod tests {
     async fn probe_exposes_matrix_ownership_details() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let mut state = test_account_state(cancel).await;
+        state.config.ownership_mode = crate::config::MatrixOwnershipMode::MoltisOwned;
+        state.config.password = Some(Secret::new("wordpass".into()));
+        state.config.access_token = Secret::new(String::new());
+        state.config.device_id = Some("MOLTISBOT".into());
+        state.config.device_display_name = Some("Moltis Matrix Bot".into());
+        state.ownership_startup_error = Some("ownership setup failed".into());
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            let mut state = test_account_state(cancel).await;
-            state.config.ownership_mode = crate::config::MatrixOwnershipMode::MoltisOwned;
-            state.config.password = Some(Secret::new("wordpass".into()));
-            state.config.access_token = Secret::new(String::new());
-            state.config.device_id = Some("MOLTISBOT".into());
-            state.config.device_display_name = Some("Moltis Matrix Bot".into());
-            state.ownership_startup_error = Some("ownership setup failed".into());
             map.insert("test".into(), state);
         }
 
@@ -861,9 +868,10 @@ mod tests {
     async fn update_account_config_preserves_otp_state_and_updates_cooldown() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let state = test_account_state(cancel).await;
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            map.insert("test".into(), test_account_state(cancel).await);
+            map.insert("test".into(), state);
         }
 
         {
@@ -945,9 +953,10 @@ mod tests {
     async fn update_account_config_preserves_redacted_access_token_and_identity_fields() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let state = test_account_state(cancel).await;
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            map.insert("test".into(), test_account_state(cancel).await);
+            map.insert("test".into(), state);
         }
 
         if let Err(error) = plugin
@@ -980,12 +989,12 @@ mod tests {
     async fn partial_update_preserves_omitted_fields_instead_of_resetting_defaults() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let mut state = test_account_state(cancel).await;
+        state.config.mention_mode = moltis_channels::gating::MentionMode::Always;
+        state.config.reply_to_message = false;
+        state.config.auto_join = AutoJoinPolicy::Allowlist;
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            let mut state = test_account_state(cancel).await;
-            state.config.mention_mode = moltis_channels::gating::MentionMode::Always;
-            state.config.reply_to_message = false;
-            state.config.auto_join = AutoJoinPolicy::Allowlist;
             map.insert("test".into(), state);
         }
 
@@ -1021,9 +1030,10 @@ mod tests {
     async fn config_update_can_switch_from_access_token_to_password_auth() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let state = test_account_state(cancel).await;
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            map.insert("test".into(), test_account_state(cancel).await);
+            map.insert("test".into(), state);
         }
 
         if let Err(error) = plugin
@@ -1063,11 +1073,11 @@ mod tests {
     async fn redacted_password_update_preserves_existing_password() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let mut state = test_account_state(cancel).await;
+        state.config.access_token = Secret::new(String::new());
+        state.config.password = Some(Secret::new("wordpass".into()));
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            let mut state = test_account_state(cancel).await;
-            state.config.access_token = Secret::new(String::new());
-            state.config.password = Some(Secret::new("wordpass".into()));
             map.insert("test".into(), state);
         }
 
@@ -1106,23 +1116,23 @@ mod tests {
     async fn probe_exposes_matrix_verification_status_details() {
         let plugin = MatrixPlugin::new();
         let cancel = CancellationToken::new();
+        let state = test_account_state(cancel).await;
+        {
+            let mut verification = state
+                .verification
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            verification
+                .prompts
+                .insert("flow-1".into(), VerificationPrompt {
+                    flow_id: "flow-1".into(),
+                    other_user_id: "@alice:example.com".into(),
+                    room_id: Some("!room:example.com".into()),
+                    emoji_lines: vec!["🐶 Dog".into(), "🔥 Fire".into()],
+                });
+        }
         {
             let mut map = plugin.accounts.write().unwrap_or_else(|e| e.into_inner());
-            let state = test_account_state(cancel).await;
-            {
-                let mut verification = state
-                    .verification
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner());
-                verification
-                    .prompts
-                    .insert("flow-1".into(), VerificationPrompt {
-                        flow_id: "flow-1".into(),
-                        other_user_id: "@alice:example.com".into(),
-                        room_id: Some("!room:example.com".into()),
-                        emoji_lines: vec!["🐶 Dog".into(), "🔥 Fire".into()],
-                    });
-            }
             map.insert("test".into(), state);
         }
 

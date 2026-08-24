@@ -279,7 +279,11 @@ jobs:
       - name: Install build dependencies
         if: env.SKIP != 'true'
         run: |
-          sudo apt-get update
+          sudo apt-get update \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            -o APT::Update::Error-Mode=any
           sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config
 
       - name: Run integration tests
@@ -321,7 +325,11 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            -o APT::Update::Error-Mode=any
           sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config
 
       - name: Run provider E2E scenarios
@@ -464,6 +472,10 @@ jobs:
         timeout-minutes: 20
         run: cargo build --bin moltis
 
+      - name: Reclaim Rust build disk for E2E
+        if: env.SKIP != 'true'
+        run: bash ./scripts/cleanup-e2e-build-artifacts.sh
+
       - name: Cache Playwright browsers
         if: env.SKIP != 'true'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -482,6 +494,7 @@ jobs:
         working-directory: crates/web/ui
         env:
           CI: "true"
+          MOLTIS_BINARY: ${{ github.workspace }}/target/e2e-bin/moltis
         run: npx playwright test --project=openai-live e2e/specs/openai-live.spec.js
 
       - name: Upload OpenAI live E2E results
@@ -527,7 +540,11 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            -o APT::Update::Error-Mode=any
           sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config curl zstd
 
       - name: Install Ollama

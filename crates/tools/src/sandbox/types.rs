@@ -41,6 +41,8 @@ pub(crate) fn tail_lines(text: &str, n: usize) -> String {
 
 /// Default container image used when none is configured.
 pub const DEFAULT_SANDBOX_IMAGE: &str = "ubuntu:25.10";
+/// Canonical managed Files path inside local sandboxes.
+pub const SANDBOX_FILES_DIR: &str = "/home/sandbox/files";
 
 /// Sandbox mode controlling when sandboxing is applied.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +137,8 @@ pub enum WorkspaceMount {
     Rw,
 }
 
+pub use moltis_config::schema::ManagedFilesMountConfig as ManagedFilesMount;
+
 impl std::fmt::Display for WorkspaceMount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -196,6 +200,7 @@ pub struct SandboxConfig {
     pub mode: SandboxMode,
     pub scope: SandboxScope,
     pub workspace_mount: WorkspaceMount,
+    pub managed_files_mount: ManagedFilesMount,
     /// Host-visible path for Moltis `data_dir()` when running container-backed
     /// sandboxes from inside another container.
     pub host_data_dir: Option<PathBuf>,
@@ -218,6 +223,10 @@ pub struct SandboxConfig {
     pub resource_limits: ResourceLimits,
     /// GPU device passthrough for Docker/Podman backends (e.g. "all", "device=0").
     pub gpus: Option<String>,
+    /// Mount the host Podman socket into Podman-backed sandboxes.
+    pub allow_host_podman: bool,
+    /// Relax Podman sandbox hardening to support nested Podman.
+    pub allow_nested_podman: bool,
     /// Packages to install via `apt-get` after container creation.
     /// Set to an empty list to skip provisioning.
     pub packages: Vec<String>,
@@ -301,6 +310,7 @@ impl Default for SandboxConfig {
             mode: SandboxMode::default(),
             scope: SandboxScope::default(),
             workspace_mount: WorkspaceMount::default(),
+            managed_files_mount: ManagedFilesMount::default(),
             host_data_dir: None,
             home_persistence: HomePersistence::default(),
             shared_home_dir: None,
@@ -312,6 +322,8 @@ impl Default for SandboxConfig {
             backend: "auto".into(),
             resource_limits: ResourceLimits::default(),
             gpus: None,
+            allow_host_podman: false,
+            allow_nested_podman: false,
             packages: Vec::new(),
             timezone: None,
             wasm_fuel_limit: None,
@@ -367,6 +379,7 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
                 "none" => WorkspaceMount::None,
                 _ => WorkspaceMount::Ro,
             },
+            managed_files_mount: cfg.managed_files_mount,
             host_data_dir: cfg
                 .host_data_dir
                 .as_deref()
@@ -400,6 +413,8 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
                 pids_max: cfg.resource_limits.pids_max,
             },
             gpus: cfg.gpus.clone(),
+            allow_host_podman: cfg.allow_host_podman,
+            allow_nested_podman: cfg.allow_nested_podman,
             packages: cfg.packages.clone(),
             timezone: None, // Set by gateway from user profile
             wasm_fuel_limit: cfg.wasm_fuel_limit,
@@ -525,6 +540,11 @@ pub trait Sandbox: Send + Sync {
         false
     }
 
+    /// Whether commands in this backend can access the managed Files mount.
+    fn exposes_managed_files(&self) -> bool {
+        matches!(self.backend_name(), "docker" | "podman" | "apple-container")
+    }
+
     /// The default workspace/home directory inside this backend.
     ///
     /// Used by workspace sync to determine where to extract files.
@@ -610,7 +630,7 @@ pub(crate) fn canonical_sandbox_packages(packages: &[String]) -> Vec<String> {
 }
 
 pub(crate) const SANDBOX_HOME_DIR: &str = "/home/sandbox";
-pub(crate) const GOGCLI_MODULE_PATH: &str = "github.com/steipete/gogcli/cmd/gog";
+pub(crate) const GOGCLI_MODULE_PATH: &str = "github.com/openclaw/gogcli/cmd/gog";
 pub(crate) const GOGCLI_VERSION: &str = "latest";
 
 /// Additional Go-based CLI tools installed via `go install` in the sandbox image.

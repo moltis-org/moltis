@@ -873,3 +873,131 @@ pub(super) async fn local_privileged_api_during_onboarding_requires_auth() {
         "privileged API must require auth even during onboarding"
     );
 }
+
+// ── Vault unlock/recovery auth tests (GH #1177, CWE-306) ─────────────────────
+
+/// `/api/auth/*` is allowlisted in `is_public_path()`, so the vault unlock
+/// endpoint must enforce auth itself. An unauthenticated POST must be rejected
+/// before the password is ever checked, and the vault must stay sealed.
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+pub(super) async fn vault_unlock_requires_authentication() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let password = generated_password();
+    store.set_initial_password(&password).await.unwrap();
+    let _rk = vault.initialize(&password).await.unwrap();
+    vault.seal().await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/vault/unlock"))
+        .header("Content-Type", "application/json")
+        .body(json_password(&password))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.status(),
+        401,
+        "unauthenticated vault unlock must be rejected"
+    );
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Sealed,
+        "vault must stay sealed for unauthenticated callers"
+    );
+}
+
+/// A stolen recovery key alone must not unseal the vault over the network.
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+pub(super) async fn vault_recovery_requires_authentication() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let password = generated_password();
+    store.set_initial_password(&password).await.unwrap();
+    let recovery_key = vault.initialize(&password).await.unwrap();
+    let phrase = recovery_key.phrase().to_owned();
+    vault.seal().await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/vault/recovery"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({ "recovery_key": phrase }).to_string())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.status(),
+        401,
+        "unauthenticated vault recovery must be rejected"
+    );
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Sealed,
+        "vault must stay sealed for unauthenticated callers"
+    );
+}
+
+/// An authenticated session can still unseal the vault with the password.
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+pub(super) async fn vault_unlock_succeeds_with_session() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let password = generated_password();
+    store.set_initial_password(&password).await.unwrap();
+    let _rk = vault.initialize(&password).await.unwrap();
+    vault.seal().await;
+    let token = store.create_session().await.unwrap();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/vault/unlock"))
+        .header("Content-Type", "application/json")
+        .header("Cookie", format!("moltis_session={token}"))
+        .body(json_password(&password))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true);
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Unsealed
+    );
+}
+
+/// An authenticated session can still unseal the vault with the recovery key.
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+pub(super) async fn vault_recovery_succeeds_with_session() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let password = generated_password();
+    store.set_initial_password(&password).await.unwrap();
+    let recovery_key = vault.initialize(&password).await.unwrap();
+    let phrase = recovery_key.phrase().to_owned();
+    vault.seal().await;
+    let token = store.create_session().await.unwrap();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/vault/recovery"))
+        .header("Content-Type", "application/json")
+        .header("Cookie", format!("moltis_session={token}"))
+        .body(serde_json::json!({ "recovery_key": phrase }).to_string())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true);
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Unsealed
+    );
+}

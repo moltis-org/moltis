@@ -283,8 +283,10 @@ header snippet and passkey migration guidance.
 | Remove passkey | `DELETE /api/auth/passkeys/{id}` | Session |
 | Remove all auth | `POST /api/auth/reset` | Session |
 | Vault status | `GET /api/auth/vault/status` | No |
-| Vault unlock | `POST /api/auth/vault/unlock` | No |
-| Vault recovery | `POST /api/auth/vault/recovery` | No |
+| Vault unlock | `POST /api/auth/vault/unlock` | Session |
+| Vault recovery | `POST /api/auth/vault/recovery` | Session |
+| Vault initialize | `POST /api/auth/vault/initialize` | Session |
+| Vault disable | `POST /api/auth/vault/disable` | Session |
 
 ## Encryption at Rest
 

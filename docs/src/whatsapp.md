@@ -138,6 +138,9 @@ Each WhatsApp account is a named entry under `[channels.whatsapp]`:
 | `group_allowlist` | array | `[]` | Group JIDs allowed for bot responses |
 | `otp_self_approval` | bool | `true` | Allow non-allowlisted users to self-approve via OTP |
 | `otp_cooldown_secs` | int | `300` | Cooldown seconds after 3 failed OTP attempts |
+| `push_name` | string | — | Name this client asserts on WhatsApp, shown to anyone without the number saved. Falls back to `[identity] name`, then `"Moltis"` |
+| `untrusted_audience` | string | `"public"` | Tool audience ceiling for turns outside an operator direct chat: `"public"` or `"trusted"` |
+| `untrusted_tools` | string | `"deny_all"` | Tool name policy for those turns: `"deny_all"`, or `"policy"` to let `[tools.policy]` decide |
 
 ### Full Example
 
@@ -209,7 +212,7 @@ WhatsApp uses the same access control model as Telegram channels.
 | Mode | Behavior |
 |------|----------|
 | `always` | Bot may respond to allowed group messages without an @mention |
-| `mention` | Bot only responds in allowed groups when the account is @mentioned |
+| `mention` | Bot only responds in allowed groups when the account is @mentioned, or when someone replies to one of its messages |
 | `none` | Bot never responds in groups |
 
 ### OTP Self-Approval
@@ -320,6 +323,16 @@ prevent infinite reply loops:
 
 Both checks are automatic — no configuration needed.
 
+## Message Formatting
+
+Outbound replies are converted from common Markdown to WhatsApp's supported
+markup before they are sent. Markdown headings, strong emphasis, strikeout,
+links, code blocks, and simple tables are rendered in a mobile-friendly form;
+plain URLs remain visible so WhatsApp can create link previews.
+
+Formatting conversion applies only to WhatsApp delivery. The original Markdown
+is retained in the Moltis session history and remains unchanged in the web UI.
+
 ## Media Handling
 
 WhatsApp supports rich media messages. Moltis handles each type:
@@ -327,12 +340,19 @@ WhatsApp supports rich media messages. Moltis handles each type:
 | Message Type | Handling |
 |--------------|----------|
 | **Text** | Dispatched directly to the LLM |
-| **Image** | Downloaded, optimized for LLM consumption (resized if needed), sent as attachment |
+| **Image** | Downloaded, saved in session media up to 20 MB for local tools, optimized for LLM consumption (resized if needed), sent as attachment |
 | **Voice** | Downloaded and transcribed via STT (if configured); falls back to text guidance |
 | **Audio** | Same as voice, but classified separately (non-PTT audio files) |
 | **Video** | Thumbnail extracted and sent as image attachment with caption |
-| **Document** | Caption and filename/MIME metadata dispatched as text |
+| **Document** | Downloaded up to 20 MB, saved in session media for local tools, and filename/MIME metadata dispatched as text |
 | **Location** | Resolves pending location tool requests, or dispatches coordinates to LLM |
+
+The 20 MB limit for saved images and documents is enforced *while streaming*, so
+a sender who understates the file size in the message metadata cannot make Moltis
+buffer an oversized payload — the download aborts as soon as the limit is crossed.
+Sender-supplied MIME types are normalized to a bare `type/subtype` before they are
+stored or shown to the agent. Download and persistence failures are reported in the
+conversation rather than handing the agent a path that does not exist.
 
 ```admonish info title="Voice Transcription"
 Voice message transcription requires an STT provider to be configured.

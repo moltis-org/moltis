@@ -38,6 +38,7 @@ port = {port}                           # Port number (auto-generated for this i
 # bind = "127.0.0.1"                # Address to bind to ("0.0.0.0" for all interfaces)
 # http_request_logs = false              # Enable verbose Axum HTTP request/response logs (debugging)
 # ws_request_logs = false                # Enable WebSocket RPC request/response logs (debugging)
+# rpc_timeout_ms = 5000                  # Web UI WebSocket RPC reply timeout (milliseconds)
 # terminal_enabled = true                # Enable interactive host terminal in Settings > Terminal
                                          # Set to false to disable the unsandboxed shell in the web UI.
                                          # NOTE: this can be re-enabled via the web UI config editor.
@@ -214,7 +215,7 @@ port = {port}                           # Port number (auto-generated for this i
 # [providers.fireworks]
 # enabled = true
 # api_key = "..."                             # Or set FIREWORKS_API_KEY env var
-# models = ["accounts/fireworks/models/kimi-k2p5"]
+# models = ["accounts/fireworks/models/kimi-k2p6"]
 # fetch_models = true                          # Set false to skip remote discovery
 # base_url = "https://api.fireworks.ai/inference/v1"
 # alias = "fireworks"
@@ -450,14 +451,18 @@ port = {port}                           # Port number (auto-generated for this i
 # mode = "all"                      # "off" | "non-main" | "all" (recommended)
 # scope = "session"                 # "command" | "session" (recommended) | "global"
 # workspace_mount = "ro"            # "ro" | "rw" | "none"
+# managed_files_mount = "ro"        # Managed Files: "ro" | "rw" | "none"
 # home_persistence = "shared"       # "off" | "session" | "shared"
-# backend = "auto"                  # "auto" | "docker" | "apple-container" | "vercel" | "daytona" | "coder"
+# backend = "auto"                  # "auto" | "docker" | "podman" | "apple-container" | "restricted-host" | "wasm" | "vercel" | "daytona" | "coder"
 # no_network = true                 # Disable network access in sandbox
 # image = "custom-image:tag"        # Custom Docker image (default: auto-built)
 # packages = [...]                  # Packages installed in sandbox containers
 # host_data_dir = "/host/moltis-data" # Host path for Moltis data when running Moltis inside Docker
 # gpus = "all"                      # GPU passthrough: "all", "device=0", "device=0,1"
                                     # (Docker/Podman only, ignored for other backends)
+# allow_host_podman = false         # DANGEROUS, Linux only: host API removes sandbox boundary
+# allow_nested_podman = false       # DANGEROUS: privileged nested Podman sandbox
+                                    # Both require backend = "podman" and are mutually exclusive
 
 # Remote Coder workspaces. Preset values may be Coder preset names or UUIDs.
 # coder_url = "https://coder.example.com"
@@ -533,11 +538,15 @@ port = {port}                           # Port number (auto-generated for this i
 # device_scale_factor = 2.0         # HiDPI/Retina scaling
 # max_instances = 3                 # Maximum concurrent browser instances
 # idle_timeout_secs = 300           # Close idle browsers after this many seconds
-# sandbox = false                   # Run browser in container for isolation
 # allowed_domains = []              # Domain restrictions (empty = all allowed)
 # chrome_path = "/path/to/chrome"   # Custom Chrome binary path
 # obscura_path = "/path/to/obscura" # Custom Obscura binary path for browser = "obscura"
+# obscura_stealth = true             # Pass --stealth (full TLS mode needs a stealth build)
 # lightpanda_path = "/path/to/lightpanda" # Custom Lightpanda binary path for browser = "lightpanda"
+# sandbox_image = "docker.io/browserless/chrome" # Default Browserless v1 image
+# browserless_api_version = "v1"    # Must match the Browserless image API
+# Browserless v2 example: set sandbox_image = "ghcr.io/browserless/chromium:v2.56.0"
+# and browserless_api_version = "v2" together.
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SKILLS
@@ -735,8 +744,11 @@ port = {port}                           # Port number (auto-generated for this i
 # [memory]
 # style = "hybrid"                  # "hybrid" | "prompt-only" | "search-only" | "off"
 # agent_write_mode = "hybrid"       # "hybrid" | "prompt-only" | "search-only" | "off"
-# backend = "builtin"               # "builtin" | "qmd"
+# backend = "builtin"               # "builtin" | "qmd" | "zvec"
 # provider = "auto"                 # "local" | "ollama" | "openai" | "custom"
+# db_path = "memory.zvec"           # Zvec collection directory (only when backend = "zvec")
+# vector_weight = 0.7               # Weight for vector similarity in hybrid search
+# keyword_weight = 0.3              # Weight for keyword/FTS similarity in hybrid search
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PHONE (Telephony Providers)
@@ -781,6 +793,8 @@ port = {port}                           # Port number (auto-generated for this i
 # [external_agents.agents.claude-code]
 # binary = "claude"                 # Override binary path (default: look up on $PATH)
 # args = ["-p", "--output-format", "json"]
+# models = ["claude-opus-4-8", "claude-sonnet-4-6"] # Optional model choices shown in /model
+# efforts = ["high", "xhigh"]       # Optional effort choices shown in /model
 # working_dir = "."                 # Override working directory
 # timeout_secs = 300                # Session timeout
 # use_tmux = false                  # Force tmux backend (vs direct PTY)
@@ -790,6 +804,8 @@ port = {port}                           # Port number (auto-generated for this i
 # [external_agents.agents.codex]
 # binary = "codex"
 # args = ["app-server"]
+# models = ["gpt-5.5", "gpt-5.4"]
+# efforts = ["medium", "high", "xhigh"]
 
 # Generic manual ACP server for advanced/custom CLIs not listed below.
 # If Moltis is missing a named default for an ACP agent, check the official
@@ -848,6 +864,10 @@ port = {port}                           # Port number (auto-generated for this i
 # binary = "kimi"
 # args = ["acp"]
 
+# [external_agents.agents.acp-minimax-code]
+# binary = "mcode"
+# args = ["acp"]
+
 # [external_agents.agents.acp-stakpak]
 # binary = "stakpak"
 # args = ["acp"]
@@ -876,6 +896,12 @@ port = {port}                           # Port number (auto-generated for this i
 # [channels]
 # offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]
 
+# Example WhatsApp account. Pair the account by scanning the QR code after startup.
+# [channels.whatsapp.my-bot]
+# push_name = "Moltis"        # Falls back to [identity] name, then "Moltis".
+# dm_policy = "allowlist"
+# allowlist = []
+
 # Example Slack account. api_base_url defaults to Slack; set it only for
 # Slack-compatible proxies, mock servers, or gateways.
 # [channels.slack.my-bot]
@@ -886,6 +912,7 @@ port = {port}                           # Port number (auto-generated for this i
 # allowlist = []
 # operators = []             # Exact sender IDs allowed to run privileged commands; empty means nobody.
 # thread_replies = true
+# stream_mode = "edit_in_place" # use "native" for Slack live text and tool task cards
 # ack_reactions = true       # 👀 on receipt, phase emoji while working, ✅/❌ on completion
 # reaction_triggers = false  # route user reactions into the agent (react ✅ to approve)
 # rich_blocks = false        # render replies as Block Kit blocks (fallback to plain text)

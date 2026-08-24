@@ -147,6 +147,10 @@ compute_stripe_signature() {
 # ── Send ────────────────────────────────────────────────────────────────
 
 send_webhook() {
+  # extra_headers stays empty for `stripe` without --secret, so both expansions
+  # below need the `"${arr[@]+...}"` guard: bash 3.2 (the default /bin/bash on
+  # macOS) treats a plain `"${arr[@]}"` on an empty array as an unbound variable
+  # under `set -u`.
   local profile="$1" payload="$2" extra_headers=()
 
   echo "────────────────────────────────────────────"
@@ -202,7 +206,7 @@ send_webhook() {
   echo ""
 
   echo "Request headers:"
-  for h in "${extra_headers[@]}"; do
+  for h in "${extra_headers[@]+"${extra_headers[@]}"}"; do
     echo "  $h"
   done
   echo ""
@@ -213,7 +217,7 @@ send_webhook() {
   response=$(curl -sk -w "\n__HTTP_CODE__%{http_code}" \
     -X POST "$URL" \
     -H "Content-Type: application/json" \
-    "${extra_headers[@]}" \
+    "${extra_headers[@]+"${extra_headers[@]}"}" \
     -d "$payload" 2>&1)
 
   http_code="${response##*__HTTP_CODE__}"

@@ -221,6 +221,7 @@ fn build_api_routes() -> Router<AppState> {
             get(api::api_session_media_handler),
         )
         .route("/api/logs/download", get(api::api_logs_download_handler))
+        .nest("/api/files", moltis_httpd::files_routes::files_router())
         .nest("/api/data", moltis_httpd::data_routes::data_router());
 
     // Add metrics API routes (protected).

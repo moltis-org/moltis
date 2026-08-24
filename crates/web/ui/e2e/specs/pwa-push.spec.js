@@ -3,6 +3,9 @@ const { navigateAndWait, watchPageErrors } = require("../helpers");
 
 async function getActiveWorker(page, context) {
 	await navigateAndWait(page, "/chats");
+	await page.evaluate(async () => {
+		await navigator.serviceWorker.ready;
+	});
 	await expect.poll(() => context.serviceWorkers().length).toBeGreaterThan(0);
 	return context.serviceWorkers()[0];
 }
@@ -886,7 +889,7 @@ test.describe("push settings", () => {
 		await navigateAndWait(page, "/settings/notifications");
 
 		await page.getByRole("button", { name: "Enable push notifications" }).click();
-		await expect(page.getByRole("alert")).toContainText("Server rejected subscription (500)");
+		await expect(page.getByText("Server rejected subscription (500)", { exact: true })).toBeVisible();
 		await expect.poll(() => readPushMarker(page)).toEqual({ revive: true });
 		await page.evaluate(() => window.dispatchEvent(new Event("focus")));
 		await expect
@@ -1007,9 +1010,11 @@ test.describe("push settings", () => {
 		requests.length = 0;
 		await page.evaluate(async () => {
 			localStorage.setItem("moltis-push-enabled", "1");
-			const cache = await caches.open("moltis-state");
-			await cache.put("/__moltis__/push-disabled", new Response("1"));
-			await cache.delete("/__moltis__/push-enabled");
+			await navigator.locks.request("moltis-push-state", async () => {
+				const cache = await caches.open("moltis-state");
+				await cache.put("/__moltis__/push-disabled", new Response("1"));
+				await cache.delete("/__moltis__/push-enabled");
+			});
 		});
 
 		await page.reload();

@@ -129,6 +129,7 @@ const READ_METHODS: &[&str] = &[
     "graphql.config.get",
     "memory.status",
     "memory.config.get",
+    "memory.search",
     "memory.qmd.status",
     "hooks.list",
     "network.audit.list",
@@ -140,6 +141,18 @@ const READ_METHODS: &[&str] = &[
     "openclaw.scan",
     "system.describe",
     "voicecall.status",
+    #[cfg(feature = "connectors")]
+    "connectors.available",
+    #[cfg(feature = "connectors")]
+    "connectors.accounts.list",
+    #[cfg(feature = "connectors")]
+    "connectors.channel_sources.list",
+    #[cfg(feature = "connectors")]
+    "connectors.datasets.list",
+    #[cfg(feature = "connectors")]
+    "connectors.runs.list",
+    #[cfg(feature = "connectors")]
+    "connectors.items.query",
     #[cfg(feature = "telephony")]
     "phone.providers.all",
 ];
@@ -297,6 +310,10 @@ const WRITE_METHODS: &[&str] = &[
     "unsubscribe",
     "channel.join",
     "channel.leave",
+    #[cfg(feature = "connectors")]
+    "connectors.accounts.remove",
+    #[cfg(feature = "connectors")]
+    "connectors.datasets.remove",
 ];
 
 const APPROVAL_METHODS: &[&str] = &["exec.approval.request", "exec.approval.resolve"];
@@ -519,6 +536,56 @@ mod tests {
         assert!(
             authorize_method("feedback.submit", "operator", &scopes(&["operator.write"])).is_none()
         );
+    }
+
+    #[cfg(feature = "connectors")]
+    #[test]
+    fn connector_methods_use_read_and_write_scopes() {
+        for method in [
+            "connectors.available",
+            "connectors.accounts.list",
+            "connectors.channel_sources.list",
+            "connectors.datasets.list",
+            "connectors.runs.list",
+            "connectors.items.query",
+        ] {
+            assert!(
+                authorize_method(method, "operator", &scopes(&["operator.read"])).is_none(),
+                "read scope should authorize {method}"
+            );
+            assert_error_code(
+                authorize_method(method, "operator", &scopes(&[])),
+                "UNAUTHORIZED",
+            );
+        }
+        for method in ["connectors.accounts.remove", "connectors.datasets.remove"] {
+            assert!(
+                authorize_method(method, "operator", &scopes(&["operator.write"])).is_none(),
+                "write scope should authorize {method}"
+            );
+            assert_error_code(
+                authorize_method(method, "operator", &scopes(&["operator.read"])),
+                "UNAUTHORIZED",
+            );
+        }
+        for method in [
+            "connectors.accounts.add",
+            "connectors.accounts.update",
+            "connectors.accounts.test",
+            "connectors.datasets.compile",
+            "connectors.datasets.add",
+            "connectors.datasets.update",
+            "connectors.datasets.sync",
+        ] {
+            assert_error_code(
+                authorize_method(method, "operator", &scopes(&["operator.write"])),
+                "UNAUTHORIZED",
+            );
+            assert!(
+                authorize_method(method, "operator", &scopes(&["operator.admin"])).is_none(),
+                "admin scope should authorize network-capable method {method}"
+            );
+        }
     }
 
     #[test]

@@ -757,6 +757,15 @@ mod tests {
         ))
         .unwrap_or_default();
 
+        assert!(manifest_includes_feature(&cli_manifest, "default", "full"));
+        assert!(manifest_includes_feature(&cli_manifest, "full", "portable"));
+        assert!(manifest_includes_feature(&cli_manifest, "full", "zvec"));
+        assert!(!manifest_includes_feature(
+            &cli_manifest,
+            "portable",
+            "zvec"
+        ));
+
         for provider_feature in [
             "provider-github-copilot",
             "provider-kimi-code",
@@ -764,7 +773,7 @@ mod tests {
         ] {
             assert!(manifest_includes_feature(
                 &cli_manifest,
-                "full",
+                "portable",
                 provider_feature
             ));
             assert!(manifest_includes_feature(

@@ -13,7 +13,15 @@ default = [
   "provider-kimi-code",
   "provider-openai-codex",
 ]
-local-llm = ["dep:directories", "dep:encoding_rs", "dep:llama-cpp-2", "dep:sysinfo"]
+local-llm = [
+  "dep:cap-fs-ext",
+  "dep:cap-std",
+  "dep:directories",
+  "dep:encoding_rs",
+  "dep:llama-cpp-2",
+  "dep:sysinfo",
+  "dep:uuid",
+]
 local-llm-cuda = ["llama-cpp-2/cuda", "local-llm"]
 local-llm-metal = ["llama-cpp-2/metal", "local-llm"]
 local-llm-vulkan = ["llama-cpp-2/vulkan", "local-llm"]
@@ -48,6 +56,8 @@ tracing           = { workspace = true }
 # Optional LLM provider crates
 async-openai   = { optional = true, workspace = true }
 base64         = { optional = true, workspace = true }
+cap-fs-ext     = { optional = true, workspace = true }
+cap-std        = { optional = true, workspace = true }
 directories    = { optional = true, workspace = true }
 encoding_rs    = { optional = true, workspace = true }
 genai          = { optional = true, workspace = true }
@@ -55,6 +65,7 @@ llama-cpp-2    = { optional = true, workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 moltis-oauth   = { optional = true, workspace = true }
 sysinfo        = { optional = true, workspace = true }
+uuid           = { optional = true, workspace = true }
 
 [dev-dependencies]
 axum     = { workspace = true }

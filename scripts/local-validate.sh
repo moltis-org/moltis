@@ -7,11 +7,15 @@ CURRENT_PID=""
 RUN_CHECK_ASYNC_PID=""
 STATUS_PUBLISH_ENABLED=1
 
+# `"${arr[@]+"${arr[@]}"}"` is required throughout this script: bash 3.2 (the
+# default /bin/bash on macOS) treats a plain `"${arr[@]}"` on an empty array as
+# an unbound variable under `set -u`. ACTIVE_PIDS is empty before the first
+# async check starts and again after the last one is reaped.
 remove_active_pid() {
   local target="$1"
   local -a kept=()
   local pid
-  for pid in "${ACTIVE_PIDS[@]}"; do
+  for pid in "${ACTIVE_PIDS[@]+"${ACTIVE_PIDS[@]}"}"; do
     if [[ "$pid" != "$target" ]]; then
       kept+=("$pid")
     fi
@@ -31,7 +35,7 @@ handle_interrupt() {
   fi
 
   local pid
-  for pid in "${ACTIVE_PIDS[@]}"; do
+  for pid in "${ACTIVE_PIDS[@]+"${ACTIVE_PIDS[@]}"}"; do
     kill -TERM "$pid" 2>/dev/null || true
   done
 
@@ -41,7 +45,7 @@ handle_interrupt() {
     kill -KILL "$CURRENT_PID" 2>/dev/null || true
   fi
 
-  for pid in "${ACTIVE_PIDS[@]}"; do
+  for pid in "${ACTIVE_PIDS[@]+"${ACTIVE_PIDS[@]}"}"; do
     kill -KILL "$pid" 2>/dev/null || true
   done
 
@@ -196,7 +200,7 @@ e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ];
 ollama_qwen_e2e_cmd="${LOCAL_VALIDATE_OLLAMA_QWEN_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && MOLTIS_E2E_OLLAMA_QWEN_LIVE=1 npx playwright test --project=ollama-qwen-live e2e/specs/ollama-qwen-live.spec.js}"
 coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo +${nightly_toolchain} llvm-cov --workspace --all-features --html}"
 macos_app_cmd="${LOCAL_VALIDATE_MACOS_APP_CMD:-./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination \"platform=macOS\" -derivedDataPath apps/macos/.derivedData-local-validate CODE_SIGNING_ALLOWED=NO build}"
-ios_app_cmd="${LOCAL_VALIDATE_IOS_APP_CMD:-cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-project.sh && ./scripts/generate-ios-graphql.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination \"generic/platform=iOS\" CODE_SIGNING_ALLOWED=NO build}"
+ios_app_cmd="${LOCAL_VALIDATE_IOS_APP_CMD:-cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-project.sh && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination \"generic/platform=iOS\" CODE_SIGNING_ALLOWED=NO build}"
 build_cmd="${LOCAL_VALIDATE_BUILD_CMD:-cargo +${nightly_toolchain} build --workspace --all-features --all-targets}"
 
 strip_all_features_flag() {
@@ -319,6 +323,18 @@ build_targeted_rust_test_cmd() {
       # Nested source test modules do not map to Cargo --test targets, and a
       # basename such as `mod` is not a reliable nextest filter.
       commands+=("$base_cmd")
+    elif [[ "$(basename "$file")" =~ ^(lib|main|mod)\.rs$ ]] \
+      && grep -Eq '#\[(tokio::)?test\]' "$file" 2>/dev/null; then
+      # Crate and module roots name their tests after inline modules rather
+      # than the source filename, so a filename filter can select zero tests.
+      commands+=("$base_cmd")
+    elif [[ "$(basename "$file")" == *_tests.rs ]]; then
+      # Sibling test files are commonly wired under their production module,
+      # e.g. connectors_tests.rs becomes connectors::tests rather than a
+      # connectors_tests module.
+      local filter_name
+      filter_name="$(basename "$file" _tests.rs)"
+      commands+=("$base_cmd $filter_name")
     elif grep -Eq '#\[(tokio::)?test\]' "$file" 2>/dev/null; then
       local filter_name
       filter_name="$(basename "$file" .rs)"

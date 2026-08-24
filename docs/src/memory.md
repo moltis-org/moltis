@@ -8,20 +8,20 @@ state, long-term memory files, and sandbox persistence, start with
 
 ## Backends
 
-Moltis supports two memory backends:
+Moltis supports three memory backends:
 
-| Feature | Built-in | QMD |
-|---------|----------|-----|
-| **Search Type** | Hybrid (vector + FTS5 keyword) | Hybrid (BM25 + vector + LLM reranking) |
-| **Local Embeddings** | GGUF models via llama-cpp-2 | GGUF models |
-| **Remote Embeddings** | OpenAI, Ollama, custom endpoints | Built-in |
-| **Embedding Cache** | SQLite with LRU eviction | Built-in |
-| **Batch API** | OpenAI batch (50% cost saving) | No |
-| **Circuit Breaker** | Fallback chain with auto-recovery | No |
-| **LLM Reranking** | Optional (configurable) | Built-in with `query` command |
-| **File Watching** | Real-time sync via notify | Built-in |
-| **External Dependency** | None (pure Rust) | Requires QMD binary (Node.js/Bun) |
-| **Offline Support** | Yes (with local embeddings) | Yes |
+| Feature | Built-in | Zvec | QMD |
+|---------|----------|------|-----|
+| **Search Type** | Hybrid (vector + FTS5 keyword) | Hybrid (HNSW vector + native FTS keyword) | Hybrid (BM25 + vector + LLM reranking) |
+| **Local Embeddings** | GGUF models via llama-cpp-2 | GGUF models via llama-cpp-2 | GGUF models |
+| **Remote Embeddings** | OpenAI, Ollama, custom endpoints | OpenAI, Ollama, custom endpoints | Built-in |
+| **Embedding Cache** | SQLite with LRU eviction | Redb persistent K-V store | Built-in |
+| **Batch API** | OpenAI batch (50% cost saving) | No | No |
+| **Circuit Breaker** | Fallback chain with auto-recovery | Fallback chain with auto-recovery | No |
+| **LLM Reranking** | Optional (configurable) | Optional (configurable) | Built-in with `query` command |
+| **File Watching** | Real-time sync via notify | Real-time sync via notify | Built-in |
+| **External Dependency** | None (pure Rust) | Requires zvec C library (v0.5.0) | Requires QMD binary (Node.js/Bun) |
+| **Offline Support** | Yes (with local embeddings) | Yes (with local embeddings) | Yes |
 
 ### Built-in Backend
 
@@ -47,6 +47,63 @@ To use QMD:
 
 Moltis invokes the `qmd` CLI directly for indexing and search, so the memory
 backend does not require a separate background daemon.
+
+### Zvec Backend
+
+Zvec is a native vector database backend that uses HNSW indexing for vector
+similarity and native FTS for keyword search. It replaces SQLite as the storage
+layer while keeping the same embedding provider chain, LLM reranking, and file
+watching pipeline as the built-in backend.
+
+**When to use zvec:**
+- You have a large memory corpus and need faster vector search than brute-force
+- You want persistent, zero-copy vector storage (collection directory on disk)
+- You are comfortable building the zvec C library from source
+
+**When to stick with built-in (SQLite):**
+- You prefer a pure-Rust build with no C library dependencies
+- Your memory corpus is small enough that brute-force search is fast
+- You want the simplest possible setup with zero external build steps
+
+**Setup:**
+
+The Docker image and default source build include zvec. Standalone release
+packages use the self-contained `portable` feature set and currently omit zvec
+because its native runtime is not available for every supported target.
+
+1. Build moltis with the `zvec` feature flag:
+   ```bash
+   cargo build --release --features zvec
+   ```
+
+2. Configure the backend in `moltis.toml`:
+   ```toml
+   [memory]
+   backend = "zvec"
+   db_path = "memory.zvec"     # collection directory (created if it doesn't exist)
+   vector_weight = 0.7         # optional, default 0.7
+   keyword_weight = 0.3        # optional, default 0.3
+   search_merge_strategy = "rrf"   # "rrf" or "linear"
+   ```
+
+3. The zvec C library is built automatically from source by the `zvec-sys`
+   crate's Cargo build script when you compile moltis with the `zvec` feature.
+
+
+The `db_path` is resolved relative to Moltis' data directory
+(`~/.moltis/memory.zvec`). The directory is created on first run with the
+collection schema (chunk fields, FTS index, HNSW vector index with 768
+dimensions).
+
+**Required sidecar file:** zvec also creates a redb database next to the
+collection directory at `<db_path>.cache` (e.g. `memory.zvec.cache`). This file
+is **not a disposable cache** — it stores the embedding cache, the file
+metadata index, and the per-path chunk index that `list_files`,
+`get_file`, and `get_chunks_for_file` rely on. Treat the collection directory
+*and* the `.cache` file as a unit: back them up together, and do not delete the
+`.cache` file. If it is removed, the vectors remain in the collection but the
+backend can no longer enumerate files or look up chunks by path until you
+re-index.
 
 ## Features
 
@@ -205,6 +262,7 @@ Common combinations:
 | Disable agent memory writes | `agent_write_mode = "off"` |
 | Keep `USER.md` from silent enrichment | `user_profile_write_mode = "explicit-only"` |
 | Keep user profile only in config | `user_profile_write_mode = "off"` |
+| Zvec backend experiment | `backend = "zvec"`, `db_path = "memory.zvec"` |
 | QMD backend experiment | `backend = "qmd"` |
 
 ## Embedding Providers
@@ -213,7 +271,7 @@ The built-in backend supports multiple embedding providers:
 
 | Provider | Model | Dimensions | Notes |
 |----------|-------|------------|-------|
-| Local (GGUF) | EmbeddingGemma-300M | 768 | Offline, ~300MB download |
+| Local (GGUF) | EmbeddingGemma-300M | 768 | Offline, ~300MB download, 2048-token context |
 | Ollama | nomic-embed-text | 768 | Requires Ollama running |
 | OpenAI | text-embedding-3-small | 1536 | Requires API key |
 | Custom | Configurable | Varies | OpenAI-compatible endpoint |
@@ -222,6 +280,11 @@ The system auto-detects available providers and creates a fallback chain:
 1. Try configured provider first
 2. Fall back to other available providers if it fails
 3. Use keyword-only search if no embedding provider is available
+
+The local provider reads the context capacity from the GGUF model and sizes a
+single encoder batch for each input. Inputs longer than the model context are
+truncated at the token boundary so an oversized line or query cannot terminate
+the Moltis process.
 
 ## Memory Directories
 
@@ -470,6 +533,15 @@ systems.
 1. Check that memory files exist in the expected directories
 2. Trigger a manual sync by restarting moltis
 3. Check logs for sync errors
+
+### Zvec not available
+
+1. Ensure moltis was built with `--features zvec`
+2. Verify the zvec C library built successfully (check for `libzvec_c_api.so` /
+   `libzvec_c_api.dylib` / `zvec_c_api.dll` in the build output)
+3. Check that `db_path` points to a writable directory
+4. If the collection directory already exists but is corrupted, delete it and
+   restart — moltis will recreate it on the next run
 
 ### QMD not available
 

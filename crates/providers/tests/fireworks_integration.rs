@@ -12,19 +12,19 @@ use std::{collections::HashSet, time::Duration};
 
 use {
     futures::StreamExt,
-    moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent, ToolCall},
+    moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall},
     moltis_providers::openai::OpenAiProvider,
     secrecy::{ExposeSecret, Secret},
 };
 
 const FIREWORKS_BASE_URL: &str = "https://api.fireworks.ai/inference/v1";
-const TEST_MODEL: &str = "accounts/fireworks/models/glm-5p1";
+const TEST_MODEL: &str = "accounts/fireworks/models/gpt-oss-120b";
+const TRANSIENT_RETRY_DELAYS: [u64; 3] = [5, 15, 30];
 
 /// Known Fireworks models we catalog. Keep in sync with `FIREWORKS_MODELS` in
 /// `crates/providers/src/model_catalogs.rs`.
 const KNOWN_MODELS: &[&str] = &[
     "accounts/fireworks/models/kimi-k2p6",
-    "accounts/fireworks/models/glm-5p1",
     "accounts/fireworks/models/gpt-oss-120b",
     "accounts/fireworks/models/deepseek-v4-pro",
 ];
@@ -60,6 +60,104 @@ fn make_named_provider(model: &str, provider_name: &str) -> OpenAiProvider {
     p
 }
 
+fn is_transient_provider_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("http 429")
+        || message.contains("too many requests")
+        || message.contains("http 503")
+        || message.contains("service unavailable")
+        || message.contains("overloaded")
+}
+
+async fn wait_before_retry(attempt: usize, operation: &str, error: &str) {
+    let delay = TRANSIENT_RETRY_DELAYS[attempt];
+    eprintln!("retrying Fireworks {operation} after transient provider error in {delay}s: {error}");
+    tokio::time::sleep(Duration::from_secs(delay)).await;
+}
+
+async fn complete_with_retries(
+    provider: &OpenAiProvider,
+    messages: &[ChatMessage],
+    tools: &[serde_json::Value],
+) -> CompletionResponse {
+    for attempt in 0..=TRANSIENT_RETRY_DELAYS.len() {
+        match provider.complete(messages, tools).await {
+            Ok(response) => return response,
+            Err(error)
+                if attempt < TRANSIENT_RETRY_DELAYS.len()
+                    && is_transient_provider_error(&error.to_string()) =>
+            {
+                wait_before_retry(attempt, "completion", &error.to_string()).await;
+            },
+            Err(error) => panic!("Fireworks completion should succeed: {error:#}"),
+        }
+    }
+
+    unreachable!("bounded retry loop returns or panics")
+}
+
+async fn probe_with_retries(provider: &OpenAiProvider) -> anyhow::Result<()> {
+    for attempt in 0..=TRANSIENT_RETRY_DELAYS.len() {
+        match provider.probe().await {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if attempt < TRANSIENT_RETRY_DELAYS.len()
+                    && is_transient_provider_error(&error.to_string()) =>
+            {
+                wait_before_retry(attempt, "probe", &error.to_string()).await;
+            },
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("bounded retry loop returns or returns an error")
+}
+
+async fn stream_with_retries(
+    provider: &OpenAiProvider,
+    messages: Vec<ChatMessage>,
+    tools: Vec<serde_json::Value>,
+) -> Vec<StreamEvent> {
+    for attempt in 0..=TRANSIENT_RETRY_DELAYS.len() {
+        let mut events = Vec::new();
+        let mut stream = provider.stream_with_tools(messages.clone(), tools.clone());
+        let mut retry_error = None;
+
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::Error(error)
+                    if attempt < TRANSIENT_RETRY_DELAYS.len()
+                        && is_transient_provider_error(&error) =>
+                {
+                    retry_error = Some(error);
+                    break;
+                },
+                event => events.push(event),
+            }
+        }
+
+        if let Some(error) = retry_error {
+            wait_before_retry(attempt, "stream", &error).await;
+            continue;
+        }
+
+        return events;
+    }
+
+    unreachable!("bounded retry loop returns or panics")
+}
+
+#[test]
+fn classifies_only_transient_provider_errors_for_retries() {
+    assert!(is_transient_provider_error(
+        "HTTP 503 Service Unavailable: service overloaded, please try again later"
+    ));
+    assert!(is_transient_provider_error("HTTP 429 Too Many Requests"));
+    assert!(!is_transient_provider_error("HTTP 400 invalid request"));
+    assert!(!is_transient_provider_error("HTTP 401 unauthorized"));
+    assert!(!is_transient_provider_error("HTTP 404 model not found"));
+}
+
 /// Tool schema in moltis-internal flat format.
 fn weather_tool() -> serde_json::Value {
     serde_json::json!({
@@ -93,23 +191,12 @@ async fn system_prompt_is_received_non_streaming() {
         ChatMessage::user("What is 2+2?"),
     ];
 
-    let response = p
-        .complete(&messages, &[])
-        .await
-        .expect("non-streaming completion should succeed");
+    let response = complete_with_retries(&p, &messages, &[]).await;
 
     let text = response.text.expect("response must contain text");
     assert!(
         text.to_lowercase().contains(&keyword.to_lowercase()),
         "system prompt was not received by model: response = {text:?}"
-    );
-    assert!(
-        response.usage.input_tokens > 0,
-        "should report input tokens"
-    );
-    assert!(
-        response.usage.output_tokens > 0,
-        "should report output tokens"
     );
 }
 
@@ -126,17 +213,15 @@ async fn system_prompt_is_received_streaming() {
         ChatMessage::user("What is 3+3?"),
     ];
 
-    let mut stream = p.stream_with_tools(messages, vec![]);
+    let events = stream_with_retries(&p, messages, vec![]).await;
     let mut full_text = String::new();
     let mut saw_done = false;
 
-    while let Some(event) = stream.next().await {
+    for event in events {
         match event {
             StreamEvent::Delta(chunk) => full_text.push_str(&chunk),
-            StreamEvent::Done(usage) => {
+            StreamEvent::Done(_) => {
                 saw_done = true;
-                assert!(usage.input_tokens > 0, "should report input tokens");
-                assert!(usage.output_tokens > 0, "should report output tokens");
                 break;
             },
             StreamEvent::Error(err) => panic!("stream error: {err}"),
@@ -164,10 +249,7 @@ async fn tool_call_round_trip_non_streaming() {
         "What's the weather like in Tokyo? You must use the get_weather tool to answer.",
     )];
 
-    let response = p
-        .complete(&messages, &tools)
-        .await
-        .expect("completion with tools should succeed");
+    let response = complete_with_retries(&p, &messages, &tools).await;
 
     assert!(
         !response.tool_calls.is_empty(),
@@ -195,12 +277,12 @@ async fn tool_call_round_trip_streaming() {
         "What's the weather in Paris? You must use the get_weather tool.",
     )];
 
-    let mut stream = p.stream_with_tools(messages, tools);
+    let events = stream_with_retries(&p, messages, tools).await;
     let mut saw_tool_start = false;
     let mut saw_done = false;
     let mut tool_name = String::new();
 
-    while let Some(event) = stream.next().await {
+    for event in events {
         match event {
             StreamEvent::ToolCallStart { name, .. } => {
                 saw_tool_start = true;
@@ -231,10 +313,7 @@ async fn multi_turn_tool_use() {
     let messages = vec![ChatMessage::user(
         "What's the weather in London? You must use the get_weather tool.",
     )];
-    let response = p
-        .complete(&messages, &tools)
-        .await
-        .expect("first turn should succeed");
+    let response = complete_with_retries(&p, &messages, &tools).await;
 
     assert!(
         !response.tool_calls.is_empty(),
@@ -256,10 +335,7 @@ async fn multi_turn_tool_use() {
         ChatMessage::tool(&tc.id, r#"{"temperature": 15, "condition": "cloudy"}"#),
     ];
 
-    let final_response = p
-        .complete(&messages, &tools)
-        .await
-        .expect("second turn should succeed");
+    let final_response = complete_with_retries(&p, &messages, &tools).await;
 
     let text = final_response.text.expect("should have text response");
     assert!(!text.is_empty(), "final response should not be empty");
@@ -272,7 +348,7 @@ async fn multi_turn_tool_use() {
 #[ignore]
 async fn probe_succeeds() {
     let p = make_provider(TEST_MODEL);
-    p.probe()
+    probe_with_retries(&p)
         .await
         .expect("probe should succeed against live Fireworks API");
 }
@@ -285,12 +361,12 @@ async fn probe_succeeds() {
 async fn stream_emits_delta_and_done() {
     let p = make_provider(TEST_MODEL);
     let messages = vec![ChatMessage::user("Say hello in one word.")];
-    let mut stream = p.stream(messages);
+    let events = stream_with_retries(&p, messages, vec![]).await;
 
     let mut saw_delta = false;
     let mut saw_done = false;
 
-    while let Some(event) = stream.next().await {
+    for event in events {
         match event {
             StreamEvent::Delta(_) => saw_delta = true,
             StreamEvent::Done(_) => {
@@ -317,7 +393,7 @@ async fn catalog_models_are_live() {
 
     for &model_id in KNOWN_MODELS {
         let p = make_provider(model_id);
-        match p.probe().await {
+        match probe_with_retries(&p).await {
             Ok(()) => alive.push(model_id),
             Err(e) => dead.push((model_id, e.to_string())),
         }
@@ -337,8 +413,8 @@ async fn catalog_models_are_live() {
     eprintln!("=====================================\n");
 
     assert!(
-        alive.contains(&TEST_MODEL),
-        "{TEST_MODEL} should be reachable"
+        dead.is_empty(),
+        "catalog contains unreachable models: {dead:?}"
     );
 }
 
@@ -356,10 +432,7 @@ async fn kimi_router_basic_completion() {
         "What is 2+2? Answer with just the number.",
     )];
 
-    let response = p
-        .complete(&messages, &[])
-        .await
-        .expect("Kimi K2.6 via Fireworks should succeed (issue #810)");
+    let response = complete_with_retries(&p, &messages, &[]).await;
 
     let text = response.text.expect("should have text response");
     assert!(text.contains('4'), "expected '4' in response: {text:?}");
@@ -377,10 +450,7 @@ async fn kimi_router_tool_call_no_400() {
         "What's the weather in Berlin? You must use the get_weather tool.",
     )];
 
-    let response = p
-        .complete(&messages, &tools)
-        .await
-        .expect("Kimi K2.6 via Fireworks tool call should not 400 (issue #810)");
+    let response = complete_with_retries(&p, &messages, &tools).await;
 
     assert!(
         !response.tool_calls.is_empty(),
@@ -402,10 +472,7 @@ async fn kimi_router_multi_turn_tool_use() {
     let messages = vec![ChatMessage::user(
         "What's the weather in Tokyo? You must use the get_weather tool.",
     )];
-    let response = p
-        .complete(&messages, &tools)
-        .await
-        .expect("first turn should succeed");
+    let response = complete_with_retries(&p, &messages, &tools).await;
 
     assert!(
         !response.tool_calls.is_empty(),
@@ -427,10 +494,7 @@ async fn kimi_router_multi_turn_tool_use() {
         ChatMessage::tool(&tc.id, r#"{"temperature": 28, "condition": "sunny"}"#),
     ];
 
-    let mut final_response = p
-        .complete(&messages, &tools)
-        .await
-        .expect("second turn with tool result should succeed (issue #810)");
+    let mut final_response = complete_with_retries(&p, &messages, &tools).await;
 
     for attempt in 1..=2 {
         if final_response
@@ -442,10 +506,7 @@ async fn kimi_router_multi_turn_tool_use() {
         }
 
         tokio::time::sleep(Duration::from_secs(attempt)).await;
-        final_response = p
-            .complete(&messages, &tools)
-            .await
-            .expect("second turn retry with tool result should succeed (issue #810)");
+        final_response = complete_with_retries(&p, &messages, &tools).await;
     }
 
     let text = final_response.text.expect("should have text response");

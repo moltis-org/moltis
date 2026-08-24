@@ -14,26 +14,29 @@ use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
 #[cfg(target_os = "macos")]
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 #[cfg(target_os = "macos")]
 use super::containers::{
-    apple_container_exec_args, apple_container_run_args, apple_container_status_from_inspect,
-    is_apple_container_daemon_stale_error, is_apple_container_exists_error,
-    is_apple_container_service_error, rebuildable_sandbox_image_tag, sandbox_image_exists,
-    unmark_zombie,
+    ContainerRunState, apple_container_exec_args, apple_container_run_args,
+    apple_container_run_state_from_inspect, is_apple_container_daemon_stale_error,
+    is_apple_container_exists_error, is_apple_container_service_error,
+    rebuildable_sandbox_image_tag, sandbox_image_exists, unmark_zombie,
+    validate_apple_container_resource_limits,
 };
 #[cfg(target_os = "macos")]
 use super::host::provision_packages;
 #[cfg(target_os = "macos")]
 use super::paths::{
+    ManagedFilesPath, ensure_managed_files_host_dir, ensure_managed_files_none_mask_host_dir,
     ensure_sandbox_home_persistence_host_dir, resolve_home_persistence_guest_path_on_host,
-    resolve_workspace_guest_path_on_host,
+    resolve_managed_files_guest_path_on_host, resolve_workspace_guest_path_on_host,
 };
 #[cfg(target_os = "macos")]
 use super::types::{
-    BuildImageResult, DEFAULT_SANDBOX_IMAGE, NetworkPolicy, SANDBOX_HOME_DIR, Sandbox,
-    SandboxConfig, SandboxId, truncate_output_for_display,
+    BuildImageResult, DEFAULT_SANDBOX_IMAGE, ManagedFilesMount, NetworkPolicy, ResourceLimits,
+    SANDBOX_FILES_DIR, SANDBOX_HOME_DIR, Sandbox, SandboxConfig, SandboxId,
+    truncate_output_for_display,
 };
 #[cfg(target_os = "macos")]
 use crate::error::{Error, Result};
@@ -43,7 +46,7 @@ use crate::exec::{ExecOpts, ExecResult};
 use crate::sandbox::file_system::{
     SandboxListFilesResult, SandboxReadResult, command_list_files, command_read_file,
     command_write_file, native_host_list_files, native_host_read_file, native_host_write_file,
-    remap_host_list_result_to_guest,
+    permission_denied_payload, remap_host_list_result_to_guest,
 };
 
 /// Apple Container sandbox using the `container` CLI (macOS 26+, Apple Silicon).
@@ -51,6 +54,7 @@ use crate::sandbox::file_system::{
 pub struct AppleContainerSandbox {
     pub config: SandboxConfig,
     name_generations: RwLock<HashMap<String, u32>>,
+    container_policy_fingerprints: Mutex<HashMap<String, String>>,
     /// Cached host gateway IP for proxy routing in Trusted mode.
     host_gateway_cache: RwLock<Option<String>>,
 }
@@ -61,6 +65,7 @@ impl AppleContainerSandbox {
         Self {
             config,
             name_generations: RwLock::new(HashMap::new()),
+            container_policy_fingerprints: Mutex::new(HashMap::new()),
             host_gateway_cache: RwLock::new(None),
         }
     }
@@ -123,6 +128,13 @@ impl AppleContainerSandbox {
             .unwrap_or("moltis-sandbox")
     }
 
+    pub(crate) fn container_policy_fingerprint(&self) -> String {
+        format!(
+            "{:?}\0{:?}",
+            self.config.managed_files_mount, self.config.resource_limits
+        )
+    }
+
     fn base_container_name(&self, id: &SandboxId) -> String {
         format!("{}-{}", self.container_prefix(), id.key)
     }
@@ -174,6 +186,26 @@ impl AppleContainerSandbox {
         Ok(Some(format!("{}:{SANDBOX_HOME_DIR}", host_dir.display())))
     }
 
+    pub(crate) fn volumes(&self, id: &SandboxId) -> Result<Vec<String>> {
+        let mut volumes = self
+            .home_persistence_volume(id)?
+            .into_iter()
+            .collect::<Vec<_>>();
+        let managed_volume = match self.config.managed_files_mount {
+            ManagedFilesMount::None => {
+                let mask_dir =
+                    ensure_managed_files_none_mask_host_dir(&self.config, Some("container"))?;
+                format!("{}:{SANDBOX_FILES_DIR}:ro", mask_dir.display())
+            },
+            mode => {
+                let host_dir = ensure_managed_files_host_dir(&self.config, Some("container"))?;
+                format!("{}:{SANDBOX_FILES_DIR}:{mode}", host_dir.display())
+            },
+        };
+        volumes.push(managed_volume);
+        Ok(volumes)
+    }
+
     fn mounted_host_path(&self, id: &SandboxId, guest_path: &str) -> Option<std::path::PathBuf> {
         let guest_path = std::path::Path::new(guest_path);
         resolve_workspace_guest_path_on_host(&self.config, Some("container"), guest_path).or_else(
@@ -185,6 +217,14 @@ impl AppleContainerSandbox {
                     guest_path,
                 )
             },
+        )
+    }
+
+    fn managed_files_path(&self, guest_path: &str) -> ManagedFilesPath {
+        resolve_managed_files_guest_path_on_host(
+            &self.config,
+            Some("container"),
+            std::path::Path::new(guest_path),
         )
     }
 
@@ -285,9 +325,9 @@ impl AppleContainerSandbox {
             match output {
                 Ok(output) if output.status.success() => {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    match apple_container_status_from_inspect(&stdout) {
-                        Some("running") => return Ok(()),
-                        Some("stopped") => {
+                    match apple_container_run_state_from_inspect(&stdout) {
+                        Some(ContainerRunState::Running) => return Ok(()),
+                        Some(ContainerRunState::Stopped | ContainerRunState::Exited) => {
                             return Err(Error::message(format!(
                                 "container {name} failed to stay running after startup"
                             )));
@@ -421,9 +461,9 @@ impl AppleContainerSandbox {
             return ContainerState::NotFound;
         }
 
-        match apple_container_status_from_inspect(&stdout) {
-            Some("running") => ContainerState::Running,
-            Some("stopped") => ContainerState::Stopped,
+        match apple_container_run_state_from_inspect(&stdout) {
+            Some(ContainerRunState::Running) => ContainerState::Running,
+            Some(ContainerRunState::Stopped | ContainerRunState::Exited) => ContainerState::Stopped,
             _ => ContainerState::Unknown,
         }
     }
@@ -434,9 +474,11 @@ impl AppleContainerSandbox {
         name: &str,
         image: &str,
         tz: Option<&str>,
-        home_volume: Option<&str>,
+        volumes: &[String],
+        resource_limits: &ResourceLimits,
     ) -> std::result::Result<(), CreateError> {
-        let args = apple_container_run_args(name, image, tz, home_volume);
+        let args = apple_container_run_args(name, image, tz, volumes, resource_limits)
+            .map_err(|error| CreateError::Other(error.to_string()))?;
 
         let output = tokio::process::Command::new("container")
             .args(&args)
@@ -743,12 +785,37 @@ impl Sandbox for AppleContainerSandbox {
         true
     }
 
+    fn exposes_managed_files(&self) -> bool {
+        self.config.managed_files_mount != ManagedFilesMount::None
+    }
+
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+        validate_apple_container_resource_limits(&self.config.resource_limits)?;
+
         let mut name = self.container_name(id).await;
+        // This state lock also serializes Apple Container creation. The CLI has
+        // no atomic create-or-inspect primitive, so releasing it after policy
+        // validation would let a concurrent caller remove the fresh winner.
+        let mut fingerprints = self.container_policy_fingerprints.lock().await;
+        let desired_fingerprint = self.container_policy_fingerprint();
+        if fingerprints.get(&name) != Some(&desired_fingerprint)
+            && Self::container_exists(&name).await?
+        {
+            warn!(
+                name,
+                "recreating existing apple container to apply sandbox policy"
+            );
+            Self::force_remove_and_wait(&name).await;
+            if Self::container_exists(&name).await? {
+                return Err(Error::message(format!(
+                    "failed to remove apple container '{name}' after sandbox policy changed"
+                )));
+            }
+        }
         let requested_image = image_override.unwrap_or_else(|| self.image());
         let image = self.resolve_local_image(requested_image).await?;
         let tz = self.config.timezone.as_deref();
-        let home_volume = self.home_persistence_volume(id)?;
+        let volumes = self.volumes(id)?;
 
         const MAX_ATTEMPTS: usize = 3;
         let mut daemon_restarted = false;
@@ -762,6 +829,7 @@ impl Sandbox for AppleContainerSandbox {
                     info!(name, "apple container already running");
                     match Self::wait_for_container_exec_ready(&name).await {
                         Ok(()) => {
+                            fingerprints.insert(name.clone(), desired_fingerprint.clone());
                             unmark_zombie(&name);
                             return Ok(());
                         },
@@ -782,6 +850,7 @@ impl Sandbox for AppleContainerSandbox {
                         info!(name, "apple container restarted");
                         match Self::wait_for_container_exec_ready(&name).await {
                             Ok(()) => {
+                                fingerprints.insert(name.clone(), desired_fingerprint.clone());
                                 unmark_zombie(&name);
                                 return Ok(());
                             },
@@ -811,7 +880,9 @@ impl Sandbox for AppleContainerSandbox {
 
             // Phase 2: Create a new container.
             info!(name, image = %image, attempt, "creating apple container");
-            match Self::run_container(&name, &image, tz, home_volume.as_deref()).await {
+            match Self::run_container(&name, &image, tz, &volumes, &self.config.resource_limits)
+                .await
+            {
                 Ok(()) => {},
                 Err(CreateError::AlreadyExists) => {
                     warn!(
@@ -875,6 +946,7 @@ impl Sandbox for AppleContainerSandbox {
                         provision_packages("container", &name, &self.config.packages).await?;
                     }
 
+                    fingerprints.insert(name.clone(), desired_fingerprint.clone());
                     return Ok(());
                 },
                 Err(error) => {
@@ -906,6 +978,7 @@ impl Sandbox for AppleContainerSandbox {
                                         )
                                         .await?;
                                     }
+                                    fingerprints.insert(name.clone(), desired_fingerprint.clone());
                                     return Ok(());
                                 },
                                 Err(restart_error) => {
@@ -1105,6 +1178,14 @@ impl Sandbox for AppleContainerSandbox {
         file_path: &str,
         max_bytes: u64,
     ) -> Result<SandboxReadResult> {
+        match self.managed_files_path(file_path) {
+            ManagedFilesPath::Unavailable => return Ok(SandboxReadResult::PermissionDenied),
+            ManagedFilesPath::ReadOnly(_) | ManagedFilesPath::ReadWrite(_) => {
+                return command_read_file(self, id, file_path, max_bytes).await;
+            },
+            ManagedFilesPath::Unmanaged => {},
+        }
+
         if let Some(host_path) = self.mounted_host_path(id, file_path) {
             return native_host_read_file(
                 host_path
@@ -1124,6 +1205,25 @@ impl Sandbox for AppleContainerSandbox {
         file_path: &str,
         content: &[u8],
     ) -> Result<Option<serde_json::Value>> {
+        match self.managed_files_path(file_path) {
+            ManagedFilesPath::Unavailable => {
+                return Ok(Some(permission_denied_payload(
+                    file_path,
+                    "managed Files are disabled in this sandbox",
+                )));
+            },
+            ManagedFilesPath::ReadOnly(_) => {
+                return Ok(Some(permission_denied_payload(
+                    file_path,
+                    "managed Files are mounted read-only in this sandbox",
+                )));
+            },
+            ManagedFilesPath::ReadWrite(_) => {
+                return command_write_file(self, id, file_path, content).await;
+            },
+            ManagedFilesPath::Unmanaged => {},
+        }
+
         if let Some(host_path) = self.mounted_host_path(id, file_path) {
             return native_host_write_file(
                 host_path
@@ -1138,6 +1238,16 @@ impl Sandbox for AppleContainerSandbox {
     }
 
     async fn list_files(&self, id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
+        match self.managed_files_path(root) {
+            ManagedFilesPath::Unavailable => {
+                return Err(Error::message("managed Files are disabled in this sandbox"));
+            },
+            ManagedFilesPath::ReadOnly(_) | ManagedFilesPath::ReadWrite(_) => {
+                return command_list_files(self, id, root).await;
+            },
+            ManagedFilesPath::Unmanaged => {},
+        }
+
         if let Some(host_path) = self.mounted_host_path(id, root) {
             let host_files = native_host_list_files(
                 host_path

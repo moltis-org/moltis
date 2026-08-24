@@ -21,7 +21,7 @@ use moltis_channels::{
     plugin::{
         ChannelAttachment, ChannelHealthSnapshot, ChannelMessageKind, ChannelMessageMeta,
         ChannelOtpProvider, ChannelOutbound, ChannelPlugin, ChannelReplyTarget, ChannelStatus,
-        ChannelStreamOutbound, ChannelThreadContext, ChannelType, ThreadMessage,
+        ChannelStreamOutbound, ChannelThreadContext, ChannelType,
     },
 };
 
@@ -1015,7 +1015,13 @@ impl ChannelPlugin for MsTeamsPlugin {
     }
 
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
-        Some(self)
+        Some(&self.outbound)
+    }
+
+    fn shared_thread_context(&self) -> Option<Arc<dyn ChannelThreadContext>> {
+        Some(Arc::new(MsTeamsOutbound {
+            accounts: Arc::clone(&self.accounts),
+        }))
     }
 
     fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
@@ -1026,59 +1032,6 @@ impl ChannelPlugin for MsTeamsPlugin {
 impl ChannelOtpProvider for MsTeamsPlugin {
     fn pending_otp_challenges(&self, account_id: &str) -> Vec<OtpChallengeInfo> {
         MsTeamsPlugin::pending_otp_challenges(self, account_id)
-    }
-}
-
-#[async_trait]
-impl ChannelThreadContext for MsTeamsPlugin {
-    async fn fetch_thread_messages(
-        &self,
-        account_id: &str,
-        channel_id: &str,
-        _thread_id: &str,
-        limit: usize,
-    ) -> ChannelResult<Vec<ThreadMessage>> {
-        let (http, config, graph_cache) = {
-            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-            let state = accounts
-                .get(account_id)
-                .ok_or_else(|| ChannelError::unknown_account(account_id))?;
-            (
-                state.http.clone(),
-                state.config.clone(),
-                Arc::clone(&state.graph_token_cache),
-            )
-        };
-
-        let token = crate::auth::get_graph_token(&http, &config, &graph_cache)
-            .await
-            .map_err(|e| ChannelError::unavailable(format!("Teams Graph token: {e}")))?;
-
-        let effective_limit = if limit == 0 {
-            config.history_limit
-        } else {
-            limit.min(config.history_limit)
-        };
-
-        let messages =
-            crate::graph::fetch_chat_messages(&http, &token, channel_id, effective_limit)
-                .await
-                .map_err(|e| {
-                    ChannelError::external(
-                        "Teams Graph fetch messages",
-                        std::io::Error::other(e.to_string()),
-                    )
-                })?;
-
-        Ok(messages
-            .into_iter()
-            .map(|m| ThreadMessage {
-                sender_id: m.from_user_id.unwrap_or_default(),
-                is_bot: m.is_bot,
-                text: m.body_content.unwrap_or_default(),
-                timestamp: m.created_at.unwrap_or_default(),
-            })
-            .collect())
     }
 }
 

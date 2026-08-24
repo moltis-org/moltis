@@ -185,7 +185,14 @@ fn test_apple_container_bootstrap_command_uses_portable_sleep() {
 
 #[test]
 fn test_apple_container_run_args_pin_workdir_and_bootstrap_home() {
-    let args = apple_container_run_args("moltis-sandbox-test", "ubuntu:25.10", Some("UTC"), None);
+    let args = apple_container_run_args(
+        "moltis-sandbox-test",
+        "ubuntu:25.10",
+        Some("UTC"),
+        &[],
+        &ResourceLimits::default(),
+    )
+    .unwrap();
     let expected = vec![
         "run",
         "-d",
@@ -212,8 +219,10 @@ fn test_apple_container_run_args_with_home_volume() {
         "moltis-sandbox-test",
         "ubuntu:25.10",
         Some("UTC"),
-        Some("/tmp/home:/home/sandbox"),
-    );
+        &["/tmp/home:/home/sandbox".to_string()],
+        &ResourceLimits::default(),
+    )
+    .unwrap();
     let expected = vec![
         "run",
         "-d",
@@ -234,6 +243,133 @@ fn test_apple_container_run_args_with_home_volume() {
     .map(str::to_string)
     .collect::<Vec<_>>();
     assert_eq!(args, expected);
+}
+
+#[test]
+fn test_apple_container_run_args_with_multiple_volumes() {
+    let volumes = vec![
+        "/tmp/home:/home/sandbox".to_string(),
+        "/tmp/files:/home/sandbox/files:ro".to_string(),
+    ];
+    let args = apple_container_run_args(
+        "moltis-sandbox-test",
+        "ubuntu:25.10",
+        None,
+        &volumes,
+        &ResourceLimits::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        args.windows(2)
+            .filter(|window| window[0] == "--volume")
+            .map(|window| window[1].as_str())
+            .collect::<Vec<_>>(),
+        volumes.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_apple_container_run_args_apply_resource_limits() {
+    let args = apple_container_run_args(
+        "moltis-sandbox-test",
+        "ubuntu:25.10",
+        None,
+        &[],
+        &ResourceLimits {
+            memory_limit: Some("1G".into()),
+            cpu_quota: Some(2.0),
+            pids_max: Some(512),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        args.windows(2)
+            .filter(|window| matches!(window[0].as_str(), "--memory" | "--cpus" | "--ulimit"))
+            .map(|window| (window[0].as_str(), window[1].as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("--memory", "1G"),
+            ("--cpus", "2"),
+            ("--ulimit", "nproc=512")
+        ]
+    );
+}
+
+#[test]
+fn test_apple_container_run_args_reject_fractional_cpu_quota() {
+    let error = apple_container_run_args(
+        "moltis-sandbox-test",
+        "ubuntu:25.10",
+        None,
+        &[],
+        &ResourceLimits {
+            cpu_quota: Some(0.5),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("cpu_quota to be a positive whole number")
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn test_apple_container_policy_fingerprint_includes_resource_limits() {
+    let first = AppleContainerSandbox::new(SandboxConfig {
+        resource_limits: ResourceLimits {
+            pids_max: Some(256),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let second = AppleContainerSandbox::new(SandboxConfig {
+        resource_limits: ResourceLimits {
+            pids_max: Some(512),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+
+    assert_ne!(
+        first.container_policy_fingerprint(),
+        second.container_policy_fingerprint()
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn test_apple_container_managed_files_mount_coexists_with_home_persistence() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let host_data_dir = temp_dir.path().join("moltis-data");
+    let sandbox = AppleContainerSandbox::new(SandboxConfig {
+        host_data_dir: Some(host_data_dir.clone()),
+        home_persistence: HomePersistence::Session,
+        managed_files_mount: ManagedFilesMount::Rw,
+        ..Default::default()
+    });
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "apple-volumes".into(),
+    };
+
+    assert_eq!(sandbox.volumes(&id).unwrap(), vec![
+        format!(
+            "{}:/home/sandbox",
+            host_data_dir
+                .join("sandbox/home/session/apple-volumes")
+                .display()
+        ),
+        format!(
+            "{}:{SANDBOX_FILES_DIR}:rw",
+            host_data_dir.join("files").display()
+        ),
+    ]);
 }
 
 #[test]
@@ -283,19 +419,60 @@ fn test_container_exec_shell_args_docker_keeps_standard_exec_shape() {
 }
 
 #[test]
-fn test_apple_container_status_from_inspect() {
+fn test_apple_container_run_state_from_legacy_inspect() {
     assert_eq!(
-        apple_container_status_from_inspect(
+        apple_container_run_state_from_inspect(
             r#"[{"id":"abc","status":"running","configuration":{}}]"#
         ),
-        Some("running")
+        Some(ContainerRunState::Running)
     );
     assert_eq!(
-        apple_container_status_from_inspect(r#"[{"id":"abc","status":"stopped"}]"#),
-        Some("stopped")
+        apple_container_run_state_from_inspect(r#"[{"id":"abc","status":"stopped"}]"#),
+        Some(ContainerRunState::Stopped)
     );
-    assert_eq!(apple_container_status_from_inspect("[]"), None);
-    assert_eq!(apple_container_status_from_inspect(""), None);
+    assert_eq!(
+        apple_container_run_state_from_inspect(r#"[{"id":"abc","status":"exited"}]"#),
+        Some(ContainerRunState::Exited)
+    );
+}
+
+#[test]
+fn test_apple_container_run_state_from_current_inspect() {
+    assert_eq!(
+        apple_container_run_state_from_inspect(
+            r#"[
+                {
+                    "id": "abc",
+                    "status": { "state": "running" },
+                    "configuration": {}
+                }
+            ]"#
+        ),
+        Some(ContainerRunState::Running)
+    );
+    assert_eq!(
+        apple_container_run_state_from_inspect(r#"[{"id":"abc","status":{"state":"stopped"}}]"#),
+        Some(ContainerRunState::Stopped)
+    );
+    assert_eq!(
+        apple_container_run_state_from_inspect(r#"[{"id":"abc","status":{"state":"exited"}}]"#),
+        Some(ContainerRunState::Exited)
+    );
+}
+
+#[test]
+fn test_apple_container_run_state_rejects_missing_or_malformed_inspect() {
+    assert_eq!(
+        apple_container_run_state_from_inspect(r#"[{"id":"abc","status":{"state":"starting"}}]"#),
+        Some(ContainerRunState::Unknown)
+    );
+    assert_eq!(apple_container_run_state_from_inspect("[]"), None);
+    assert_eq!(apple_container_run_state_from_inspect(""), None);
+    assert_eq!(apple_container_run_state_from_inspect("not json"), None);
+    assert_eq!(
+        apple_container_run_state_from_inspect(r#"[{"id":"abc"}]"#),
+        None
+    );
 }
 
 #[test]

@@ -71,6 +71,7 @@ anyhow                  = { workspace = true }
 async-trait             = { workspace = true }
 clap                    = { workspace = true }
 dotenvy                 = { workspace = true }
+indicatif               = { workspace = true }
 moltis-acp              = { optional = true, workspace = true }
 moltis-agents           = { workspace = true }
 moltis-browser          = { workspace = true }
@@ -79,6 +80,7 @@ moltis-claude-import    = { optional = true, workspace = true }
 moltis-codex-import     = { optional = true, workspace = true }
 moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
+moltis-connectors       = { optional = true, workspace = true }
 moltis-cron             = { workspace = true }
 moltis-gateway          = { workspace = true }
 moltis-hermes-import    = { optional = true, workspace = true }
@@ -87,6 +89,7 @@ moltis-import-core      = { workspace = true }
 moltis-mcp              = { optional = true, workspace = true }
 moltis-mcp-agent-bridge = { optional = true, workspace = true }
 moltis-memory           = { workspace = true }
+moltis-memory-zvec      = { optional = true, workspace = true }
 moltis-node-host        = { workspace = true }
 moltis-oauth            = { workspace = true }
 moltis-onboarding       = { workspace = true }
@@ -118,7 +121,8 @@ which                   = { workspace = true }
 tikv-jemallocator = { optional = true, workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
+serial_test = { workspace = true }
+tempfile    = { workspace = true }
 
 [features]
 acp = [
@@ -132,17 +136,25 @@ acp = [
 agent = ["moltis-gateway/agent", "moltis-web?/agent"]
 caldav = ["moltis-gateway/caldav"]
 cloudflare-tunnel = ["moltis-httpd/cloudflare-tunnel", "moltis-web?/cloudflare-tunnel"]
+connectors = [
+  "dep:moltis-connectors",
+  "moltis-gateway/connectors",
+  "moltis-httpd/connectors",
+  "moltis-web?/connectors",
+]
 home-assistant = ["moltis-gateway/home-assistant"]
 # User-facing integrations stay default-on in the CLI crate per workspace policy,
 # even when the underlying implementation remains feature-gated in lower crates.
 #
-# `full` is the portable production feature set used by release, packaging, and
-# container builds. It intentionally excludes build-mode toggles (`embedded-*`)
-# and accelerator-specific features (`local-llm-cuda`, `local-llm-vulkan`) that
-# require host SDKs/toolchains not present on every target.
+# `portable` is the self-contained feature set used by release packages. `full`
+# adds zvec for source and container builds, where its native runtime can be
+# provided. Both exclude build-mode toggles (`embedded-*`) and accelerator-
+# specific features (`local-llm-cuda`, `local-llm-vulkan`).
 bundled-skills = ["moltis-gateway/bundled-skills", "moltis-web?/bundled-skills"]
 default = ["full"]
-full = [
+full = ["portable", "zvec"]
+llm-compaction = ["moltis-gateway/llm-compaction"]
+portable = [
   "acp",
   "agent",
   "bundled-skills",
@@ -152,6 +164,7 @@ full = [
   "code-index-builtin",
   "code-splitter",
   "codex-import",
+  "connectors",
   "discord",
   "file-watcher",
   "firecrawl",
@@ -209,7 +222,6 @@ full = [
   "web-ui",
   "whatsapp",
 ]
-llm-compaction = ["moltis-gateway/llm-compaction"]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
 code-index-builtin = ["moltis-gateway/code-index-builtin"]
@@ -284,6 +296,7 @@ voice = ["moltis-gateway/voice", "moltis-web?/voice"]
 wasm = ["moltis-tools/wasm"]
 web-ui = ["dep:moltis-web", "moltis-httpd/web-ui"]
 whatsapp = ["moltis-gateway/whatsapp"]
+zvec = ["dep:moltis-memory-zvec", "moltis-gateway/zvec"]
 
 [lints]
 workspace = true

@@ -30,6 +30,8 @@ pub struct ExportQuery {
     pub include_provider_keys: bool,
     #[serde(default)]
     pub include_media: bool,
+    #[serde(default)]
+    pub include_files: bool,
 }
 
 fn default_true() -> bool {
@@ -77,6 +79,7 @@ async fn export_handler(Query(query): Query<ExportQuery>) -> impl IntoResponse {
     let opts = ExportOptions {
         include_provider_keys: query.include_provider_keys,
         include_media: query.include_media,
+        include_files: query.include_files,
     };
 
     // Write to a temp file so we don't buffer the full archive in memory.

@@ -90,8 +90,16 @@ pub(super) struct VaultUnlockRequest {
     password: String,
 }
 
+/// Unseal the vault with the vault password.
+///
+/// Requires an authenticated session: unsealing decrypts every stored
+/// secret (provider keys, SSH private keys, env vars, channel tokens), so
+/// an unauthenticated caller must never be able to attempt it. `/api/auth/*`
+/// is allowlisted in `is_public_path()`, so the `AuthSession` extractor is
+/// what enforces auth here.
 #[cfg(feature = "vault")]
 pub(super) async fn vault_unlock_handler(
+    _session: crate::auth_middleware::AuthSession,
     State(state): State<AuthState>,
     Json(body): Json<VaultUnlockRequest>,
 ) -> impl IntoResponse {
@@ -120,8 +128,14 @@ pub(super) struct VaultRecoveryRequest {
     recovery_key: String,
 }
 
+/// Unseal the vault with the recovery key.
+///
+/// Requires an authenticated session for the same reason as
+/// [`vault_unlock_handler`]: a stolen recovery key alone must not be enough
+/// to decrypt stored secrets over the network.
 #[cfg(feature = "vault")]
 pub(super) async fn vault_recovery_handler(
+    _session: crate::auth_middleware::AuthSession,
     State(state): State<AuthState>,
     Json(body): Json<VaultRecoveryRequest>,
 ) -> impl IntoResponse {
@@ -181,24 +195,33 @@ pub(super) async fn vault_disable_handler(
         }
     }
 
+    #[cfg(feature = "connectors")]
+    let connector_manager = state.gateway_state.connector_manager();
     match moltis_gateway::vault_lifecycle::disable_vault_and_decrypt_all(
         vault,
         state.credential_store.db_pool(),
+        #[cfg(feature = "connectors")]
+        connector_manager.as_deref(),
     )
     .await
     {
         Ok(report) => {
             vault.seal().await;
             state.credential_store.disable_vault_encryption();
+            let mut report_payload = serde_json::json!({
+                "env_vars": report.env_vars,
+                "ssh_keys": report.ssh_keys,
+                "channels": report.channels,
+                "webhooks": report.webhooks,
+                "provider_keys": report.provider_keys,
+            });
+            #[cfg(feature = "connectors")]
+            {
+                report_payload["connectors"] = serde_json::json!(report.connectors);
+            }
             Json(serde_json::json!({
                 "ok": true,
-                "report": {
-                    "env_vars": report.env_vars,
-                    "ssh_keys": report.ssh_keys,
-                    "channels": report.channels,
-                    "webhooks": report.webhooks,
-                    "provider_keys": report.provider_keys,
-                }
+                "report": report_payload,
             }))
             .into_response()
         },

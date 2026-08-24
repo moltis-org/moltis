@@ -262,19 +262,29 @@ fn list_sidecars_fs(assets_dir: &Path, name: &str) -> Vec<(String, u64)> {
     let mut out = Vec::new();
     for sub in crate::SIDECAR_SUBDIRS {
         let dir = skill_dir.join(sub);
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if entry.path().is_file() {
-                let file_name = entry.file_name().to_string_lossy().to_string();
-                let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                out.push((format!("{sub}/{file_name}"), bytes));
-            }
+        for entry in walkdir::WalkDir::new(dir)
+            .min_depth(1)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+        {
+            let Some(rel_path) = relative_sidecar_path(&skill_dir, entry.path()) else {
+                continue;
+            };
+            let bytes = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+            out.push((rel_path, bytes));
         }
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
+}
+
+fn relative_sidecar_path(skill_dir: &Path, path: &Path) -> Option<String> {
+    path.strip_prefix(skill_dir)
+        .ok()?
+        .to_str()
+        .map(|path| path.replace(std::path::MAIN_SEPARATOR, "/"))
 }
 
 /// Recursively find a skill directory by name under the assets tree.
@@ -372,12 +382,7 @@ fn read_skill_body_embedded(name: &str) -> Option<String> {
 
 fn read_sidecar_embedded(name: &str, rel_path: &str) -> Option<(Vec<u8>, bool)> {
     let skill_dir = find_skill_dir_embedded(name)?;
-    // Sidecar paths like "references/foo.md" — match by the full relative tail.
-    let file = skill_dir.files().find(|f| {
-        f.path()
-            .strip_prefix(skill_dir.path())
-            .is_ok_and(|rel| rel == Path::new(rel_path))
-    })?;
+    let file = skill_dir.get_file(skill_dir.path().join(rel_path))?;
     let bytes = file.contents().to_vec();
     let is_utf8 = std::str::from_utf8(&bytes).is_ok();
     Some((bytes, is_utf8))
@@ -394,17 +399,24 @@ fn list_sidecars_embedded(name: &str) -> Vec<(String, u64)> {
         let Some(sub_dir) = skill_dir.dirs().find(|d| d.path() == sub_path) else {
             continue;
         };
-        for file in sub_dir.files() {
-            let file_name = file
-                .path()
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            out.push((format!("{sub}/{file_name}"), file.contents().len() as u64));
-        }
+        list_sidecars_embedded_recursive(skill_dir.path(), sub_dir, &mut out);
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
+}
+
+fn list_sidecars_embedded_recursive(
+    skill_path: &Path,
+    dir: &include_dir::Dir<'static>,
+    out: &mut Vec<(String, u64)>,
+) {
+    out.extend(dir.files().filter_map(|file| {
+        let rel_path = relative_sidecar_path(skill_path, file.path())?;
+        Some((rel_path, file.contents().len() as u64))
+    }));
+    for sub_dir in dir.dirs() {
+        list_sidecars_embedded_recursive(skill_path, sub_dir, out);
+    }
 }
 
 /// Recursively find a skill subdirectory by name in the embedded tree.
@@ -443,6 +455,13 @@ mod tests {
         BundledSkillStore::new()
     }
 
+    fn embedded_store(materialize_dir: PathBuf) -> BundledSkillStore {
+        BundledSkillStore {
+            source: AssetSource::Embedded,
+            materialize_dir,
+        }
+    }
+
     // ── Embedded assets ─────────────────────────────────────────────────
 
     #[test]
@@ -476,6 +495,56 @@ mod tests {
             "embedded skill '{}' body not readable via embedded path",
             first.name
         );
+    }
+
+    #[test]
+    fn embedded_listed_sidecars_are_readable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = embedded_store(tmp.path().to_path_buf());
+        let sidecars = store.list_sidecars("skill-creator");
+
+        assert!(
+            sidecars
+                .iter()
+                .any(|(path, _)| path == "scripts/quick_validate.py"),
+            "quick_validate.py must be listed"
+        );
+        for (path, expected_bytes) in sidecars {
+            let (bytes, _) = store
+                .read_sidecar("skill-creator", &path)
+                .unwrap_or_else(|| panic!("listed sidecar '{path}' must be readable"));
+            assert_eq!(
+                bytes.len() as u64,
+                expected_bytes,
+                "size mismatch for {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn filesystem_and_embedded_list_nested_sidecars() {
+        let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/assets");
+        let filesystem = list_sidecars_fs(&assets_dir, "powerpoint");
+        let embedded = list_sidecars_embedded("powerpoint");
+        let nested_path = "scripts/office/helpers/merge_runs.py";
+
+        assert!(filesystem.iter().any(|(path, _)| path == nested_path));
+        assert!(embedded.iter().any(|(path, _)| path == nested_path));
+        assert_eq!(filesystem, embedded);
+    }
+
+    #[test]
+    fn embedded_materialization_preserves_nested_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = embedded_store(tmp.path().to_path_buf());
+        let skill_dir = store
+            .materialize_sidecars("powerpoint")
+            .expect("embedded powerpoint sidecars must materialize");
+        let nested_path = "scripts/office/helpers/merge_runs.py";
+        let materialized = std::fs::read(skill_dir.join(nested_path)).unwrap();
+        let (embedded, _) = store.read_sidecar("powerpoint", nested_path).unwrap();
+
+        assert_eq!(materialized, embedded);
     }
 
     // ── Discovery ───────────────────────────────────────────────────────
@@ -806,6 +875,55 @@ mod tests {
             !modules
                 .iter()
                 .any(|module| module.contains("github.com/vincentkoc/slacrawl"))
+        );
+    }
+
+    #[test]
+    fn wacrawl_install_metadata_uses_openclaw_sources() {
+        let skills = store().discover();
+        let wacrawl = skills
+            .iter()
+            .find(|s| s.name == "wacrawl")
+            .expect("wacrawl should be bundled");
+
+        let modules: Vec<&str> = wacrawl
+            .requires
+            .install
+            .iter()
+            .filter_map(|install| install.module.as_deref())
+            .collect();
+
+        assert_eq!(
+            wacrawl.homepage.as_deref(),
+            Some("https://github.com/openclaw/wacrawl")
+        );
+        assert!(
+            wacrawl
+                .requires
+                .install
+                .iter()
+                .any(|install| install.formula.as_deref() == Some("openclaw/tap/wacrawl"))
+        );
+        assert!(modules.contains(&"github.com/openclaw/wacrawl/cmd/wacrawl@latest"));
+        assert!(
+            !wacrawl
+                .homepage
+                .as_deref()
+                .is_some_and(|homepage| { homepage.contains("github.com/steipete/wacrawl") })
+        );
+        assert!(!wacrawl.requires.install.iter().any(|install| {
+            install
+                .formula
+                .as_deref()
+                .is_some_and(|formula| formula.contains("steipete/tap/wacrawl"))
+        }));
+        // Load-bearing: `go install` compares the declared module path against the
+        // required one, so the pre-rename path fails outright — the repo was renamed
+        // into the openclaw org and its go.mod declares `github.com/openclaw/wacrawl`.
+        assert!(
+            !modules
+                .iter()
+                .any(|module| module.contains("github.com/steipete/wacrawl"))
         );
     }
 

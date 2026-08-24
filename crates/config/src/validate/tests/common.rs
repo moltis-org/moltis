@@ -267,6 +267,23 @@ terminal_enabled = false
 }
 
 #[test]
+fn server_rpc_timeout_ms_is_known_field() {
+    let toml = r#"
+[server]
+rpc_timeout_ms = 8000
+"#;
+    let result = validate_toml_str(toml);
+    let unknown = result
+        .diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path.contains("rpc_timeout_ms"));
+    assert!(
+        unknown.is_none(),
+        "rpc_timeout_ms should be a known field, got: {unknown:?}"
+    );
+}
+
+#[test]
 fn server_external_url_is_known_field() {
     let toml = r#"
 [server]

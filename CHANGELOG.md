@@ -19,6 +19,139 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260820.01] - 2026-08-20
+### Fixed
+- [release] Harden transient integration checks
+
+## [20260819.01] - 2026-08-19
+### Fixed
+- [web] Preserve run state during session refresh
+- [httpd] Require authentication for vault unlock and recovery (#1216)
+- [whatsapp] Treat a reply to the bot as addressing it (#1217)
+- [channels] Make the untrusted-turn tool ceiling configurable (#1219)
+- [whatsapp] Stop hardcoding the push name to "Moltis" (#1218)
+
+## [20260818.10] - 2026-08-18
+### Added
+- Add GPT-5.6 Luna routing coverage (#1213)
+
+
+### Fixed
+- Fix Apple Container status parsing across versions (#1214)
+- Fix Apple Container sandbox resource limits (#1215)
+
+## [20260818.09] - 2026-08-18
+### Fixed
+- Preserve Responses routing for explicit OpenAI endpoints (#1212)
+
+## [20260818.08] - 2026-08-18
+### Fixed
+- [gateway] Keep core service methods within size limit
+
+## [20260818.07] - 2026-08-18
+### Removed
+- Remove broken star history chart
+
+
+### Fixed
+- [ci] Run clippy and tests in parallel
+- [gateway] Treat heartbeat.update params as a patch, not a whole config (#1209)
+
+## [20260818.06] - 2026-08-18
+### Fixed
+- [release] Keep standalone packages self-contained
+
+## [20260818.05] - 2026-08-18
+### Fixed
+- [docker] Package zvec runtime in release image
+
+## [20260818.04] - 2026-08-18
+### Fixed
+- [web] Cover bare session refreshes in midnight E2E
+
+## [20260818.03] - 2026-08-18
+### Fixed
+- [sandbox] Support Podman escape hatches (#1106)
+- [ci] Bound Ubuntu mirror stalls in release jobs
+
+## [20260818.02] - 2026-08-18
+### Added
+- Add managed Files library and Settings browser (#1206)
+
+## [20260818.01] - 2026-08-18
+### Fixed
+- [ci] Stabilize release validation races
+
+## [20260817.05] - 2026-08-17
+### Fixed
+- [web] Stabilize stateful E2E flows
+- [ci] Run release E2E through the sharded CI runner
+
+## [20260817.04] - 2026-08-17
+### Fixed
+- Unblock provider release checks
+
+## [20260817.03] - 2026-08-17
+### Fixed
+- [ci] Split external agent tests
+
+## [20260817.02] - 2026-08-17
+### Added
+- Make webui rpc timeout configurable (#1130)
+- Add MiniMax Code ACP agent (#1204)
+
+
+### Fixed
+- [browser] Pierce shadow DOM lookups efficiently (#1103)
+- [ci] Stage zvec runtime for OpenAI E2E
+
+## [20260817.01] - 2026-08-17
+### Fixed
+- [ci] Repair release validation failures
+- [ci] Stabilize OAuth and push E2E
+- [web] Eliminate session and PWA test races
+- [ci] Eliminate remaining release races
+
+## [20260816.01] - 2026-08-16
+### Added
+- [slack] Acknowledge messages with reactions and add reaction triggers (#1165)
+- [website] Add install command copy controls
+- [pwa] Make push notifications reliable and non-disruptive (#1173)
+- [acp] Expose Moltis as an ACP agent over stdio (#1169)
+- [slack] Per-message acknowledgment reactions, phases, reconnect supervision, and Block Kit (#1166)
+- [web] Add Markdown copy and session export (#1176)
+- [nostr] Add NIP-29 group chat support for Buzz channels (#1168)
+- Add instrumentation and feedback collection infrastructure (#1174)
+- Add Slack native live task cards (#1195)
+- Add durable calendar, channel, and email connectors (#1190)
+- [memory] Add zvec vector database memory backend (#1158)
+- Start agent chats from the command palette (#1197)
+
+
+### Changed
+- Move ACP selection into the chat model picker (#1171)
+- Route OpenAI reasoning tool calls through Responses (#1198)
+
+
+### Fixed
+- [scripts] Target local validation tests
+- [web] Hide archived cron sessions by default (#1172)
+- [ios] Refresh Apollo package resolution
+- [channels] Gate /sh and privileged tools behind a per-account operators list (#1170)
+- Fix Docker sandbox filesystem tool fallback (#1105)
+- Fix ClawHub skill search results (#1196)
+- [ios] Stabilize GraphQL project generation
+- [scripts] Guard empty bash array expansions for macOS bash 3.2 (#1194)
+- [sessions] Allow deleting and archiving the main session (#1182)
+- [skills] Point wacrawl install metadata at the openclaw org (#1192)
+- [sandbox] Point gogcli module path at the openclaw org (#1191)
+- [gateway] Verify node pairing signatures (#1179)
+- Fix(security): harden model and zip paths (#1180)
+- [vault] Normalize recovery phrase before hashing (#1186)
+- Restore local validation on main
+- [gateway] Thread start_background_tasks into the memory runtime builder (#1201)
+- [caldav] Honor list_events time ranges (#1147)
+
 ## [20260723.03] - 2026-07-23
 ### Added
 - Add context command support for chat turns (#1124)

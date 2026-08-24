@@ -415,6 +415,7 @@ impl From<&ChannelReplyTarget> for ChannelBinding {
             channel_type: Some(channel_type),
             account_id: Some(target.account_id.clone()),
             chat_id: Some(target.chat_id.clone()),
+            outbound_to: Some(target.outbound_to().into_owned()),
             chat_type: target.channel_type.classify_chat(&target.chat_id),
             sender_id: None,
         }
@@ -493,6 +494,8 @@ pub struct InteractiveMessage {
 /// A single message from a thread conversation.
 #[derive(Debug, Clone)]
 pub struct ThreadMessage {
+    /// Stable provider identifier used for deduplication and reconciliation.
+    pub message_id: String,
     pub sender_id: String,
     pub is_bot: bool,
     pub text: String,
@@ -581,6 +584,11 @@ pub trait ChannelPlugin: Send + Sync {
 
     /// Thread context provider for fetching prior thread messages.
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
+        None
+    }
+
+    /// Shared thread context handle for work that must outlive the plugin lock.
+    fn shared_thread_context(&self) -> Option<Arc<dyn ChannelThreadContext>> {
         None
     }
 
@@ -841,13 +849,31 @@ pub struct ChannelHealthSnapshot {
     pub extra: Option<serde_json::Value>,
 }
 
-/// Stream event for edit-in-place streaming.
+/// Lifecycle state for a user-visible task in a channel stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelTaskStatus {
+    InProgress,
+    Complete,
+    Error,
+}
+
+/// A channel-neutral task update emitted while an agent uses a tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelTaskUpdate {
+    pub id: String,
+    pub title: String,
+    pub status: ChannelTaskStatus,
+}
+
+/// Stream event for incremental channel responses.
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     /// A chunk of final reply text to append.
     Delta(String),
     /// A chunk of intermediate progress text to append.
     ProgressDelta(String),
+    /// A structured task lifecycle update.
+    TaskUpdate(ChannelTaskUpdate),
     /// Stream is complete.
     Done,
     /// An error occurred.
@@ -904,12 +930,25 @@ pub trait ChannelStreamOutbound: Send + Sync {
         true
     }
 
+    /// Whether any successful stream result is itself a complete delivery.
+    ///
+    /// This lets a stream retain a user-visible terminal error and suppress the
+    /// normal fallback even when no final reply delta was emitted.
+    async fn claims_stream_delivery(&self, _account_id: &str, _reply_to: Option<&str>) -> bool {
+        false
+    }
+
     /// Whether this stream consumes progress deltas separately from final text.
     ///
     /// Channels that only append streamed text should leave this disabled to
     /// avoid receiving the same pre-tool draft once as final text and again as
     /// reclassified progress.
     async fn receives_progress_deltas(&self, _account_id: &str) -> bool {
+        false
+    }
+
+    /// Whether this stream renders structured task lifecycle updates.
+    async fn receives_task_updates(&self, _account_id: &str) -> bool {
         false
     }
 }
@@ -1320,6 +1359,7 @@ mod tests {
         assert_eq!(binding.channel_type.as_deref(), Some("telegram"));
         assert_eq!(binding.account_id.as_deref(), Some("bot1"));
         assert_eq!(binding.chat_id.as_deref(), Some("-100999"));
+        assert_eq!(binding.outbound_to.as_deref(), Some("-100999:42"));
         assert_eq!(binding.chat_type.as_deref(), Some("channel_or_supergroup"));
         assert!(binding.sender_id.is_none());
     }

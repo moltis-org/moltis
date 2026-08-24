@@ -122,6 +122,19 @@ impl Sandbox for FailoverSandbox {
         }
     }
 
+    fn exposes_managed_files(&self) -> bool {
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(true)
+        {
+            self.fallback.exposes_managed_files()
+        } else {
+            self.primary.exposes_managed_files()
+        }
+    }
+
     fn workspace_dir(&self) -> &str {
         if self
             .use_fallback

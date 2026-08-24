@@ -78,6 +78,7 @@ const namespaces: Record<string, (lng: string) => Promise<{ default?: Record<str
 	mcp: (lng: string) => import(`./locales/${lng}/mcp.ts`),
 	skills: (lng: string) => import(`./locales/${lng}/skills.ts`),
 	channels: (lng: string) => import(`./locales/${lng}/channels.ts`),
+	connectors: (lng: string) => import(`./locales/${lng}/connectors.ts`),
 	hooks: (lng: string) => import(`./locales/${lng}/hooks.ts`),
 	projects: (lng: string) => import(`./locales/${lng}/projects.ts`),
 	images: (lng: string) => import(`./locales/${lng}/images.ts`),

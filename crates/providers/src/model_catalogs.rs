@@ -77,7 +77,6 @@ const FIREWORKS_KIMI_ROUTER_PREFIXES: &[&str] = &[
 /// Known Fireworks models.
 pub(crate) const FIREWORKS_MODELS: &[(&str, &str)] = &[
     ("accounts/fireworks/models/kimi-k2p6", "Kimi K2.6"),
-    ("accounts/fireworks/models/glm-5p1", "GLM 5.1"),
     ("accounts/fireworks/models/gpt-oss-120b", "GPT OSS 120B"),
     (
         "accounts/fireworks/models/deepseek-v4-pro",
@@ -385,6 +384,7 @@ mod tests {
         assert!(!CEREBRAS_MODELS.is_empty());
         assert!(!MINIMAX_MODELS.is_empty());
         assert!(!ZAI_MODELS.is_empty());
+        assert!(!FIREWORKS_MODELS.is_empty());
         assert!(!DEEPINFRA_MODELS.is_empty());
         assert!(!MOONSHOT_MODELS.is_empty());
         assert!(!GEMINI_MODELS.is_empty());
@@ -409,6 +409,7 @@ mod tests {
             DEEPINFRA_MODELS,
             MINIMAX_MODELS,
             ZAI_MODELS,
+            FIREWORKS_MODELS,
             MOONSHOT_MODELS,
             GEMINI_MODELS,
         ] {
@@ -606,7 +607,7 @@ mod tests {
 
         assert!(matches("accounts/fireworks/routers/kimi-k2p5-turbo"));
         assert!(matches("accounts/fireworks/models/kimi-k2p6"));
-        assert!(!matches("accounts/fireworks/models/glm-5p1"));
+        assert!(!matches("accounts/fireworks/models/gpt-oss-120b"));
 
         // non_strict_tools_model_prefixes should use the same prefixes
         assert_eq!(

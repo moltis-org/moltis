@@ -96,8 +96,8 @@ curl -fsSL "https://github.com/moltis-org/moltis/releases/download/${VERSION}/mo
 ### 2. Create user and directories
 
 ```bash
-sudo useradd -r -s /usr/sbin/nologin moltis
-sudo mkdir -p /var/lib/moltis /etc/moltis
+sudo useradd -r -m -d /var/lib/moltis -s /usr/sbin/nologin moltis
+sudo mkdir -p /etc/moltis
 sudo chown moltis:moltis /var/lib/moltis /etc/moltis
 ```
 
@@ -105,6 +105,39 @@ sudo chown moltis:moltis /var/lib/moltis /etc/moltis
 
 ```bash
 sudo curl -fsSL https://raw.githubusercontent.com/moltis-org/moltis/main/deploy/moltis.service -o /etc/systemd/system/moltis.service
+```
+
+The bundled unit keeps `NoNewPrivileges=true` and `ProtectHome=true` as secure
+defaults. If Moltis uses rootless Podman, install the Podman-specific override:
+
+```bash
+sudo mkdir -p /etc/systemd/system/moltis.service.d
+sudo curl -fsSL https://raw.githubusercontent.com/moltis-org/moltis/main/deploy/moltis-podman.conf -o /etc/systemd/system/moltis.service.d/podman.conf
+```
+
+The override relaxes only the directives that block Podman's user namespace
+re-exec path and places its writable home and runtime directories under paths
+allowed by the unit. Rootless Podman also requires an unused subordinate UID and
+GID range. Check `/etc/subuid` and `/etc/subgid`; if the `moltis` user has none,
+assign a non-overlapping range before starting the service, for example:
+
+```bash
+sudo usermod --add-subuids 200000-265535 --add-subgids 200000-265535 moltis
+```
+
+If `allow_host_podman = true`, install the companion API service before Moltis.
+It runs as `moltis` and creates `/run/moltis/podman/podman.sock`, matching the
+drop-in's `XDG_RUNTIME_DIR`:
+
+```bash
+sudo curl -fsSL https://raw.githubusercontent.com/moltis-org/moltis/main/deploy/moltis-podman-api.service -o /etc/systemd/system/moltis-podman-api.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now moltis-podman-api.service
+```
+
+Then enable and start Moltis:
+
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now moltis
 ```

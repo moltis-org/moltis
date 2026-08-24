@@ -377,6 +377,7 @@ mod tests {
             channel_type: Some("telegram".into()),
             account_id: Some("acct-1".into()),
             chat_id: Some("chat-1".into()),
+            outbound_to: Some("chat-1".into()),
             chat_type: Some("dm".into()),
             sender_id: Some("42".into()),
         }

@@ -66,8 +66,10 @@ webauthn-rs           = { features = ["danger-allow-state-serialisation"], works
 
 [features]
 cloudflare-tunnel = []
+connectors = ["moltis-gateway/connectors"]
 default = [
   "cloudflare-tunnel",
+  "connectors",
   "discord",
   "graphql",
   "matrix",
@@ -120,6 +122,7 @@ moltis-providers            = { workspace = true }
 moltis-web                  = { workspace = true }
 serial_test                 = { workspace = true }
 sqlx                        = { workspace = true }
+tower                       = { workspace = true }
 
 [lints]
 workspace = true

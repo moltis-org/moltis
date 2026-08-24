@@ -77,6 +77,8 @@
   - [`mcp`](#mcp)
   - [`mcp.servers.<name>`](#mcpserversname)
   - [`mcp.servers.<name>.oauth`](#mcpserversnameoauth)
+  - [`external_agents`](#external-agents)
+  - [`external_agents.agents.<kind>`](#external-agentsagentskind)
 - **Memory**
   - [`memory`](#memory)
   - [`memory.qmd`](#memoryqmd)
@@ -132,6 +134,7 @@ Gateway server configuration.
 | `log_buffer_size` | integer | `1000` | Maximum number of log entries kept in the in-memory ring buffer. Older entries are persisted to disk. Increase for busy servers, decrease for memory-constrained devices. |
 | `update_releases_url` | optional string | — | URL of the releases manifest (`releases.json`) used by the update checker. Defaults to `https://www.moltis.org/releases.json` when unset. |
 | `db_pool_max_connections` | integer | `5` | Maximum number of SQLite pool connections. Lower values reduce memory usage for personal gateways. |
+| `rpc_timeout_ms` | integer | `5000` | Milliseconds the web UI waits for a WebSocket RPC reply before failing with a `TIMEOUT` error. |
 | `shiki_cdn_url` | optional string | — | Base URL for the Shiki syntax-highlighting library loaded by the web UI. Defaults to `https://esm.sh/shiki@3.2.1?bundle` when unset. |
 | `terminal_enabled` | bool | `true` | Enable or disable the host terminal in the web UI. Set to `false` to prevent an unsandboxed shell. The `MOLTIS_TERMINAL_DISABLED` env var (`1` or `true`) takes precedence. |
 
@@ -409,6 +412,7 @@ not create chat agents, change memory, or affect `spawn_agent` presets.
 | `mode` | string | `"all"` | When sandboxing is active (`"all"`, `"auto"`, `"off"`). |
 | `scope` | string | `"session"` | Container lifetime (`"session"` or `"per-command"`). |
 | `workspace_mount` | string | `"ro"` | Workspace mount mode (`"ro"`, `"rw"`, `"none"`). |
+| `managed_files_mount` | enum: `"none"`, `"ro"`, `"rw"` | `"ro"` | Access to Managed Files at `/home/sandbox/files` in supported local container sandboxes. `none` disables the mount, `ro` allows reads, and `rw` allows mutations. Initially supported by Docker, Podman, and Apple Container; not yet by WASM or remote backends. |
 | `host_data_dir` | optional string | `null` | Host-visible path for Moltis `data_dir()` when creating sandbox or browser containers from inside another container. |
 | `home_persistence` | enum: `"off"`, `"session"`, `"shared"` | `"shared"` | Persistence strategy for `/home/sandbox` in sandbox containers. |
 | `shared_home_dir` | optional string | `null` | Host directory for shared `/home/sandbox` persistence. Relative paths resolved against `data_dir()`. |
@@ -418,6 +422,9 @@ not create chat agents, change memory, or affect `spawn_agent` presets.
 | `network` | string | `"trusted"` | Network policy: `"blocked"`, `"trusted"` (proxy-filtered), or `"bypass"` (unrestricted). |
 | `trusted_domains` | array | `[]` | Domains allowed through the proxy in `"trusted"` network mode. |
 | `backend` | string | `"auto"` | Sandbox backend: `"auto"`, `"docker"`, `"podman"`, `"apple-container"`, `"restricted-host"`, or `"wasm"`. |
+| `gpus` | optional string | `null` | GPU device passthrough for Docker/Podman backends. |
+| `allow_host_podman` | bool | `false` | Linux-only Podman escape hatch. Mounts the host socket, disables SELinux label separation, and removes the sandbox boundary by granting the Podman service user's host access. Requires `backend = "podman"` and cannot be combined with `allow_nested_podman`. |
+| `allow_nested_podman` | bool | `false` | Dangerous Podman escape hatch: relax Podman sandbox hardening and launch the sandbox with privileged container settings. Requires `backend = "podman"` and cannot be combined with `allow_host_podman`. |
 | `packages` | array | *(~130 packages)* | Packages to install via `apt-get` in the sandbox image. Empty list to skip. |
 | `wasm_fuel_limit` | optional integer | `null` | Fuel limit for WASM sandbox execution (instructions). |
 | `wasm_epoch_interval_ms` | optional integer | `null` | Epoch interruption interval in milliseconds for WASM sandbox. |
@@ -474,6 +481,7 @@ Default `tool_overrides` entries:
 | `enabled` | bool | `true` | Whether browser support is enabled. |
 | `chrome_path` | optional string | `null` | Path to Chrome/Chromium binary (auto-detected if not set). |
 | `obscura_path` | optional string | `null` | Path to the Obscura binary for `browser = "obscura"` requests (auto-detected from `OBSCURA` or `PATH` if not set). |
+| `obscura_stealth` | bool | `true` | Pass `--stealth` when launching Obscura. Full TLS impersonation requires an Obscura binary built with its upstream `stealth` feature. |
 | `lightpanda_path` | optional string | `null` | Path to the Lightpanda binary for `browser = "lightpanda"` requests (auto-detected from `LIGHTPANDA` or `PATH` if not set). |
 | `headless` | bool | `true` | Whether to run in headless mode. |
 | `viewport_width` | integer | `2560` | Default viewport width in pixels. |
@@ -485,13 +493,13 @@ Default `tool_overrides` entries:
 | `navigation_timeout_ms` | integer | `30000` | Default navigation timeout in milliseconds. |
 | `user_agent` | optional string | `null` | Custom user agent string (uses Chrome default if not set). |
 | `chrome_args` | array | `[]` | Additional Chrome command-line arguments. |
-| `sandbox_image` | string | `"docker.io/browserless/chrome"` | Docker image for sandboxed browser instances. |
+| `sandbox_image` | string | `"docker.io/browserless/chrome"` | Docker image for sandboxed browser instances. Must match `browserless_api_version`; use a pinned `ghcr.io/browserless/chromium:v2.x` image for v2. |
 | `allowed_domains` | array | `[]` | Allowed navigation domains (empty = all allowed). Supports wildcards (`"*.example.com"`). |
 | `low_memory_threshold_mb` | integer | `2048` | System RAM threshold (MB) below which memory-saving Chrome flags are injected (0 to disable). |
 | `persist_profile` | bool | `true` | Persist Chrome user profile (cookies, auth, local storage) across sessions. |
 | `profile_dir` | optional string | `null` | Custom path for persistent Chrome profile directory. Implies `persist_profile = true`. |
 | `container_host` | string | `"127.0.0.1"` | Hostname/IP to connect to the browser container from the host. Use `"host.docker.internal"` when Moltis runs inside Docker. |
-| `browserless_api_version` | enum: `"v1"`, `"v2"` | `"v1"` | Browserless API compatibility mode for websocket endpoints. |
+| `browserless_api_version` | enum: `"v1"`, `"v2"` | `"v1"` | Browserless container protocol for environment settings, launch options, and WebSocket paths. Must match `sandbox_image`; see [Browser Automation](browser-automation.md#browserless-v2-setup-checklist) for the complete v2 setup. |
 
 ---
 
@@ -704,6 +712,34 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 
 ---
 
+### `external_agents`
+
+**Struct:** `ExternalAgentsConfig`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the external CLI agent bridge. |
+| `agents` | map | `{}` | Per-agent configuration keyed by agent kind, such as `claude-code` or `codex`. |
+
+
+### `external_agents.agents.<kind>`
+
+**Struct:** `ExternalAgentConfig`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `binary` | optional string | `null` | Override the CLI binary path. |
+| `args` | array of strings | `[]` | Override CLI arguments for the external agent runtime. |
+| `models` | array of strings | `[]` | Optional model choices shown in `/model`; selected values are passed to the external CLI runtime. |
+| `efforts` | array of strings | `[]` | Optional thinking/reasoning effort choices shown in `/model`; selected values are passed to runtimes that support effort. |
+| `env` | map | `{}` | Environment variables for this external agent runtime. |
+| `working_dir` | optional string | `null` | Working directory for this external agent runtime. |
+| `timeout_secs` | optional integer | `null` | Timeout for external agent startup or turns. |
+| `use_tmux` | optional bool | `null` | Force tmux-backed runtime when supported. |
+
+
+---
+
 ## Memory
 
 
@@ -716,7 +752,7 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | `style` | enum (`hybrid`, `prompt-only`, `search-only`, `off`) | `"hybrid"` | High-level memory orchestration style. |
 | `agent_write_mode` | enum (`hybrid`, `prompt-only`, `search-only`, `off`) | `"hybrid"` | Where agent-authored memory writes are allowed to land. |
 | `user_profile_write_mode` | enum (`explicit-and-auto`, `explicit-only`, `off`) | `"explicit-and-auto"` | How Moltis writes the managed `USER.md` profile surface. |
-| `backend` | enum (`builtin`, `qmd`) | `"builtin"` | Memory backend used for search, retrieval, and indexing. |
+| `backend` | enum (`builtin`, `qmd`, `zvec`) | `"builtin"` | Memory backend used for search, retrieval, and indexing. |
 | `provider` | optional enum (`local`, `ollama`, `openai`, `custom`) | *auto-detect* | Embedding provider. Alias: `embedding_provider`. |
 | `disable_rag` | bool | `false` | Disable RAG embeddings and force keyword-only memory search. |
 | `base_url` | optional string | — | Base URL for the embedding API. Alias: `embedding_base_url`. |
@@ -727,6 +763,9 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | `search_merge_strategy` | enum (`rrf`, `linear`) | `"rrf"` | Merge strategy for hybrid search results. |
 | `session_export` | enum (`off`, `on-new-or-reset`) | `"on-new-or-reset"` | How session transcripts are exported into searchable memory. |
 | `qmd` | map (see `memory.qmd`) | `{}` | QMD-specific configuration (only used when backend = `"qmd"`). |
+| `db_path` | optional string | — | Zvec collection directory path (only used when `backend = "zvec"`). Resolved relative to the Moltis data directory. |
+| `vector_weight` | float | `0.7` | Weight for vector similarity in hybrid search (0.0–1.0). |
+| `keyword_weight` | float | `0.3` | Weight for keyword/FTS similarity in hybrid search (0.0–1.0). |
 
 
 ### `memory.qmd`

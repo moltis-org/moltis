@@ -631,6 +631,11 @@ fn test_sandbox_image_dockerfile_creates_home_in_install_layer() {
 fn test_sandbox_image_dockerfile_installs_gogcli() {
     let dockerfile = sandbox_image_dockerfile("ubuntu:25.10", &["curl".into()]);
     assert!(dockerfile.contains(&format!("go install {GOGCLI_MODULE_PATH}@{GOGCLI_VERSION}")));
+    // Assert the literal module path: interpolating the constant alone cannot catch a
+    // wrong constant, and `go install` rejects the pre-rename path because gogcli's
+    // go.mod declares `module github.com/openclaw/gogcli`.
+    assert!(dockerfile.contains("go install github.com/openclaw/gogcli/cmd/gog@latest"));
+    assert!(!dockerfile.contains("github.com/steipete/gogcli"));
     assert!(dockerfile.contains("ln -sf /usr/local/bin/gog /usr/local/bin/gogcli"));
 }
 

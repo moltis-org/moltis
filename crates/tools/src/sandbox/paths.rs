@@ -12,14 +12,22 @@ use {
     super::{
         containers::{is_cli_available, is_docker_daemon_available, should_use_docker_backend},
         types::{
-            HomePersistence, SANDBOX_HOME_DIR, SandboxConfig, SandboxId, WorkspaceMount,
-            sanitize_path_component,
+            HomePersistence, ManagedFilesMount, SANDBOX_FILES_DIR, SANDBOX_HOME_DIR, SandboxConfig,
+            SandboxId, WorkspaceMount, sanitize_path_component,
         },
     },
     crate::error::Result,
 };
 
 pub(crate) static HOST_DATA_DIR_CACHE: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ManagedFilesPath {
+    Unmanaged,
+    Unavailable,
+    ReadOnly(PathBuf),
+    ReadWrite(PathBuf),
+}
 
 pub(crate) fn configured_host_data_dir(config: &SandboxConfig) -> Option<PathBuf> {
     let guest_data_dir = moltis_config::data_dir();
@@ -111,6 +119,76 @@ pub(crate) fn host_visible_path(
         host_data_dir
     } else {
         host_data_dir.join(relative_path)
+    }
+}
+
+pub(crate) fn host_visible_managed_files_dir(config: &SandboxConfig, cli: Option<&str>) -> PathBuf {
+    host_visible_path(config, cli, &moltis_config::managed_files_dir())
+}
+
+pub(crate) fn ensure_managed_files_host_dir(
+    config: &SandboxConfig,
+    cli: Option<&str>,
+) -> Result<PathBuf> {
+    std::fs::create_dir_all(moltis_config::managed_files_dir())?;
+    Ok(host_visible_managed_files_dir(config, cli))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn ensure_managed_files_none_mask_host_dir(
+    config: &SandboxConfig,
+    cli: Option<&str>,
+) -> Result<PathBuf> {
+    let guest_visible = moltis_config::data_dir()
+        .join("sandbox")
+        .join("masks")
+        .join("managed-files-none");
+    std::fs::create_dir_all(&guest_visible)?;
+    Ok(host_visible_path(config, cli, &guest_visible))
+}
+
+fn normalize_guest_path(path: &FsPath) -> PathBuf {
+    use std::path::Component;
+
+    path.components()
+        .fold(PathBuf::new(), |mut normalized, component| {
+            match component {
+                Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+                Component::RootDir => normalized.push(FsPath::new(std::path::MAIN_SEPARATOR_STR)),
+                Component::CurDir => {},
+                Component::ParentDir => {
+                    normalized.pop();
+                },
+                Component::Normal(part) => normalized.push(part),
+            }
+            normalized
+        })
+}
+
+pub(crate) fn resolve_managed_files_guest_path_on_host(
+    config: &SandboxConfig,
+    cli: Option<&str>,
+    guest_path: &FsPath,
+) -> ManagedFilesPath {
+    let normalized = normalize_guest_path(guest_path);
+    let canonical_guest_dir = FsPath::new(SANDBOX_FILES_DIR);
+    let legacy_guest_dir = moltis_config::managed_files_dir();
+    let relative = normalized
+        .strip_prefix(canonical_guest_dir)
+        .or_else(|_| normalized.strip_prefix(&legacy_guest_dir));
+    let Ok(relative) = relative else {
+        return ManagedFilesPath::Unmanaged;
+    };
+
+    if config.managed_files_mount == ManagedFilesMount::None {
+        return ManagedFilesPath::Unavailable;
+    }
+
+    let host_path = host_visible_managed_files_dir(config, cli).join(relative);
+    match config.managed_files_mount {
+        ManagedFilesMount::None => ManagedFilesPath::Unavailable,
+        ManagedFilesMount::Ro => ManagedFilesPath::ReadOnly(host_path),
+        ManagedFilesMount::Rw => ManagedFilesPath::ReadWrite(host_path),
     }
 }
 

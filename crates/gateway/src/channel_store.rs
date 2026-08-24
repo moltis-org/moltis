@@ -531,7 +531,9 @@ mod tests {
 
     #[cfg(feature = "vault")]
     #[tokio::test]
+    #[serial_test::serial(vault_runtime)]
     async fn vault_store_rejects_plaintext_secret_updates_when_sealed() {
+        crate::vault_lifecycle::set_vault_encryption_runtime_enabled(true);
         let pool = test_pool().await;
         let vault = test_vault(pool.clone()).await;
         vault.seal().await;

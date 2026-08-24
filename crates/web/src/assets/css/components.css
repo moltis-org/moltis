@@ -1154,6 +1154,10 @@
   -webkit-mask-image: url("../icons/masks/mask-9efc91f08692af1a.svg");
   mask-image: url("../icons/masks/mask-9efc91f08692af1a.svg");
 }
+.settings-nav-item[data-section="files"]::before {
+  -webkit-mask-image: url("../icons/masks/files.svg");
+  mask-image: url("../icons/masks/files.svg");
+}
 .settings-nav-item[data-section="environment"]::before,
 .settings-nav-item[data-section="terminal"]::before {
   -webkit-mask-image: url("../icons/masks/mask-2920334234a725b2.svg");
@@ -1206,6 +1210,10 @@
 .settings-nav-item[data-section="channels"]::before {
   -webkit-mask-image: url("../icons/masks/mask-fa03630d2271dc99.svg");
   mask-image: url("../icons/masks/mask-fa03630d2271dc99.svg");
+}
+.settings-nav-item[data-section="connectors"]::before {
+  -webkit-mask-image: url("../icons/masks/connectors.svg");
+  mask-image: url("../icons/masks/connectors.svg");
 }
 .settings-nav-item[data-section="hooks"]::before {
   -webkit-mask-image: url("../icons/masks/mask-99420ef32a8bfaac.svg");

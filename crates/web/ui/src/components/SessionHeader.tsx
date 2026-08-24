@@ -279,7 +279,6 @@ export function SessionHeader({
 		const currentSession = sessionStore.getByKey(currentKey);
 		const msgCount = currentSession ? currentSession.messageCount || 0 : 0;
 		const nextKey = nextSessionKey(currentKey);
-		const canOptimisticallyDelete = !currentSession?.worktree_branch;
 		const applyDeletedState = (): void => {
 			removeSessionFromClientState(currentKey, { nextKey });
 			switchSession(nextKey);
@@ -287,11 +286,6 @@ export function SessionHeader({
 		const runDelete = (force: boolean): void => {
 			const request: Record<string, unknown> = { key: currentKey };
 			if (force) request.force = true;
-			let optimisticApplied = false;
-			if (canOptimisticallyDelete && !force) {
-				applyDeletedState();
-				optimisticApplied = true;
-			}
 			sendRpc("sessions.delete", request).then((res) => {
 				const err = res?.error?.message || (typeof res?.error === "string" ? String(res.error) : "") || "";
 				if (res && !res.ok && typeof err === "string" && err.indexOf("uncommitted changes") !== -1) {
@@ -307,9 +301,7 @@ export function SessionHeader({
 					fetchSessions();
 					return;
 				}
-				if (!optimisticApplied) {
-					applyDeletedState();
-				}
+				applyDeletedState();
 				fetchSessions();
 			});
 		};
@@ -460,9 +452,10 @@ export function SessionHeader({
 						showToast((res?.error as { message?: string })?.message || "Failed to switch agent", "error");
 						return;
 					}
-					if (session) {
-						session.agent_id = nextAgentId;
-						session.dataVersion.value++;
+					const currentSession = sessionStore.getByKey(currentKey);
+					if (currentSession) {
+						currentSession.agent_id = nextAgentId;
+						currentSession.dataVersion.value++;
 					}
 					fetchSessions();
 				})
@@ -470,7 +463,7 @@ export function SessionHeader({
 					setSwitchingAgent(false);
 				});
 		},
-		[currentAgentId, currentKey, session, switchingAgent],
+		[currentAgentId, currentKey, switchingAgent],
 	);
 
 	const onNodeChange = useCallback(
@@ -679,7 +672,7 @@ export function SessionHeader({
 						<span className="hidden md:inline">Save .md</span>
 					</button>
 				)}
-				{showDelete && !isMain && (
+				{showDelete && (
 					<button
 						className={`${actionButtonClass} chat-session-btn-danger inline-flex items-center gap-1.5`}
 						onClick={onDelete}

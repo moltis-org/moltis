@@ -8,7 +8,7 @@ import { switchSession } from "./sessions/session-switch";
 import * as S from "./state";
 import { projectStore } from "./stores/project-store";
 import { clearSessionHistory } from "./stores/session-history-cache";
-import { sessionStore } from "./stores/session-store";
+import { markSessionRunStateChanged, type Session, sessionStore } from "./stores/session-store";
 import type { SessionMeta } from "./types";
 import { confirmDialog } from "./ui";
 
@@ -61,6 +61,14 @@ let sessionListPendingRefresh = false;
 let sessionListScrollEl: HTMLElement | null = null;
 let sessionListScrollRaf = 0;
 
+function sessionListChangedWhileLoading(requestSessions: Session[]): boolean {
+	if (sessionStore.sessions.value === requestSessions) return false;
+	// Store mutations replace the array, so its identity is the request's
+	// optimistic-concurrency token for session membership.
+	sessionListPendingRefresh = true;
+	return true;
+}
+
 function truncateSessionPreview(text: string | null | undefined): string {
 	const trimmed = (text || "").trim();
 	if (!trimmed) return "";
@@ -87,9 +95,11 @@ export function fetchSessions(): void {
 			SESSION_LIST_REFRESH_LIMIT_MAX,
 		),
 	);
+	const requestSessions = sessionStore.sessions.value;
 
 	void fetchSessionListPage({ limit: refreshLimit })
 		.then((page) => {
+			if (sessionListChangedWhileLoading(requestSessions)) return;
 			const merged = mergeSessionListPage(S.sessions as SessionMeta[], page.sessions, false);
 			applySessionList(merged);
 			applySessionListPaging(page);
@@ -187,8 +197,8 @@ function mergeSessionListPage(
 }
 
 function applySessionList(sessions: SessionMeta[]): void {
-	// Update session store (source of truth) -- version guard
-	// inside Session.update() prevents stale data from overwriting.
+	// The request-level membership guard rejects stale lists, while the version
+	// guard inside Session.update() rejects stale fields for matching keys.
 	sessionStore.setAll(sessions);
 	// Dual-write to state.js for backward compat
 	S.setSessions(sessions);
@@ -244,11 +254,13 @@ function shouldLoadMoreSessions(): boolean {
 async function loadMoreSessionsPage(): Promise<void> {
 	if (!shouldLoadMoreSessions()) return;
 	sessionListPaging.loading = true;
+	const requestSessions = sessionStore.sessions.value;
 	try {
 		const page = await fetchSessionListPage({
 			cursor: sessionListPaging.nextCursor as number,
 			limit: SESSION_LIST_PAGE_LIMIT,
 		});
+		if (sessionListChangedWhileLoading(requestSessions)) return;
 		const merged = mergeSessionListPage(S.sessions as SessionMeta[], page.sessions, true);
 		applySessionList(merged);
 		if (page.sessions.length === 0) {
@@ -300,6 +312,7 @@ function ensureSessionListScrollBinding(): void {
 
 export function markSessionLocallyCleared(key: string): void {
 	if (!key) return;
+	markSessionRunStateChanged(key);
 	const now = Date.now();
 
 	const session = sessionStore.getByKey(key);
@@ -340,6 +353,7 @@ export function renderSessionList(): void {
 // ── Status helpers ──────────────────────────────────────────
 
 export function setSessionReplying(key: string, replying: boolean): void {
+	markSessionRunStateChanged(key);
 	// Update store signal -- Preact SessionList re-renders automatically.
 	const session = sessionStore.getByKey(key);
 	if (session) session.replying.value = replying;
@@ -359,6 +373,7 @@ export function clearSessionSendErrors(key: string): void {
 }
 
 export function setSessionActiveRunId(key: string, runId: string | null): void {
+	markSessionRunStateChanged(key);
 	const session = sessionStore.getByKey(key);
 	if (session) session.activeRunId.value = runId || null;
 	const entry = (S.sessions as SessionMeta[]).find((s) => s.key === key);
@@ -459,10 +474,7 @@ const newSessionBtn = S.$("newSessionBtn") as HTMLElement;
 newSessionBtn.addEventListener("click", () => startNewSession());
 
 export function isArchivableSession(session: SessionMeta): boolean {
-	return (
-		session.key !== "main" &&
-		((session as SessionMeta & { activeChannel?: boolean }).activeChannel !== true || session.archived === true)
-	);
+	return (session as SessionMeta & { activeChannel?: boolean }).activeChannel !== true || session.archived === true;
 }
 
 /** The reply target stored in `SessionMeta.channelBinding`, JSON or already parsed. */

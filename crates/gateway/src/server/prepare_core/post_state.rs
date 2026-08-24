@@ -1,5 +1,6 @@
 use {
     super::feedback::install_feedback,
+    anyhow::Context as _,
     secrecy::Secret,
     std::{
         path::PathBuf,
@@ -232,6 +233,28 @@ pub(super) async fn complete_startup(
     };
 
     let browser_for_lifecycle = Arc::clone(&services.browser);
+    #[cfg(feature = "connectors")]
+    let connector_manager = Arc::new(
+        crate::connectors::ConnectorManager::open(
+            &data_dir,
+            config.server.db_pool_max_connections,
+            #[cfg(feature = "vault")]
+            vault.clone(),
+        )
+        .await
+        .map_err(anyhow::Error::new)
+        .context("failed to initialize connector manager")?,
+    );
+    #[cfg(feature = "connectors")]
+    connector_manager
+        .configure_planner(Arc::clone(&registry))
+        .context("failed to initialize connector planner")?;
+    #[cfg(feature = "connectors")]
+    if let Some(channel_registry) = services.channel_registry.as_ref() {
+        connector_manager
+            .configure_channel_registry(Arc::clone(channel_registry))
+            .context("failed to initialize connector channel registry")?;
+    }
     let pairing_store = Arc::new(crate::pairing::PairingStore::new(db_pool.clone()));
     #[cfg(feature = "tls")]
     let tls_enabled_for_gateway = config.tls.enabled;
@@ -286,6 +309,45 @@ pub(super) async fn complete_startup(
         #[cfg(feature = "vault")]
         vault.clone(),
     );
+
+    #[cfg(feature = "connectors")]
+    {
+        state
+            .connector_manager
+            .set(Arc::clone(&connector_manager))
+            .map_err(|_| anyhow::anyhow!("connector manager was initialized more than once"))?;
+        #[cfg(feature = "vault")]
+        connector_manager
+            .migrate_plaintext_credentials()
+            .await
+            .map_err(anyhow::Error::new)
+            .context("failed to migrate connector credentials into the vault")?;
+        match connector_manager
+            .reconcile_configured_caldav_accounts(&config.caldav)
+            .await
+        {
+            Ok(report) => {
+                info!(
+                    created = report.created,
+                    adopted = report.adopted,
+                    updated = report.updated,
+                    unchanged = report.unchanged,
+                    disabled = report.disabled,
+                    deferred = report.deferred,
+                    invalid = report.invalid,
+                    ambiguous = report.ambiguous,
+                    "reconciled configured CalDAV accounts into connectors"
+                );
+            },
+            Err(error) => {
+                warn!(?error, "configured CalDAV connector reconciliation failed");
+            },
+        }
+        connector_manager.start_projection_maintenance().await;
+        if !profile.is_headless() {
+            connector_manager.start_scheduler().await;
+        }
+    }
 
     // ── Agent instrumentation ─────────────────────────────────────────────
     // Applied on the state's own instance so RPC and lifecycle callers observe
@@ -1241,6 +1303,22 @@ pub(super) async fn complete_startup(
             .with_agents_config(agents_config)
             .with_task_store(Arc::clone(&spawn_task_store));
             tool_registry.register(Box::new(spawn_tool));
+        }
+
+        // Register after spawn_agent snapshots its tools so a narrowed parent
+        // policy cannot regain private connector data through a sub-agent.
+        #[cfg(feature = "connectors")]
+        {
+            tool_registry.register(Box::new(crate::connector_agent_tools::ConnectorsTool::new(
+                Arc::clone(&connector_manager),
+            )));
+            let reader = connector_manager.reader();
+            tool_registry.register(Box::new(moltis_connector_gmail::GmailConnectorTool::new(
+                Arc::clone(&reader),
+            )));
+            tool_registry.register(Box::new(
+                moltis_connector_himalaya::HimalayaConnectorTool::new(reader),
+            ));
         }
 
         let shared_tool_registry = Arc::new(tokio::sync::RwLock::new(tool_registry));

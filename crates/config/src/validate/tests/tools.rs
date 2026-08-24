@@ -63,6 +63,127 @@ backend = "podman"
 }
 
 #[test]
+fn podman_escape_hatch_fields_accepted_and_warned() {
+    let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+allow_nested_podman = true
+"#;
+    let result = validate_toml_str(toml);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.category != "unknown-field"),
+        "podman escape hatch fields should be accepted"
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.path == "tools.exec.sandbox.allow_nested_podman")
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.severity != Severity::Error)
+    );
+}
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn host_podman_escape_hatch_rejected_off_linux() {
+    let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+allow_host_podman = true
+"#;
+    let result = validate_toml_str(toml);
+
+    assert!(result.diagnostics.iter().any(|d| {
+        d.severity == Severity::Error && d.path == "tools.exec.sandbox.allow_host_podman"
+    }));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn host_podman_escape_hatch_accepted_on_linux() {
+    let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+allow_host_podman = true
+"#;
+    let result = validate_toml_str(toml);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.severity != Severity::Error)
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.path == "tools.exec.sandbox.allow_host_podman")
+    );
+}
+
+#[test]
+fn podman_escape_hatches_require_podman_backend() {
+    let toml = r#"
+[tools.exec.sandbox]
+backend = "docker"
+allow_nested_podman = true
+"#;
+    let result = validate_toml_str(toml);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| { d.severity == Severity::Error && d.path == "tools.exec.sandbox.backend" })
+    );
+}
+
+#[test]
+fn podman_escape_hatches_are_mutually_exclusive() {
+    let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+allow_host_podman = true
+allow_nested_podman = true
+"#;
+    let result = validate_toml_str(toml);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| { d.severity == Severity::Error && d.path == "tools.exec.sandbox" })
+    );
+}
+
+#[test]
+fn managed_files_mount_is_recognized_by_schema_validation() {
+    let result = validate_toml_str(
+        r#"
+[tools.exec.sandbox]
+managed_files_mount = "rw"
+"#,
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.path != "tools.exec.sandbox.managed_files_mount"),
+        "managed_files_mount should be a recognized typed field"
+    );
+}
+
+#[test]
 fn unknown_security_level_warned() {
     let toml = r#"
 [tools.exec]
@@ -112,10 +233,11 @@ host = "ssh"
 }
 
 #[test]
-fn browser_obscura_path_accepted() {
+fn browser_obscura_fields_accepted() {
     let toml = r#"
 [tools.browser]
 obscura_path = "/usr/local/bin/obscura"
+obscura_stealth = false
 "#;
     let result = validate_toml_str(toml);
     let unknown = result
@@ -125,6 +247,15 @@ obscura_path = "/usr/local/bin/obscura"
     assert!(
         unknown.is_none(),
         "obscura_path should be accepted as a browser config field, got: {:?}",
+        result.diagnostics
+    );
+    let unknown = result
+        .diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path == "tools.browser.obscura_stealth");
+    assert!(
+        unknown.is_none(),
+        "obscura_stealth should be accepted as a browser config field, got: {:?}",
         result.diagnostics
     );
 }

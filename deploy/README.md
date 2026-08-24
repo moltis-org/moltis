@@ -8,6 +8,8 @@ This directory contains templates for deploying Moltis on a VPS or bare-metal se
 |------|---------|
 | `docker-compose.yml` | Docker Compose for VPS deployment |
 | `moltis.service` | systemd unit file for bare-metal installs |
+| `moltis-podman.conf` | systemd override for rootless Podman |
+| `moltis-podman-api.service` | Optional host socket service for sandbox passthrough |
 
 ## Docker Compose (recommended)
 
@@ -22,16 +24,40 @@ Open `https://<your-server-ip>:13131` and configure your LLM provider.
 ## Systemd (bare-metal)
 
 ```bash
-# Create user and directories
-sudo useradd -r -s /usr/sbin/nologin moltis
-sudo mkdir -p /var/lib/moltis /etc/moltis
+# Create user and directories. /var/lib/moltis is also its Podman-compatible home.
+sudo useradd -r -m -d /var/lib/moltis -s /usr/sbin/nologin moltis
+sudo mkdir -p /etc/moltis
 sudo chown moltis:moltis /var/lib/moltis /etc/moltis
 
 # Install the binary
 sudo cp moltis /usr/local/bin/moltis
 
-# Install and start the service
+# Install the service
 sudo cp deploy/moltis.service /etc/systemd/system/
+```
+
+The default unit retains systemd privilege and home-directory hardening. If
+Moltis uses rootless Podman, install the required override before starting it:
+
+```bash
+sudo mkdir -p /etc/systemd/system/moltis.service.d
+sudo cp deploy/moltis-podman.conf /etc/systemd/system/moltis.service.d/podman.conf
+# Assign an unused subordinate ID range if moltis has none in /etc/subuid and /etc/subgid.
+# sudo usermod --add-subuids 200000-265535 --add-subgids 200000-265535 moltis
+```
+
+If `allow_host_podman = true`, also install and enable the API service before
+Moltis. It creates the socket at the path configured by the drop-in:
+
+```bash
+sudo cp deploy/moltis-podman-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now moltis-podman-api.service
+```
+
+Then start the service:
+
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now moltis
 ```

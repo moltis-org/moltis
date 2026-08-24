@@ -1,4 +1,4 @@
-use super::*;
+use super::{heartbeat_patch::apply_heartbeat_patch, *};
 
 /// Strip gateway-owned routing and trust markers from RPC-supplied params.
 ///
@@ -376,14 +376,18 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "heartbeat.update",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let patch: moltis_config::schema::HeartbeatConfig =
-                        serde_json::from_value(ctx.params.clone()).map_err(|e| {
-                            ErrorShape::new(
-                                error_codes::INVALID_REQUEST,
-                                format!("invalid heartbeat config: {e}"),
-                            )
-                        })?;
-                    ctx.state.inner.write().await.heartbeat_config = patch.clone();
+                    let patch = {
+                        let mut state = ctx.state.inner.write().await;
+                        let patch = apply_heartbeat_patch(&state.heartbeat_config, &ctx.params)
+                            .map_err(|e| {
+                                ErrorShape::new(
+                                    error_codes::INVALID_REQUEST,
+                                    format!("invalid heartbeat config: {e}"),
+                                )
+                            })?;
+                        state.heartbeat_config = patch.clone();
+                        patch
+                    };
 
                     // Persist to moltis.toml so the config survives restarts.
                     if let Err(e) = moltis_config::update_config(|cfg| {

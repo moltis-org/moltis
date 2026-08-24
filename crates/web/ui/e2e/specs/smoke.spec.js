@@ -1,6 +1,10 @@
 const { expect, test } = require("../base-test");
 const { expectPageContentMounted, watchPageErrors } = require("../helpers");
 
+// This spec covers app layout and routing. Dedicated PWA specs exercise the
+// worker without exposing headless Chromium to native installed-app badging.
+test.use({ serviceWorkers: "block" });
+
 test("app shell loads chat route instead of onboarding", async ({ page }) => {
 	const pageErrors = watchPageErrors(page);
 

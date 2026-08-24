@@ -27,7 +27,7 @@ import {
 	setSessionUnread,
 } from "../sessions";
 import * as S from "../state";
-import { sessionStore } from "../stores/session-store";
+import { markSessionRunStateChanged, sessionStore } from "../stores/session-store";
 import type { AbortedPartialState, ChatPayload, CompactPayload, ToolCallPayload } from "../types/ws-events";
 import {
 	clearChatEmptyState,
@@ -98,6 +98,7 @@ function handleChatThinkingDone(_p: ChatPayload, isActive: boolean, isChatPage: 
 }
 
 function handleChatVoicePending(_p: ChatPayload, isActive: boolean, isChatPage: boolean, eventSession: string): void {
+	markSessionRunStateChanged(eventSession);
 	// Update per-session signal
 	const session = sessionStore.getByKey(eventSession);
 	if (session) session.voicePending.value = true;

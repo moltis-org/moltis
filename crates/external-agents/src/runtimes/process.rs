@@ -6,6 +6,7 @@ use {
 };
 
 use crate::{
+    runtimes::env::inject_managed_files_dir,
     transport::ExternalAgentSession,
     types::{ContextSnapshot, ExternalAgentEvent, ExternalAgentStatus},
 };
@@ -59,6 +60,7 @@ impl ExternalAgentSession for OneShotProcessSession {
             command.current_dir(working_dir);
         }
         command.envs(&self.env);
+        inject_managed_files_dir(&mut command);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());

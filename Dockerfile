@@ -11,7 +11,7 @@
 # See README.md for detailed instructions.
 
 # Build stage — nightly required for wacore-binary (portable_simd)
-FROM rust:bookworm AS builder
+FROM rust:trixie AS builder
 
 WORKDIR /build
 
@@ -25,6 +25,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY apps/courier ./apps/courier
 COPY scripts ./scripts
+COPY vendor ./vendor
 COPY wit ./wit
 # docs/src is embedded into moltis-agents via include_dir! (crates/agents/src/docs.rs).
 # CHANGELOG.md is the target of the docs/src/changelog.md symlink, so it must be
@@ -63,7 +64,7 @@ ENV MOLTIS_VERSION=${MOLTIS_VERSION}
 RUN ./scripts/cargo-build-moltis.sh --release
 
 # Runtime stage
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 # Install base runtime dependencies
 ENV DEBIAN_FRONTEND=noninteractive
@@ -109,12 +110,14 @@ RUN groupadd -f docker && \
     usermod -aG docker moltis && \
     echo "moltis ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/moltis
 
-# Copy binary from builder
+# Copy binary and its zvec shared library from builder.
 COPY --from=builder /build/target/release/moltis /usr/local/bin/moltis
+COPY --from=builder /build/target/release/build/zvec-rust-sys-*/out/zvec-prebuilt/libzvec_c_api.so /usr/local/lib/
 COPY --from=builder /build/crates/web/src/assets /usr/share/moltis/web
 COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_calc.wasm /usr/share/moltis/wasm/
 COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm /usr/share/moltis/wasm/
 COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_web_search.wasm /usr/share/moltis/wasm/
+RUN ldconfig && moltis --version
 
 # Create config and data directories.
 # Persistent state lives under these paths; mount a volume or bind mount at

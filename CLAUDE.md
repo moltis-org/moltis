@@ -291,6 +291,9 @@ Conventional commits: `feat|fix|docs|style|refactor|test|chore(scope): descripti
 - Prefer descriptive commit subjects over terse "change stuff" summaries.
 - For bug fixes, behavioral changes, and non-obvious refactors, include a commit body that explains the concrete problem, the root cause, and why the chosen fix is correct.
 - Write commit messages so `git log` is useful without opening the diff first.
+- If GPG signing or pinentry fails, do **not** bypass it with `--no-gpg-sign` or
+  create an unsigned commit. Stop and wait for the maintainer to return to their
+  computer and complete the pinentry or YubiKey interaction.
 **No `Co-Authored-By` trailers.** Do **not** add `Claude-Session:` URLs (or any
 other AI/assistant session links) to commit messages or PR descriptions. Update
 `README.md` features list with `feat` commits.
@@ -351,12 +354,13 @@ Exact commands (must match `local-validate.sh`):
 - Tests: targeted changed/added Rust tests only, derived from the branch diff. Override with `LOCAL_VALIDATE_TEST_CMD` when needed.
 - E2E: targeted changed/added Playwright specs only, derived from the branch diff. Override with `LOCAL_VALIDATE_E2E_CMD` when needed.
 - macOS app (Darwin hosts): `./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination "platform=macOS" -derivedDataPath apps/macos/.derivedData-local-validate CODE_SIGNING_ALLOWED=NO build`
-- iOS app (Darwin hosts): `cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-project.sh && ./scripts/generate-ios-graphql.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build`
+- iOS app (Darwin hosts): `cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-project.sh && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build`
 
 ### PR Descriptions
 
 Required sections: `## Summary`, `## Validation` (checkboxes, split into `### Completed` / `### Remaining`
 with exact commands), `## Manual QA`. Include concrete test steps.
+- Add a Mermaid diagram when architecture, control flow, data flow, or cross-component interactions benefit from a visual explanation.
 - Do not prefix GitHub PR titles with `[codex]`.
 - Prefer normal human-readable PR titles, ideally aligned with the conventional-commit summary.
 

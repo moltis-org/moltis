@@ -434,6 +434,10 @@ pub struct BrowserConfig {
     /// Path to the Obscura binary (auto-detected from PATH if not set).
     /// Set `browser = "obscura"` in requests to use this lightweight headless browser.
     pub obscura_path: Option<String>,
+    /// Whether to enable Obscura's anti-detection mode.
+    /// Enabled by default. Full TLS impersonation requires an Obscura binary
+    /// built with its upstream `stealth` feature.
+    pub obscura_stealth: bool,
     /// Path to the Lightpanda binary (auto-detected from PATH if not set).
     /// Set `browser = "lightpanda"` in requests to use this lightweight headless browser.
     pub lightpanda_path: Option<String>,
@@ -489,9 +493,9 @@ pub struct BrowserConfig {
     /// Moltis can reach the sibling browser container via the host's port mapping.
     #[serde(default = "default_container_host")]
     pub container_host: String,
-    /// Browserless API compatibility mode for websocket endpoints.
-    /// - "v1" (default): connect to the base websocket URL.
-    /// - "v2": try Browserless v2 paths (`/chrome`, `/chromium`) when needed.
+    /// Browserless container API compatibility mode. Must match `sandbox_image`.
+    /// - "v1" (default): legacy environment-based launch settings.
+    /// - "v2": query-based launch settings and v2 websocket paths.
     #[serde(default = "default_browserless_api_version")]
     pub browserless_api_version: BrowserlessApiVersion,
 }
@@ -530,6 +534,7 @@ impl Default for BrowserConfig {
             enabled: true,
             chrome_path: None,
             obscura_path: None,
+            obscura_stealth: true,
             lightpanda_path: None,
             headless: true,
             viewport_width: 2560,
@@ -663,6 +668,26 @@ pub enum HomePersistenceConfig {
     Shared,
 }
 
+/// Access mode for managed Files inside local sandboxes.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ManagedFilesMountConfig {
+    None,
+    #[default]
+    Ro,
+    Rw,
+}
+
+impl std::fmt::Display for ManagedFilesMountConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => f.write_str("none"),
+            Self::Ro => f.write_str("ro"),
+            Self::Rw => f.write_str("rw"),
+        }
+    }
+}
+
 /// Sandbox configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -670,6 +695,8 @@ pub struct SandboxConfig {
     pub mode: String,
     pub scope: String,
     pub workspace_mount: String,
+    /// Access to managed Files at `/home/sandbox/files` in local sandboxes.
+    pub managed_files_mount: ManagedFilesMountConfig,
     /// Optional host-visible path for Moltis `data_dir()` when creating
     /// sandbox containers from inside another container.
     pub host_data_dir: Option<String>,
@@ -699,6 +726,16 @@ pub struct SandboxConfig {
     /// Ignored for Apple Container and WASM backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpus: Option<String>,
+    /// Mount the host Podman socket into Podman-backed sandboxes and set
+    /// CONTAINER_HOST/DOCKER_HOST inside the sandbox. Linux only. Dangerous:
+    /// this removes the sandbox boundary because commands can use the API to
+    /// mount host paths and execute code with the Podman service user's access.
+    #[serde(default)]
+    pub allow_host_podman: bool,
+    /// Relax Podman sandbox hardening so Podman can run inside the sandbox.
+    /// Dangerous and runtime-dependent: uses privileged container launch.
+    #[serde(default)]
+    pub allow_nested_podman: bool,
     /// Packages to install via `apt-get` in the sandbox image.
     /// Set to an empty list to skip provisioning.
     #[serde(default = "default_sandbox_packages")]
@@ -1002,6 +1039,7 @@ impl Default for SandboxConfig {
             mode: "all".into(),
             scope: "session".into(),
             workspace_mount: "ro".into(),
+            managed_files_mount: ManagedFilesMountConfig::default(),
             host_data_dir: None,
             home_persistence: HomePersistenceConfig::default(),
             shared_home_dir: None,
@@ -1013,6 +1051,8 @@ impl Default for SandboxConfig {
             backend: "auto".into(),
             resource_limits: ResourceLimitsConfig::default(),
             gpus: None,
+            allow_host_podman: false,
+            allow_nested_podman: false,
             packages: default_sandbox_packages(),
             wasm_fuel_limit: None,
             wasm_epoch_interval_ms: None,

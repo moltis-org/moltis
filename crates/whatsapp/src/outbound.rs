@@ -19,7 +19,10 @@ use {
     moltis_common::types::ReplyPayload,
 };
 
-use crate::state::{AccountStateMap, BOT_WATERMARK};
+use crate::{
+    formatting::markdown_to_whatsapp,
+    state::{AccountStateMap, BOT_WATERMARK},
+};
 
 /// Parse a JID from a string, treating bare phone numbers (no `@`) as PN JIDs.
 fn resolve_jid(to: &str) -> ChannelResult<Jid> {
@@ -28,6 +31,16 @@ fn resolve_jid(to: &str) -> ChannelResult<Jid> {
             .map_err(|e| moltis_channels::Error::invalid_input(format!("invalid JID: {e:?}")))
     } else {
         Ok(Jid::pn(to))
+    }
+}
+
+/// Build the exact text payload handed to the WhatsApp client.
+fn build_text_message(text: &str) -> wa::Message {
+    let mut watermarked = markdown_to_whatsapp(text);
+    watermarked.push_str(BOT_WATERMARK);
+    wa::Message {
+        conversation: Some(watermarked),
+        ..Default::default()
     }
 }
 
@@ -170,12 +183,7 @@ impl ChannelOutbound for WhatsAppOutbound {
             "sending WhatsApp text"
         );
 
-        let mut watermarked = text.to_string();
-        watermarked.push_str(BOT_WATERMARK);
-        let msg = wa::Message {
-            conversation: Some(watermarked),
-            ..Default::default()
-        };
+        let msg = build_text_message(text);
         let sent = client
             .send_message(jid, msg)
             .await
@@ -221,7 +229,7 @@ impl ChannelOutbound for WhatsAppOutbound {
         let caption = if payload.text.is_empty() {
             None
         } else {
-            Some(payload.text.clone())
+            Some(markdown_to_whatsapp(&payload.text))
         };
 
         info!(
@@ -290,6 +298,7 @@ impl ChannelStreamOutbound for WhatsAppOutbound {
                 StreamEvent::Delta(delta) | StreamEvent::ProgressDelta(delta) => {
                     text.push_str(&delta)
                 },
+                StreamEvent::TaskUpdate(_) => {},
                 StreamEvent::Done => break,
                 StreamEvent::Error(err) => {
                     debug!(account_id, chat_id = to, "WhatsApp stream error: {err}");
@@ -357,5 +366,17 @@ mod tests {
             mime_to_media_type("application/octet-stream"),
             MediaType::Document
         ));
+    }
+
+    #[test]
+    fn text_payload_uses_whatsapp_markup_and_retains_loop_watermark() {
+        let msg = build_text_message(
+            "## Resultado\n\n**Flamengo** venceu. [Fonte](https://example.com/jogo)",
+        );
+        let conversation = msg.conversation.as_deref().unwrap_or_default();
+        assert_eq!(
+            conversation.strip_suffix(BOT_WATERMARK),
+            Some("*Resultado*\n\n*Flamengo* venceu. Fonte: https://example.com/jogo")
+        );
     }
 }

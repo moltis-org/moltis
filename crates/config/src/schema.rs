@@ -386,6 +386,10 @@ pub struct ExternalAgentConfig {
     pub binary: Option<String>,
     pub args: Option<Vec<String>>,
     #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub efforts: Vec<String>,
+    #[serde(default)]
     pub env: HashMap<String, String>,
     pub working_dir: Option<String>,
     pub timeout_secs: Option<u64>,

@@ -23,6 +23,11 @@ The launchd and systemd configurations:
 - **Restart on failure** with a 10-second cooldown
 - **Log to** `~/.moltis/moltis.log`
 
+On Linux, the generated user service is compatible with rootless Podman. If you
+hand-edit the unit, avoid `NoNewPrivileges=true` and `ProtectHome=true` when
+using Podman as the sandbox backend because they can prevent Podman from
+creating user namespaces and reading its per-user container storage.
+
 On Linux, Moltis first uses `systemd --user` when it is available. Some
 development containers, including Coder/devbox environments, do not run systemd
 or provide the SysV `service` command. In those environments, `moltis service

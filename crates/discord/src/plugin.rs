@@ -273,6 +273,12 @@ impl ChannelPlugin for DiscordPlugin {
     fn thread_context(&self) -> Option<&dyn ChannelThreadContext> {
         Some(&self.outbound)
     }
+
+    fn shared_thread_context(&self) -> Option<Arc<dyn ChannelThreadContext>> {
+        Some(Arc::new(DiscordOutbound {
+            accounts: Arc::clone(&self.accounts),
+        }))
+    }
 }
 
 #[async_trait]

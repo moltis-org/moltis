@@ -205,6 +205,10 @@ fn write_default_config_writes_template_to_requested_path() {
         raw.contains("YOUR overrides only"),
         "generated template should explain it is override-only"
     );
+    assert!(
+        raw.contains("# push_name = \"Moltis\""),
+        "generated template should document the WhatsApp push name override"
+    );
 
     let parsed: MoltisConfig = parse_config(&raw, &path).expect("parse generated config");
     assert_eq!(
@@ -292,6 +296,15 @@ fn data_dir_override_works() {
     let path = PathBuf::from("/tmp/test-data-dir-override");
     set_data_dir(path.clone());
     assert_eq!(data_dir(), path);
+    clear_data_dir();
+}
+
+#[test]
+fn managed_files_dir_is_below_data_dir() {
+    let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+    let path = PathBuf::from("/tmp/test-managed-files-dir");
+    set_data_dir(path.clone());
+    assert_eq!(managed_files_dir(), path.join("files"));
     clear_data_dir();
 }
 

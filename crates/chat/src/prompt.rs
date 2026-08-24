@@ -381,6 +381,7 @@ pub(crate) fn channel_binding_from_runtime_context(
         channel_type: host.channel_type.clone(),
         account_id: host.channel_account_id.clone(),
         chat_id: host.channel_chat_id.clone(),
+        outbound_to: host.channel_outbound_to.clone(),
         chat_type: host.channel_chat_type.clone(),
         sender_id: host.channel_sender_id.clone(),
     };
@@ -440,9 +441,16 @@ pub(crate) async fn build_prompt_runtime_context(
                 return None;
             }
             let config = router.config();
-            let backend_name = router.backend_name();
+            let backend = router.resolve_backend(session_key).await;
+            let backend_name = backend.backend_name();
             let workspace_mount = config.workspace_mount.to_string();
             let workspace_path = (workspace_mount != "none").then(|| data_dir_display.clone());
+            let exposes_managed_files = matches!(
+                moltis_tools::sandbox::SandboxBackendId::from_name(backend_name),
+                moltis_tools::sandbox::SandboxBackendId::Docker
+                    | moltis_tools::sandbox::SandboxBackendId::Podman
+                    | moltis_tools::sandbox::SandboxBackendId::AppleContainer
+            );
             Some(PromptSandboxRuntimeContext {
                 exec_sandboxed: true,
                 mode: Some(config.mode.to_string()),
@@ -452,6 +460,9 @@ pub(crate) async fn build_prompt_runtime_context(
                 home: Some("/home/sandbox".to_string()),
                 workspace_mount: Some(workspace_mount),
                 workspace_path,
+                files_path: exposes_managed_files
+                    .then(|| moltis_tools::sandbox::SANDBOX_FILES_DIR.to_string()),
+                files_mount: exposes_managed_files.then(|| config.managed_files_mount.to_string()),
                 no_network: prompt_sandbox_no_network_state(backend_name, config.no_network),
                 session_override: session_entry.and_then(|entry| entry.sandbox_enabled),
             })
@@ -488,8 +499,10 @@ pub(crate) async fn build_prompt_runtime_context(
         channel_type: channel_context.channel_type,
         channel_account_id: channel_context.account_id,
         channel_chat_id: channel_context.chat_id,
+        channel_outbound_to: channel_context.outbound_to,
         channel_chat_type: channel_context.chat_type,
         data_dir: Some(data_dir_display),
+        files_dir: Some(moltis_config::managed_files_dir().display().to_string()),
         docs_path: docs_reference
             .as_ref()
             .map(|reference| reference.docs_dir.display().to_string()),
@@ -771,5 +784,20 @@ mod tests {
             Some("/workspace/project")
         );
         assert!(context.get("working_dir").is_none());
+    }
+
+    #[test]
+    fn tool_context_preserves_canonical_channel_destination() {
+        let mut runtime = PromptRuntimeContext::default();
+        runtime.host.channel_type = Some("telegram".into());
+        runtime.host.channel_account_id = Some("main".into());
+        runtime.host.channel_chat_id = Some("-100123".into());
+        runtime.host.channel_outbound_to = Some("-100123:42".into());
+
+        let context = build_tool_context("telegram:main:-100123:42", None, None, Some(&runtime));
+
+        assert_eq!(context["_channel"]["account_id"], "main");
+        assert_eq!(context["_channel"]["chat_id"], "-100123");
+        assert_eq!(context["_channel"]["outbound_to"], "-100123:42");
     }
 }

@@ -14,7 +14,7 @@ RestartSec=5
 Environment=MOLTIS_DATA_DIR=/var/lib/moltis
 Environment=MOLTIS_CONFIG_DIR=/etc/moltis
 
-# Harden the service
+# Harden the service. Rootless Podman users must install moltis-podman.conf.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

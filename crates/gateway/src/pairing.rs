@@ -187,11 +187,17 @@ impl PairingStore {
 
     /// List all non-expired pending requests.
     pub async fn list_pending(&self) -> Result<Vec<PairRequest>> {
+        let now = format_datetime(OffsetDateTime::now_utc());
+        self.list_pending_at(&now).await
+    }
+
+    async fn list_pending_at(&self, now: &str) -> Result<Vec<PairRequest>> {
         let rows: Vec<(String, String, Option<String>, String, Option<String>, String, String, String)> = sqlx::query_as(
             "SELECT id, device_id, display_name, platform, public_key, nonce, created_at, expires_at
              FROM pair_requests
-             WHERE status = 'pending' AND expires_at > datetime('now')",
+             WHERE status = 'pending' AND julianday(expires_at) > julianday(?)",
         )
+        .bind(now)
         .fetch_all(&self.pool)
         .await?;
 
@@ -713,10 +719,16 @@ impl PairingStore {
 
     /// Evict expired pending requests.
     pub async fn evict_expired(&self) -> Result<u64> {
+        let now = format_datetime(OffsetDateTime::now_utc());
+        self.evict_expired_at(&now).await
+    }
+
+    async fn evict_expired_at(&self, now: &str) -> Result<u64> {
         let result = sqlx::query(
             "UPDATE pair_requests SET status = 'expired'
-             WHERE status = 'pending' AND expires_at <= datetime('now')",
+             WHERE status = 'pending' AND julianday(expires_at) <= julianday(?)",
         )
+        .bind(now)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -1122,6 +1134,51 @@ mod tests {
         // Reject again should fail.
         let result = store.reject(&req.id).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn sqlite_expiry_comparison_handles_fractional_and_legacy_timestamps() {
+        let pool = test_pool().await;
+        let store = PairingStore::new(pool.clone());
+        let expiries = [
+            ("exact-second", "2030-01-01T00:00:00Z"),
+            ("fractional", "2030-01-01T00:00:00.900Z"),
+            ("legacy", "2030-01-01 00:00:01"),
+            ("malformed", "not-a-datetime"),
+        ];
+        let mut requests = Vec::new();
+        for (device_id, expires_at) in expiries {
+            let request = store
+                .request_pair(device_id, None, "test", None)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE pair_requests SET expires_at = ? WHERE id = ?")
+                .bind(expires_at)
+                .bind(&request.id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            requests.push(request);
+        }
+
+        let now = "2030-01-01T00:00:00.500Z";
+        let pending = store.list_pending_at(now).await.unwrap();
+        let mut pending_devices: Vec<_> = pending
+            .iter()
+            .map(|request| request.device_id.as_str())
+            .collect();
+        pending_devices.sort_unstable();
+        assert_eq!(pending_devices, ["fractional", "legacy"]);
+
+        assert_eq!(store.evict_expired_at(now).await.unwrap(), 1);
+        assert_eq!(
+            store.get_pair_status(&requests[0].id).await.unwrap(),
+            Some(PairStatus::Expired)
+        );
+        assert_eq!(
+            store.get_pair_status(&requests[3].id).await.unwrap(),
+            Some(PairStatus::Pending)
+        );
     }
 
     #[tokio::test]

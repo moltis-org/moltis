@@ -155,6 +155,7 @@ impl NostrOutbound {
                 StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk) => {
                     buffer.push_str(&chunk);
                 },
+                StreamEvent::TaskUpdate(_) => {},
                 StreamEvent::Done => break,
                 StreamEvent::Error(e) => {
                     tracing::warn!(account_id, "stream error: {e}");
@@ -630,6 +631,7 @@ impl ChannelStreamOutbound for NostrOutbound {
                 StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk) => {
                     buffer.push_str(&chunk);
                 },
+                StreamEvent::TaskUpdate(_) => {},
                 StreamEvent::Done => break,
                 StreamEvent::Error(e) => {
                     tracing::warn!(account_id, "stream error: {e}");

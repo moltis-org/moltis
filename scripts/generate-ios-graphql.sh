@@ -7,7 +7,8 @@ IOS_DIR="${REPO_ROOT}/apps/ios"
 CLI_DIR="${IOS_DIR}/.tools"
 CLI_BIN="${CLI_DIR}/apollo-ios-cli"
 CLI_ARCHIVE="${CLI_DIR}/apollo-ios-cli.tar.gz"
-APOLLO_IOS_VERSION="2.2.0"
+APOLLO_IOS_VERSION="2.3.0"
+SCHEMA_NAMESPACE_FILE="${IOS_DIR}/Sources/GraphQL/Generated/MoltisAPI/MoltisAPI.graphql.swift"
 
 mkdir -p "${CLI_DIR}"
 
@@ -27,5 +28,16 @@ fi
 
 cd "${IOS_DIR}"
 "${CLI_BIN}" generate --path "${IOS_DIR}/apollo-codegen-config.json"
+
+# Apollo can prune the namespace file on the first generation after a CLI upgrade.
+if [[ ! -f "${SCHEMA_NAMESPACE_FILE}" ]]; then
+  echo "Apollo omitted the schema namespace; retrying code generation..."
+  "${CLI_BIN}" generate --path "${IOS_DIR}/apollo-codegen-config.json"
+fi
+
+if [[ ! -f "${SCHEMA_NAMESPACE_FILE}" ]]; then
+  echo "error: Apollo did not generate ${SCHEMA_NAMESPACE_FILE}" >&2
+  exit 1
+fi
 
 echo "Generated Apollo GraphQL Swift types in ${IOS_DIR}/Sources/GraphQL/Generated"

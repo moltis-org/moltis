@@ -100,6 +100,54 @@ Once installed, restart `moltis gateway` — the startup banner will show
 `sandbox: podman backend`. All Docker hardening flags (see below) apply
 identically to Podman containers.
 
+If Moltis runs under systemd, rootless Podman must be allowed to create user
+namespaces and access the Moltis user's container storage. For the bundled
+system unit, install `deploy/moltis-podman.conf` as
+`/etc/systemd/system/moltis.service.d/podman.conf`. It disables
+`NoNewPrivileges` and places Podman's home and runtime state outside the paths
+hidden by `ProtectHome`. Without those accommodations, Podman can fail with
+`cannot clone: Operation not permitted` and `Error: cannot re-exec process` even
+when the same `podman run ...` command works from an interactive shell.
+
+Moltis supports using Podman as the sandbox backend. Running `podman run ...`
+from inside an already sandboxed Moltis container is different and is blocked by
+the default hardened sandbox, which drops capabilities and sets
+`no-new-privileges` inside the container.
+
+Two mutually exclusive escape hatches are available when you intentionally want
+container commands inside a Podman sandbox. Both require `backend = "podman"`;
+host socket passthrough is supported only on Linux:
+
+```toml
+[tools.exec.sandbox]
+backend = "podman"
+
+# Use the host Podman service from inside the sandbox.
+# This mounts the host Podman socket and sets CONTAINER_HOST/DOCKER_HOST.
+allow_host_podman = true
+# The sandbox image must include a Podman client. This replaces default packages.
+packages = ["ca-certificates", "curl", "podman"]
+
+# Or run Podman nested inside the sandbox.
+# This starts the sandbox with privileged Podman launch flags and disables
+# the normal no-new-privileges/cap-drop/read-only hardening for that sandbox.
+# allow_nested_podman = true
+# packages = ["ca-certificates", "curl", "podman", "uidmap", "slirp4netns", "fuse-overlayfs"]
+```
+
+Before using `allow_host_podman`, start the Podman API socket. For a CLI-installed
+user service, run `systemctl --user enable --now podman.socket`. For the bundled
+system service, install `deploy/moltis-podman-api.service` as documented in
+[VPS Deployment](deploy-vps.md). Moltis verifies that the configured path is a
+live Unix socket and fails sandbox startup if it is unavailable. The mount also
+disables SELinux label separation so the container can access the socket.
+
+`allow_host_podman` removes the sandbox boundary: sandboxed commands can use the
+API to create containers with host bind mounts and execute code with the Podman
+service user's file access. `allow_nested_podman` keeps container state inside
+the sandbox, but it is runtime-dependent and weakens the sandbox substantially
+by using privileged container settings.
+
 ## Docker
 
 Docker is supported on macOS, Linux, and Windows. On macOS it runs inside a
@@ -129,6 +177,11 @@ hardening flags by default:
 The `--read-only` flag is applied only to prebuilt sandbox images (where
 packages are already baked in). Non-prebuilt images need a writable root
 filesystem for `apt-get` provisioning on first start.
+
+When `allow_nested_podman = true` and the backend is Podman, Moltis starts the
+sandbox with `--privileged` and does not apply `--cap-drop ALL`,
+`--security-opt no-new-privileges`, or `--read-only`. This is required for
+nested container runtimes but materially reduces the security boundary.
 
 The `/sys` tmpfs overlays prevent host hardware metadata (serial numbers, disk
 models, LUKS UUIDs) from being visible inside the container. Note that
@@ -317,6 +370,32 @@ home_persistence = "session"   # "off", "session", or "shared" (default)
 
 Moltis stores persisted homes under `data_dir()/sandbox/home/`.
 
+## Managed Files mount
+
+[Managed Files](managed-files.md) use a separate mount from the Moltis
+workspace and sandbox home:
+
+```toml
+[tools.exec.sandbox]
+managed_files_mount = "ro" # "none", "ro" (default), or "rw"
+```
+
+Docker, Podman, and Apple Container mount the host's `<data_dir>/files` at
+`/home/sandbox/files`. `none` makes that tree unavailable, `ro` permits reads,
+and `rw` permits mutations. WASM and remote sandbox backends do not yet support
+this mount.
+
+Although `/home/sandbox/files` is below the home path, it is an independent
+mount. `home_persistence = "shared"` does not enable Managed Files, and changing
+`managed_files_mount` does not change how sandbox caches, credentials, or other
+home files persist. Moltis advertises the effective path and mount mode to the
+agent and sets `MOLTIS_FILES_DIR` for `exec`.
+
+The default `ro` mode prevents a sandboxed command from changing Managed Files,
+but every agent session whose tool and channel policy permits reads sees the
+same tree. See the [Managed Files privacy warning](managed-files.md#privacy)
+before storing sensitive data.
+
 ## Docker-in-Docker workspace mounts
 
 When Moltis runs inside a container and launches Docker-backed sandboxes via a
@@ -370,7 +449,11 @@ How resource limits are applied depends on the backend:
 |-------|--------|-----------------|------|-----------------|----------------|
 | `memory_limit` | `--memory` | `--memory` | Wasmtime reservation | `ulimit -v` | `MemoryMax=` |
 | `cpu_quota` | `--cpus` | `--cpus` | epoch timeout | `ulimit -t` (seconds) | `CPUQuota=` |
-| `pids_max` | `--pids-limit` | `--pids-limit` | n/a | `ulimit -u` | `TasksMax=` |
+| `pids_max` | `--pids-limit` | `--ulimit nproc=` | n/a | `ulimit -u` | `TasksMax=` |
+
+Apple Container requires version 0.9 or newer to apply `pids_max`.
+Its `--cpus` option only accepts positive whole CPU counts, so fractional
+`cpu_quota` values are not supported by that backend.
 
 ## Comparison
 
@@ -383,5 +466,6 @@ How resource limits are applied depends on the backend:
 | Resource limits | ✅ | ✅ | ✅ fuel + epoch | ✅ ulimit | ❌ |
 | Image building | ✅ (via Docker) | ✅ | ❌ | ❌ | ❌ |
 | Shell commands | ✅ full shell | ✅ full shell | ~20 built-ins | ✅ full shell | ✅ full shell |
+| Managed Files mount | yes: `none`/`ro`/`rw` | yes: `none`/`ro`/`rw` | not yet | host path, no mount | host path, no mount |
 | Platform | macOS 26+ | any | any | any | any |
 | Overhead | low | medium | minimal | minimal | none |

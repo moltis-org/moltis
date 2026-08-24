@@ -140,6 +140,10 @@ pub struct ChannelBinding {
     pub account_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_id: Option<String>,
+    /// Canonical outbound address for the current conversation. This may
+    /// include channel-specific routing data (for example a Telegram topic).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outbound_to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -154,6 +158,7 @@ impl ChannelBinding {
             && self.channel_type.is_none()
             && self.account_id.is_none()
             && self.chat_id.is_none()
+            && self.outbound_to.is_none()
             && self.chat_type.is_none()
             && self.sender_id.is_none()
     }
@@ -791,6 +796,7 @@ mod tests {
             channel_type: Some("telegram".into()),
             account_id: Some("bot-main".into()),
             chat_id: Some("-100123".into()),
+            outbound_to: Some("-100123".into()),
             chat_type: Some("channel_or_supergroup".into()),
             sender_id: None,
         }

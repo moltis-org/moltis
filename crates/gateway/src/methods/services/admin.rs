@@ -806,6 +806,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         Ok(status) => Ok(serde_json::json!({
                             "available": true,
                             "backend": mm.backend_name(),
+                            "backend_type": status.backend_type,
+                            "hnsw_percent": status.hnsw_percent,
                             "total_files": status.total_files,
                             "total_chunks": status.total_chunks,
                             "db_size": status.db_size_bytes,
@@ -829,13 +831,73 @@ pub(super) fn register(reg: &mut MethodRegistry) {
     );
 
     reg.register(
-        "memory.config.get",
-        Box::new(|_ctx| {
+        "memory.search",
+        Box::new(|ctx| {
             Box::pin(async move {
-                // Read memory config from the config file
+                let query = ctx
+                    .params
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let limit = ctx
+                    .params
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10)
+                    .clamp(1, 100) as usize;
+
+                let Some(ref mm) = ctx.state.memory_manager else {
+                    return Ok(serde_json::json!({
+                        "results": [],
+                        "error": "Memory system not initialized",
+                    }));
+                };
+
+                // Match the agent's memory_search tool: over-fetch, return raw.
+                let search_limit = limit.saturating_mul(8);
+                match mm.search(&query, search_limit).await {
+                    Ok(results) => {
+                        let truncated: Vec<_> = results.into_iter().take(limit).collect();
+                        Ok(serde_json::json!({
+                            "results": truncated.iter().map(|r| serde_json::json!({
+                                "chunk_id": r.chunk_id,
+                                "path": r.path,
+                                "source": r.source,
+                                "start_line": r.start_line,
+                                "end_line": r.end_line,
+                                "score": r.score,
+                                "text": r.text,
+                            })).collect::<Vec<_>>(),
+                        }))
+                    },
+                    Err(e) => Ok(serde_json::json!({
+                        "results": [],
+                        "error": e.to_string(),
+                    })),
+                }
+            })
+        }),
+    );
+
+    reg.register(
+        "memory.config.get",
+        Box::new(|ctx| {
+            Box::pin(async move {
                 let config = moltis_config::discover_and_load();
                 let memory = &config.memory;
                 let chat = &config.chat;
+
+                // Report the active backend using the editable config value.
+                // The builtin runtime identifies its SQLite implementation as
+                // "sqlite", while memory.config.update accepts "builtin".
+                let active_backend = editable_memory_backend_name(
+                    memory.backend,
+                    ctx.state
+                        .memory_manager
+                        .as_ref()
+                        .map(|manager| manager.backend_name()),
+                );
                 Ok(serde_json::json!({
                     "style": match memory.style {
                         moltis_config::MemoryStyle::Hybrid => "hybrid",
@@ -854,10 +916,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         moltis_config::UserProfileWriteMode::ExplicitOnly => "explicit-only",
                         moltis_config::UserProfileWriteMode::Off => "off",
                     },
-                    "backend": match memory.backend {
-                        moltis_config::MemoryBackend::Builtin => "builtin",
-                        moltis_config::MemoryBackend::Qmd => "qmd",
-                    },
+                    "backend": active_backend,
                     "provider": match memory.provider {
                         Some(moltis_config::MemoryProvider::Local) => "local",
                         Some(moltis_config::MemoryProvider::Ollama) => "ollama",
@@ -885,6 +944,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         moltis_config::PromptMemoryMode::FrozenAtSessionStart => "frozen-at-session-start",
                     },
                     "qmd_feature_enabled": cfg!(feature = "qmd"),
+                    "zvec_feature_enabled": cfg!(feature = "zvec"),
                     "enable_prefetch": memory.enable_prefetch,
                     "prefetch_limit": memory.prefetch_limit,
                     "auto_extract_interval": memory.auto_extract_interval,
@@ -914,10 +974,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .params
                     .get("backend")
                     .and_then(|v| v.as_str())
-                    .unwrap_or(match current_memory.backend {
-                        moltis_config::MemoryBackend::Builtin => "builtin",
-                        moltis_config::MemoryBackend::Qmd => "qmd",
-                    });
+                    .unwrap_or_else(|| configured_memory_backend_name(current_memory.backend));
                 let agent_write_mode = ctx
                     .params
                     .get("agent_write_mode")
@@ -1266,134 +1323,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
 
-    // ── OpenClaw import ─────────────────────────────────────────────────
-
-    reg.register(
-        "openclaw.detect",
-        Box::new(|ctx| {
-            Box::pin(async move {
-                ctx.state
-                    .services
-                    .onboarding
-                    .openclaw_detect()
-                    .await
-                    .map_err(ErrorShape::from)
-            })
-        }),
-    );
-    reg.register(
-        "openclaw.scan",
-        Box::new(|ctx| {
-            Box::pin(async move {
-                ctx.state
-                    .services
-                    .onboarding
-                    .openclaw_scan()
-                    .await
-                    .map_err(ErrorShape::from)
-            })
-        }),
-    );
-    reg.register(
-        "openclaw.import",
-        Box::new(|ctx| {
-            Box::pin(async move {
-                ctx.state
-                    .services
-                    .onboarding
-                    .openclaw_import(ctx.params.clone())
-                    .await
-                    .map_err(ErrorShape::from)
-            })
-        }),
-    );
-
-    // ── Claude import ────────────────────────────────────────────────────
-
-    reg.register(
-        "claude.detect",
-        Box::new(|ctx| {
-            Box::pin(async move {
-                ctx.state
-                    .services
-                    .onboarding
-                    .claude_detect()
-                    .await
-                    .map_err(ErrorShape::from)
-            })
-        }),
-    );
-    reg.register(
-        "claude.import",
-        Box::new(|ctx| {
-            Box::pin(async move {
-                ctx.state
-                    .services
-                    .onboarding
-                    .claude_import(ctx.params.clone())
-                    .await
-                    .map_err(ErrorShape::from)
-            })
-        }),
-    );
-
-    // ── Codex import ───────────────────────────────────────────────────
-
-    reg.register(
-        "codex.detect",
-        Box::new(|ctx| {
-            Box::pin(async move {
-                ctx.state
-                    .services
-                    .onboarding
-                    .codex_detect()
-                    .await
-                    .map_err(ErrorShape::from)
-            })
-        }),
-    );
-    reg.register(
-        "codex.import",
-        Box::new(|ctx| {
-            Box::pin(async move {
-                ctx.state
-                    .services
-                    .onboarding
-                    .codex_import(ctx.params.clone())
-                    .await
-                    .map_err(ErrorShape::from)
-            })
-        }),
-    );
-
-    // ── Hermes import ──────────────────────────────────────────────────
-
-    reg.register(
-        "hermes.detect",
-        Box::new(|ctx| {
-            Box::pin(async move {
-                ctx.state
-                    .services
-                    .onboarding
-                    .hermes_detect()
-                    .await
-                    .map_err(ErrorShape::from)
-            })
-        }),
-    );
-    reg.register(
-        "hermes.import",
-        Box::new(|ctx| {
-            Box::pin(async move {
-                ctx.state
-                    .services
-                    .onboarding
-                    .hermes_import(ctx.params.clone())
-                    .await
-                    .map_err(ErrorShape::from)
-            })
-        }),
-    );
+    admin_imports::register(reg);
 
     // ── Logs ────────────────────────────────────────────────────────────────
 

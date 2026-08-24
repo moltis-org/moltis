@@ -598,6 +598,7 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 	const [appToken, setAppToken] = useState("");
 	const [apiBaseUrl, setApiBaseUrl] = useState("");
 	const [signingSecret, setSigningSecret] = useState("");
+	const [streamMode, setStreamMode] = useState("edit_in_place");
 	const [dmPolicy, setDmPolicy] = useState("allowlist");
 	const [allowlist, setAllowlist] = useState("");
 	const [advancedConfig, setAdvancedConfig] = useState("");
@@ -639,11 +640,16 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 			dm_policy: dmPolicy,
 			mention_mode: "mention",
 			allowlist: allowlistEntries,
+			stream_mode: streamMode,
 		};
 		if (connectionMode === "socket_mode") config.app_token = appToken.trim();
 		if (connectionMode === "events_api") config.signing_secret = signingSecret.trim();
 		if (apiBaseUrl.trim()) config.api_base_url = apiBaseUrl.trim();
 		Object.assign(config, advancedPatch.value);
+		if (config.stream_mode === "native") {
+			config.thread_replies = true;
+			config.rich_blocks = false;
+		}
 		(
 			addChannel("slack", accountId.trim(), config) as Promise<{
 				ok?: boolean;
@@ -809,6 +815,25 @@ function SlackForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 				/>
 				<div className="text-xs text-[var(--muted)] mt-1">
 					Leave blank for Slack. Set this only for Slack-compatible proxies or test gateways.
+				</div>
+			</div>
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block" htmlFor="onboarding-slack-stream-mode">
+					Response streaming
+				</label>
+				<select
+					id="onboarding-slack-stream-mode"
+					className="provider-key-input w-full cursor-pointer"
+					value={streamMode}
+					onChange={(e) => setStreamMode(targetValue(e))}
+					aria-label="Response streaming"
+				>
+					<option value="edit_in_place">Edit-in-place text (default)</option>
+					<option value="native">Slack live text and tool cards</option>
+					<option value="off">Off (send once complete)</option>
+				</select>
+				<div className="text-xs text-[var(--muted)] mt-1">
+					Native streaming requires threaded replies and shows tool names without arguments or results.
 				</div>
 			</div>
 			<div>

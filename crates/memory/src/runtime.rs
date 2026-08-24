@@ -40,7 +40,7 @@ pub trait MemoryRuntime: MemoryWriter + Send + Sync {
 #[async_trait]
 impl MemoryRuntime for MemoryManager {
     fn backend_name(&self) -> &'static str {
-        "builtin"
+        MemoryManager::backend_type(self)
     }
 
     fn data_dir(&self) -> Option<&Path> {

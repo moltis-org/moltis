@@ -357,9 +357,11 @@ fn test_runtime_context_injected_when_provided() {
             channel_type: None,
             channel_account_id: None,
             channel_chat_id: None,
+            channel_outbound_to: None,
             channel_chat_type: None,
             channel_sender_id: None,
             data_dir: Some("/home/moltis/.moltis".into()),
+            files_dir: Some("/home/moltis/.moltis/files".into()),
             working_dir: Some("/workspace/project".into()),
             docs_path: None,
             config_template_path: None,
@@ -379,6 +381,8 @@ fn test_runtime_context_injected_when_provided() {
             home: Some("/home/sandbox".into()),
             workspace_mount: Some("ro".into()),
             workspace_path: Some("/home/moltis/.moltis".into()),
+            files_path: Some("/home/sandbox/files".into()),
+            files_mount: Some("ro".into()),
             no_network: Some(true),
             session_override: Some(true),
         }),
@@ -413,6 +417,7 @@ fn test_runtime_context_injected_when_provided() {
     assert!(prompt.contains("provider=openai"));
     assert!(prompt.contains("model=gpt-5"));
     assert!(prompt.contains("data_dir=/home/moltis/.moltis"));
+    assert!(prompt.contains("files_dir=/home/moltis/.moltis/files"));
     assert!(prompt.contains("working_dir=/workspace/project"));
     assert!(prompt.contains("sudo_non_interactive=true"));
     assert!(prompt.contains("sudo_status=passwordless"));
@@ -423,6 +428,8 @@ fn test_runtime_context_injected_when_provided() {
     assert!(prompt.contains("backend=docker"));
     assert!(prompt.contains("home=/home/sandbox"));
     assert!(prompt.contains("workspace_path=/home/moltis/.moltis"));
+    assert!(prompt.contains("files_path=/home/sandbox/files"));
+    assert!(prompt.contains("files_mount=ro"));
     assert!(prompt.contains("network=disabled"));
     assert!(prompt.contains("Execution routing:"));
     assert!(prompt.contains("`~` and relative paths resolve under"));
