@@ -107,6 +107,14 @@ impl Sandbox for FailoverSandbox {
         }
     }
 
+    async fn runtime_name(&self, id: &SandboxId) -> Option<String> {
+        if self.fallback_enabled().await {
+            self.fallback.runtime_name(id).await
+        } else {
+            self.primary.runtime_name(id).await
+        }
+    }
+
     fn provides_fs_isolation(&self) -> bool {
         // On lock contention, conservatively report the fallback's (weaker)
         // isolation level rather than the primary's.

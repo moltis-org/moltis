@@ -135,12 +135,11 @@ impl AppleContainerSandbox {
         )
     }
 
-    fn base_container_name(&self, id: &SandboxId) -> String {
-        format!("{}-{}", self.container_prefix(), id.key)
+    fn container_name_for_generation(&self, id: &SandboxId, generation: u32) -> String {
+        super::container_name::apple_container_name(self.container_prefix(), &id.key, generation)
     }
 
     pub(crate) async fn container_name(&self, id: &SandboxId) -> String {
-        let base = self.base_container_name(id);
         let generation = self
             .name_generations
             .read()
@@ -148,11 +147,7 @@ impl AppleContainerSandbox {
             .get(&id.key)
             .copied()
             .unwrap_or(0);
-        if generation == 0 {
-            base
-        } else {
-            format!("{base}-g{generation}")
-        }
+        self.container_name_for_generation(id, generation)
     }
 
     pub(crate) async fn bump_container_generation(&self, id: &SandboxId) -> String {
@@ -162,8 +157,7 @@ impl AppleContainerSandbox {
             *entry += 1;
             *entry
         };
-        let base = self.base_container_name(id);
-        let next_name = format!("{base}-g{next_generation}");
+        let next_name = self.container_name_for_generation(id, next_generation);
         warn!(
             session_key = %id.key,
             generation = next_generation,
@@ -781,6 +775,10 @@ impl Sandbox for AppleContainerSandbox {
         "apple-container"
     }
 
+    async fn runtime_name(&self, id: &SandboxId) -> Option<String> {
+        Some(self.container_name(id).await)
+    }
+
     fn provides_fs_isolation(&self) -> bool {
         true
     }
@@ -1277,7 +1275,6 @@ impl Sandbox for AppleContainerSandbox {
     }
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
-        let base = self.base_container_name(id);
         let max_generation = self
             .name_generations
             .read()
@@ -1287,11 +1284,7 @@ impl Sandbox for AppleContainerSandbox {
             .unwrap_or(0);
 
         for generation in 0..=max_generation {
-            let name = if generation == 0 {
-                base.clone()
-            } else {
-                format!("{base}-g{generation}")
-            };
+            let name = self.container_name_for_generation(id, generation);
             info!(name, "cleaning up apple container");
             let _ = tokio::process::Command::new("container")
                 .args(["stop", &name])

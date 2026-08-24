@@ -588,8 +588,10 @@ pub async fn list_running_containers_for_prefixes(
                     .pointer("/configuration/id")
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
-                if !prefixes.iter().any(|prefix| name.starts_with(prefix))
-                    || !seen.insert(name.to_string())
+                if !prefixes.iter().any(|prefix| {
+                    super::container_name::has_apple_container_prefix(name, prefix)
+                        || name.starts_with(prefix)
+                }) || !seen.insert(name.to_string())
                 {
                     continue;
                 }

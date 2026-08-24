@@ -4,6 +4,7 @@
 
 #[cfg(target_os = "macos")]
 pub(crate) mod apple;
+pub(crate) mod container_name;
 pub(crate) mod containers;
 pub(crate) mod daytona;
 pub(crate) mod docker;

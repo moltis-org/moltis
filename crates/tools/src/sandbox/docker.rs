@@ -898,6 +898,10 @@ impl Sandbox for DockerSandbox {
         self.backend_label
     }
 
+    async fn runtime_name(&self, id: &SandboxId) -> Option<String> {
+        Some(self.container_name(id))
+    }
+
     fn provides_fs_isolation(&self) -> bool {
         true
     }

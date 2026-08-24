@@ -689,14 +689,20 @@ impl ChatService for LiveChatService {
             };
             let container_name = {
                 let id = router.sandbox_id_for(&session_key);
-                format!(
+                let fallback = format!(
                     "{}-{}",
                     config
                         .container_prefix
                         .as_deref()
                         .unwrap_or("moltis-sandbox"),
                     id.key
-                )
+                );
+                router
+                    .resolve_backend(&session_key)
+                    .await
+                    .runtime_name(&id)
+                    .await
+                    .unwrap_or(fallback)
             };
             serde_json::json!({
                 "enabled": is_sandboxed,

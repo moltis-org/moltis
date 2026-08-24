@@ -432,6 +432,11 @@ pub trait Sandbox: Send + Sync {
     /// Human-readable backend name (e.g. "docker", "podman", "apple-container", "cgroup", "none").
     fn backend_name(&self) -> &'static str;
 
+    /// Runtime resource name for operator-facing diagnostics, when applicable.
+    async fn runtime_name(&self, _id: &SandboxId) -> Option<String> {
+        None
+    }
+
     /// Ensure the sandbox environment is ready (e.g., container started).
     /// If `image_override` is provided, use that image instead of the configured default.
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()>;

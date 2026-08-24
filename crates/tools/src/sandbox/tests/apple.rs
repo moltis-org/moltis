@@ -38,6 +38,36 @@ async fn test_apple_container_name_generation_rotation() {
     assert_eq!(current_name, "moltis-sandbox-session-abc-g1");
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn apple_container_names_fit_runtime_limit() {
+    let sandbox = AppleContainerSandbox::new(SandboxConfig {
+        container_prefix: Some("moltis-moltis-sandbox".into()),
+        ..Default::default()
+    });
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "session-4fc5159e-0cb6-49f2-8eba-553ba3ec897b".into(),
+    };
+
+    let initial = sandbox.container_name(&id).await;
+    assert!(initial.len() <= container_name::APPLE_CONTAINER_ID_MAX_LEN);
+    assert_eq!(sandbox.runtime_name(&id).await, Some(initial.clone()));
+
+    let rotated = sandbox.bump_container_generation(&id).await;
+    assert!(rotated.len() <= container_name::APPLE_CONTAINER_ID_MAX_LEN);
+    assert!(rotated.ends_with("-g1"));
+
+    let failover = FailoverSandbox::new(
+        Arc::new(AppleContainerSandbox::new(SandboxConfig {
+            container_prefix: Some("moltis-moltis-sandbox".into()),
+            ..Default::default()
+        })),
+        Arc::new(DockerSandbox::new(SandboxConfig::default())),
+    );
+    assert_eq!(failover.runtime_name(&id).await, Some(initial));
+}
+
 /// When both Docker and Apple Container are available, test that we can
 /// explicitly select each one.
 #[test]
