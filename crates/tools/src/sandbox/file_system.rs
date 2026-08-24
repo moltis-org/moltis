@@ -46,6 +46,26 @@ const EXIT_TOO_LARGE: i32 = 13;
 const EXIT_SYMLINK: i32 = 14;
 const EXIT_PARENT_MISSING: i32 = 20;
 
+/// Exec options for a transfer of `bytes`, with a timeout that scales.
+///
+/// [`DEFAULT_SANDBOX_TIMEOUT`] is right for a small file, but a backend that
+/// permits multi-megabyte transfers would otherwise time out long before the
+/// size limit rejected it — surfacing a timeout instead of the real
+/// constraint. The floor throughput is deliberately pessimistic: the timeout
+/// only bounds a stall, it is not a budget the transfer tries to spend.
+fn transfer_opts(bytes: usize) -> ExecOpts {
+    /// Slowest transfer rate we are willing to call "still working".
+    const FLOOR_BYTES_PER_SEC: usize = 256 * 1024;
+    const MAX_TRANSFER_TIMEOUT: Duration = Duration::from_secs(600);
+
+    let scaled = DEFAULT_SANDBOX_TIMEOUT
+        .saturating_add(Duration::from_secs((bytes / FLOOR_BYTES_PER_SEC) as u64));
+    ExecOpts {
+        timeout: scaled.min(MAX_TRANSFER_TIMEOUT),
+        ..default_opts()
+    }
+}
+
 fn default_opts() -> ExecOpts {
     ExecOpts {
         timeout: DEFAULT_SANDBOX_TIMEOUT,
@@ -218,7 +238,9 @@ pub async fn command_read_file<S: Sandbox + ?Sized>(
          base64 < \"$path\" | tr -d '\\n'"
     );
 
-    let result = backend.exec(id, &script, &default_opts()).await?;
+    let result = backend
+        .exec(id, &script, &transfer_opts(max_bytes as usize))
+        .await?;
     match result.exit_code {
         0 => {
             let bytes = BASE64.decode(result.stdout.trim()).map_err(|e| {
@@ -293,7 +315,9 @@ pub async fn command_write_file_with_limit<S: Sandbox + ?Sized>(
          mv \"$tmp\" \"$path\""
     );
 
-    let result = backend.exec(id, &script, &default_opts()).await?;
+    let result = backend
+        .exec(id, &script, &transfer_opts(content.len()))
+        .await?;
     match result.exit_code {
         0 => Ok(None),
         EXIT_PARENT_MISSING => Err(Error::message(format!(
@@ -1323,6 +1347,32 @@ pub(crate) mod test_helpers {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn transfer_timeout_scales_with_payload_size() {
+        let small = transfer_opts(1024).timeout;
+        assert_eq!(
+            small, DEFAULT_SANDBOX_TIMEOUT,
+            "small writes keep the default"
+        );
+
+        let large = transfer_opts(16 * 1024 * 1024).timeout;
+        assert!(
+            large > DEFAULT_SANDBOX_TIMEOUT,
+            "a 16 MB transfer must not inherit the 30s default"
+        );
+        assert!(large <= Duration::from_secs(600), "timeout stays bounded");
+    }
+
+    #[test]
+    fn transfer_timeout_is_capped_for_absurd_sizes() {
+        assert_eq!(
+            transfer_opts(usize::MAX).timeout,
+            Duration::from_secs(600),
+            "an overflowing size must clamp, not wrap"
+        );
+    }
+
     use {
         super::{test_helpers::MockSandbox, *},
         crate::{exec::ExecResult, sandbox::types::SandboxScope},

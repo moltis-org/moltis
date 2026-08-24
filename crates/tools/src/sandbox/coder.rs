@@ -709,6 +709,12 @@ impl Sandbox for CoderSandbox {
     /// [`CODER_MAX_WRITE_BYTES`] — without that, workspace sync-in fails for
     /// any workspace larger than 512 KB and aborts the command that triggered
     /// it.
+    ///
+    /// Content is base64-encoded twice on the way in: once to embed it in the
+    /// script, and once to frame the script for the stdin stream. That is a
+    /// ~1.78x wire amplification, kept for now because collapsing it would
+    /// mean duplicating this helper's symlink and parent-directory handling
+    /// here.
     async fn write_file(
         &self,
         id: &SandboxId,
