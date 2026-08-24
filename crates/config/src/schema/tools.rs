@@ -794,6 +794,45 @@ pub struct SandboxConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daytona_image: Option<String>,
 
+    /// Coder deployment URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coder_url: Option<String>,
+    /// Coder session token.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub coder_token: Option<Secret<String>>,
+    /// Coder organization name or ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coder_organization: Option<String>,
+    /// Coder user name, ID, or `me`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coder_user: Option<String>,
+    /// Coder template ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coder_template_id: Option<String>,
+    /// Coder template name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coder_template_name: Option<String>,
+    /// Prefix for Moltis-created Coder workspaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coder_workspace_prefix: Option<String>,
+    /// Workspace TTL in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coder_ttl_ms: Option<i64>,
+    /// Logical workspace size key used with `coder_template_presets`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coder_size: Option<String>,
+    /// Map logical size keys to Coder template preset names or IDs.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub coder_template_presets: HashMap<String, String>,
+    /// Extra rich parameter values passed during workspace creation.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub coder_parameter_values: HashMap<String, String>,
+
     /// Vercel snapshot ID for fast cold starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vercel_snapshot_id: Option<String>,
@@ -1029,6 +1068,17 @@ impl Default for SandboxConfig {
             daytona_api_url: None,
             daytona_target: None,
             daytona_image: None,
+            coder_url: None,
+            coder_token: None,
+            coder_organization: None,
+            coder_user: None,
+            coder_template_id: None,
+            coder_template_name: None,
+            coder_workspace_prefix: None,
+            coder_ttl_ms: None,
+            coder_size: None,
+            coder_template_presets: HashMap::new(),
+            coder_parameter_values: HashMap::new(),
             vercel_snapshot_id: None,
             firecracker_bin: None,
             firecracker_kernel: None,

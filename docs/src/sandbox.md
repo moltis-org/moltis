@@ -14,6 +14,7 @@ backend = "auto"          # default — picks the best available
 # backend = "docker"      # force Docker
 # backend = "apple-container"  # force Apple Container (macOS only)
 # backend = "wasm"        # force WASM sandbox (Wasmtime + WASI)
+# backend = "coder"       # force Coder remote workspace backend
 # backend = "restricted-host"  # env clearing + rlimits only
 ```
 

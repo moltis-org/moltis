@@ -852,6 +852,25 @@ fn apply_env_overrides_with_options(
             "sandbox",
             "daytona_target",
         ]),
+        ("CODER_URL", &["tools", "exec", "sandbox", "coder_url"]),
+        ("CODER_SESSION_TOKEN", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "coder_token",
+        ]),
+        ("CODER_ORGANIZATION", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "coder_organization",
+        ]),
+        ("CODER_TEMPLATE_NAME", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "coder_template_name",
+        ]),
     ];
 
     for (key, val) in vars {

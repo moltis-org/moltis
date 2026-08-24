@@ -9,6 +9,7 @@ use remote sandbox backends to provide isolated command execution via cloud APIs
 |---------|----------|-----------|-----------------|
 | **Vercel Sandbox** | Vercel (managed) | Firecracker microVM | `dnf` (Amazon Linux 2023) |
 | **Daytona** | Daytona (managed or self-hosted) | Cloud sandbox | `apt-get` (Ubuntu) |
+| **Coder** | Coder (managed or self-hosted) | Coder workspace template | Template-defined |
 | **Firecracker** | Self-hosted (Linux) | Local microVM | `apt-get` (Ubuntu) |
 
 ## Vercel Sandbox
@@ -111,6 +112,103 @@ using moltis's multi-backend routing and workspace sync.
 - Files transfer via multipart upload / download
 - On cleanup, the sandbox is deleted
 
+## Coder
+
+Coder creates ephemeral workspaces from your Coder templates. Moltis uses the
+Coder REST API for lifecycle operations and the workspace-agent reconnecting PTY
+WebSocket for command execution. Workspaces created by Moltis are deleted on
+cleanup.
+
+### Configuration
+
+Set environment variables:
+
+```bash
+CODER_URL=https://coder.example.com
+CODER_SESSION_TOKEN=coder_your_token_here
+CODER_ORGANIZATION=default          # optional when template_id is configured
+CODER_TEMPLATE_NAME=moltis-devbox   # or configure coder_template_id
+```
+
+Or configure in `moltis.toml`:
+
+```toml
+[tools.exec.sandbox]
+backend = "coder"  # or leave "auto" for auto-detection when no local runtime exists
+
+coder_url = "https://coder.example.com"
+coder_token = "${CODER_SESSION_TOKEN}"
+coder_organization = "default"
+coder_user = "me"
+coder_template_name = "moltis-devbox"
+coder_workspace_prefix = "moltis"
+coder_ttl_ms = 300000
+coder_size = "medium"
+
+[tools.exec.sandbox.coder_template_presets]
+small = "small"
+medium = "medium"
+large = "large"
+xlarge = "xlarge"
+```
+
+### Template Presets
+
+`coder_size` selects an entry from `coder_template_presets`. Each value may be
+either a Coder template preset name or a preset UUID. Names are resolved against
+the active template version before workspace creation.
+
+Use `coder_parameter_values` for advanced template parameters that are not
+represented by presets:
+
+```toml
+[tools.exec.sandbox.coder_parameter_values]
+region = "us"
+```
+
+### How It Works
+
+- `backend = "auto"` detects `CODER_URL` and `CODER_SESSION_TOKEN` when no local Docker runtime is available
+- Each session creates an ephemeral Coder workspace
+- Moltis waits for the workspace agent to report lifecycle state `ready`, so
+  commands do not race the template's startup script. A workspace whose agent
+  reaches a terminal state (`start_error`, `off`, …) fails fast instead of
+  polling until the create timeout
+- Commands execute via Coder's reconnecting PTY WebSocket
+- On cleanup, the Coder workspace is deleted
+
+### Command and File Transport
+
+Coder exposes no REST endpoint for a workspace filesystem, so commands and file
+payloads both travel over the agent PTY. The PTY URL's `command` parameter
+carries only a fixed ~200 byte bootstrap; the real script is streamed to the
+workspace on the PTY stdin channel. Payload size is therefore bounded by memory
+rather than by URL length, which is what makes `Write` and workspace sync work:
+
+| Limit | Value |
+|-------|-------|
+| Single `Write` through the PTY stream | 64 MB |
+| Workspace sync transfer (in or out) | 16 MB |
+
+Sync is capped lower than a single `Write` because sync-out reads the workspace
+tarball back as base64 on stdout, and that expansion has to fit the sandbox
+file service's output budget. Exceeding either limit produces an explicit
+"too large" error rather than a truncated transfer.
+
+The bootstrap puts the terminal into raw mode before any payload is streamed,
+which disables echo and `ONLCR` so the marker framing around stdout, stderr,
+and the exit code stays parseable. The PTY window is reported as 1000×200 so
+that programs which self-format to `COLUMNS` do not wrap their own output.
+
+### Workspace Names
+
+Coder validates workspace names against `^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$` with a
+32 character limit. Moltis derives the name from
+`coder_workspace_prefix` and the session key, lowercasing and collapsing every
+other character to `-`. Names that would exceed the limit are truncated with a
+short digest of the full session key appended, so sessions sharing a long
+prefix still map to distinct workspaces.
+
 ## Local Firecracker
 
 For Linux servers without Docker where you want VM-level isolation, the
@@ -152,7 +250,7 @@ When `backend = "auto"` (the default), moltis selects the sandbox backend
 in this order:
 
 1. **Local**: Apple Container → Podman → Docker → (next)
-2. **Remote**: Vercel (if `VERCEL_TOKEN` set) → Daytona (if `DAYTONA_API_KEY` set)
+2. **Remote**: Vercel (if `VERCEL_TOKEN` set) → Daytona (if `DAYTONA_API_KEY` set) → Coder (if `CODER_URL` and `CODER_SESSION_TOKEN` set)
 3. **Fallback**: Restricted Host (rlimits only, no isolation)
 
 ## Multi-Backend Routing
@@ -183,4 +281,5 @@ installed, but subsequent sessions use cached images/snapshots:
 |---------|-----------------|
 | Vercel | Snapshot after first provisioning (instant subsequent boots) |
 | Daytona | Runtime provisioning on first session |
+| Coder | Template-defined image/packages (Moltis waits for agent lifecycle `ready`) |
 | Firecracker | Pre-built rootfs with packages baked in |

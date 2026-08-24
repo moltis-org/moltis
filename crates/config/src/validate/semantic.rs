@@ -700,6 +700,10 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         "apple-container",
         "restricted-host",
         "wasm",
+        "vercel",
+        "daytona",
+        "coder",
+        "firecracker",
     ];
     if !valid_sandbox_backends.contains(&config.tools.exec.sandbox.backend.as_str()) {
         diagnostics.push(Diagnostic {

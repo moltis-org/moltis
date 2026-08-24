@@ -29,9 +29,6 @@ use crate::{
     },
 };
 
-/// Maximum tarball size for sync read operations (100 MB).
-const MAX_SYNC_BYTES: u64 = 100 * 1024 * 1024;
-
 /// Upload host workspace contents to an isolated sandbox.
 ///
 /// Creates a gzipped tarball of the host workspace directory and extracts
@@ -57,6 +54,16 @@ pub async fn sync_in(
     if tar_bytes.is_empty() {
         debug!(%id, "sync-in: tar produced empty output, skipping");
         return Ok(());
+    }
+
+    let max_transfer = backend.max_transfer_bytes();
+    if tar_bytes.len() as u64 > max_transfer {
+        return Err(Error::message(format!(
+            "sync-in: workspace too large ({} bytes exceeds the {max_transfer} byte limit of the \
+             {} backend)",
+            tar_bytes.len(),
+            backend.backend_name(),
+        )));
     }
 
     debug!(
@@ -137,7 +144,8 @@ pub async fn sync_out(
     }
 
     // Read tarball from sandbox.
-    let read_result = backend.read_file(id, tar_path, MAX_SYNC_BYTES).await?;
+    let max_transfer = backend.max_transfer_bytes();
+    let read_result = backend.read_file(id, tar_path, max_transfer).await?;
     let tar_bytes = match read_result {
         SandboxReadResult::Ok(bytes) => bytes,
         SandboxReadResult::NotFound => {
@@ -152,8 +160,7 @@ pub async fn sync_out(
         SandboxReadResult::TooLarge(size) => {
             warn!(%id, size, "sync-out: workspace tarball exceeds size limit");
             return Err(Error::message(format!(
-                "sync-out: workspace too large ({size} bytes exceeds {} byte limit)",
-                MAX_SYNC_BYTES
+                "sync-out: workspace too large ({size} bytes exceeds {max_transfer} byte limit)"
             )));
         },
         SandboxReadResult::NotRegularFile => {
@@ -636,7 +643,116 @@ fn reject_existing_symlink(path: &Path) -> Result<()> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
+    use {super::*, crate::exec::ExecResult, async_trait::async_trait};
+
+    /// Records what sync tried to push, and advertises a small transfer cap.
+    struct CappedSandbox {
+        max_transfer: u64,
+        wrote: std::sync::Mutex<Vec<usize>>,
+    }
+
+    impl CappedSandbox {
+        fn new(max_transfer: u64) -> Self {
+            Self {
+                max_transfer,
+                wrote: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn writes(&self) -> Vec<usize> {
+            self.wrote.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        }
+    }
+
+    #[async_trait]
+    impl Sandbox for CappedSandbox {
+        fn backend_name(&self) -> &'static str {
+            "capped"
+        }
+
+        async fn ensure_ready(&self, _id: &SandboxId, _image: Option<&str>) -> Result<()> {
+            Ok(())
+        }
+
+        async fn exec(
+            &self,
+            _id: &SandboxId,
+            _command: &str,
+            _opts: &ExecOpts,
+        ) -> Result<ExecResult> {
+            Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+
+        async fn write_file(
+            &self,
+            _id: &SandboxId,
+            _file_path: &str,
+            content: &[u8],
+        ) -> Result<Option<serde_json::Value>> {
+            self.wrote
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(content.len());
+            Ok(None)
+        }
+
+        async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+            Ok(())
+        }
+
+        fn is_isolated(&self) -> bool {
+            true
+        }
+
+        fn max_transfer_bytes(&self) -> u64 {
+            self.max_transfer
+        }
+    }
+
+    fn sandbox_id() -> SandboxId {
+        SandboxId {
+            scope: super::super::types::SandboxScope::Session,
+            key: "capped".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_in_rejects_workspaces_over_the_backend_transfer_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        // Incompressible content, so the tarball stays over the cap.
+        let blob: Vec<u8> = (0..200_000u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
+            .collect();
+        std::fs::write(dir.path().join("blob.bin"), &blob).unwrap();
+
+        let backend = CappedSandbox::new(1024);
+        let err = sync_in(&backend, &sandbox_id(), dir.path(), "/home/coder")
+            .await
+            .expect_err("oversized workspace must be rejected");
+        let message = err.to_string();
+        assert!(message.contains("workspace too large"), "{message}");
+        assert!(message.contains("capped"), "{message}");
+        assert!(
+            backend.writes().is_empty(),
+            "nothing should be uploaded once the cap is exceeded"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_in_uploads_workspaces_within_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), b"hello").unwrap();
+
+        let backend = CappedSandbox::new(super::super::types::DEFAULT_MAX_TRANSFER_BYTES);
+        sync_in(&backend, &sandbox_id(), dir.path(), "/home/coder")
+            .await
+            .unwrap();
+        assert_eq!(backend.writes().len(), 1);
+    }
 
     fn tar_gz_with_two_files(first_path: &str, second_path: &str) -> Vec<u8> {
         let enc = GzEncoder::new(Vec::new(), Compression::fast());

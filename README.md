@@ -54,7 +54,7 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 | Local checkout size\* | ~1.1M app LoC | ~152K app LoC | **~270K Rust LoC** |
 | Architecture | Broad gateway, channel, node, and app ecosystem | CLI/gateway agent with learning loop and research tooling | **Persistent personal agent server with modular crates** |
 | Crates/modules | npm packages, extensions, apps | Python packages, plugins, tools, TUI | **59 Rust workspace crates** |
-| Sandbox/backends | App-level permissions, browser/node tools | Local, Docker, SSH, Daytona, Singularity, Modal | **Docker/Podman + Apple Container + WASM** |
+| Sandbox/backends | App-level permissions, browser/node tools | Local, Docker, SSH, Daytona, Singularity, Modal | **Docker/Podman + Apple Container + WASM + Coder** |
 | Auth/access | Pairing and local gateway controls | CLI and messaging gateway setup | **Password + Passkey + API keys + Vault** |
 | Voice I/O | Voice wake and talk modes | Voice memo transcription | **Built-in STT + TTS providers** |
 | MCP | Plugin/integration support | MCP integration | **stdio + HTTP/SSE** |

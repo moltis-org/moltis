@@ -33,7 +33,10 @@ pub const MAX_SANDBOX_WRITE_BYTES: usize = 512 * 1024;
 pub const MAX_SANDBOX_LIST_FILES: usize = 10_000;
 
 const DEFAULT_SANDBOX_TIMEOUT: Duration = Duration::from_secs(30);
-const DEFAULT_SANDBOX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
+/// Output budget for the shell bridges in this module. A sandbox read returns
+/// its payload as base64 on stdout, so the largest readable file is roughly
+/// three quarters of this.
+pub(crate) const DEFAULT_SANDBOX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 
 // Exit codes used by the bridge scripts to encode typed errors.
 const EXIT_NOT_FOUND: i32 = 10;
@@ -253,11 +256,25 @@ pub async fn command_write_file<S: Sandbox + ?Sized>(
     file_path: &str,
     content: &[u8],
 ) -> Result<Option<Value>> {
-    if content.len() > MAX_SANDBOX_WRITE_BYTES {
+    command_write_file_with_limit(backend, id, file_path, content, MAX_SANDBOX_WRITE_BYTES).await
+}
+
+/// Command-based sandbox write with a backend-specific size limit.
+///
+/// Backends whose transport is not bounded by `ARG_MAX` (for example the Coder
+/// backend, which streams the script over the PTY stdin channel rather than
+/// embedding it in a command line) raise the limit by calling this directly.
+pub async fn command_write_file_with_limit<S: Sandbox + ?Sized>(
+    backend: &S,
+    id: &SandboxId,
+    file_path: &str,
+    content: &[u8],
+    max_bytes: usize,
+) -> Result<Option<Value>> {
+    if content.len() > max_bytes {
         return Err(Error::message(format!(
-            "sandbox Write is limited to {} KB per call (got {:.1} KB); \
-             larger writes will ship in a follow-up that chunks content",
-            MAX_SANDBOX_WRITE_BYTES / 1024,
+            "sandbox Write is limited to {} KB per call (got {:.1} KB)",
+            max_bytes / 1024,
             content.len() as f64 / 1024.0,
         )));
     }

@@ -371,6 +371,7 @@ pub(crate) fn select_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         #[cfg(feature = "vercel-sandbox")]
         "vercel" => create_vercel_backend(config),
         "daytona" => create_daytona_backend(config),
+        "coder" => create_coder_backend(config),
         #[cfg(target_os = "linux")]
         "firecracker" => create_firecracker_backend(config),
         _ => auto_detect_backend(config),
@@ -472,6 +473,62 @@ fn create_daytona_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         "sandbox backend: daytona (cloud sandbox)"
     );
     Arc::new(DaytonaSandbox::new(config, daytona_config))
+}
+
+/// Create a Coder sandbox backend, falling back to `RestrictedHostSandbox`
+/// if the URL or token is not configured.
+fn create_coder_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
+    use super::coder::{CoderSandbox, CoderSandboxConfig};
+
+    let Some(token) = config
+        .coder_token
+        .clone()
+        .filter(|token| !token.expose_secret().is_empty())
+    else {
+        tracing::warn!(
+            "coder sandbox requested but no token configured (set CODER_SESSION_TOKEN); \
+             using restricted-host"
+        );
+        return Arc::new(RestrictedHostSandbox::new(config));
+    };
+
+    let Some(url) = config
+        .coder_url
+        .clone()
+        .map(|url| url.trim().trim_end_matches('/').to_string())
+        .filter(|url| !url.is_empty())
+    else {
+        tracing::warn!(
+            "coder sandbox requested but no URL configured (set CODER_URL); using restricted-host"
+        );
+        return Arc::new(RestrictedHostSandbox::new(config));
+    };
+
+    let coder_config = CoderSandboxConfig {
+        url,
+        token,
+        organization: config.coder_organization.clone(),
+        user: config
+            .coder_user
+            .clone()
+            .unwrap_or_else(|| "me".to_string()),
+        template_id: config.coder_template_id.clone(),
+        template_name: config.coder_template_name.clone(),
+        workspace_prefix: config
+            .coder_workspace_prefix
+            .clone()
+            .unwrap_or_else(|| "moltis".to_string()),
+        ttl_ms: config.coder_ttl_ms,
+        size: config.coder_size.clone(),
+        template_presets: config.coder_template_presets.clone(),
+        parameter_values: config.coder_parameter_values.clone(),
+    };
+
+    tracing::info!(
+        url = coder_config.url,
+        "sandbox backend: coder (remote workspace)"
+    );
+    Arc::new(CoderSandbox::new(config, coder_config))
 }
 
 fn has_secret(secret: &Option<secrecy::Secret<String>>) -> bool {
@@ -629,6 +686,16 @@ pub fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     if has_secret(&config.daytona_api_key) {
         tracing::info!("no local container runtime; using daytona sandbox");
         return create_daytona_backend(config);
+    }
+
+    if has_secret(&config.coder_token)
+        && config
+            .coder_url
+            .as_deref()
+            .is_some_and(|url| !url.trim().is_empty())
+    {
+        tracing::info!("no local container runtime; using coder sandbox");
+        return create_coder_backend(config);
     }
 
     // Use restricted-host sandbox as last resort.

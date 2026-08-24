@@ -453,7 +453,7 @@ port = {port}                           # Port number (auto-generated for this i
 # workspace_mount = "ro"            # "ro" | "rw" | "none"
 # managed_files_mount = "ro"        # Managed Files: "ro" | "rw" | "none"
 # home_persistence = "shared"       # "off" | "session" | "shared"
-# backend = "auto"                  # "auto" | "docker" | "podman" | "apple-container" | "restricted-host" | "wasm"
+# backend = "auto"                  # "auto" | "docker" | "podman" | "apple-container" | "restricted-host" | "wasm" | "vercel" | "daytona" | "coder"
 # no_network = true                 # Disable network access in sandbox
 # image = "custom-image:tag"        # Custom Docker image (default: auto-built)
 # packages = [...]                  # Packages installed in sandbox containers
@@ -463,6 +463,17 @@ port = {port}                           # Port number (auto-generated for this i
 # allow_host_podman = false         # DANGEROUS, Linux only: host API removes sandbox boundary
 # allow_nested_podman = false       # DANGEROUS: privileged nested Podman sandbox
                                     # Both require backend = "podman" and are mutually exclusive
+
+# Remote Coder workspaces. Preset values may be Coder preset names or UUIDs.
+# coder_url = "https://coder.example.com"
+# coder_token = "${{CODER_SESSION_TOKEN}}"
+# coder_organization = "default"
+# coder_user = "me"
+# coder_template_name = "moltis-devbox"
+# coder_workspace_prefix = "moltis"
+# coder_ttl_ms = 300000
+# coder_size = "medium"
+# coder_template_presets = {{ small = "small", medium = "medium", large = "large", xlarge = "xlarge" }}
 
 # [tools.exec.sandbox.resource_limits]
 # memory_limit = "512M"             # Memory limit (e.g., "512M", "1G")
