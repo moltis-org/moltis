@@ -72,6 +72,7 @@ navigation_timeout_ms = 30000  # Page load timeout
 
 # Sandbox image (browser sandbox mode follows session sandbox mode)
 sandbox_image = &#x22;docker.io/browserless/chrome&#x22;  # Container image for sandboxed sessions
+browserless_api_version = &#x22;v1&#x22;                  # Must match the image API
 # allowed_domains = [&#x22;example.com&#x22;, &#x22;*.trusted.org&#x22;]  # Restrict navigation
 
 # Container connectivity (for Moltis-in-Docker setups)
@@ -97,6 +98,7 @@ sandbox_image = &#x22;docker.io/browserless/chrome&#x22;  # Container image for 
 <span class="line"></span>
 <span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Sandbox image (browser sandbox mode follows session sandbox mode)</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">sandbox_image </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "docker.io/browserless/chrome"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">  # Container image for sandboxed sessions</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">browserless_api_version </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "v1"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">                  # Must match the image API</span></span>
 <span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># allowed_domains = ["example.com", "*.trusted.org"]  # Restrict navigation</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Container connectivity (for Moltis-in-Docker setups)</span></span>
@@ -490,14 +492,116 @@ to the host network and filesystem.</p>
 <li><strong>Readiness detection</strong>: Waits for Chrome to be fully ready before connecting</li>
 </ul>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[tools.browser]
-sandbox_image = &#x22;docker.io/browserless/chrome&#x22;  # Container image for sandboxed sessions"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">browser</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
-<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">sandbox_image </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "docker.io/browserless/chrome"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">  # Container image for sandboxed sessions</span></span></code></pre>
+sandbox_image = &#x22;docker.io/browserless/chrome&#x22;  # Container image for sandboxed sessions
+browserless_api_version = &#x22;v1&#x22;"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">browser</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">sandbox_image </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "docker.io/browserless/chrome"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">  # Container image for sandboxed sessions</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">browserless_api_version </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "v1"</span></span></code></pre>
+<p>The existing Browserless v1 image remains the default for upgrade compatibility.
+Browserless v2 is opt-in. Pin the image and change both settings together:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[tools.browser]
+sandbox_image = &#x22;ghcr.io/browserless/chromium:v2.56.0&#x22;
+browserless_api_version = &#x22;v2&#x22;"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">browser</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">sandbox_image </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "ghcr.io/browserless/chromium:v2.56.0"</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">browserless_api_version </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "v2"</span></span></code></pre>
+<p>Moltis passes viewport, low-memory, and persistent-profile launch arguments
+using the protocol expected by the selected version. Browserless v2 images no
+longer accept the legacy <code>DEFAULT_LAUNCH_ARGS</code> and <code>PREBOOT_CHROME</code> variables.
+For v2, Moltis sets <code>TIMEOUT</code> and <code>CONCURRENT</code> on the container and sends Chrome
+launch arguments in the Base64-encoded <code>launch</code> WebSocket query. Do not set
+those values manually.</p>
 <p>Requirements:</p>
 <ul>
 <li>Docker or Apple Container must be installed and running</li>
 <li>The container image is pulled automatically on first use</li>
 <li>Session sandbox mode must be enabled (<code>[tools.exec.sandbox] mode = "all"</code>)</li>
 </ul>
+<h4 id="browserless-v2-setup-checklist">Browserless v2 setup checklist</h4>
+<ol>
+<li>Close active browser sessions before changing versions. Browser containers
+already running with v1 do not change protocol in place.</li>
+<li>Pin a Browserless v2 image and set <code>browserless_api_version = "v2"</code> in the
+same configuration change.</li>
+<li>If Moltis runs in Docker, mount the container-runtime socket, configure a
+host-reachable <code>container_host</code>, and make the host data path visible with
+<code>host_data_dir</code> when persistent profiles are enabled.</li>
+<li>Restart Moltis. It pulls the configured image during startup.</li>
+<li>Start a new sandboxed browser session and verify the startup logs show
+<code>browserless_api_version=v2</code> and the pinned image.</li>
+</ol>
+<p>For a native Moltis installation, the minimal configuration is:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[tools.exec.sandbox]
+mode = &#x22;all&#x22;
+
+[tools.browser]
+sandbox_image = &#x22;ghcr.io/browserless/chromium:v2.56.0&#x22;
+browserless_api_version = &#x22;v2&#x22;"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">exec</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">sandbox</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">mode </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "all"</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">browser</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">sandbox_image </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "ghcr.io/browserless/chromium:v2.56.0"</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">browserless_api_version </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "v2"</span></span></code></pre>
+<p>When Moltis runs inside Docker and launches sibling browser containers, use the
+host-visible data path rather than the path inside the Moltis container:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[tools.exec.sandbox]
+mode = &#x22;all&#x22;
+host_data_dir = &#x22;/srv/moltis/data&#x22;
+
+[tools.browser]
+sandbox_image = &#x22;ghcr.io/browserless/chromium:v2.56.0&#x22;
+browserless_api_version = &#x22;v2&#x22;
+container_host = &#x22;host.docker.internal&#x22;"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">exec</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">sandbox</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">mode </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "all"</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">host_data_dir </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "/srv/moltis/data"</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">browser</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">sandbox_image </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "ghcr.io/browserless/chromium:v2.56.0"</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">browserless_api_version </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "v2"</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">container_host </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "host.docker.internal"</span></span></code></pre>
+<p>The matching Compose service needs the same data directory, the Docker socket,
+and a host-gateway mapping on Linux:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="yaml" data-code="services:
+  moltis:
+    volumes:
+      - /srv/moltis/data:/home/moltis/.moltis
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - &#x22;host.docker.internal:host-gateway&#x22;"><code><span class="line"><span style="color:#D32F2F;--shiki-dark:#85E89D">services</span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">:</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#85E89D">  moltis</span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">:</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#85E89D">    volumes</span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">:</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">      - </span><span style="color:#22863A;--shiki-dark:#9ECBFF">/srv/moltis/data:/home/moltis/.moltis</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">      - </span><span style="color:#22863A;--shiki-dark:#9ECBFF">/var/run/docker.sock:/var/run/docker.sock</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#85E89D">    extra_hosts</span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">:</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">      - </span><span style="color:#22863A;--shiki-dark:#9ECBFF">"host.docker.internal:host-gateway"</span></span></code></pre>
+<p>The Moltis user inside the container must be allowed to access the socket. If
+the socket is group-owned, add its host group ID with Compose <code>group_add</code>.
+Mounting the Docker socket grants container-management privileges equivalent to
+host-level control; only use this setup with a trusted Moltis instance. See
+<a href="/docker.html#docker-socket-sandbox-execution">Docker Socket Sandbox Execution</a>
+for the complete Docker setup.</p>
+<p>To validate the configuration and image before opening a browser session:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="bash" data-code="moltis config check
+docker pull ghcr.io/browserless/chromium:v2.56.0"><code><span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">moltis</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> config</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> check</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">docker</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> pull</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> ghcr.io/browserless/chromium:v2.56.0</span></span></code></pre>
+<p>After the first v2 browser action, the Moltis logs should report a browser
+container using the v2 image and <code>browserless_api_version=v2</code>. Its environment
+contains <code>TIMEOUT</code> and <code>CONCURRENT</code>, not the v1-only <code>DEFAULT_LAUNCH_ARGS</code>,
+<code>PREBOOT_CHROME</code>, or <code>MAX_CONCURRENT_SESSIONS</code> variables.</p>
+<p>Common setup failures:</p>
+<ul>
+<li>A v2 image with <code>browserless_api_version = "v1"</code> (or the reverse) causes
+WebSocket timeouts or missing launch options. Always change the pair together.</li>
+<li>A connection to <code>127.0.0.1</code> from Moltis-in-Docker targets the Moltis container,
+not the sibling browser. Configure <code>container_host</code> as described below.</li>
+<li><code>Permission denied</code> mentioning <code>/data/browser-profile/SingletonLock</code> means the
+host profile mount is wrong or not writable. Set the correct absolute
+<code>host_data_dir</code> and ensure the directory is writable by the browser container.</li>
+<li><code>Permission denied</code> for <code>/var/run/docker.sock</code> means the Moltis container user
+is missing the socket’s group ID or the socket was not mounted.</li>
+</ul>
+<p>Browserless v2.56.0 can mount and safely restart the same <code>userDataDir</code>, but it
+currently does not reliably restore cookies or local storage across new
+container instances. Track the upstream limitation in
+<a href="https://github.com/browserless/browserless/issues/4913">browserless/browserless#4913</a>.</p>
 <h3 id="moltis-inside-docker-sibling-containers">Moltis Inside Docker (Sibling Containers)</h3>
 <p>When Moltis itself runs inside a Docker container, the browser container is
 launched as a sibling via the host’s Docker socket. By default Moltis connects
