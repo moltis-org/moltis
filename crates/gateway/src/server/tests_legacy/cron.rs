@@ -85,6 +85,10 @@ fn reply_target(
     }
 }
 
+fn whatsapp_target(chat_id: &str) -> ChannelReplyTarget {
+    reply_target(ChannelType::Whatsapp, "bot-main", chat_id, None)
+}
+
 struct FailingChannelOutbound;
 
 #[async_trait]
@@ -234,9 +238,9 @@ async fn maybe_deliver_cron_output_propagates_channel_failure() {
 }
 
 #[tokio::test]
-async fn successful_delivery_is_recorded_once_in_bound_conversation() {
+async fn bare_whatsapp_number_delivery_is_recorded_once_in_bound_conversation() {
     let fixture = CronHistoryFixture::new(ChannelType::Whatsapp, "bot-main").await;
-    let target = reply_target(ChannelType::Whatsapp, "bot-main", "123456", None);
+    let target = whatsapp_target("123456@s.whatsapp.net");
     fixture.bind(&target, "session:whatsapp", true).await;
     let outbound = Arc::new(RecordingChannelOutbound::default());
     let req = cron_delivery_request();
@@ -280,7 +284,7 @@ async fn successful_delivery_is_recorded_once_in_bound_conversation() {
 #[tokio::test]
 async fn failed_delivery_is_not_added_to_conversation_history() {
     let fixture = CronHistoryFixture::new(ChannelType::Whatsapp, "bot-main").await;
-    let target = reply_target(ChannelType::Whatsapp, "bot-main", "123456", None);
+    let target = whatsapp_target("123456@s.whatsapp.net");
     fixture.bind(&target, "session:whatsapp", true).await;
     let req = cron_delivery_request();
     let history = fixture.history("failed-run");
@@ -308,7 +312,7 @@ async fn failed_delivery_is_not_added_to_conversation_history() {
 #[tokio::test]
 async fn delivered_output_does_not_fail_when_history_cannot_be_written() {
     let fixture = CronHistoryFixture::new(ChannelType::Whatsapp, "bot-main").await;
-    let target = reply_target(ChannelType::Whatsapp, "bot-main", "123456", None);
+    let target = whatsapp_target("123456@s.whatsapp.net");
     fixture.bind(&target, "session:whatsapp", true).await;
     let blocked_path = fixture._directory.path().join("not-a-directory");
     std::fs::write(&blocked_path, b"file blocks session directory").unwrap();
@@ -363,10 +367,7 @@ async fn delivery_without_an_existing_bound_session_stays_out_of_history() {
     assert!(
         fixture
             .store
-            .read(
-                &reply_target(ChannelType::Whatsapp, "bot-main", "123456", None)
-                    .default_session_key()
-            )
+            .read(&whatsapp_target("123456@s.whatsapp.net").default_session_key())
             .await
             .unwrap()
             .is_empty()
@@ -376,8 +377,8 @@ async fn delivery_without_an_existing_bound_session_stays_out_of_history() {
 #[tokio::test]
 async fn delivery_is_isolated_to_the_exact_recipient() {
     let fixture = CronHistoryFixture::new(ChannelType::Whatsapp, "bot-main").await;
-    let intended = reply_target(ChannelType::Whatsapp, "bot-main", "123456", None);
-    let other = reply_target(ChannelType::Whatsapp, "bot-main", "999999", None);
+    let intended = whatsapp_target("123456@s.whatsapp.net");
+    let other = whatsapp_target("999999@s.whatsapp.net");
     fixture.bind(&intended, "session:intended", true).await;
     fixture.bind(&other, "session:other", true).await;
     let outbound = Arc::new(RecordingChannelOutbound::default());
@@ -410,8 +411,8 @@ async fn delivery_is_isolated_to_the_exact_recipient() {
 #[tokio::test]
 async fn stale_mapping_to_another_recipient_fails_closed() {
     let fixture = CronHistoryFixture::new(ChannelType::Whatsapp, "bot-main").await;
-    let intended = reply_target(ChannelType::Whatsapp, "bot-main", "123456", None);
-    let other = reply_target(ChannelType::Whatsapp, "bot-main", "999999", None);
+    let intended = whatsapp_target("123456@s.whatsapp.net");
+    let other = whatsapp_target("999999@s.whatsapp.net");
     fixture.bind(&other, "session:other", false).await;
     fixture
         .metadata
@@ -450,8 +451,8 @@ async fn stale_mapping_to_another_recipient_fails_closed() {
 #[tokio::test]
 async fn binding_is_revalidated_after_the_external_send() {
     let fixture = CronHistoryFixture::new(ChannelType::Whatsapp, "bot-main").await;
-    let intended = reply_target(ChannelType::Whatsapp, "bot-main", "123456", None);
-    let other = reply_target(ChannelType::Whatsapp, "bot-main", "999999", None);
+    let intended = whatsapp_target("123456@s.whatsapp.net");
+    let other = whatsapp_target("999999@s.whatsapp.net");
     fixture.bind(&intended, "session:intended", true).await;
     fixture.bind(&other, "session:other", false).await;
     let outbound = Arc::new(RemappingChannelOutbound {
@@ -517,7 +518,7 @@ async fn telegram_delivery_is_isolated_to_the_exact_topic() {
 #[tokio::test]
 async fn default_bound_conversation_is_used_without_an_active_override() {
     let fixture = CronHistoryFixture::new(ChannelType::Whatsapp, "bot-main").await;
-    let target = reply_target(ChannelType::Whatsapp, "bot-main", "123456", None);
+    let target = whatsapp_target("123456@s.whatsapp.net");
     let default_key = target.default_session_key();
     fixture.bind(&target, &default_key, false).await;
     let outbound = Arc::new(RecordingChannelOutbound::default());

@@ -590,16 +590,20 @@ fn cron_delivery_target(
     outbound_to: &str,
 ) -> Option<moltis_channels::ChannelReplyTarget> {
     let channel_type = registry.resolve_channel_type(account_id)?.parse().ok()?;
-    let (chat_id, thread_id) = if channel_type == moltis_channels::ChannelType::Telegram {
-        match outbound_to.split_once(':') {
+    let (chat_id, thread_id) = match channel_type {
+        moltis_channels::ChannelType::Telegram => match outbound_to.split_once(':') {
             Some((chat_id, thread_id)) if !chat_id.is_empty() && !thread_id.is_empty() => {
                 (chat_id.to_string(), Some(thread_id.to_string()))
             },
             Some(_) => return None,
             None => (outbound_to.to_string(), None),
-        }
-    } else {
-        (outbound_to.to_string(), None)
+        },
+        // WhatsApp accepts bare phone numbers for outbound sends, but inbound
+        // conversations are keyed by their canonical phone-number JID.
+        moltis_channels::ChannelType::Whatsapp if !outbound_to.contains('@') => {
+            (format!("{outbound_to}@s.whatsapp.net"), None)
+        },
+        _ => (outbound_to.to_string(), None),
     };
 
     Some(moltis_channels::ChannelReplyTarget {
