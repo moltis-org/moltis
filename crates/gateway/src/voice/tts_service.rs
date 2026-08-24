@@ -512,6 +512,7 @@ mod tests {
         _lock: std::sync::MutexGuard<'static, ()>,
         _config_dir: TempDir,
         _data_dir: TempDir,
+        saved_env: Vec<(&'static str, Option<String>)>,
     }
 
     impl VoiceConfigTestGuard {
@@ -525,16 +526,40 @@ mod tests {
                 .unwrap_or_else(|error| panic!("config should be written: {error}"));
             moltis_config::set_config_dir(config_dir.path().to_path_buf());
             moltis_config::set_data_dir(data_dir.path().to_path_buf());
+
+            // Clear ambient TTS credentials so default-state assertions are not
+            // polluted by the developer/CI environment (#1114 Greptile P1).
+            let mut saved_env = Vec::new();
+            for key in [
+                "OPENAI_API_KEY",
+                "ELEVENLABS_API_KEY",
+                "GOOGLE_API_KEY",
+                "GEMINI_API_KEY",
+            ] {
+                saved_env.push((key, std::env::var(key).ok()));
+                // SAFETY: tests hold `config_override_test_lock`, so concurrent
+                // config/env mutation in this crate is serialized.
+                unsafe { std::env::remove_var(key) };
+            }
+
             Self {
                 _lock: lock,
                 _config_dir: config_dir,
                 _data_dir: data_dir,
+                saved_env,
             }
         }
     }
 
     impl Drop for VoiceConfigTestGuard {
         fn drop(&mut self) {
+            for (key, value) in self.saved_env.drain(..) {
+                // SAFETY: same lock-serialized test cleanup as construction.
+                match value {
+                    Some(v) => unsafe { std::env::set_var(key, v) },
+                    None => unsafe { std::env::remove_var(key) },
+                }
+            }
             moltis_config::clear_config_dir();
             moltis_config::clear_data_dir();
         }
@@ -542,17 +567,21 @@ mod tests {
 
     #[test]
     fn test_live_tts_resolve_provider_handles_explicit_and_auto_selection() {
+        // Isolate from machine-local voice config / env keys so the default
+        // unconfigured contract is what we assert (#1114 / Greptile P1).
+        let _guard = VoiceConfigTestGuard::with_config("");
         assert_eq!(
             LiveTtsService::resolve_provider(Some(TtsProviderId::OpenAi)),
             Some(TtsProviderId::OpenAi)
         );
-        // Default config has no API keys / local models, and default Coqui is
-        // not considered configured, so auto-select must return None.
+        // Empty isolated config has no API keys / local models, and default
+        // Coqui is not considered configured, so auto-select must return None.
         assert_eq!(LiveTtsService::resolve_provider(None), None);
     }
 
     #[tokio::test]
     async fn test_live_tts_service_status() {
+        let _guard = VoiceConfigTestGuard::with_config("");
         let service = LiveTtsService::new(TtsConfig::default());
         let status = service.status().await.unwrap();
 
@@ -560,8 +589,9 @@ mod tests {
         assert!(status.get("enabled").is_some());
         assert!(status.get("configured").is_some());
         assert!(status.get("provider").is_some());
-        // With default config and no API keys / local models, no provider is
-        // configured — including Coqui (default endpoint alone is not enough).
+        // With isolated empty config and no API keys / local models, no
+        // provider is configured — including Coqui (default endpoint alone is
+        // not enough).
         assert_eq!(status["configured"], false);
     }
 
