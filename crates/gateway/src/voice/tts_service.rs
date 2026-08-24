@@ -546,9 +546,9 @@ mod tests {
             LiveTtsService::resolve_provider(Some(TtsProviderId::OpenAi)),
             Some(TtsProviderId::OpenAi)
         );
-        // None means auto-select — returns first configured provider, or None
-        // when nothing (including Coqui) is actually configured.
-        let _ = LiveTtsService::resolve_provider(None);
+        // Default config has no API keys / local models, and default Coqui is
+        // not considered configured, so auto-select must return None.
+        assert_eq!(LiveTtsService::resolve_provider(None), None);
     }
 
     #[tokio::test]
