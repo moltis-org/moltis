@@ -1,7 +1,7 @@
 use {
     super::{
         helpers::{
-            StartupMemProbe, approval_manager_from_config, env_flag_enabled,
+            CronDeliveryHistory, StartupMemProbe, approval_manager_from_config, env_flag_enabled,
             log_startup_config_storage_diagnostics, log_startup_model_inventory,
             maybe_deliver_cron_output, restore_saved_local_llm_models,
             validate_proxy_tls_configuration,
@@ -768,11 +768,12 @@ pub async fn prepare_gateway_core_with_profile(
             }
 
             let chat = state.chat();
+            let cron_turn_id = uuid::Uuid::new_v4().to_string();
             let session_key = match &req.session_target {
                 moltis_cron::types::SessionTarget::Named(name) => {
                     format!("cron:{name}")
                 },
-                _ => format!("cron:{}", uuid::Uuid::new_v4()),
+                _ => format!("cron:{cron_turn_id}"),
             };
 
             if matches!(
@@ -876,19 +877,35 @@ pub async fn prepare_gateway_core_with_profile(
                 text.clone()
             };
 
-            let delivery_error =
-                if req.deliver && !is_heartbeat_turn && delivery_text.trim().is_empty() {
-                    Some("cron agent produced an empty response; nothing was delivered".to_string())
-                } else {
-                    maybe_deliver_cron_output(
-                        state.services.channel_outbound_arc(),
-                        &req,
-                        &delivery_text,
-                    )
-                    .await
-                    .err()
-                    .map(|error| error.to_string())
+            let delivery_error = if req.deliver
+                && !is_heartbeat_turn
+                && delivery_text.trim().is_empty()
+            {
+                Some("cron agent produced an empty response; nothing was delivered".to_string())
+            } else {
+                let delivery_history = match (
+                    state.services.channel_registry.as_ref(),
+                    state.services.session_metadata.as_ref(),
+                    state.services.session_store.as_ref(),
+                ) {
+                    (Some(registry), Some(metadata), Some(store)) => Some(CronDeliveryHistory {
+                        registry: Arc::clone(registry),
+                        metadata: Arc::clone(metadata),
+                        store: Arc::clone(store),
+                        delivery_id: cron_turn_id.clone(),
+                    }),
+                    _ => None,
                 };
+                maybe_deliver_cron_output(
+                    state.services.channel_outbound_arc(),
+                    &req,
+                    &delivery_text,
+                    delivery_history.as_ref(),
+                )
+                .await
+                .err()
+                .map(|error| error.to_string())
+            };
 
             Ok(moltis_cron::service::AgentTurnResult {
                 output: text,

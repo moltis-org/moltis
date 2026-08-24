@@ -172,8 +172,16 @@ Example:
 
 Channel delivery is separate from session targeting. The cron job still runs in
 an isolated cron session, then Moltis forwards the finished output to the
-requested channel destination. Delivery failures and empty non-heartbeat
-outputs are recorded as failed cron runs. The `run` action returns that run
+requested channel destination. After a successful send, Moltis also adds the
+delivered text to that destination's existing bound conversation. A follow-up
+in the same chat (and, where supported, the same topic) can therefore refer to
+the scheduled message naturally. No additional configuration is required.
+
+Moltis only updates history when the channel account and exact destination map
+to an existing bound conversation. Delivery to a new or unbound destination
+still succeeds, but does not create a conversation implicitly. Delivery
+failures and empty non-heartbeat outputs are recorded as failed cron runs and
+are never added to conversation history. The `run` action returns that run
 record with the completed output, token usage, and session key intact so callers
 can distinguish agent execution from successful delivery.
 
