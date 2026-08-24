@@ -206,6 +206,7 @@ portable = [
   "provider-github-copilot",
   "provider-kimi-code",
   "provider-openai-codex",
+  "provider-xai-oauth",
   "push-notifications",
   "qmd",
   "signal",
@@ -281,6 +282,7 @@ provider-github-copilot = [
 ]
 provider-kimi-code = ["moltis-gateway/provider-kimi-code", "moltis-providers/provider-kimi-code"]
 provider-openai-codex = ["moltis-gateway/provider-openai-codex"]
+provider-xai-oauth = ["moltis-gateway/provider-xai-oauth", "moltis-providers/provider-xai-oauth"]
 push-notifications = ["moltis-httpd/push-notifications", "moltis-web?/push-notifications"]
 qmd = ["moltis-gateway/qmd"]
 signal = ["moltis-httpd/signal"]

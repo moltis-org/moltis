@@ -993,6 +993,11 @@ impl ProviderRegistry {
             reg.register_kimi_code_providers(config, env_overrides);
         }
 
+        #[cfg(feature = "provider-xai-oauth")]
+        {
+            reg.register_xai_oauth_providers(config, env_overrides);
+        }
+
         reg.register_opencode_zen_providers(config, env_overrides, prefetched);
 
         // Local GGUF providers (no API key needed, model runs locally)

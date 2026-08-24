@@ -31,6 +31,7 @@ Configure providers through the web UI or directly in configuration files.
 |----------|-------------|-------|
 | **OpenAI Codex** | `openai-codex` | OAuth flow via web UI |
 | **GitHub Copilot** | `github-copilot` | Requires active Copilot subscription |
+| **xAI Grok OAuth** | `xai-oauth` | SuperGrok / SuperGrok Heavy / X Premium+ device-code login (no `XAI_API_KEY`) |
 
 ### Local
 
@@ -241,6 +242,40 @@ docker exec -it moltis moltis auth login --provider github-copilot
 
 ```admonish info
 Requires an active GitHub Copilot subscription.
+```
+
+### xAI Grok OAuth (SuperGrok)
+
+xAI subscription OAuth uses device-flow login against `auth.x.ai`. No
+`XAI_API_KEY` is required. Inference rides the Grok CLI chat proxy so requests
+consume SuperGrok / SuperGrok Heavy / X Premium+ quota.
+
+1. Go to **Settings** → **Providers** → **xAI Grok OAuth (SuperGrok)**.
+2. Click **Connect** and complete the device-code login in any browser.
+3. Pick a Grok model (for example `grok-4.5`).
+
+```admonish note title="CLI login"
+Device-flow works headless (SSH / Docker) without publishing a callback port:
+
+~~~bash
+moltis auth login --provider xai-oauth
+# or
+docker exec -it moltis moltis auth login --provider xai-oauth
+~~~
+```
+
+```admonish warning title="Entitlement fallback"
+If login succeeds but inference returns HTTP 403 / spending-limit errors, your
+account may not be entitled on the OAuth surface. Use the API-key provider
+`xai` with `XAI_API_KEY` instead — re-login will not fix entitlement gating.
+```
+
+The billed developer API remains available separately:
+
+```toml
+[providers.xai]
+enabled = true
+# api_key / XAI_API_KEY
 ```
 
 Moltis discovers Copilot models from GitHub's `/models` endpoint when possible.

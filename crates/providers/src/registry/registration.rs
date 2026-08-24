@@ -21,6 +21,8 @@ use moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent};
 use crate::github_copilot;
 #[cfg(feature = "provider-kimi-code")]
 use crate::kimi_code;
+#[cfg(feature = "provider-xai-oauth")]
+use crate::xai_oauth;
 #[cfg(feature = "local-llm")]
 use crate::local_gguf;
 #[cfg(feature = "local-llm")]
@@ -700,6 +702,64 @@ impl ProviderRegistry {
                     capabilities: caps,
                 },
                 provider,
+            );
+        }
+    }
+
+    #[cfg(feature = "provider-xai-oauth")]
+    pub(super) fn register_xai_oauth_providers(
+        &mut self,
+        config: &ProvidersConfig,
+        env_overrides: &HashMap<String, String>,
+    ) {
+        use crate::xai_oauth;
+
+        if !config.is_enabled("xai-oauth") {
+            return;
+        }
+
+        if !xai_oauth::has_stored_tokens() {
+            return;
+        }
+
+        let preferred = configured_models_for_provider(config, "xai-oauth");
+        let discovered = if should_fetch_models(config, "xai-oauth") {
+            catalog_to_discovered(xai_oauth::XAI_OAUTH_MODELS, 1)
+        } else {
+            Vec::new()
+        };
+        let models = merge_preferred_and_discovered_models(preferred, discovered);
+        for model in models {
+            let caps = model
+                .capabilities
+                .unwrap_or_else(|| ModelCapabilities::infer(&model.id));
+            let (model_id, display_name, created_at, recommended) = (
+                model.id,
+                model.display_name,
+                model.created_at,
+                model.recommended,
+            );
+            if self.has_provider_model("xai-oauth", &model_id) {
+                continue;
+            }
+            let mut provider = xai_oauth::XaiOauthProvider::new(model_id.clone());
+            if let Some(base_url) = config
+                .get("xai-oauth")
+                .and_then(|e| e.base_url.clone())
+                .or_else(|| env_value(env_overrides, "MOLTIS_XAI_OAUTH_BASE_URL"))
+            {
+                provider = provider.with_base_url(base_url);
+            }
+            self.register(
+                ModelInfo {
+                    id: model_id,
+                    provider: "xai-oauth".into(),
+                    display_name,
+                    created_at,
+                    recommended,
+                    capabilities: caps,
+                },
+                Arc::new(provider),
             );
         }
     }

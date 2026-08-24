@@ -180,6 +180,7 @@ async fn login_device_flow(provider: &str, config: &moltis_oauth::OAuthConfig) -
 fn build_provider_headers(provider: &str) -> Option<reqwest::header::HeaderMap> {
     match provider {
         "kimi-code" => Some(moltis_oauth::kimi_headers()),
+        "xai-oauth" => Some(moltis_oauth::xai_device_headers()),
         _ => None,
     }
 }

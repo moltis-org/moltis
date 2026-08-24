@@ -770,6 +770,7 @@ mod tests {
             "provider-github-copilot",
             "provider-kimi-code",
             "provider-openai-codex",
+            "provider-xai-oauth",
         ] {
             assert!(manifest_includes_feature(
                 &cli_manifest,

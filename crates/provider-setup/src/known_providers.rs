@@ -78,6 +78,16 @@ pub fn known_providers() -> Vec<KnownProvider> {
             local_only: false,
         },
         KnownProvider {
+            name: "xai-oauth",
+            display_name: "xAI Grok OAuth (SuperGrok)",
+            auth_type: AuthType::Oauth,
+            env_key: None,
+            default_base_url: Some("https://cli-chat-proxy.grok.com/v1"),
+            requires_model: false,
+            key_optional: false,
+            local_only: false,
+        },
+        KnownProvider {
             name: "anthropic",
             display_name: "Anthropic",
             auth_type: AuthType::ApiKey,
@@ -385,6 +395,7 @@ mod tests {
         assert!(names.contains(&"lmstudio"), "missing lmstudio");
         // OAuth providers
         assert!(names.contains(&"github-copilot"), "missing github-copilot");
+        assert!(names.contains(&"xai-oauth"), "missing xai-oauth");
     }
 
     #[test]
@@ -433,6 +444,21 @@ mod tests {
             .expect("github-copilot not in known_providers");
         assert_eq!(copilot.auth_type, AuthType::Oauth);
         assert!(copilot.env_key.is_none());
+    }
+
+    #[test]
+    fn xai_oauth_is_oauth_provider() {
+        let providers = known_providers();
+        let xai = providers
+            .iter()
+            .find(|p| p.name == "xai-oauth")
+            .expect("xai-oauth not in known_providers");
+        assert_eq!(xai.auth_type, AuthType::Oauth);
+        assert!(xai.env_key.is_none());
+        assert_eq!(
+            xai.default_base_url,
+            Some("https://cli-chat-proxy.grok.com/v1")
+        );
     }
 
     #[test]

@@ -46,6 +46,7 @@ pub const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "local", // alias for local-llm
     "local-llm",
     "openai-codex",
+    "xai-oauth",
     // Providers registered via genai/async-openai backends
     "groq",
     "xai",

@@ -450,7 +450,7 @@ moltis-portable           = { path = "crates/portable" }
 moltis-projects           = { path = "crates/projects" }
 moltis-protocol           = { path = "crates/protocol" }
 moltis-provider-setup     = { path = "crates/provider-setup" }
-moltis-providers          = { features = ["provider-kimi-code", "provider-openai-codex"], path = "crates/providers" }
+moltis-providers          = { features = ["provider-kimi-code", "provider-openai-codex", "provider-xai-oauth"], path = "crates/providers" }
 moltis-qmd                = { path = "crates/qmd" }
 moltis-routing            = { path = "crates/routing" }
 moltis-schema-export      = { path = "crates/schema-export" }

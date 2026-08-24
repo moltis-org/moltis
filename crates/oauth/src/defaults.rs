@@ -30,6 +30,27 @@ fn builtin_defaults() -> HashMap<String, OAuthConfig> {
         extra_auth_params: vec![],
         device_flow: true,
     });
+    // Public Grok CLI client used by Hermes / OpenCode / pi-grok.
+    m.insert("xai-oauth".into(), OAuthConfig {
+        client_id: "b1a00492-073a-47ea-816f-4c329264a828".into(),
+        client_secret: None,
+        auth_url: "https://auth.x.ai/oauth2/device/code".into(),
+        token_url: "https://auth.x.ai/oauth2/token".into(),
+        redirect_uri: String::new(),
+        resource: None,
+        scopes: vec![
+            "openid".into(),
+            "profile".into(),
+            "email".into(),
+            "offline_access".into(),
+            "grok-cli:access".into(),
+            "api:access".into(),
+            "conversations:read".into(),
+            "conversations:write".into(),
+        ],
+        extra_auth_params: vec![("referrer".into(), "grok-build".into())],
+        device_flow: true,
+    });
     m.insert("openai-codex".into(), OAuthConfig {
         client_id: "app_EMoamEEZ73f0CkXaXp7hrann".into(),
         client_secret: None,
@@ -140,6 +161,22 @@ mod tests {
             "https://auth.kimi.com/api/oauth/device_authorization"
         );
         assert_eq!(config.token_url, "https://auth.kimi.com/api/oauth/token");
+    }
+
+    #[test]
+    fn load_xai_oauth_config() {
+        let config = load_oauth_config("xai-oauth").expect("should have xai-oauth");
+        assert_eq!(config.client_id, "b1a00492-073a-47ea-816f-4c329264a828");
+        assert!(config.device_flow);
+        assert!(config.redirect_uri.is_empty());
+        assert_eq!(config.auth_url, "https://auth.x.ai/oauth2/device/code");
+        assert_eq!(config.token_url, "https://auth.x.ai/oauth2/token");
+        assert!(config.scopes.iter().any(|s| s == "offline_access"));
+        assert!(config.scopes.iter().any(|s| s == "grok-cli:access"));
+        assert_eq!(
+            config.extra_auth_params,
+            vec![("referrer".into(), "grok-build".into())]
+        );
     }
 
     #[test]

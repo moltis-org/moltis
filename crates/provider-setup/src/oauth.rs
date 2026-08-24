@@ -125,6 +125,7 @@ pub fn import_detected_oauth_tokens(
 pub(crate) fn build_provider_headers(provider: &str) -> Option<reqwest::header::HeaderMap> {
     match provider {
         "kimi-code" => Some(moltis_oauth::kimi_headers()),
+        "xai-oauth" => Some(moltis_oauth::xai_device_headers()),
         _ => None,
     }
 }
@@ -302,7 +303,19 @@ mod tests {
     }
 
     #[test]
-    fn provider_headers_are_none_for_non_kimi() {
+    fn provider_headers_include_xai_device_headers() {
+        let headers = build_provider_headers("xai-oauth").expect("expected xai-oauth headers");
+        assert!(headers.get("x-grok-client-version").is_some());
+        assert_eq!(
+            headers
+                .get("x-grok-client-surface")
+                .and_then(|v| v.to_str().ok()),
+            Some("cli")
+        );
+    }
+
+    #[test]
+    fn provider_headers_are_none_for_plain_oauth() {
         assert!(build_provider_headers("github-copilot").is_none());
     }
 

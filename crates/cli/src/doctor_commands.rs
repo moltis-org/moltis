@@ -130,7 +130,7 @@ const PROVIDER_ENV_MAP: &[(&str, &str, bool)] = &[
 ];
 
 /// OAuth providers that don't use env var API keys.
-const OAUTH_PROVIDERS: &[&str] = &["openai-codex", "github-copilot"];
+const OAUTH_PROVIDERS: &[&str] = &["openai-codex", "github-copilot", "xai-oauth"];
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 

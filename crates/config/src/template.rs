@@ -132,7 +132,7 @@ port = {port}                           # Port number (auto-generated for this i
 #                        Increase for local LLM servers that load large models on first request.
 
 # [providers]
-# offered = ["local-llm", "lmstudio", "github-copilot", "openai-codex", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"]
+# offered = ["local-llm", "lmstudio", "github-copilot", "openai-codex", "xai-oauth", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"]
                                     # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
 # show_legacy_models = true         # Show models older than 1 year in the chat model selector (they always appear in Settings)
 # All available providers (canonical list in schema/providers.rs):

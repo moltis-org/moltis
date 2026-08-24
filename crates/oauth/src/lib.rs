@@ -12,6 +12,7 @@ pub mod redirect;
 pub mod registration_store;
 pub mod storage;
 pub mod types;
+pub mod xai;
 
 pub use {
     callback_input::{ParsedCallbackInput, parse_callback_input},
@@ -29,6 +30,7 @@ pub use {
     registration_store::{RegistrationStore, StoredRegistration},
     storage::TokenStore,
     types::{OAuthConfig, OAuthTokens, PkceChallenge, serialize_option_secret, serialize_secret},
+    xai::{xai_device_headers, xai_proxy_headers},
 };
 
 pub use error::{Error, Result};

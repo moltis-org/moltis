@@ -258,7 +258,7 @@ impl LiveProviderSetupService {
         // providers with valid local tokens.
         if !active_config.is_enabled(provider.name) {
             let subscription_with_tokens =
-                matches!(provider.name, "openai-codex" | "github-copilot")
+                matches!(provider.name, "openai-codex" | "github-copilot" | "xai-oauth")
                     && active_config
                         .get(provider.name)
                         .is_none_or(|entry| entry.enabled)

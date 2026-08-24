@@ -39,7 +39,16 @@ pub async fn request_device_code_with_headers(
     config: &OAuthConfig,
     extra_headers: Option<&HeaderMap>,
 ) -> Result<DeviceCodeResponse> {
-    let mut form = vec![("client_id", config.client_id.as_str()), ("scope", "")];
+    // Keep owned scope string alive for the form borrow below.
+    let scope = config.scopes.join(" ");
+    let mut form = vec![("client_id", config.client_id.as_str())];
+    if !scope.is_empty() {
+        form.push(("scope", scope.as_str()));
+    }
+    // Provider-specific authorize extras (e.g. xAI `referrer=grok-build`).
+    for (key, value) in &config.extra_auth_params {
+        form.push((key.as_str(), value.as_str()));
+    }
     if let Some(client_secret) = &config.client_secret {
         form.push(("client_secret", client_secret.expose_secret().as_str()));
     }
@@ -261,6 +270,76 @@ mod tests {
         assert_eq!(resp.user_code, "TEST-CODE");
         assert_eq!(resp.verification_uri, "https://example.com/device");
         assert_eq!(resp.interval, 1);
+    }
+
+    #[tokio::test]
+    async fn request_device_code_sends_scopes_and_extra_params() {
+        let app = Router::new().route(
+            "/device/code",
+            post(
+                |Form(form): Form<std::collections::HashMap<String, String>>| async move {
+                    assert_eq!(
+                        form.get("client_id").map(String::as_str),
+                        Some("test-client")
+                    );
+                    assert_eq!(
+                        form.get("scope").map(String::as_str),
+                        Some("openid offline_access grok-cli:access")
+                    );
+                    assert_eq!(
+                        form.get("referrer").map(String::as_str),
+                        Some("grok-build")
+                    );
+                    assert!(
+                        !form.contains_key("client_secret"),
+                        "client_secret must be omitted when unset"
+                    );
+                    axum::Json(serde_json::json!({
+                        "device_code": "dc",
+                        "user_code": "CODE",
+                        "verification_uri": "https://example.com",
+                    }))
+                },
+            ),
+        );
+        let base = start_mock(app).await;
+        let mut config = test_config(format!("{base}/device/code"), String::new());
+        config.scopes = vec![
+            "openid".into(),
+            "offline_access".into(),
+            "grok-cli:access".into(),
+        ];
+        config.extra_auth_params = vec![("referrer".into(), "grok-build".into())];
+
+        let client = reqwest::Client::new();
+        let resp = request_device_code(&client, &config).await.unwrap();
+        assert_eq!(resp.device_code, "dc");
+    }
+
+    #[tokio::test]
+    async fn request_device_code_omits_empty_scope() {
+        let app = Router::new().route(
+            "/device/code",
+            post(
+                |Form(form): Form<std::collections::HashMap<String, String>>| async move {
+                    assert!(
+                        !form.contains_key("scope"),
+                        "empty scopes must omit the scope field, not send scope="
+                    );
+                    axum::Json(serde_json::json!({
+                        "device_code": "dc",
+                        "user_code": "CODE",
+                        "verification_uri": "https://example.com",
+                    }))
+                },
+            ),
+        );
+        let base = start_mock(app).await;
+        let config = test_config(format!("{base}/device/code"), String::new());
+
+        let client = reqwest::Client::new();
+        let resp = request_device_code(&client, &config).await.unwrap();
+        assert_eq!(resp.device_code, "dc");
     }
 
     #[tokio::test]

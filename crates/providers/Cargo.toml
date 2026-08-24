@@ -12,6 +12,7 @@ default = [
   "provider-github-copilot",
   "provider-kimi-code",
   "provider-openai-codex",
+  "provider-xai-oauth",
 ]
 local-llm = [
   "dep:cap-fs-ext",
@@ -31,6 +32,7 @@ provider-genai = ["dep:genai"]
 provider-github-copilot = ["dep:moltis-oauth"]
 provider-kimi-code = ["dep:moltis-oauth"]
 provider-openai-codex = ["dep:base64", "dep:moltis-oauth"]
+provider-xai-oauth = ["dep:moltis-oauth"]
 
 [dependencies]
 anyhow            = { workspace = true }
