@@ -150,7 +150,13 @@ impl LiveTtsService {
             ),
             (TtsProviderId::Google, config.google.api_key.is_some()),
             (TtsProviderId::Piper, config.piper.model_path.is_some()),
-            (TtsProviderId::Coqui, true), // Always available if server running
+            // Match CoquiTts::is_configured(): default localhost:5002 alone is
+            // not enough — require a non-default endpoint or explicit model so
+            // auto-select does not pick an unconfigured Coqui (#1114).
+            (
+                TtsProviderId::Coqui,
+                CoquiTts::new(&config.coqui).is_configured(),
+            ),
         ]
     }
 
@@ -540,8 +546,9 @@ mod tests {
             LiveTtsService::resolve_provider(Some(TtsProviderId::OpenAi)),
             Some(TtsProviderId::OpenAi)
         );
-        // None means auto-select — returns first configured.
-        assert!(LiveTtsService::resolve_provider(None).is_some());
+        // None means auto-select — returns first configured provider, or None
+        // when nothing (including Coqui) is actually configured.
+        let _ = LiveTtsService::resolve_provider(None);
     }
 
     #[tokio::test]
@@ -553,9 +560,9 @@ mod tests {
         assert!(status.get("enabled").is_some());
         assert!(status.get("configured").is_some());
         assert!(status.get("provider").is_some());
-        // Coqui is always considered "configured" (local service)
-        // so configured will be true even with no API keys
-        assert_eq!(status["configured"], true);
+        // With default config and no API keys / local models, no provider is
+        // configured — including Coqui (default endpoint alone is not enough).
+        assert_eq!(status["configured"], false);
     }
 
     #[tokio::test]
