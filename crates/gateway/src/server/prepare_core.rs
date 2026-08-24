@@ -743,19 +743,20 @@ pub async fn prepare_gateway_core_with_profile(
                 moltis_cron::types::SessionTarget::Named(name) if name == "heartbeat"
             );
             let has_pending_events = is_heartbeat_turn && !eq.is_empty().await;
-            if is_heartbeat_turn && !has_pending_events {
+            if is_heartbeat_turn {
                 let hb_cfg = state.inner.read().await.heartbeat_config.clone();
-                let has_prompt_override = hb_cfg
-                    .prompt
-                    .as_deref()
-                    .is_some_and(|p| !p.trim().is_empty());
-                let heartbeat_path = moltis_config::heartbeat_path();
-                let heartbeat_file_exists = heartbeat_path.exists();
-                let heartbeat_md = moltis_config::load_heartbeat_md();
-                if heartbeat_file_exists && heartbeat_md.is_none() && !has_prompt_override {
+                // Enforce [heartbeat.active_hours] even though the cron job itself
+                // is an unconditional every_ms schedule (#1205 / #1223).
+                if !moltis_cron::heartbeat::is_within_active_hours(
+                    &hb_cfg.active_hours.start,
+                    &hb_cfg.active_hours.end,
+                    &hb_cfg.active_hours.timezone,
+                ) {
                     tracing::info!(
-                        path = %heartbeat_path.display(),
-                        "skipping heartbeat LLM turn: HEARTBEAT.md is empty"
+                        start = %hb_cfg.active_hours.start,
+                        end = %hb_cfg.active_hours.end,
+                        timezone = %hb_cfg.active_hours.timezone,
+                        "skipping heartbeat LLM turn: outside active hours"
                     );
                     return Ok(moltis_cron::service::AgentTurnResult {
                         output: moltis_cron::heartbeat::HEARTBEAT_OK.to_string(),
@@ -764,6 +765,29 @@ pub async fn prepare_gateway_core_with_profile(
                         session_key: None,
                         delivery_error: None,
                     });
+                }
+
+                if !has_pending_events {
+                    let has_prompt_override = hb_cfg
+                        .prompt
+                        .as_deref()
+                        .is_some_and(|p| !p.trim().is_empty());
+                    let heartbeat_path = moltis_config::heartbeat_path();
+                    let heartbeat_file_exists = heartbeat_path.exists();
+                    let heartbeat_md = moltis_config::load_heartbeat_md();
+                    if heartbeat_file_exists && heartbeat_md.is_none() && !has_prompt_override {
+                        tracing::info!(
+                            path = %heartbeat_path.display(),
+                            "skipping heartbeat LLM turn: HEARTBEAT.md is empty"
+                        );
+                        return Ok(moltis_cron::service::AgentTurnResult {
+                            output: moltis_cron::heartbeat::HEARTBEAT_OK.to_string(),
+                            input_tokens: None,
+                            output_tokens: None,
+                            session_key: None,
+                            delivery_error: None,
+                        });
+                    }
                 }
             }
 

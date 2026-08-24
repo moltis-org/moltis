@@ -128,26 +128,24 @@ pub fn is_heartbeat_content_empty(content: &str) -> bool {
 /// Check whether the current time falls within the active hours window.
 ///
 /// Handles overnight windows (e.g. start=22:00, end=06:00).
+/// `end = "24:00"` means end-of-day (exclusive upper bound at 24:00).
 /// If timezone is "local" or empty, uses the system local time.
+///
+/// Invalid `start`/`end` values fail open (always active) so a typo does not
+/// silently disable heartbeats.
 pub fn is_within_active_hours(start: &str, end: &str, timezone: &str) -> bool {
-    let start_time = match parse_hhmm(start) {
-        Some(t) => t,
-        None => return true, // invalid config → always active
-    };
-    let end_time = match parse_hhmm(end) {
-        Some(t) => t,
-        None => return true,
-    };
+    is_within_active_hours_at(start, end, current_minutes(timezone))
+}
 
-    // "24:00" means end-of-day.
-    let end_minutes = if end == "24:00" {
-        24 * 60
-    } else {
-        end_time.hour() * 60 + end_time.minute()
+/// Same as [`is_within_active_hours`], but takes an explicit `now_minutes`
+/// (minutes since midnight) so callers/tests can control the clock.
+pub fn is_within_active_hours_at(start: &str, end: &str, now_minutes: u32) -> bool {
+    let Some(start_minutes) = parse_hhmm_minutes(start) else {
+        return true; // invalid config → always active
     };
-    let start_minutes = start_time.hour() * 60 + start_time.minute();
-
-    let now_minutes = current_minutes(timezone);
+    let Some(end_minutes) = parse_hhmm_minutes(end) else {
+        return true;
+    };
 
     if start_minutes <= end_minutes {
         // Normal window: 08:00–24:00
@@ -255,6 +253,20 @@ fn parse_hhmm(s: &str) -> Option<NaiveTime> {
     NaiveTime::parse_from_str(s, "%H:%M").ok()
 }
 
+/// Parse `HH:MM` into minutes since midnight.
+///
+/// Special-cases `"24:00"` as end-of-day (`24 * 60`) because chrono's `%H`
+/// only accepts 00–23 and would otherwise treat the documented default as
+/// invalid (failing open / always-active).
+fn parse_hhmm_minutes(s: &str) -> Option<u32> {
+    let trimmed = s.trim();
+    if trimmed == "24:00" {
+        return Some(24 * 60);
+    }
+    let time = parse_hhmm(trimmed)?;
+    Some(time.hour() * 60 + time.minute())
+}
+
 fn current_minutes(timezone: &str) -> u32 {
     if timezone.is_empty() || timezone == "local" {
         let local = Local::now();
@@ -356,19 +368,45 @@ mod tests {
     #[test]
     fn invalid_time_always_active() {
         assert!(is_within_active_hours("invalid", "24:00", "local"));
+        assert!(is_within_active_hours_at("08:00", "not-a-time", 0));
+    }
+
+    #[test]
+    fn end_24_00_is_end_of_day_not_invalid() {
+        // Regression for #1223 / #1205: chrono rejects "24:00", so the old
+        // parse-first path failed open and ignored the window entirely.
+        assert!(!is_within_active_hours_at("08:00", "24:00", 7 * 60 + 59));
+        assert!(is_within_active_hours_at("08:00", "24:00", 8 * 60));
+        assert!(is_within_active_hours_at("08:00", "24:00", 23 * 60 + 59));
     }
 
     #[test]
     fn active_hours_normal_window() {
-        // We can't assert exact behavior without controlling time,
-        // but we can verify it doesn't panic.
+        assert!(!is_within_active_hours_at("09:00", "17:00", 8 * 60 + 59));
+        assert!(is_within_active_hours_at("09:00", "17:00", 9 * 60));
+        assert!(is_within_active_hours_at("09:00", "17:00", 16 * 60 + 59));
+        assert!(!is_within_active_hours_at("09:00", "17:00", 17 * 60));
         let _ = is_within_active_hours("08:00", "24:00", "local");
         let _ = is_within_active_hours("09:00", "17:00", "UTC");
     }
 
     #[test]
     fn active_hours_overnight_window() {
+        assert!(is_within_active_hours_at("22:00", "06:00", 22 * 60));
+        assert!(is_within_active_hours_at("22:00", "06:00", 23 * 60 + 30));
+        assert!(is_within_active_hours_at("22:00", "06:00", 0));
+        assert!(is_within_active_hours_at("22:00", "06:00", 5 * 60 + 59));
+        assert!(!is_within_active_hours_at("22:00", "06:00", 6 * 60));
+        assert!(!is_within_active_hours_at("22:00", "06:00", 12 * 60));
         let _ = is_within_active_hours("22:00", "06:00", "local");
+    }
+
+    #[test]
+    fn parse_hhmm_minutes_accepts_24_00() {
+        assert_eq!(parse_hhmm_minutes("24:00"), Some(24 * 60));
+        assert_eq!(parse_hhmm_minutes("00:00"), Some(0));
+        assert_eq!(parse_hhmm_minutes("08:30"), Some(8 * 60 + 30));
+        assert!(parse_hhmm_minutes("25:00").is_none());
     }
 
     // ── resolve_heartbeat_prompt ─────────────────────────────────────────
