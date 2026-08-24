@@ -140,10 +140,13 @@ pub fn is_within_active_hours(start: &str, end: &str, timezone: &str) -> bool {
 /// Same as [`is_within_active_hours`], but takes an explicit `now_minutes`
 /// (minutes since midnight) so callers/tests can control the clock.
 pub fn is_within_active_hours_at(start: &str, end: &str, now_minutes: u32) -> bool {
-    let Some(start_minutes) = parse_hhmm_minutes(start) else {
+    // "24:00" is documented only as an end-of-day sentinel. Accepting it as a
+    // start value would create an empty 24:00–24:00 window and suppress every
+    // heartbeat; treat that as invalid/fail-open instead (#1223 review).
+    let Some(start_minutes) = parse_hhmm_minutes(start, /*allow_end_of_day=*/ false) else {
         return true; // invalid config → always active
     };
-    let Some(end_minutes) = parse_hhmm_minutes(end) else {
+    let Some(end_minutes) = parse_hhmm_minutes(end, /*allow_end_of_day=*/ true) else {
         return true;
     };
 
@@ -255,13 +258,13 @@ fn parse_hhmm(s: &str) -> Option<NaiveTime> {
 
 /// Parse `HH:MM` into minutes since midnight.
 ///
-/// Special-cases `"24:00"` as end-of-day (`24 * 60`) because chrono's `%H`
-/// only accepts 00–23 and would otherwise treat the documented default as
-/// invalid (failing open / always-active).
-fn parse_hhmm_minutes(s: &str) -> Option<u32> {
+/// When `allow_end_of_day` is true, special-cases `"24:00"` as end-of-day
+/// (`24 * 60`) because chrono's `%H` only accepts 00–23. That sentinel is not
+/// valid for the start boundary.
+fn parse_hhmm_minutes(s: &str, allow_end_of_day: bool) -> Option<u32> {
     let trimmed = s.trim();
     if trimmed == "24:00" {
-        return Some(24 * 60);
+        return allow_end_of_day.then_some(24 * 60);
     }
     let time = parse_hhmm(trimmed)?;
     Some(time.hour() * 60 + time.minute())
@@ -402,11 +405,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_hhmm_minutes_accepts_24_00() {
-        assert_eq!(parse_hhmm_minutes("24:00"), Some(24 * 60));
-        assert_eq!(parse_hhmm_minutes("00:00"), Some(0));
-        assert_eq!(parse_hhmm_minutes("08:30"), Some(8 * 60 + 30));
-        assert!(parse_hhmm_minutes("25:00").is_none());
+    fn parse_hhmm_minutes_accepts_24_00_only_for_end() {
+        assert_eq!(parse_hhmm_minutes("24:00", true), Some(24 * 60));
+        assert!(parse_hhmm_minutes("24:00", false).is_none());
+        assert_eq!(parse_hhmm_minutes("00:00", false), Some(0));
+        assert_eq!(parse_hhmm_minutes("08:30", true), Some(8 * 60 + 30));
+        assert!(parse_hhmm_minutes("25:00", true).is_none());
+    }
+
+    #[test]
+    fn start_24_00_fails_open_instead_of_empty_window() {
+        // start=24:00,end=24:00 must not suppress all heartbeats.
+        assert!(is_within_active_hours_at("24:00", "24:00", 0));
+        assert!(is_within_active_hours_at("24:00", "24:00", 12 * 60));
+        assert!(is_within_active_hours_at("24:00", "08:00", 3 * 60));
     }
 
     // ── resolve_heartbeat_prompt ─────────────────────────────────────────
