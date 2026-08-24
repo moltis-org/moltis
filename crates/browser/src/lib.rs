@@ -37,6 +37,8 @@ pub mod pool;
 pub mod snapshot;
 pub mod types;
 
+mod browserless;
+
 pub use {
     error::Error,
     manager::BrowserManager,

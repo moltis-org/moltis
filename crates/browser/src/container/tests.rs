@@ -71,7 +71,7 @@ fn test_detect_backend_returns_some() {
 #[test]
 fn test_build_container_launch_args_without_low_memory() {
     let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::Docker);
-    assert_eq!(args, r#"DEFAULT_LAUNCH_ARGS=["--window-size=1920,1080"]"#);
+    assert_eq!(args, vec!["--window-size=1920,1080"]);
 }
 
 #[test]
@@ -83,14 +83,14 @@ fn test_build_container_launch_args_with_profile_dir() {
         Some("/data/browser-profile"),
         ContainerBackend::Docker,
     );
-    assert!(args.contains("--user-data-dir=/data/browser-profile"));
-    assert!(args.contains("--window-size=1920,1080"));
+    assert!(args.contains(&"--user-data-dir=/data/browser-profile".to_string()));
+    assert!(args.contains(&"--window-size=1920,1080".to_string()));
 }
 
 #[test]
 fn test_build_container_launch_args_without_profile_dir() {
     let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::Docker);
-    assert!(!args.contains("--user-data-dir"));
+    assert!(args.iter().all(|arg| !arg.starts_with("--user-data-dir")));
 }
 
 #[test]
@@ -162,6 +162,74 @@ fn browser_profile_precreate_skips_untranslated_mount() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn remove_stale_profile_singletons_removes_dangling_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let profile_dir = temp_dir.path().join("profile");
+    std::fs::create_dir_all(&profile_dir).unwrap();
+    for name in ["SingletonLock", "SingletonCookie", "SingletonSocket"] {
+        symlink("missing-target", profile_dir.join(name)).unwrap();
+    }
+
+    remove_stale_profile_singletons(&profile_dir);
+
+    for name in ["SingletonLock", "SingletonCookie", "SingletonSocket"] {
+        assert!(std::fs::symlink_metadata(profile_dir.join(name)).is_err());
+    }
+}
+
+#[test]
+#[serial_test::serial(browser_profile_lock)]
+fn browser_profile_lock_prevents_live_singleton_cleanup() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let first_lock = prepare_browserless_v2_profile(temp_dir.path()).unwrap();
+    let singleton = temp_dir.path().join("SingletonLock");
+    std::fs::write(&singleton, "live-browser").unwrap();
+
+    let error = prepare_browserless_v2_profile(temp_dir.path()).unwrap_err();
+    assert!(error.to_string().contains("already in use"));
+    assert!(singleton.is_file());
+
+    drop(first_lock);
+    drop(prepare_browserless_v2_profile(temp_dir.path()).unwrap());
+    assert!(!singleton.exists());
+}
+
+#[test]
+fn container_cleanup_is_confirmed_when_stop_or_remove_succeeds() {
+    assert!(!cleanup_was_confirmed(false, false));
+    assert!(cleanup_was_confirmed(true, false));
+    assert!(cleanup_was_confirmed(false, true));
+    assert!(cleanup_was_confirmed(true, true));
+}
+
+#[test]
+#[serial_test::serial(browser_profile_lock)]
+fn failed_cleanup_retains_browser_profile_lock() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let profile_lock = prepare_browserless_v2_profile(temp_dir.path()).unwrap();
+
+    let retained_lock = profile_lock_to_quarantine(Some(profile_lock), false);
+    let error = prepare_browserless_v2_profile(temp_dir.path()).unwrap_err();
+    assert!(error.to_string().contains("already in use"));
+
+    drop(retained_lock);
+    drop(prepare_browserless_v2_profile(temp_dir.path()).unwrap());
+}
+
+#[test]
+#[serial_test::serial(browser_profile_lock)]
+fn confirmed_cleanup_releases_browser_profile_lock() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let profile_lock = prepare_browserless_v2_profile(temp_dir.path()).unwrap();
+
+    assert!(profile_lock_to_quarantine(Some(profile_lock), true).is_none());
+    drop(prepare_browserless_v2_profile(temp_dir.path()).unwrap());
+}
+
 #[test]
 fn browser_profile_permission_hint_points_to_host_data_dir() {
     let logs = "Failed to create /data/browser-profile/SingletonLock: Permission denied (13)";
@@ -198,44 +266,12 @@ fn browser_profile_permission_hint_skips_when_host_data_dir_is_configured() {
 #[test]
 fn test_build_container_launch_args_apple_container_has_disable_shm() {
     let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::AppleContainer);
-    assert!(args.contains("--disable-dev-shm-usage"));
-    assert!(args.contains("--window-size=1920,1080"));
+    assert!(args.contains(&"--disable-dev-shm-usage".to_string()));
+    assert!(args.contains(&"--window-size=1920,1080".to_string()));
 }
 
 #[test]
 fn test_build_container_launch_args_docker_no_disable_shm() {
     let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::Docker);
-    assert!(!args.contains("--disable-dev-shm-usage"));
-}
-
-#[test]
-fn test_browserless_session_timeout_uses_moltis_lifecycle_floor() {
-    let timeout_ms = browserless_session_timeout_ms(300, 30_000, 1800);
-    assert_eq!(timeout_ms, 1_800_000);
-}
-
-#[test]
-fn test_browserless_session_timeout_caps_at_max_lifetime() {
-    let timeout_ms = browserless_session_timeout_ms(3_600, 30_000, 1800);
-    assert_eq!(timeout_ms, 1_800_000);
-}
-
-#[test]
-fn test_browserless_session_timeout_caps_large_navigation_timeout() {
-    let timeout_ms = browserless_session_timeout_ms(60, 3_900_000, 1800);
-    assert_eq!(timeout_ms, 1_800_000);
-}
-
-#[test]
-fn test_browserless_session_timeout_nav_within_ceiling() {
-    let timeout_ms = browserless_session_timeout_ms(60, 600_000, 1800);
-    assert_eq!(timeout_ms, 1_800_000);
-}
-
-#[test]
-fn test_browserless_container_env_includes_timeout() {
-    let env = browserless_container_env(1_800_000);
-    assert_eq!(env[0], "TIMEOUT=1800000");
-    assert!(env.contains(&"MAX_CONCURRENT_SESSIONS=1".to_string()));
-    assert!(env.contains(&"PREBOOT_CHROME=true".to_string()));
+    assert!(!args.contains(&"--disable-dev-shm-usage".to_string()));
 }

@@ -9,7 +9,7 @@ pub mod connection;
 pub mod error;
 mod formatting;
 pub mod handlers;
-mod inbound_documents;
+mod inbound_media;
 pub mod memory_store;
 pub mod otp;
 pub mod outbound;

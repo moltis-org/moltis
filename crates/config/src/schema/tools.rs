@@ -434,6 +434,10 @@ pub struct BrowserConfig {
     /// Path to the Obscura binary (auto-detected from PATH if not set).
     /// Set `browser = "obscura"` in requests to use this lightweight headless browser.
     pub obscura_path: Option<String>,
+    /// Whether to enable Obscura's anti-detection mode.
+    /// Enabled by default. Full TLS impersonation requires an Obscura binary
+    /// built with its upstream `stealth` feature.
+    pub obscura_stealth: bool,
     /// Path to the Lightpanda binary (auto-detected from PATH if not set).
     /// Set `browser = "lightpanda"` in requests to use this lightweight headless browser.
     pub lightpanda_path: Option<String>,
@@ -489,9 +493,9 @@ pub struct BrowserConfig {
     /// Moltis can reach the sibling browser container via the host's port mapping.
     #[serde(default = "default_container_host")]
     pub container_host: String,
-    /// Browserless API compatibility mode for websocket endpoints.
-    /// - "v1" (default): connect to the base websocket URL.
-    /// - "v2": try Browserless v2 paths (`/chrome`, `/chromium`) when needed.
+    /// Browserless container API compatibility mode. Must match `sandbox_image`.
+    /// - "v1" (default): legacy environment-based launch settings.
+    /// - "v2": query-based launch settings and v2 websocket paths.
     #[serde(default = "default_browserless_api_version")]
     pub browserless_api_version: BrowserlessApiVersion,
 }
@@ -530,6 +534,7 @@ impl Default for BrowserConfig {
             enabled: true,
             chrome_path: None,
             obscura_path: None,
+            obscura_stealth: true,
             lightpanda_path: None,
             headless: true,
             viewport_width: 2560,

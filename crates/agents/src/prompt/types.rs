@@ -52,6 +52,7 @@ pub struct PromptHostRuntimeContext {
     pub channel_type: Option<String>,
     pub channel_account_id: Option<String>,
     pub channel_chat_id: Option<String>,
+    pub channel_outbound_to: Option<String>,
     pub channel_chat_type: Option<String>,
     pub channel_sender_id: Option<String>,
     pub data_dir: Option<String>,

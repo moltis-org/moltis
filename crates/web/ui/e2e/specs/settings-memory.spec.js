@@ -46,4 +46,14 @@ test.describe("Settings > Memory page", () => {
 
 		await expect(page.getByRole("button", { name: "Save", exact: false })).toBeVisible();
 	});
+
+	test("unchanged built-in backend can be saved", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/memory");
+
+		await page.getByRole("button", { name: "Save", exact: true }).click();
+
+		await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
 });

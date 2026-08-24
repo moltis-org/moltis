@@ -6,7 +6,7 @@
 use async_graphql::{Context, Object, Result};
 
 use crate::{
-    error::{from_service, from_service_json, gql_err, parse_err},
+    error::{from_service, from_service_json, from_service_ok, gql_err, parse_err},
     scalars::Json,
     services,
     types::{
@@ -457,17 +457,17 @@ pub struct CronMutation;
 impl CronMutation {
     async fn add(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
         let s = services!(ctx);
-        from_service(s.cron.add(input.0).await)
+        from_service_ok(s.cron.add(input.0).await)
     }
 
     async fn update(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
         let s = services!(ctx);
-        from_service(s.cron.update(input.0).await)
+        from_service_ok(s.cron.update(input.0).await)
     }
 
     async fn remove(&self, ctx: &Context<'_>, id: String) -> Result<BoolResult> {
         let s = services!(ctx);
-        from_service(s.cron.remove(serde_json::json!({ "id": id })).await)
+        from_service_ok(s.cron.remove(serde_json::json!({ "id": id })).await)
     }
 
     /// Trigger a cron job immediately.

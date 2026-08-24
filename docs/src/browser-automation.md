@@ -61,12 +61,14 @@ navigation_timeout_ms = 30000  # Page load timeout
 # Optional customization
 # chrome_path = "/path/to/chrome"  # Custom Chrome path
 # obscura_path = "/path/to/obscura"  # Custom Obscura path
+# obscura_stealth = true            # Pass --stealth to Obscura (default)
 # lightpanda_path = "/path/to/lightpanda"  # Custom Lightpanda path
 # user_agent = "Custom UA"         # Custom user agent
 # chrome_args = ["--disable-extensions"]  # Extra args
 
 # Sandbox image (browser sandbox mode follows session sandbox mode)
 sandbox_image = "docker.io/browserless/chrome"  # Container image for sandboxed sessions
+browserless_api_version = "v1"                  # Must match the image API
 # allowed_domains = ["example.com", "*.trusted.org"]  # Restrict navigation
 
 # Container connectivity (for Moltis-in-Docker setups)
@@ -165,7 +167,14 @@ detection.
 
 `obscura` launches the Obscura sidecar binary from `obscura_path`, the
 `OBSCURA` environment variable, or `PATH`. It supports DOM-oriented browsing
-through CDP, but not pixel screenshots.
+through CDP, but not pixel screenshots. Moltis passes Obscura's
+[`--stealth` mode](https://github.com/h4ckf0r0day/obscura/wiki/Configure-stealth-and-proxies)
+flag by default, enabling the anti-detection behavior available in the
+installed binary. Full TLS impersonation requires Obscura 0.1.1 or newer built
+with its upstream `stealth` feature. Choose a release asset whose name includes
+`-stealth`, or add `--features stealth` when installing from source. Set
+`obscura_stealth = false` when tracker blocking or the stealth network stack is
+undesirable.
 
 `lightpanda` launches the Lightpanda sidecar binary from `lightpanda_path`, the
 `LIGHTPANDA` environment variable, or `PATH`. It supports DOM-oriented browsing
@@ -308,12 +317,117 @@ When the session is sandboxed, Chrome runs inside a Docker container with:
 ```toml
 [tools.browser]
 sandbox_image = "docker.io/browserless/chrome"  # Container image for sandboxed sessions
+browserless_api_version = "v1"
 ```
 
+The existing Browserless v1 image remains the default for upgrade compatibility.
+Browserless v2 is opt-in. Pin the image and change both settings together:
+
+```toml
+[tools.browser]
+sandbox_image = "ghcr.io/browserless/chromium:v2.56.0"
+browserless_api_version = "v2"
+```
+
+Moltis passes viewport, low-memory, and persistent-profile launch arguments
+using the protocol expected by the selected version. Browserless v2 images no
+longer accept the legacy `DEFAULT_LAUNCH_ARGS` and `PREBOOT_CHROME` variables.
+For v2, Moltis sets `TIMEOUT` and `CONCURRENT` on the container and sends Chrome
+launch arguments in the Base64-encoded `launch` WebSocket query. Do not set
+those values manually.
+
 Requirements:
+
 - Docker or Apple Container must be installed and running
 - The container image is pulled automatically on first use
 - Session sandbox mode must be enabled (`[tools.exec.sandbox] mode = "all"`)
+
+#### Browserless v2 setup checklist
+
+1. Close active browser sessions before changing versions. Browser containers
+   already running with v1 do not change protocol in place.
+2. Pin a Browserless v2 image and set `browserless_api_version = "v2"` in the
+   same configuration change.
+3. If Moltis runs in Docker, mount the container-runtime socket, configure a
+   host-reachable `container_host`, and make the host data path visible with
+   `host_data_dir` when persistent profiles are enabled.
+4. Restart Moltis. It pulls the configured image during startup.
+5. Start a new sandboxed browser session and verify the startup logs show
+   `browserless_api_version=v2` and the pinned image.
+
+For a native Moltis installation, the minimal configuration is:
+
+```toml
+[tools.exec.sandbox]
+mode = "all"
+
+[tools.browser]
+sandbox_image = "ghcr.io/browserless/chromium:v2.56.0"
+browserless_api_version = "v2"
+```
+
+When Moltis runs inside Docker and launches sibling browser containers, use the
+host-visible data path rather than the path inside the Moltis container:
+
+```toml
+[tools.exec.sandbox]
+mode = "all"
+host_data_dir = "/srv/moltis/data"
+
+[tools.browser]
+sandbox_image = "ghcr.io/browserless/chromium:v2.56.0"
+browserless_api_version = "v2"
+container_host = "host.docker.internal"
+```
+
+The matching Compose service needs the same data directory, the Docker socket,
+and a host-gateway mapping on Linux:
+
+```yaml
+services:
+  moltis:
+    volumes:
+      - /srv/moltis/data:/home/moltis/.moltis
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+The Moltis user inside the container must be allowed to access the socket. If
+the socket is group-owned, add its host group ID with Compose `group_add`.
+Mounting the Docker socket grants container-management privileges equivalent to
+host-level control; only use this setup with a trusted Moltis instance. See
+[Docker Socket Sandbox Execution](docker.md#docker-socket-sandbox-execution)
+for the complete Docker setup.
+
+To validate the configuration and image before opening a browser session:
+
+```bash
+moltis config check
+docker pull ghcr.io/browserless/chromium:v2.56.0
+```
+
+After the first v2 browser action, the Moltis logs should report a browser
+container using the v2 image and `browserless_api_version=v2`. Its environment
+contains `TIMEOUT` and `CONCURRENT`, not the v1-only `DEFAULT_LAUNCH_ARGS`,
+`PREBOOT_CHROME`, or `MAX_CONCURRENT_SESSIONS` variables.
+
+Common setup failures:
+
+- A v2 image with `browserless_api_version = "v1"` (or the reverse) causes
+  WebSocket timeouts or missing launch options. Always change the pair together.
+- A connection to `127.0.0.1` from Moltis-in-Docker targets the Moltis container,
+  not the sibling browser. Configure `container_host` as described below.
+- `Permission denied` mentioning `/data/browser-profile/SingletonLock` means the
+  host profile mount is wrong or not writable. Set the correct absolute
+  `host_data_dir` and ensure the directory is writable by the browser container.
+- `Permission denied` for `/var/run/docker.sock` means the Moltis container user
+  is missing the socket's group ID or the socket was not mounted.
+
+Browserless v2.56.0 can mount and safely restart the same `userDataDir`, but it
+currently does not reliably restore cookies or local storage across new
+container instances. Track the upstream limitation in
+[browserless/browserless#4913](https://github.com/browserless/browserless/issues/4913).
 
 ### Moltis Inside Docker (Sibling Containers)
 

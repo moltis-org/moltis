@@ -123,8 +123,6 @@ export interface ChannelConfig {
 	http_url?: string;
 	group_allowlist?: string[];
 	text_chunk_limit?: number;
-	// WhatsApp
-	download_inbound_documents?: boolean;
 	// Advanced config patch pass-through
 	[key: string]: unknown;
 }

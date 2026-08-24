@@ -18,6 +18,7 @@ use {
 use crate::{
     auth::{McpAuthState, McpOAuthOverride, McpOAuthProvider, SharedAuthProvider},
     client::{McpClient, McpClientState},
+    client_slot::{ClientSlot, SharedMcpClient},
     error::{Context, Error, Result},
     registry::{McpOAuthConfig, McpRegistry, McpServerConfig, TransportType},
     remote::{ResolvedRemoteConfig, header_names, sanitize_url_for_display},
@@ -59,18 +60,18 @@ pub struct ServerStatus {
 }
 
 /// Mutable state behind the single `RwLock` on [`McpManager`].
-pub struct McpManagerInner {
-    pub clients: HashMap<String, Arc<RwLock<dyn McpClientTrait>>>,
-    pub tools: HashMap<String, Vec<McpToolDef>>,
-    pub registry: McpRegistry,
+struct McpManagerInner {
+    clients: HashMap<String, Arc<ClientSlot>>,
+    tools: HashMap<String, Vec<McpToolDef>>,
+    registry: McpRegistry,
     /// OAuth auth providers for SSE servers, keyed by server name.
-    pub auth_providers: HashMap<String, SharedAuthProvider>,
-    pub env_overrides: HashMap<String, String>,
+    auth_providers: HashMap<String, SharedAuthProvider>,
+    env_overrides: HashMap<String, String>,
 }
 
 /// Manages the lifecycle of multiple MCP server connections.
 pub struct McpManager {
-    pub inner: RwLock<McpManagerInner>,
+    inner: RwLock<McpManagerInner>,
     request_timeout_secs: AtomicU64,
 }
 
@@ -200,14 +201,68 @@ impl McpManager {
             .await
     }
 
+    async fn publish_started_client(
+        &self,
+        name: &str,
+        slot: &Arc<ClientSlot>,
+        client: SharedMcpClient,
+        tool_defs: Vec<McpToolDef>,
+        auth_provider: Option<SharedAuthProvider>,
+    ) -> Result<()> {
+        let (published, client_to_shutdown) = {
+            let mut inner = self.inner.write().await;
+            let slot_is_current = inner
+                .clients
+                .get(name)
+                .is_some_and(|current| Arc::ptr_eq(current, slot));
+
+            if slot_is_current {
+                let replaced = slot.replace(client).await;
+                inner.tools.insert(name.to_string(), tool_defs);
+                if let Some(auth) = auth_provider {
+                    inner.auth_providers.insert(name.to_string(), auth);
+                }
+                (true, replaced)
+            } else {
+                (false, Some(client))
+            }
+        };
+
+        if let Some(client) = client_to_shutdown {
+            client.write().await.shutdown().await;
+        }
+
+        if !published {
+            return Err(Error::message(format!(
+                "MCP server '{name}' start was superseded by a lifecycle change"
+            )));
+        }
+
+        Ok(())
+    }
+
     pub async fn start_server_with_options(
         &self,
         name: &str,
         config: &McpServerConfig,
         stdio_options: &StdioLaunchOptions,
     ) -> Result<()> {
-        // Shut down existing connection if any.
-        self.stop_server(name).await;
+        // Keep the per-server slot stable across restarts so retained tool
+        // bridges can follow the replacement connection.
+        let slot = {
+            let mut inner = self.inner.write().await;
+            inner.tools.remove(name);
+            Arc::clone(
+                inner
+                    .clients
+                    .entry(name.to_string())
+                    .or_insert_with(|| Arc::new(ClientSlot::empty())),
+            )
+        };
+        if let Some(client) = slot.take().await {
+            let mut client = client.write().await;
+            client.shutdown().await;
+        }
 
         // Network work happens outside the lock.
         let (client, auth_provider) = match config.transport {
@@ -492,31 +547,28 @@ impl McpManager {
             "MCP server started with tools"
         );
 
-        // Atomic insert of client, tools, and auth provider.
-        let client: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(client));
-        let mut inner = self.inner.write().await;
-        inner.clients.insert(name.to_string(), client);
-        inner.tools.insert(name.to_string(), tool_defs);
-
-        if let Some(auth) = auth_provider {
-            inner.auth_providers.insert(name.to_string(), auth);
-        }
-
-        Ok(())
+        // Publish only if the slot is still registered. Stop, removal,
+        // disable, and configuration changes invalidate an in-flight start by
+        // removing its slot.
+        let client: SharedMcpClient = Arc::new(RwLock::new(client));
+        self.publish_started_client(name, &slot, client, tool_defs, auth_provider)
+            .await
     }
 
     /// Stop a server connection.
     pub async fn stop_server(&self, name: &str) {
         // Atomically remove client and tools, then drop the lock before async shutdown.
         // Keep auth_providers for potential reconnection.
-        let client = {
+        let slot = {
             let mut inner = self.inner.write().await;
             inner.tools.remove(name);
             inner.clients.remove(name)
         };
-        if let Some(client) = client {
-            let mut c = client.write().await;
-            c.shutdown().await;
+        if let Some(slot) = slot
+            && let Some(client) = slot.take().await
+        {
+            let mut client = client.write().await;
+            client.shutdown().await;
         }
     }
 
@@ -616,7 +668,12 @@ impl McpManager {
 
         let mut statuses = Vec::new();
         for (name, config) in &inner.registry.servers {
-            let state = if let Some(client) = inner.clients.get(name) {
+            let client = if let Some(slot) = inner.clients.get(name) {
+                slot.current().await
+            } else {
+                None
+            };
+            let state = if let Some(client) = client {
                 let c = client.read().await;
                 match c.state() {
                     McpClientState::Ready => {
@@ -670,13 +727,9 @@ impl McpManager {
         let inner = self.inner.read().await;
         let mut bridges = Vec::new();
 
-        for (name, client) in inner.clients.iter() {
+        for (name, slot) in &inner.clients {
             if let Some(tool_defs) = inner.tools.get(name) {
-                bridges.extend(McpToolBridge::from_client(
-                    name,
-                    tool_defs,
-                    Arc::clone(client),
-                ));
+                bridges.extend(McpToolBridge::from_slot(name, tool_defs, Arc::clone(slot)));
             }
         }
 
@@ -745,19 +798,27 @@ impl McpManager {
 
     /// Update a server's configuration and restart it if running.
     pub async fn update_server(&self, name: &str, config: McpServerConfig) -> Result<()> {
+        // A registered slot represents a server that is running or in the
+        // process of starting. Empty slots must still be restarted after the
+        // configuration change.
         let was_running = {
             let inner = self.inner.read().await;
             inner.clients.contains_key(name)
         };
-        {
+        let updated_config = {
             let mut inner = self.inner.write().await;
             let enabled = inner.registry.get(name).is_none_or(|c| c.enabled);
             let mut new_config = config;
             new_config.enabled = enabled;
-            inner.registry.add(name.to_string(), new_config)?;
-        }
+            inner.registry.add(name.to_string(), new_config.clone())?;
+            new_config
+        };
+        // A configuration change may point this name at a different trust
+        // boundary. Always invalidate the old slot, including while a restart
+        // has temporarily removed its client.
+        self.stop_server(name).await;
         if was_running {
-            self.restart_server(name).await?;
+            self.start_server(name, &updated_config).await?;
         }
         Ok(())
     }
@@ -773,12 +834,58 @@ impl McpManager {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     use {
         super::*,
-        crate::auth::{McpAuthProvider, McpAuthState},
+        crate::{
+            auth::{McpAuthProvider, McpAuthState},
+            types::ToolsCallResult,
+        },
     };
+
+    struct ShutdownTrackingClient {
+        shutdown: Arc<AtomicBool>,
+        tools: Vec<McpToolDef>,
+    }
+
+    #[async_trait::async_trait]
+    impl McpClientTrait for ShutdownTrackingClient {
+        fn server_name(&self) -> &str {
+            "test"
+        }
+
+        fn state(&self) -> McpClientState {
+            McpClientState::Ready
+        }
+
+        fn tools(&self) -> &[McpToolDef] {
+            &self.tools
+        }
+
+        async fn list_tools(&mut self) -> Result<&[McpToolDef]> {
+            Ok(&self.tools)
+        }
+
+        async fn call_tool(
+            &self,
+            _name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<ToolsCallResult> {
+            Err(Error::message("not implemented"))
+        }
+
+        async fn is_alive(&self) -> bool {
+            true
+        }
+
+        async fn shutdown(&mut self) {
+            self.shutdown.store(true, Ordering::SeqCst);
+        }
+    }
 
     #[test]
     fn test_manager_creation() {
@@ -826,6 +933,78 @@ mod tests {
         let mgr = McpManager::new(McpRegistry::new());
         let bridges = mgr.tool_bridges().await;
         assert!(bridges.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_publish_started_client_rejects_invalidated_slot() {
+        let mgr = McpManager::new(McpRegistry::new());
+        let slot = Arc::new(ClientSlot::empty());
+        mgr.inner
+            .write()
+            .await
+            .clients
+            .insert("test".to_string(), Arc::clone(&slot));
+        mgr.stop_server("test").await;
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let client: SharedMcpClient = Arc::new(RwLock::new(ShutdownTrackingClient {
+            shutdown: Arc::clone(&shutdown),
+            tools: Vec::new(),
+        }));
+
+        let result = mgr
+            .publish_started_client("test", &slot, client, Vec::new(), None)
+            .await;
+
+        assert!(result.is_err());
+        assert!(shutdown.load(Ordering::SeqCst));
+        assert!(slot.current().await.is_none());
+        let inner = mgr.inner.read().await;
+        assert!(!inner.clients.contains_key("test"));
+        assert!(!inner.tools.contains_key("test"));
+    }
+
+    #[tokio::test]
+    async fn test_update_server_restarts_with_new_slot_during_restart() {
+        let registry_dir = tempfile::tempdir().unwrap();
+        let registry_path = registry_dir.path().join("mcp-servers.json");
+        let mut registry = McpRegistry::load(&registry_path).unwrap();
+        registry
+            .servers
+            .insert("test".to_string(), McpServerConfig {
+                command: "old-command".to_string(),
+                ..Default::default()
+            });
+        let mgr = McpManager::new(registry);
+        let slot = Arc::new(ClientSlot::empty());
+        mgr.inner
+            .write()
+            .await
+            .clients
+            .insert("test".to_string(), Arc::clone(&slot));
+
+        let result = mgr
+            .update_server("test", McpServerConfig {
+                command: "new-command".to_string(),
+                ..Default::default()
+            })
+            .await;
+
+        // The replacement command is intentionally unavailable. Its start
+        // failure proves that update_server attempted to restart the server
+        // rather than leaving it stopped after invalidating the old slot.
+        assert!(result.is_err());
+
+        let inner = mgr.inner.read().await;
+        let replacement_slot = inner.clients.get("test").unwrap();
+        assert!(!Arc::ptr_eq(replacement_slot, &slot));
+        assert_eq!(
+            inner
+                .registry
+                .get("test")
+                .map(|config| config.command.as_str()),
+            Some("new-command")
+        );
     }
 
     #[tokio::test]

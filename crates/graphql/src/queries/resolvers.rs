@@ -405,7 +405,7 @@ impl CronQuery {
     /// Get run history for a cron job.
     async fn runs(&self, ctx: &Context<'_>, job_id: String) -> Result<Vec<CronRunRecord>> {
         let s = services!(ctx);
-        from_service(s.cron.runs(serde_json::json!({ "jobId": job_id })).await)
+        from_service(s.cron.runs(serde_json::json!({ "id": job_id })).await)
     }
 }
 

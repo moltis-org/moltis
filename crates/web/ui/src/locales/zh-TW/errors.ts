@@ -54,7 +54,7 @@ export default {
 		AGENT_TIMEOUT: "AI 助理回應時間過長，請重試。",
 		INVALID_REQUEST: "請求無效，請檢查輸入內容後重試。",
 		UNAVAILABLE: "服務暫時無法使用，請重試。",
-		UNKNOWN_METHOD: "未知的方法。您使用的用戶端可能需要更新。",
+		UNKNOWN_METHOD: "未知方法。目前使用的應用程式可能需要更新。",
 		UNAUTHORIZED: "您未被授權執行此操作。",
 		FORBIDDEN: "拒絕存取。權限不足。",
 		NOT_FOUND: "找不到請求的資源。",

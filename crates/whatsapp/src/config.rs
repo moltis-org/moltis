@@ -96,12 +96,6 @@ pub struct WhatsAppAccountConfig {
     /// Cooldown in seconds after 3 failed OTP attempts (default: 300).
     pub otp_cooldown_secs: u64,
 
-    /// Download inbound document messages into session media (default: false).
-    ///
-    /// Documents can contain sensitive or untrusted data, so persistence is an
-    /// explicit per-account opt-in.
-    pub download_inbound_documents: bool,
-
     /// Per-group/chat overrides keyed by WhatsApp chat JID.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub channel_overrides: HashMap<String, ChatOverride>,
@@ -224,7 +218,6 @@ impl Default for WhatsAppAccountConfig {
             untrusted_tools: UntrustedTools::default(),
             otp_self_approval: true,
             otp_cooldown_secs: 300,
-            download_inbound_documents: false,
             channel_overrides: HashMap::new(),
             user_overrides: HashMap::new(),
         }
@@ -251,7 +244,6 @@ mod tests {
         assert!(cfg.group_allowlist.is_empty());
         assert!(cfg.otp_self_approval);
         assert_eq!(cfg.otp_cooldown_secs, 300);
-        assert!(!cfg.download_inbound_documents);
     }
 
     #[test]
@@ -291,16 +283,6 @@ mod tests {
         assert_eq!(cfg.group_allowlist, vec!["group1"]);
         assert!(!cfg.otp_self_approval);
         assert_eq!(cfg.otp_cooldown_secs, 600);
-    }
-
-    #[test]
-    fn inbound_document_downloads_require_explicit_opt_in() {
-        let defaulted: WhatsAppAccountConfig = serde_json::from_str("{}").unwrap();
-        let enabled: WhatsAppAccountConfig =
-            serde_json::from_str(r#"{"download_inbound_documents":true}"#).unwrap();
-
-        assert!(!defaulted.download_inbound_documents);
-        assert!(enabled.download_inbound_documents);
     }
 
     #[test]

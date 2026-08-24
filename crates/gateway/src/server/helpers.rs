@@ -581,30 +581,28 @@ pub(crate) async fn maybe_deliver_cron_output(
     outbound: Option<Arc<dyn moltis_channels::ChannelOutbound>>,
     req: &moltis_cron::service::AgentTurnRequest,
     delivery_text: &str,
-) {
+) -> moltis_cron::Result<()> {
     if !req.deliver || delivery_text.trim().is_empty() {
-        return;
+        return Ok(());
     }
 
     let (Some(channel_account), Some(chat_id)) = (&req.channel, &req.to) else {
-        return;
+        return Err(moltis_cron::Error::message(
+            "cron delivery requires both channel and destination",
+        ));
     };
 
-    if let Some(outbound) = outbound {
-        if let Err(error) = outbound
-            .send_text(channel_account, chat_id, delivery_text, None)
-            .await
-        {
-            tracing::warn!(
-                channel = %channel_account,
-                to = %chat_id,
-                error = %error,
-                "cron job channel delivery failed"
-            );
-        }
-    } else {
-        tracing::debug!("cron job delivery requested but no channel outbound configured");
-    }
+    let outbound = outbound.ok_or_else(|| {
+        moltis_cron::Error::message("cron delivery requested but channel outbound is unavailable")
+    })?;
+    outbound
+        .send_text(channel_account, chat_id, delivery_text, None)
+        .await
+        .map_err(|error| {
+            moltis_cron::Error::message(format!(
+                "failed to deliver cron output to {channel_account}: {error}"
+            ))
+        })
 }
 
 // ── Skill hot-reload watcher ─────────────────────────────────────────────────

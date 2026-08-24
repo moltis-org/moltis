@@ -8,7 +8,7 @@ export default {
 		resume: "繼續",
 		clear: "清除",
 		download: "下載",
-		entries: "筆記錄",
+		entries: "筆紀錄",
 	},
 	levels: {
 		trace: "TRACE",
