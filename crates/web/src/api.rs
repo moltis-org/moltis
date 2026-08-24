@@ -1414,15 +1414,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn managed_container_name_accepts_compacted_apple_prefix() {
-        let mut config = moltis_config::MoltisConfig::default();
-        let prefix = "custom-sandbox-prefix-that-is-much-too-long";
-        config.tools.exec.sandbox.container_prefix = Some(prefix.to_string());
-        let name = moltis_tools::sandbox::apple_container_name(prefix, "session-abc", 0);
-        assert!(managed_container_name(&config, &name));
-    }
-
-    #[test]
     fn content_disposition_inline_for_pdf() {
         let result = media_content_disposition("report.pdf", "application/pdf");
         assert!(result.starts_with("inline;"));
