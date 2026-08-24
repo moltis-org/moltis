@@ -3,8 +3,11 @@
 Tool policies control which tools are available during a session. Before these
 name-based layers run, Moltis applies the registry's host-owned audience
 ceiling. Guest, shared-room, and unknown-topology channel turns receive no
-tools. Webhooks receive no tools by default and can explicitly opt into tools
-registered for public use. Policies may narrow but never widen these ceilings.
+tools by default. Supported channel accounts can explicitly lift that ceiling
+and hand tool selection back to these policy layers. Webhooks receive no tools
+by default and can explicitly opt into tools registered for public use. Policy
+layers may narrow or widen access only within the host-owned ceiling selected
+for the request.
 
 Within the audience ceiling, policies use a layered system where each layer can
 restrict or widen access, and **deny always wins** — once a tool is denied at
@@ -111,9 +114,11 @@ allowed, and `exec`/`write_file` are explicitly denied. See
 ## Layer 4 — Per-Channel Chat Type
 
 Channel accounts can restrict tools by chat type (`private`, `group`,
-`channel`, etc.). Guest, shared-room, and unknown-topology turns already have a
-non-widenable deny-all policy. This layer is primarily useful for narrowing the
-tools available to an operator in a proven direct chat.
+`channel`, etc.). By default, guest, shared-room, and unknown-topology turns
+have a deny-all ceiling, so this layer primarily narrows tools available to an
+operator in a proven direct chat. Channels that support `untrusted_audience`
+and `untrusted_tools` can explicitly lift that ceiling and hand the decision
+back to this layer.
 
 ```toml
 [channels.telegram.my-bot.tools.groups.private]
@@ -126,8 +131,9 @@ handled by the `my-bot` account. Web UI sessions are unaffected.
 ## Layer 5 — Per-Sender
 
 Within a channel chat type, individual senders can receive name-policy
-overrides. Overrides cannot cross the deny-all ceiling applied to guests,
-shared rooms, and unknown chat kinds.
+overrides. Overrides cannot cross the default deny-all ceiling applied to
+guests, shared rooms, and unknown chat kinds unless the account explicitly
+lifts that ceiling.
 
 ```toml
 [channels.telegram.my-bot.tools.groups.private]
@@ -139,8 +145,10 @@ allow = ["*"]
 
 Sender `123456` gets `allow = ["*"]`, which replaces the previous allow list.
 However, because **deny always accumulates**, the `exec` and `browser` denials
-from the chat-type layer still apply. The sender must also be a configured
-operator in a proven direct chat; a sender override alone never grants tools.
+from the chat-type layer still apply. By default, the sender must also be a
+configured operator in a proven direct chat; a sender override alone never
+grants tools. A supported channel account can instead opt its untrusted turns
+into policy-based access with `untrusted_audience` and `untrusted_tools`.
 
 ## Layer 6 — Sandbox
 

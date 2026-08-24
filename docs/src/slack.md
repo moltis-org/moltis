@@ -108,7 +108,10 @@ offered = ["slack"]
 | `group_policy` | no | `"open"` | Who can talk to the bot in channels: `"open"`, `"allowlist"`, or `"disabled"` |
 | `mention_mode` | no | `"mention"` | When the bot responds in channels: `"always"`, `"mention"`, or `"none"` |
 | `allowlist` | no | `[]` | Slack user IDs allowed to DM the bot (when `dm_policy = "allowlist"`) |
+| `operators` | no | `[]` | Exact Slack user IDs eligible for privileged commands in proven direct chats. Empty means nobody. |
 | `channel_allowlist` | no | `[]` | Slack channel IDs allowed to interact with the bot |
+| `untrusted_audience` | no | `"public"` | Tool audience ceiling for turns outside an operator direct chat: `"public"` or `"trusted"` |
+| `untrusted_tools` | no | `"deny_all"` | Tool name policy for those turns: `"deny_all"`, or `"policy"` to let configured policy layers decide |
 | `otp_self_approval` | no | `true` | Enable OTP self-approval for non-allowlisted DM users |
 | `otp_cooldown_secs` | no | `300` | Cooldown after failed OTP attempts |
 | `model` | no | — | Override the default model for this channel |
@@ -143,6 +146,7 @@ dm_policy = "allowlist"
 group_policy = "open"
 mention_mode = "mention"
 allowlist = ["U0123456789", "U9876543210"]
+operators = ["U0123456789"]
 channel_allowlist = ["C0123456789"]
 otp_self_approval = true
 otp_cooldown_secs = 300
@@ -162,6 +166,40 @@ model = "gpt-4o"
 model = "claude-sonnet-4-20250514"
 model_provider = "anthropic"
 ```
+
+### Tools in Shared Channels
+
+By default, Slack channels and DMs from non-operators receive no tools. To let
+those turns use tools, lift both parts of the untrusted-turn ceiling and use a
+tool policy to restrict what is available:
+
+```toml
+[channels.slack.my-bot]
+untrusted_audience = "trusted"
+untrusted_tools = "policy"
+
+[channels.slack.my-bot.tools.groups.channel]
+allow = ["linear_*"]
+
+[channels.slack.my-bot.tools.groups.direct]
+allow = ["linear_*"]
+```
+
+`untrusted_audience = "trusted"` makes MCP, WASM, and other trusted-audience
+tools eligible. `untrusted_tools = "policy"` removes the blanket name denial.
+Both settings are required for MCP tools, and without a restrictive policy the
+turn can reach every tool allowed by the remaining policy layers.
+
+The ceiling applies to every turn outside an operator direct chat, so restrict
+both `channel` and `direct` when non-operator DMs are enabled. For accounts
+created in the web UI, Advanced Config can set the two ceiling fields, but
+database-backed `tools.groups` policies are not currently part of runtime
+policy resolution. Configure a restrictive global or provider policy before
+lifting the ceiling on a UI-managed account.
+
+These settings do not expose `/sh`, privileged commands, or owner-private
+prompt context in shared rooms. Those remain restricted to operators in proven
+direct chats.
 
 ### Events API Mode
 
