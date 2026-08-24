@@ -66,6 +66,7 @@ navigation_timeout_ms = 30000  # Page load timeout
 # Optional customization
 # chrome_path = &#x22;/path/to/chrome&#x22;  # Custom Chrome path
 # obscura_path = &#x22;/path/to/obscura&#x22;  # Custom Obscura path
+# obscura_stealth = true            # Pass --stealth to Obscura (default)
 # lightpanda_path = &#x22;/path/to/lightpanda&#x22;  # Custom Lightpanda path
 # user_agent = &#x22;Custom UA&#x22;         # Custom user agent
 # chrome_args = [&#x22;--disable-extensions&#x22;]  # Extra args
@@ -92,6 +93,7 @@ browserless_api_version = &#x22;v1&#x22;                  # Must match the image
 <span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># Optional customization</span></span>
 <span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># chrome_path = "/path/to/chrome"  # Custom Chrome path</span></span>
 <span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># obscura_path = "/path/to/obscura"  # Custom Obscura path</span></span>
+<span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># obscura_stealth = true            # Pass --stealth to Obscura (default)</span></span>
 <span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># lightpanda_path = "/path/to/lightpanda"  # Custom Lightpanda path</span></span>
 <span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># user_agent = "Custom UA"         # Custom user agent</span></span>
 <span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># chrome_args = ["--disable-extensions"]  # Extra args</span></span>
@@ -254,7 +256,14 @@ installed, Moltis will attempt a best-effort auto-install, then retry
 detection.</p>
 <p><code>obscura</code> launches the Obscura sidecar binary from <code>obscura_path</code>, the
 <code>OBSCURA</code> environment variable, or <code>PATH</code>. It supports DOM-oriented browsing
-through CDP, but not pixel screenshots.</p>
+through CDP, but not pixel screenshots. Moltis passes Obscura’s
+<a href="https://github.com/h4ckf0r0day/obscura/wiki/Configure-stealth-and-proxies"><code>--stealth</code> mode</a>
+flag by default, enabling the anti-detection behavior available in the
+installed binary. Full TLS impersonation requires Obscura 0.1.1 or newer built
+with its upstream <code>stealth</code> feature. Choose a release asset whose name includes
+<code>-stealth</code>, or add <code>--features stealth</code> when installing from source. Set
+<code>obscura_stealth = false</code> when tracker blocking or the stealth network stack is
+undesirable.</p>
 <p><code>lightpanda</code> launches the Lightpanda sidecar binary from <code>lightpanda_path</code>, the
 <code>LIGHTPANDA</code> environment variable, or <code>PATH</code>. It supports DOM-oriented browsing
 through CDP, but not pixel screenshots.</p>
