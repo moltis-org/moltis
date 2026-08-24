@@ -70,4 +70,14 @@ mod tests {
             "moltis-sandbox-unrelated"
         ));
     }
+
+    #[test]
+    fn falls_back_to_configured_prefix_and_deduplicates() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.tools.exec.sandbox.container_prefix = Some("moltis-browser".to_string());
+
+        assert_eq!(managed_container_prefixes(&config, None), vec![
+            "moltis-browser"
+        ]);
+    }
 }
