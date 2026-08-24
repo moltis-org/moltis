@@ -9,8 +9,11 @@
 <p>Tool policies control which tools are available during a session. Before these
 name-based layers run, Moltis applies the registry’s host-owned audience
 ceiling. Guest, shared-room, and unknown-topology channel turns receive no
-tools. Webhooks receive no tools by default and can explicitly opt into tools
-registered for public use. Policies may narrow but never widen these ceilings.</p>
+tools by default. Supported channel accounts can explicitly lift that ceiling
+and hand tool selection back to these policy layers. Webhooks receive no tools
+by default and can explicitly opt into tools registered for public use. Policy
+layers may narrow or widen access only within the host-owned ceiling selected
+for the request.</p>
 <p>Within the audience ceiling, policies use a layered system where each layer can
 restrict or widen access, and <strong>deny always wins</strong> — once a tool is denied at
 any layer, no later layer can re-allow it.</p>
@@ -153,9 +156,11 @@ allowed, and <code>exec</code>/<code>write_file</code> are explicitly denied. Se
 </blockquote>
 <h2 id="layer-4--per-channel-chat-type">Layer 4 — Per-Channel Chat Type</h2>
 <p>Channel accounts can restrict tools by chat type (<code>private</code>, <code>group</code>,
-<code>channel</code>, etc.). Guest, shared-room, and unknown-topology turns already have a
-non-widenable deny-all policy. This layer is primarily useful for narrowing the
-tools available to an operator in a proven direct chat.</p>
+<code>channel</code>, etc.). By default, guest, shared-room, and unknown-topology turns
+have a deny-all ceiling, so this layer primarily narrows tools available to an
+operator in a proven direct chat. Channels that support <code>untrusted_audience</code>
+and <code>untrusted_tools</code> can explicitly lift that ceiling and hand the decision
+back to this layer.</p>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels.telegram.my-bot.tools.groups.private]
 deny = [&#x22;exec&#x22;, &#x22;browser&#x22;]"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channels</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">telegram</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">my-bot</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">groups</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">private</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">deny </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"exec"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "browser"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span></code></pre>
@@ -163,8 +168,9 @@ deny = [&#x22;exec&#x22;, &#x22;browser&#x22;]"><code><span class="line"><span s
 handled by the <code>my-bot</code> account. Web UI sessions are unaffected.</p>
 <h2 id="layer-5--per-sender">Layer 5 — Per-Sender</h2>
 <p>Within a channel chat type, individual senders can receive name-policy
-overrides. Overrides cannot cross the deny-all ceiling applied to guests,
-shared rooms, and unknown chat kinds.</p>
+overrides. Overrides cannot cross the default deny-all ceiling applied to
+guests, shared rooms, and unknown chat kinds unless the account explicitly
+lifts that ceiling.</p>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels.telegram.my-bot.tools.groups.private]
 deny = [&#x22;exec&#x22;, &#x22;browser&#x22;]
 
@@ -176,8 +182,10 @@ allow = [&#x22;*&#x22;]"><code><span class="line"><span style="color:#24292EFF;-
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">allow </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"*"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span></code></pre>
 <p>Sender <code>123456</code> gets <code>allow = ["*"]</code>, which replaces the previous allow list.
 However, because <strong>deny always accumulates</strong>, the <code>exec</code> and <code>browser</code> denials
-from the chat-type layer still apply. The sender must also be a configured
-operator in a proven direct chat; a sender override alone never grants tools.</p>
+from the chat-type layer still apply. By default, the sender must also be a
+configured operator in a proven direct chat; a sender override alone never
+grants tools. A supported channel account can instead opt its untrusted turns
+into policy-based access with <code>untrusted_audience</code> and <code>untrusted_tools</code>.</p>
 <h2 id="layer-6--sandbox">Layer 6 — Sandbox</h2>
 <p>When a session runs inside a sandbox container, this layer applies on top of
 all other layers. It lets you restrict tools for sandboxed execution without
