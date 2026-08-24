@@ -491,6 +491,47 @@ async fn binding_is_revalidated_after_the_external_send() {
 }
 
 #[tokio::test]
+async fn same_target_session_remap_during_send_is_not_recorded() {
+    let fixture = CronHistoryFixture::new(ChannelType::Whatsapp, "bot-main").await;
+    let intended = whatsapp_target("123456@s.whatsapp.net");
+    fixture.bind(&intended, "session:before-send", true).await;
+    fixture.bind(&intended, "session:after-send", false).await;
+    let outbound = Arc::new(RemappingChannelOutbound {
+        metadata: Arc::clone(&fixture.metadata),
+        target: intended,
+        session_key: "session:after-send".to_string(),
+    });
+    let req = cron_delivery_request();
+    let history = fixture.history("same-target-remap-run");
+
+    crate::server::helpers::maybe_deliver_cron_output(
+        Some(outbound as Arc<dyn moltis_channels::ChannelOutbound>),
+        &req,
+        "Delivered while the active session changed",
+        Some(&history),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        fixture
+            .store
+            .read("session:before-send")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        fixture
+            .store
+            .read("session:after-send")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn telegram_delivery_is_isolated_to_the_exact_topic() {
     let fixture = CronHistoryFixture::new(ChannelType::Telegram, "bot-main").await;
     let topic = reply_target(ChannelType::Telegram, "bot-main", "-100123", Some("42"));

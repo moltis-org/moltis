@@ -589,7 +589,18 @@ fn cron_delivery_target(
     account_id: &str,
     outbound_to: &str,
 ) -> Option<moltis_channels::ChannelReplyTarget> {
-    let channel_type = registry.resolve_channel_type(account_id)?.parse().ok()?;
+    let channel_type = match registry.resolve_known_channel_type(account_id) {
+        Ok(Some(channel_type)) => channel_type,
+        Ok(None) => return None,
+        Err(error) => {
+            warn!(
+                account_id,
+                %error,
+                "cannot add cron delivery to history for an unknown channel type"
+            );
+            return None;
+        },
+    };
     let (chat_id, thread_id) = match channel_type {
         moltis_channels::ChannelType::Telegram => match outbound_to.split_once(':') {
             Some((chat_id, thread_id)) if !chat_id.is_empty() && !thread_id.is_empty() => {
@@ -652,21 +663,43 @@ fn cron_delivery_run_id(delivery_id: &str) -> String {
     format!("cron-delivery:{delivery_id}")
 }
 
-fn cron_delivery_message(delivery_text: &str, run_id: &str) -> serde_json::Value {
+#[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum CronDeliveryRole {
+    Assistant,
+}
+
+#[derive(serde::Serialize)]
+struct CronDeliveryChannelContext {
+    private_context: bool,
+}
+
+#[derive(serde::Serialize)]
+struct CronDeliveryMessage<'a> {
+    role: CronDeliveryRole,
+    content: &'a str,
+    created_at: u64,
+    run_id: &'a str,
+    channel: CronDeliveryChannelContext,
+}
+
+fn cron_delivery_message<'a>(delivery_text: &'a str, run_id: &'a str) -> CronDeliveryMessage<'a> {
     let created_at = u64::try_from(
         (time::OffsetDateTime::now_utc() - time::OffsetDateTime::UNIX_EPOCH).whole_milliseconds(),
     )
     .unwrap_or_default();
-    serde_json::json!({
-        "role": "assistant",
-        "content": delivery_text,
-        "created_at": created_at,
-        "run_id": run_id,
+    CronDeliveryMessage {
+        role: CronDeliveryRole::Assistant,
+        content: delivery_text,
+        created_at,
+        run_id,
         // A scheduled answer delivered to a shared chat is already public to
         // that audience. Marking it keeps the message in that chat's public
         // history filter without exposing anything from the isolated run.
-        "channel": { "private_context": false },
-    })
+        channel: CronDeliveryChannelContext {
+            private_context: false,
+        },
+    }
 }
 
 async fn cron_delivery_was_recorded(
@@ -693,10 +726,8 @@ async fn record_cron_delivery(
     delivery_text: &str,
     run_id: &str,
 ) -> moltis_sessions::Result<()> {
-    history
-        .store
-        .append(session_key, &cron_delivery_message(delivery_text, run_id))
-        .await?;
+    let message = serde_json::to_value(cron_delivery_message(delivery_text, run_id))?;
+    history.store.append(session_key, &message).await?;
     let message_count = history.store.count(session_key).await?;
     history.metadata.touch(session_key, message_count).await;
     Ok(())
@@ -752,11 +783,18 @@ pub(crate) async fn maybe_deliver_cron_output(
         Some(history) => bound_cron_delivery_session(history, channel_account, chat_id).await,
         None => None,
     };
-    if let (Some(history), Some(session_key), Some(run_id)) = (
-        history,
-        bound_session_after_delivery.as_deref(),
-        run_id.as_deref(),
-    ) {
+    if let (Some(history), Some(session_key), Some(run_id)) =
+        (history, bound_session.as_deref(), run_id.as_deref())
+    {
+        if bound_session_after_delivery.as_deref() != Some(session_key) {
+            warn!(
+                session = session_key,
+                delivery_id = %history.delivery_id,
+                "cron output was delivered but the channel session changed; skipping history"
+            );
+            return Ok(());
+        }
+
         if let Err(error) = record_cron_delivery(history, session_key, delivery_text, run_id).await
         {
             warn!(
