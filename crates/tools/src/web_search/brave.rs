@@ -139,6 +139,17 @@ fn normalize_search_language(
         return Some(language);
     }
 
+    let preferred_region = ui_lang
+        .and_then(|locale| locale.split_once('-').map(|(_, region)| region))
+        .or_else(|| country.filter(|country| *country != "ALL"));
+    if base == "zh" {
+        return match preferred_region {
+            Some("CN") => Some("zh-hans"),
+            Some("HK" | "TW") => Some("zh-hant"),
+            _ => None,
+        };
+    }
+
     let mut candidates = SEARCH_LANGUAGES
         .iter()
         .copied()
@@ -148,9 +159,6 @@ fn normalize_search_language(
         return Some(first);
     }
 
-    let preferred_region = ui_lang
-        .and_then(|locale| locale.split_once('-').map(|(_, region)| region))
-        .or_else(|| country.filter(|country| *country != "ALL"));
     preferred_region.and_then(|region| {
         SEARCH_LANGUAGES.iter().copied().find(|candidate| {
             candidate
@@ -221,6 +229,23 @@ mod tests {
         assert_eq!(params.country, Some("BR"));
         assert_eq!(params.search_lang, Some("pt-br"));
         assert_eq!(params.ui_lang, Some("pt-BR"));
+    }
+
+    #[test]
+    fn infers_chinese_script_from_supported_region() {
+        let simplified = Params::from_json(&json!({
+            "country": "CN",
+            "search_lang": "zh",
+            "ui_lang": "zh-CN",
+        }));
+        assert_eq!(simplified.search_lang, Some("zh-hans"));
+
+        let traditional = Params::from_json(&json!({
+            "country": "TW",
+            "search_lang": "zh",
+            "ui_lang": "zh-TW",
+        }));
+        assert_eq!(traditional.search_lang, Some("zh-hant"));
     }
 
     #[test]
