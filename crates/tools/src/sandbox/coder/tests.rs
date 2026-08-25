@@ -56,9 +56,10 @@ fn workspace_with(status: BuildStatus, agents: Vec<CoderAgent>) -> CoderWorkspac
     }
 }
 
-fn transcript(nonce: &str, stdout: &str, stderr: &str, exit_code: i32) -> String {
+fn transcript(markers: &PtyMarkers, stdout: &str, stderr: &str, exit_code: i32) -> String {
     format!(
-        "login noise\r\n__MOLTIS_READY_{nonce}__\r\n{stdout}\r\n__MOLTIS_EXIT_{nonce}__{exit_code}\r\n__MOLTIS_STDERR_{nonce}_BEGIN__\r\n{stderr}\r\n__MOLTIS_STDERR_{nonce}_END__\r\n"
+        "login noise\r\n{}\r\n{stdout}\r\n{}{exit_code}\r\n{}\r\n{stderr}\r\n{}\r\n",
+        markers.ready, markers.exit, markers.stderr_begin, markers.stderr_end
     )
 }
 
@@ -149,16 +150,16 @@ fn client_messages_are_binary_json_and_safely_sized() {
 
 #[test]
 fn eof_message_is_binary_and_bounded() {
-    let markers = PtyMarkers::with_nonce("abc");
+    let markers = PtyMarkers::new();
     let eof = eof_stdin(&markers);
-    assert_eq!(eof, "__MOLTIS_EOF_abc__\n");
+    assert_eq!(eof, format!("{}\n", markers.eof));
     let payload = binary_payload(stdin_message(&eof).unwrap());
     assert!(payload.len() < CLIENT_MESSAGE_CAP);
 }
 
 #[test]
 fn bootstrap_stays_small_and_remote_watchdog_fails_closed() {
-    let markers = PtyMarkers::with_nonce("abc");
+    let markers = PtyMarkers::new();
     let bootstrap = bootstrap_command(&markers);
     assert!(bootstrap.len() < 1024);
     assert!(bootstrap.contains("stty raw -echo"));
@@ -201,14 +202,14 @@ async fn command_deadline_is_shared_and_reports_configured_timeout() {
 async fn cancelling_pty_script_releases_websocket_ownership() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
+    let markers = PtyMarkers::new();
+    let ready_marker = format!("{}\n", markers.ready);
     let (reader_active_tx, reader_active_rx) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let mut websocket = accept_async(stream).await.unwrap();
         websocket
-            .send(Message::Binary(
-                b"__MOLTIS_READY_cancel__\n".to_vec().into(),
-            ))
+            .send(Message::Binary(ready_marker.into_bytes().into()))
             .await
             .unwrap();
         let mut reader_active_tx = Some(reader_active_tx);
@@ -239,7 +240,6 @@ async fn cancelling_pty_script_releases_websocket_ownership() {
             agent_id: "agent-1".into(),
             workspace_dir: "/workspaces/demo".into(),
         };
-        let markers = PtyMarkers::with_nonce("cancel");
         sandbox
             .run_pty_script(
                 &session,
@@ -265,8 +265,8 @@ async fn cancelling_pty_script_releases_websocket_ownership() {
 
 #[test]
 fn parser_handles_every_binary_fragment_and_utf8_boundary() {
-    let markers = PtyMarkers::with_nonce("abc");
-    let output = transcript("abc", "hello 世界", "oops ñ", 7);
+    let markers = PtyMarkers::new();
+    let output = transcript(&markers, "hello 世界", "oops ñ", 7);
     let mut parser = PtyOutputParser::new(markers, 1024);
     let mut saw_ready = false;
     for byte in output.as_bytes() {
@@ -283,8 +283,8 @@ fn parser_handles_every_binary_fragment_and_utf8_boundary() {
 
 #[test]
 fn parser_accepts_fragmented_text_and_binary_frames() {
-    let markers = PtyMarkers::with_nonce("abc");
-    let output = transcript("abc", "one", "two", 0);
+    let markers = PtyMarkers::new();
+    let output = transcript(&markers, "one", "two", 0);
     let split = output.find("__MOLTIS_EXIT").unwrap() + 8;
     let mut parser = PtyOutputParser::new(markers, 1024);
     parser
@@ -300,8 +300,8 @@ fn parser_accepts_fragmented_text_and_binary_frames() {
 
 #[test]
 fn parser_bounds_output_but_consumes_through_markers() {
-    let markers = PtyMarkers::with_nonce("abc");
-    let output = transcript("abc", &"o".repeat(1_000_000), &"e".repeat(1_000_000), 23);
+    let markers = PtyMarkers::new();
+    let output = transcript(&markers, &"o".repeat(1_000_000), &"e".repeat(1_000_000), 23);
     let mut parser = PtyOutputParser::new(markers, 64);
     parser.feed(output.as_bytes()).unwrap();
     assert!(parser.is_done());
@@ -314,8 +314,8 @@ fn parser_bounds_output_but_consumes_through_markers() {
 
 #[test]
 fn parser_ignores_large_trailing_payload_after_completion() {
-    let markers = PtyMarkers::with_nonce("abc");
-    let mut output = transcript("abc", "ok", "", 0).into_bytes();
+    let markers = PtyMarkers::new();
+    let mut output = transcript(&markers, "ok", "", 0).into_bytes();
     output.extend(std::iter::repeat_n(b'x', 1_000_000));
     let mut parser = PtyOutputParser::new(markers, 64);
     parser.feed(&output).unwrap();
@@ -325,8 +325,8 @@ fn parser_ignores_large_trailing_payload_after_completion() {
 
 #[test]
 fn parser_strips_ansi_and_errors_without_completion() {
-    let markers = PtyMarkers::with_nonce("abc");
-    let output = transcript("abc", "\x1b[32mgreen\x1b[0m", "", 0);
+    let markers = PtyMarkers::new();
+    let output = transcript(&markers, "\x1b[32mgreen\x1b[0m", "", 0);
     let mut parser = PtyOutputParser::new(markers.clone(), 1024);
     parser.feed(output.as_bytes()).unwrap();
     assert_eq!(parser.finish().unwrap().stdout, "green");

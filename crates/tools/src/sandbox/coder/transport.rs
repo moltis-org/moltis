@@ -18,9 +18,9 @@ pub(super) const CLIENT_MESSAGE_CAP: usize = 32 * 1024;
 pub(super) struct PtyMarkers {
     pub(super) ready: String,
     pub(super) eof: String,
-    exit: String,
-    stderr_begin: String,
-    stderr_end: String,
+    pub(super) exit: String,
+    pub(super) stderr_begin: String,
+    pub(super) stderr_end: String,
 }
 
 impl PtyMarkers {
