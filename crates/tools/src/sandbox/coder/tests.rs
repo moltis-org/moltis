@@ -746,12 +746,12 @@ async fn delete_confirmation_times_out_while_workspace_exists() {
     let sandbox = CoderSandbox::new(SandboxConfig::default(), sandbox_config(server.url()));
 
     let error = sandbox
-        .wait_for_deleted_workspace("ws-1", Duration::from_millis(20), Duration::from_millis(2))
+        .wait_for_deleted_workspace("ws-1", Duration::from_secs(2), Duration::from_millis(10))
         .await
         .unwrap_err();
 
     pending.assert_async().await;
-    assert!(error.to_string().contains("within 20ms"));
+    assert!(error.to_string().contains("within 2s"));
 }
 
 #[tokio::test]
