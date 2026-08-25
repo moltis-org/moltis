@@ -163,6 +163,8 @@ pub struct ClientRegistrationRequest {
     pub grant_types: Vec<String>,
     pub response_types: Vec<String>,
     pub token_endpoint_auth_method: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub scope: String,
 }
 
 /// Successful registration response.
@@ -185,6 +187,7 @@ pub async fn register_client(
     registration_endpoint: &str,
     redirect_uris: Vec<String>,
     client_name: &str,
+    scopes: &[String],
 ) -> Result<ClientRegistrationResponse> {
     debug!(endpoint = %registration_endpoint, client_name, "registering dynamic OAuth client");
 
@@ -197,6 +200,7 @@ pub async fn register_client(
         ],
         response_types: vec!["code".to_string()],
         token_endpoint_auth_method: "none".to_string(),
+        scope: scopes.join(" "),
     };
 
     let resp = client
@@ -274,6 +278,8 @@ fn build_well_known_url(base: &Url, suffix: &str) -> Result<Url> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
+    use mockito::Matcher;
+
     use super::*;
 
     // ── WWW-Authenticate parsing ───────────────────────────────────────
@@ -460,6 +466,9 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("POST", "/register")
+            .match_body(Matcher::PartialJson(serde_json::json!({
+                "scope": "read write",
+            })))
             .with_status(201)
             .with_header("content-type", "application/json")
             .with_body(
@@ -480,6 +489,7 @@ mod tests {
             &format!("{}/register", server.url()),
             vec!["http://127.0.0.1:9999/auth/callback".to_string()],
             "moltis-test",
+            &["read".to_string(), "write".to_string()],
         )
         .await
         .unwrap();
@@ -512,6 +522,7 @@ mod tests {
             &format!("{}/register", server.url()),
             vec!["http://127.0.0.1:9999/auth/callback".to_string()],
             "moltis",
+            &[],
         )
         .await
         .unwrap();
@@ -536,6 +547,7 @@ mod tests {
             &format!("{}/register", server.url()),
             vec!["http://127.0.0.1:9999/auth/callback".to_string()],
             "moltis",
+            &[],
         )
         .await;
 
