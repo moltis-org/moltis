@@ -19,6 +19,9 @@ use {
 
 use crate::templates::{build_nav_counts, onboarding_completed};
 
+mod remote_backends;
+pub use remote_backends::{api_get_remote_backends_handler, api_set_remote_backend_handler};
+
 const MCP_LIST_FAILED: &str = "MCP_LIST_FAILED";
 const IMAGE_CACHE_DELETE_FAILED: &str = "IMAGE_CACHE_DELETE_FAILED";
 const IMAGE_CACHE_PRUNE_FAILED: &str = "IMAGE_CACHE_PRUNE_FAILED";
@@ -103,27 +106,6 @@ fn managed_container_name(config: &moltis_config::MoltisConfig, name: &str) -> b
 pub struct SandboxSharedHomeUpdateRequest {
     enabled: bool,
     path: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
-pub struct RemoteBackendUpdateRequest {
-    /// Which backend: "vercel" or "daytona".
-    backend: String,
-    config: RemoteBackendConfigUpdate,
-}
-
-#[derive(Default, serde::Deserialize)]
-struct RemoteBackendConfigUpdate {
-    backend: Option<String>,
-    token: Option<Secret<String>>,
-    api_key: Option<Secret<String>>,
-    project_id: Option<Option<String>>,
-    team_id: Option<Option<String>>,
-    runtime: Option<String>,
-    timeout_ms: Option<u64>,
-    vcpus: Option<u64>,
-    api_url: Option<String>,
-    target: Option<Option<String>>,
 }
 
 fn shared_home_config_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
@@ -1087,6 +1069,15 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
         }));
     }
 
+    if remote_backends::coder_available(sb) {
+        backends.push(serde_json::json!({
+            "id": "coder",
+            "label": "Coder Workspace",
+            "kind": "remote",
+            "available": true,
+        }));
+    }
+
     // Always include restricted-host as fallback.
     backends.push(serde_json::json!({
         "id": "restricted-host",
@@ -1099,104 +1090,6 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
         "backends": backends,
         "default": sb.backend,
     }))
-}
-
-// ── Remote sandbox backend configuration ──────────────────────────────────────
-
-fn remote_backends_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
-    let sb = &config.tools.exec.sandbox;
-    let vercel_configured = configured_secret(&sb.vercel_token);
-    let vercel_from_env =
-        std::env::var("VERCEL_TOKEN").is_ok() || std::env::var("VERCEL_OIDC_TOKEN").is_ok();
-    let daytona_configured = configured_secret(&sb.daytona_api_key);
-    let daytona_from_env = std::env::var("DAYTONA_API_KEY").is_ok();
-    serde_json::json!({
-        "backend": sb.backend,
-        "vercel": {
-            "configured": vercel_configured,
-            "from_env": vercel_from_env,
-            "project_id": sb.vercel_project_id,
-            "team_id": sb.vercel_team_id,
-            "runtime": sb.vercel_runtime.as_deref().unwrap_or("node24"),
-            "timeout_ms": sb.vercel_timeout_ms.unwrap_or(300_000),
-            "vcpus": sb.vercel_vcpus.unwrap_or(2),
-        },
-        "daytona": {
-            "configured": daytona_configured,
-            "from_env": daytona_from_env,
-            "api_url": sb.daytona_api_url.as_deref().unwrap_or("https://app.daytona.io/api"),
-            "target": sb.daytona_target,
-        },
-    })
-}
-
-pub async fn api_get_remote_backends_handler() -> impl IntoResponse {
-    let config = moltis_config::discover_and_load();
-    Json(remote_backends_payload(&config))
-}
-
-pub async fn api_set_remote_backend_handler(
-    Json(body): Json<RemoteBackendUpdateRequest>,
-) -> impl IntoResponse {
-    let update_result = moltis_config::update_config(|cfg| {
-        let sb = &mut cfg.tools.exec.sandbox;
-        // Allow changing the default backend (auto/docker/podman/apple-container/vercel/daytona).
-        if let Some(v) = body.config.backend.as_deref() {
-            sb.backend = v.to_string();
-        }
-        match body.backend.as_str() {
-            "vercel" => {
-                if let Some(v) = body.config.token.clone() {
-                    sb.vercel_token = Some(v);
-                }
-                if let Some(v) = body.config.project_id.clone() {
-                    sb.vercel_project_id = v;
-                }
-                if let Some(v) = body.config.team_id.clone() {
-                    sb.vercel_team_id = v;
-                }
-                if let Some(v) = body.config.runtime.as_deref() {
-                    sb.vercel_runtime = Some(v.to_string());
-                }
-                if let Some(v) = body.config.timeout_ms {
-                    sb.vercel_timeout_ms = Some(v);
-                }
-                if let Some(v) = body.config.vcpus {
-                    sb.vercel_vcpus = Some(v as u32);
-                }
-            },
-            "daytona" => {
-                if let Some(v) = body.config.api_key.clone() {
-                    sb.daytona_api_key = Some(v);
-                }
-                if let Some(v) = body.config.api_url.as_deref() {
-                    sb.daytona_api_url = Some(v.to_string());
-                }
-                if let Some(v) = body.config.target.clone() {
-                    sb.daytona_target = v;
-                }
-            },
-            _ => {},
-        }
-    });
-
-    match update_result {
-        Ok(saved_path) => {
-            let config = moltis_config::discover_and_load();
-            Json(serde_json::json!({
-                "ok": true,
-                "restart_required": true,
-                "config_path": saved_path.display().to_string(),
-                "config": remote_backends_payload(&config),
-            }))
-            .into_response()
-        },
-        Err(e) => api_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "remote_backend_save_failed",
-            e.to_string(),
-        ),
-    }
 }
 
 pub async fn api_build_image_handler(Json(body): Json<serde_json::Value>) -> impl IntoResponse {

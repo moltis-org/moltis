@@ -8,7 +8,8 @@ use std::{
 use {
     async_trait::async_trait,
     secrecy::ExposeSecret,
-    tokio::sync::RwLock,
+    sha2::{Digest, Sha256},
+    tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore},
     tracing::{debug, info, warn},
 };
 
@@ -331,13 +332,54 @@ pub(crate) fn create_sandbox_backend(config: SandboxConfig) -> Arc<dyn Sandbox> 
 /// Create a backend by explicit name, using the given config.
 ///
 /// Used by the gateway to register additional backends into the multi-backend
-/// router at startup. If the backend cannot be created (missing credentials,
-/// wrong platform), falls back to `RestrictedHostSandbox`.
+/// router at startup. Backends that cannot be created may return an unavailable
+/// implementation that fails closed rather than executing on the host.
 pub fn select_backend_by_name(name: &str, config: &SandboxConfig) -> Arc<dyn Sandbox> {
     select_backend(SandboxConfig {
         backend: name.to_string(),
         ..config.clone()
     })
+}
+
+struct UnavailableSandbox {
+    backend_name: &'static str,
+    error: String,
+}
+
+impl UnavailableSandbox {
+    fn coder(error: impl Into<String>) -> Arc<dyn Sandbox> {
+        Arc::new(Self {
+            backend_name: "coder",
+            error: error.into(),
+        })
+    }
+
+    fn error(&self) -> Error {
+        Error::message(self.error.clone())
+    }
+}
+
+#[async_trait]
+impl Sandbox for UnavailableSandbox {
+    fn backend_name(&self) -> &'static str {
+        self.backend_name
+    }
+
+    fn is_real(&self) -> bool {
+        false
+    }
+
+    async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+        Err(self.error())
+    }
+
+    async fn exec(&self, _id: &SandboxId, _command: &str, _opts: &ExecOpts) -> Result<ExecResult> {
+        Err(self.error())
+    }
+
+    async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+        Err(self.error())
+    }
 }
 
 /// Select the sandbox backend based on config and platform availability.
@@ -475,21 +517,18 @@ fn create_daytona_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     Arc::new(DaytonaSandbox::new(config, daytona_config))
 }
 
-/// Create a Coder sandbox backend, falling back to `RestrictedHostSandbox`
-/// if the URL or token is not configured.
+/// Create a Coder sandbox backend, failing closed if required config is absent.
 fn create_coder_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     use super::coder::{CoderSandbox, CoderSandboxConfig};
 
     let Some(token) = config
         .coder_token
         .clone()
-        .filter(|token| !token.expose_secret().is_empty())
+        .filter(|token| !token.expose_secret().trim().is_empty())
     else {
-        tracing::warn!(
-            "coder sandbox requested but no token configured (set CODER_SESSION_TOKEN); \
-             using restricted-host"
-        );
-        return Arc::new(RestrictedHostSandbox::new(config));
+        let error = "coder sandbox is unavailable: no token configured (set CODER_SESSION_TOKEN)";
+        tracing::warn!("{error}");
+        return UnavailableSandbox::coder(error);
     };
 
     let Some(url) = config
@@ -498,11 +537,16 @@ fn create_coder_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         .map(|url| url.trim().trim_end_matches('/').to_string())
         .filter(|url| !url.is_empty())
     else {
-        tracing::warn!(
-            "coder sandbox requested but no URL configured (set CODER_URL); using restricted-host"
-        );
-        return Arc::new(RestrictedHostSandbox::new(config));
+        let error = "coder sandbox is unavailable: no URL configured (set CODER_URL)";
+        tracing::warn!("{error}");
+        return UnavailableSandbox::coder(error);
     };
+
+    if !has_coder_template(&config) {
+        let error = "coder sandbox is unavailable: no template configured (set CODER_TEMPLATE_ID or CODER_TEMPLATE_NAME)";
+        tracing::warn!("{error}");
+        return UnavailableSandbox::coder(error);
+    }
 
     let coder_config = CoderSandboxConfig {
         url,
@@ -524,10 +568,7 @@ fn create_coder_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         parameter_values: config.coder_parameter_values.clone(),
     };
 
-    tracing::info!(
-        url = coder_config.url,
-        "sandbox backend: coder (remote workspace)"
-    );
+    tracing::info!("sandbox backend: coder (remote workspace)");
     Arc::new(CoderSandbox::new(config, coder_config))
 }
 
@@ -535,6 +576,17 @@ fn has_secret(secret: &Option<secrecy::Secret<String>>) -> bool {
     secret
         .as_ref()
         .is_some_and(|secret| !secret.expose_secret().is_empty())
+}
+
+fn has_coder_template(config: &SandboxConfig) -> bool {
+    config
+        .coder_template_id
+        .as_deref()
+        .is_some_and(|template| !template.trim().is_empty())
+        || config
+            .coder_template_name
+            .as_deref()
+            .is_some_and(|template| !template.trim().is_empty())
 }
 
 /// Create a Firecracker sandbox backend.
@@ -688,11 +740,15 @@ pub fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         return create_daytona_backend(config);
     }
 
-    if has_secret(&config.coder_token)
+    if config
+        .coder_token
+        .as_ref()
+        .is_some_and(|token| !token.expose_secret().trim().is_empty())
         && config
             .coder_url
             .as_deref()
             .is_some_and(|url| !url.trim().is_empty())
+        && has_coder_template(&config)
     {
         tracing::info!("no local container runtime; using coder sandbox");
         return create_coder_backend(config);
@@ -770,9 +826,8 @@ pub struct SandboxRouter {
     /// Session keys where workspace sync-in has completed.
     /// Subsequent exec calls wait until sync_in finishes before proceeding.
     synced_sessions: RwLock<HashSet<String>>,
-    /// Per-session first-run failures that should unblock waiters without
-    /// allowing them to run against an incomplete sandbox workspace.
-    sync_failures: RwLock<HashMap<String, String>>,
+    /// Serializes preparation and runtime state changes for each session.
+    preparation_permits: RwLock<HashMap<String, Arc<Semaphore>>>,
     /// Whether a sandbox image pre-build is currently in progress.
     /// Used by the gateway to show a banner in the UI.
     pub building_flag: std::sync::atomic::AtomicBool,
@@ -780,6 +835,22 @@ pub struct SandboxRouter {
     /// Callers that arrive while `building_flag` is true can await this to
     /// avoid launching containers from the bare base image.
     pub build_complete: tokio::sync::Notify,
+}
+
+/// Runtime selected and fully prepared for one session operation.
+pub struct PreparedSandboxSession {
+    pub backend: Arc<dyn Sandbox>,
+    pub id: SandboxId,
+    pub image: String,
+    operation_permit: OwnedSemaphorePermit,
+}
+
+impl PreparedSandboxSession {
+    pub(crate) fn into_file_system_parts(
+        self,
+    ) -> (Arc<dyn Sandbox>, SandboxId, OwnedSemaphorePermit) {
+        (self.backend, self.id, self.operation_permit)
+    }
 }
 
 impl SandboxRouter {
@@ -806,7 +877,7 @@ impl SandboxRouter {
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
             synced_sessions: RwLock::new(HashSet::new()),
-            sync_failures: RwLock::new(HashMap::new()),
+            preparation_permits: RwLock::new(HashMap::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
             build_complete: tokio::sync::Notify::new(),
         }
@@ -830,7 +901,7 @@ impl SandboxRouter {
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
             synced_sessions: RwLock::new(HashSet::new()),
-            sync_failures: RwLock::new(HashMap::new()),
+            preparation_permits: RwLock::new(HashMap::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
             build_complete: tokio::sync::Notify::new(),
         }
@@ -846,70 +917,62 @@ impl SandboxRouter {
         let _ = self.event_tx.send(event);
     }
 
-    /// Mark a session as preparing for sandbox first-run work.
-    /// Returns `true` only the first time for a session key.
-    pub async fn mark_preparing_once(&self, session_key: &str) -> bool {
-        let inserted = self
-            .prepared_sessions
-            .write()
-            .await
-            .insert(session_key.to_string());
-        if inserted {
-            self.clear_synced_session(session_key).await;
-        }
-        inserted
-    }
-
-    /// Clear preparation marker for a session (used on cleanup or prepare failure).
-    pub async fn clear_prepared_session(&self, session_key: &str) {
-        self.prepared_sessions.write().await.remove(session_key);
-    }
-
-    /// Mark a session as having completed workspace sync-in.
-    pub async fn mark_synced(&self, session_key: &str) {
-        self.sync_failures.write().await.remove(session_key);
-        self.synced_sessions
-            .write()
-            .await
-            .insert(session_key.to_string());
-    }
-
-    /// Mark a session as unblocked after first-run preparation failed.
-    pub async fn mark_sync_failed(&self, session_key: &str, error: String) {
-        self.sync_failures
-            .write()
-            .await
-            .insert(session_key.to_string(), error);
-        self.synced_sessions
-            .write()
-            .await
-            .insert(session_key.to_string());
-    }
-
     /// Check whether workspace sync has completed for a session.
     pub async fn is_synced(&self, session_key: &str) -> bool {
         self.synced_sessions.read().await.contains(session_key)
     }
 
-    /// Return the first-run preparation failure for a session, if any.
-    pub async fn sync_failure(&self, session_key: &str) -> Option<String> {
-        self.sync_failures.read().await.get(session_key).cloned()
+    /// Check whether first-run sandbox preparation has completed successfully.
+    pub async fn is_prepared(&self, session_key: &str) -> bool {
+        self.prepared_sessions.read().await.contains(session_key)
     }
 
-    /// Clear sync marker for a session (used on cleanup).
-    pub async fn clear_synced_session(&self, session_key: &str) {
+    async fn clear_runtime_state_unlocked(&self, session_key: &str) {
+        self.prepared_sessions.write().await.remove(session_key);
         self.synced_sessions.write().await.remove(session_key);
-        self.sync_failures.write().await.remove(session_key);
     }
 
-    /// Clear runtime initialization markers for a session.
-    ///
-    /// Backend and image changes invalidate the prepared/synced state. The
-    /// next exec must run `ensure_ready` and, for isolated backends, sync the
-    /// workspace for the newly selected runtime.
-    pub async fn clear_runtime_state(&self, session_key: &str) {
-        self.clear_prepared_session(session_key).await;
-        self.clear_synced_session(session_key).await;
+    async fn preparation_permit(&self, session_key: &str) -> Result<OwnedSemaphorePermit> {
+        loop {
+            let semaphore = self
+                .preparation_permits
+                .write()
+                .await
+                .entry(session_key.to_string())
+                .or_insert_with(|| Arc::new(Semaphore::new(1)))
+                .clone();
+            if let Ok(permit) = semaphore.acquire_owned().await {
+                return Ok(permit);
+            }
+        }
+    }
+
+    async fn optional_preparation_permit(&self, session_key: &str) -> Option<OwnedSemaphorePermit> {
+        match self.preparation_permit(session_key).await {
+            Ok(permit) => Some(permit),
+            Err(error) => {
+                warn!(session = session_key, %error, "sandbox state change skipped");
+                None
+            },
+        }
+    }
+
+    async fn retire_preparation_permit(&self, session_key: &str, permit: OwnedSemaphorePermit) {
+        let mut permits = self.preparation_permits.write().await;
+        if permits
+            .get(session_key)
+            .is_some_and(|current| Arc::ptr_eq(current, permit.semaphore()))
+        {
+            permit.semaphore().close();
+            permits.remove(session_key);
+        }
+        // Closed waiters retry through the map after the old permit is released.
+        drop(permit);
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn preparation_permit_count(&self) -> usize {
+        self.preparation_permits.read().await.len()
     }
 
     /// Check whether a session should run sandboxed.
@@ -919,7 +982,9 @@ impl SandboxRouter {
     pub async fn is_sandboxed(&self, session_key: &str) -> bool {
         let backend = self.resolve_backend(session_key).await;
         if !backend.is_real() {
-            return false;
+            // An explicitly requested but unavailable backend must route into
+            // preparation and return its configuration error, never run on host.
+            return backend.backend_name() == "coder" && self.config.backend == "coder";
         }
         if let Some(&override_val) = self.overrides.read().await.get(session_key) {
             return override_val;
@@ -936,6 +1001,9 @@ impl SandboxRouter {
 
     /// Set a per-session sandbox override.
     pub async fn set_override(&self, session_key: &str, enabled: bool) {
+        let Some(_permit) = self.optional_preparation_permit(session_key).await else {
+            return;
+        };
         self.overrides
             .write()
             .await
@@ -944,11 +1012,17 @@ impl SandboxRouter {
 
     /// Remove a per-session override (revert to global mode).
     pub async fn remove_override(&self, session_key: &str) {
+        let Some(_permit) = self.optional_preparation_permit(session_key).await else {
+            return;
+        };
         self.overrides.write().await.remove(session_key);
     }
 
     /// Set a sandbox override from an agent preset.
     pub async fn set_agent_override(&self, session_key: &str, enabled: bool) {
+        let Some(_permit) = self.optional_preparation_permit(session_key).await else {
+            return;
+        };
         self.agent_overrides
             .write()
             .await
@@ -957,11 +1031,15 @@ impl SandboxRouter {
 
     /// Remove an agent preset override without clearing explicit session policy.
     pub async fn remove_agent_override(&self, session_key: &str) {
+        let Some(_permit) = self.optional_preparation_permit(session_key).await else {
+            return;
+        };
         self.agent_overrides.write().await.remove(session_key);
     }
 
     /// Derive a SandboxId for a given session key.
-    /// The key is sanitized for use as a container name (only alphanumeric, dash, underscore, dot).
+    /// The key is sanitized for use as a container name and suffixed with a
+    /// deterministic digest so distinct session keys cannot normalize to the same ID.
     pub fn sandbox_id_for(&self, session_key: &str) -> SandboxId {
         let sanitized: String = session_key
             .chars()
@@ -973,9 +1051,16 @@ impl SandboxRouter {
                 }
             })
             .collect();
+        let sanitized = if sanitized.is_empty() {
+            "sandbox".to_string()
+        } else {
+            sanitized
+        };
+        let digest = format!("{:x}", Sha256::digest(session_key.as_bytes()));
+        let key = format!("{sanitized}-{}", &digest[..12]);
         SandboxId {
             scope: self.config.scope.clone(),
-            key: sanitized,
+            key,
         }
     }
 
@@ -984,34 +1069,162 @@ impl SandboxRouter {
     /// For isolated backends, syncs workspace changes back to the host
     /// before destroying the sandbox.
     pub async fn cleanup_session(&self, session_key: &str) -> Result<()> {
+        self.cleanup_session_inner(session_key, false).await
+    }
+
+    /// Destroy sandbox resources without syncing workspace data back first.
+    /// Cleanup errors are returned after router state is cleared so callers can
+    /// explicitly continue a force deletion while still observing the failure.
+    pub async fn force_cleanup_session(&self, session_key: &str) -> Result<()> {
+        self.cleanup_session_inner(session_key, true).await
+    }
+
+    async fn cleanup_session_inner(&self, session_key: &str, force: bool) -> Result<()> {
+        let permit = self.preparation_permit(session_key).await?;
         let id = self.sandbox_id_for(session_key);
         let backend = self.resolve_backend(session_key).await;
 
         // Sync workspace changes back to host for isolated backends.
-        if backend.is_isolated()
+        if !force
+            && backend.is_isolated()
             && let Some(host_workspace) = super::sync::resolve_sync_workspace(&self.config, &id)
         {
             let sandbox_workspace = backend.workspace_dir_for(&id).await;
-            if let Err(e) =
-                super::sync::sync_out(&*backend, &id, &host_workspace, &sandbox_workspace).await
-            {
-                warn!(
-                    session = session_key,
-                    %id,
-                    error = %e,
-                    "workspace sync-out failed, changes in sandbox may be lost"
-                );
-            }
+            super::sync::sync_out(&*backend, &id, &host_workspace, &sandbox_workspace)
+                .await
+                .map_err(|error| {
+                    warn!(
+                        session = session_key,
+                        %id,
+                        %error,
+                        "workspace sync-out failed; preserving sandbox for retry"
+                    );
+                    Error::message(format!("workspace sync-out failed: {error}"))
+                })?;
         }
 
-        backend.cleanup(&id).await?;
-        self.remove_override(session_key).await;
-        self.remove_agent_override(session_key).await;
-        self.remove_backend_override(session_key).await;
-        self.remove_image_override(session_key).await;
-        self.clear_prepared_session(session_key).await;
-        self.clear_synced_session(session_key).await;
-        Ok(())
+        let cleanup_result = backend.cleanup(&id).await;
+        if cleanup_result.is_err() && !force {
+            return cleanup_result;
+        }
+        self.overrides.write().await.remove(session_key);
+        self.agent_overrides.write().await.remove(session_key);
+        self.backend_overrides.write().await.remove(session_key);
+        self.image_overrides.write().await.remove(session_key);
+        self.clear_runtime_state_unlocked(session_key).await;
+        match cleanup_result {
+            Ok(()) => {
+                self.retire_preparation_permit(session_key, permit).await;
+                Ok(())
+            },
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Resolve and prepare a session sandbox before any exec or filesystem use.
+    ///
+    /// `ensure_ready` intentionally runs on every call so remote backends can
+    /// refresh operation-scoped state such as Coder workspace TTLs.
+    pub async fn prepare_session(
+        &self,
+        session_key: &str,
+        skill_image: Option<&str>,
+    ) -> Result<PreparedSandboxSession> {
+        let operation_permit = self.preparation_permit(session_key).await?;
+        let id = self.sandbox_id_for(session_key);
+        let backend = self.resolve_backend(session_key).await;
+        let image = self
+            .resolve_image_for_backend_nowait(session_key, skill_image, backend.backend_name())
+            .await;
+        let announce_prepare = !self.is_prepared(session_key).await;
+
+        if announce_prepare {
+            self.emit_event(SandboxEvent::Preparing {
+                session_key: session_key.to_string(),
+                backend: backend.backend_name().to_string(),
+                image: image.clone(),
+            });
+        }
+
+        if let Err(error) = backend.ensure_ready(&id, Some(&image)).await {
+            if announce_prepare {
+                self.emit_event(SandboxEvent::PrepareFailed {
+                    session_key: session_key.to_string(),
+                    backend: backend.backend_name().to_string(),
+                    image: image.clone(),
+                    error: error.to_string(),
+                });
+            }
+            return Err(error);
+        }
+
+        if announce_prepare {
+            if backend.is_isolated() {
+                if let Some(host_workspace) = super::sync::resolve_sync_workspace(&self.config, &id)
+                {
+                    let sandbox_workspace = backend.workspace_dir_for(&id).await;
+                    if let Err(error) =
+                        super::sync::sync_in(&*backend, &id, &host_workspace, &sandbox_workspace)
+                            .await
+                    {
+                        let error = error.to_string();
+                        self.emit_event(SandboxEvent::PrepareFailed {
+                            session_key: session_key.to_string(),
+                            backend: backend.backend_name().to_string(),
+                            image: image.clone(),
+                            error: error.clone(),
+                        });
+                        return Err(Error::message(format!("workspace sync-in failed: {error}")));
+                    }
+                }
+
+                let has_prebuilt = image != DEFAULT_SANDBOX_IMAGE && !image.is_empty();
+                let packages = &self.config.packages;
+                if !has_prebuilt && !packages.is_empty() {
+                    self.emit_event(SandboxEvent::Provisioning {
+                        container: id.to_string(),
+                        packages: packages.clone(),
+                    });
+                    match backend.provision_packages(&id, packages).await {
+                        Ok(()) => self.emit_event(SandboxEvent::Provisioned {
+                            container: id.to_string(),
+                        }),
+                        Err(error) => {
+                            warn!(
+                                session = session_key,
+                                %id,
+                                %error,
+                                "package provisioning failed (non-fatal)"
+                            );
+                            self.emit_event(SandboxEvent::ProvisionFailed {
+                                container: id.to_string(),
+                                error: error.to_string(),
+                            });
+                        },
+                    }
+                }
+                self.synced_sessions
+                    .write()
+                    .await
+                    .insert(session_key.to_string());
+            }
+            self.prepared_sessions
+                .write()
+                .await
+                .insert(session_key.to_string());
+            self.emit_event(SandboxEvent::Prepared {
+                session_key: session_key.to_string(),
+                backend: backend.backend_name().to_string(),
+                image: image.clone(),
+            });
+        }
+
+        Ok(PreparedSandboxSession {
+            backend,
+            id,
+            image,
+            operation_permit,
+        })
     }
 
     /// Access the default sandbox backend.
@@ -1068,18 +1281,22 @@ impl SandboxRouter {
                 self.available_backends()
             )));
         }
+        let _permit = self.preparation_permit(session_key).await?;
         self.backend_overrides
             .write()
             .await
             .insert(session_key.to_string(), backend_name.to_string());
-        self.clear_runtime_state(session_key).await;
+        self.clear_runtime_state_unlocked(session_key).await;
         Ok(())
     }
 
     /// Remove a per-session backend override (revert to default).
     pub async fn remove_backend_override(&self, session_key: &str) {
+        let Some(_permit) = self.optional_preparation_permit(session_key).await else {
+            return;
+        };
         self.backend_overrides.write().await.remove(session_key);
-        self.clear_runtime_state(session_key).await;
+        self.clear_runtime_state_unlocked(session_key).await;
     }
 
     /// Access the global sandbox mode.
@@ -1099,17 +1316,23 @@ impl SandboxRouter {
 
     /// Set a per-session image override.
     pub async fn set_image_override(&self, session_key: &str, image: String) {
+        let Some(_permit) = self.optional_preparation_permit(session_key).await else {
+            return;
+        };
         self.image_overrides
             .write()
             .await
             .insert(session_key.to_string(), image);
-        self.clear_runtime_state(session_key).await;
+        self.clear_runtime_state_unlocked(session_key).await;
     }
 
     /// Remove a per-session image override.
     pub async fn remove_image_override(&self, session_key: &str) {
+        let Some(_permit) = self.optional_preparation_permit(session_key).await else {
+            return;
+        };
         self.image_overrides.write().await.remove(session_key);
-        self.clear_runtime_state(session_key).await;
+        self.clear_runtime_state_unlocked(session_key).await;
     }
 
     /// Set a runtime override for the global default image.

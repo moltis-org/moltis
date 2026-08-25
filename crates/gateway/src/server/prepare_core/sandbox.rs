@@ -39,11 +39,30 @@ pub(super) fn build_sandbox_router(
     let mut router = moltis_tools::sandbox::SandboxRouter::new(config.clone());
 
     // Register additional remote backends that have credentials configured.
-    // Env vars (VERCEL_TOKEN, DAYTONA_API_KEY) are resolved by the config crate
+    // Env vars for remote backends are resolved by the config crate
     // into the config fields.
     for (name, has_creds) in [
         ("vercel", has_secret(&config.vercel_token)),
         ("daytona", has_secret(&config.daytona_api_key)),
+        (
+            "coder",
+            config
+                .coder_token
+                .as_ref()
+                .is_some_and(|token| !token.expose_secret().trim().is_empty())
+                && config
+                    .coder_url
+                    .as_deref()
+                    .is_some_and(|url| !url.trim().is_empty())
+                && (config
+                    .coder_template_id
+                    .as_deref()
+                    .is_some_and(|template| !template.trim().is_empty())
+                    || config
+                        .coder_template_name
+                        .as_deref()
+                        .is_some_and(|template| !template.trim().is_empty())),
+        ),
     ] {
         if has_creds && router.backend_name() != name {
             let backend = moltis_tools::sandbox::router::select_backend_by_name(name, &config);
@@ -347,7 +366,11 @@ fn concise_error_summary(error: &moltis_tools::error::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::concise_error_summary;
+    use {
+        super::{build_sandbox_router, concise_error_summary},
+        moltis_tools::sandbox::SandboxConfig,
+        secrecy::Secret,
+    };
 
     #[test]
     fn concise_error_summary_uses_first_line() {
@@ -364,5 +387,63 @@ mod tests {
             concise_error_summary(&error),
             format!("{}...", "x".repeat(160))
         );
+    }
+
+    #[test]
+    fn registers_coder_when_url_token_and_template_are_configured() {
+        let router = build_sandbox_router(
+            &SandboxConfig {
+                backend: "restricted-host".into(),
+                coder_url: Some("https://coder.example.com".into()),
+                coder_token: Some(Secret::new("token".into())),
+                coder_template_name: Some("rust".into()),
+                ..Default::default()
+            },
+            "test-sandbox",
+            None,
+        );
+
+        assert!(router.available_backends().contains(&"coder"));
+    }
+
+    #[test]
+    fn does_not_register_coder_with_incomplete_or_empty_config() {
+        for (url, token, template) in [
+            (
+                Some("https://coder.example.com".into()),
+                None,
+                Some("rust".into()),
+            ),
+            (None, Some(Secret::new("token".into())), Some("rust".into())),
+            (
+                Some("   ".into()),
+                Some(Secret::new("token".into())),
+                Some("rust".into()),
+            ),
+            (
+                Some("https://coder.example.com".into()),
+                Some(Secret::new("   ".into())),
+                Some("rust".into()),
+            ),
+            (
+                Some("https://coder.example.com".into()),
+                Some(Secret::new("token".into())),
+                None,
+            ),
+        ] {
+            let router = build_sandbox_router(
+                &SandboxConfig {
+                    backend: "restricted-host".into(),
+                    coder_url: url,
+                    coder_token: token,
+                    coder_template_name: template,
+                    ..Default::default()
+                },
+                "test-sandbox",
+                None,
+            );
+
+            assert!(!router.available_backends().contains(&"coder"));
+        }
     }
 }

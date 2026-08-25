@@ -1,6 +1,7 @@
 use {
     super::*,
     crate::{env_subst::substitute_env, schema::MoltisConfig},
+    secrecy::ExposeSecret,
     std::{
         path::{Path, PathBuf},
         sync::Mutex,
@@ -150,6 +151,53 @@ pub fn initialize_config() {
 /// Returns `MoltisConfig::default()` if no config file is found.
 pub fn discover_and_load() -> MoltisConfig {
     discover_and_load_readonly()
+}
+
+/// Whether Coder's third-party environment aliases supplied effective values.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CoderEnvSources {
+    pub url: bool,
+    pub token: bool,
+}
+
+/// Load config and report whether Coder aliases supplied the effective URL or token.
+///
+/// Explicit config and `MOLTIS_*` overrides are resolved first because Coder aliases
+/// only fill empty fields. Environment values containing only whitespace are never
+/// reported as sources.
+pub fn discover_and_load_with_coder_env_sources() -> (MoltisConfig, CoderEnvSources) {
+    let config = discover_and_load_readonly_with_aliases(false);
+    let vars: Vec<(String, String)> = std::env::vars().collect();
+    let sources = coder_env_sources_with(&config, &vars);
+    let config = apply_env_overrides_with_options(config, vars.into_iter(), true);
+    (config, sources)
+}
+
+fn coder_env_sources_with(config: &MoltisConfig, vars: &[(String, String)]) -> CoderEnvSources {
+    let sandbox = &config.tools.exec.sandbox;
+    let url_alias_can_apply = sandbox.coder_url.as_deref().is_none_or(str::is_empty);
+    let token_alias_can_apply = sandbox
+        .coder_token
+        .as_ref()
+        .is_none_or(|token| token.expose_secret().is_empty());
+    let has_nonblank = |name: &str| {
+        vars.iter()
+            .find(|(key, _)| key == name)
+            .is_some_and(|(_, value)| !value.trim().is_empty())
+    };
+
+    CoderEnvSources {
+        url: url_alias_can_apply && has_nonblank("CODER_URL"),
+        token: token_alias_can_apply && has_nonblank("CODER_SESSION_TOKEN"),
+    }
+}
+
+#[cfg(test)]
+pub(super) fn coder_env_sources_with_vars(
+    config: &MoltisConfig,
+    vars: &[(String, String)],
+) -> CoderEnvSources {
+    coder_env_sources_with(config, vars)
 }
 
 /// Load config using layered merge without writing any files.
@@ -338,12 +386,29 @@ static CONFIG_SAVE_LOCK: Mutex<ConfigSaveState> = Mutex::new(ConfigSaveState { t
 /// Acquires a process-wide lock so concurrent callers cannot race.
 /// Returns the path written to.
 pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> crate::Result<PathBuf> {
+    update_config_fallible(|config| {
+        f(config);
+        Ok(())
+    })
+}
+
+/// Atomically load, update, validate, and save the current config.
+///
+/// The fallible closure runs while the process-wide config save lock is held.
+/// Returning an error skips persistence, allowing validation to use the freshly
+/// reloaded config without opening a read/validate/write race.
+pub fn update_config_fallible<E>(
+    f: impl FnOnce(&mut MoltisConfig) -> Result<(), E>,
+) -> Result<PathBuf, E>
+where
+    E: From<crate::Error>,
+{
     let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let target_path = find_or_default_config_path();
     guard.target_path = Some(target_path.clone());
     let mut config = discover_and_load_readonly_with_aliases(false);
-    f(&mut config);
-    save_user_config_to_path(&target_path, &config)
+    f(&mut config)?;
+    save_user_config_to_path(&target_path, &config).map_err(E::from)
 }
 
 /// Serialize `config` to TOML and write it to the user-global config path.

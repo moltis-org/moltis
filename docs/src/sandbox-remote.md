@@ -121,6 +121,15 @@ cleanup.
 
 ### Configuration
 
+The simplest setup is **Settings → Sandboxes → Coder**. Enter the deployment
+URL, session token, and either a template ID or template name. Organization,
+user, workspace prefix, workspace TTL, and size/preset are available on the same
+tab. Environment-managed `CODER_URL` and `CODER_SESSION_TOKEN` values are shown
+as read-only only when those nonempty aliases supply the effective value. An
+explicit `moltis.toml` value takes precedence and remains editable even when a
+stale alias is present. Environment values are never copied into `moltis.toml`
+when other fields are saved.
+
 Set environment variables:
 
 ```bash
@@ -152,6 +161,17 @@ large = "large"
 xlarge = "xlarge"
 ```
 
+`coder_url` must be an absolute HTTPS URL without user information, a query
+string, or a fragment. Plain HTTP is accepted only for `localhost` or a literal
+loopback address such as `127.0.0.1` or `[::1]`; private network addresses and
+ordinary hostnames still require HTTPS. This policy is enforced by static config
+diagnostics and by the web API before it persists a UI save.
+
+`coder_ttl_ms` must be zero or a positive whole number of milliseconds. A value
+of zero disables Coder's automatic workspace shutdown; omitting the field leaves
+the template or deployment default in effect. Negative values are rejected by
+config diagnostics and by the web API before persistence.
+
 ### Template Presets
 
 `coder_size` selects an entry from `coder_template_presets`. Each value may be
@@ -166,16 +186,46 @@ represented by presets:
 region = "us"
 ```
 
+The web form covers the core Coder fields. The TOML blocks above are the
+advanced escape hatch for `coder_template_presets`, `coder_parameter_values`,
+or any newly supported Coder option that does not yet have a dedicated control.
+
 ### How It Works
 
-- `backend = "auto"` detects `CODER_URL` and `CODER_SESSION_TOKEN` when no local Docker runtime is available
+- `backend = "auto"` considers Coder available only when the effective config has a nonempty URL, a non-whitespace token, and either a template ID or template name
 - Each session creates an ephemeral Coder workspace
-- Moltis waits for the workspace agent to report lifecycle state `ready`, so
-  commands do not race the template's startup script. A workspace whose agent
-  reaches a terminal state (`start_error`, `off`, …) fails fast instead of
-  polling until the create timeout
+- Moltis polls workspace/build/agent lifecycle state every two seconds for up to
+  ten minutes. Only an explicit agent lifecycle state of `ready` is accepted, so
+  commands do not race the template's startup script. `start_timeout`, a missing
+  lifecycle state, and every other non-`ready` state are never treated as usable.
+  Failed or canceled builds and terminal agent states fail immediately; other
+  non-ready responses eventually fail at the creation deadline
 - Commands execute via Coder's reconnecting PTY WebSocket
 - On cleanup, the Coder workspace is deleted
+
+Concurrent setup calls for one session are serialized; callers waiting on the
+same session reuse the first ready workspace instead of creating duplicates.
+Readiness polling itself retries pending lifecycle states until the ten-minute
+creation deadline. If startup fails, Moltis requests deletion immediately. When
+that cleanup request also fails, the provisional workspace remains tracked so a
+later command can revalidate or restart it instead of creating an untracked
+duplicate. Cleanup similarly retains a workspace in the active map until Coder
+confirms deletion (a `404` also counts as already deleted), allowing a later
+cleanup call to retry rather than silently losing lifecycle ownership.
+
+The Coder HTTP client has a five-minute request timeout. Workspace creation has
+the separate ten-minute readiness deadline above. Each command uses the normal
+Moltis execution timeout, and `coder_ttl_ms` is Coder's workspace autostop TTL;
+it does not change API, readiness, or command timeouts.
+
+### Compatibility
+
+Moltis does not currently guarantee a minimum Coder release or maintain a
+version compatibility matrix. The integration requires the Coder v2 workspace,
+build, workspace-agent, and reconnecting PTY APIs used above. In particular, the
+workspace-agent response must include lifecycle state `ready`; deployments that
+omit that state or expose an incompatible lifecycle schema fail closed rather
+than running commands in a workspace of unknown readiness.
 
 ### Command and File Transport
 
@@ -203,11 +253,12 @@ that programs which self-format to `COLUMNS` do not wrap their own output.
 ### Workspace Names
 
 Coder validates workspace names against `^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$` with a
-32 character limit. Moltis derives the name from
+32 character limit. Moltis derives the name deterministically from
 `coder_workspace_prefix` and the session key, lowercasing and collapsing every
-other character to `-`. Names that would exceed the limit are truncated with a
-short digest of the full session key appended, so sessions sharing a long
-prefix still map to distinct workspaces.
+other character to `-`, then always appending a stable hash of the original
+prefix and session key. The readable portion is truncated as needed to fit. The
+same pair therefore produces the same name across restarts, while values that
+normalize to the same slug or share a long prefix remain distinct.
 
 ## Local Firecracker
 
@@ -250,7 +301,7 @@ When `backend = "auto"` (the default), moltis selects the sandbox backend
 in this order:
 
 1. **Local**: Apple Container → Podman → Docker → (next)
-2. **Remote**: Vercel (if `VERCEL_TOKEN` set) → Daytona (if `DAYTONA_API_KEY` set) → Coder (if `CODER_URL` and `CODER_SESSION_TOKEN` set)
+2. **Remote**: Vercel (if `VERCEL_TOKEN` set) → Daytona (if `DAYTONA_API_KEY` set) → Coder (if URL, token, and a template ID or name are configured)
 3. **Fallback**: Restricted Host (rlimits only, no isolation)
 
 ## Multi-Backend Routing
@@ -263,13 +314,16 @@ allows different sessions to use different backends:
 { "key": "session:quick-test", "sandboxBackend": "docker" }
 ```
 
-Configure backends in the **Settings → Sandboxes → Remote sandbox backends**
-section of the web UI, or via environment variables and `moltis.toml`.
+Configure backends in the backend-specific tabs under **Settings → Sandboxes**,
+or via environment variables and `moltis.toml`.
 
 ## Web UI Configuration
 
-Navigate to **Settings → Sandboxes** and scroll to the "Remote sandbox backends"
-section. Enter your API tokens and save — moltis will use them after restart.
+Navigate to **Settings → Sandboxes**, choose **Vercel**, **Daytona**, or
+**Coder**, enter the required credentials and provider fields, then save. The
+Coder form preserves an existing session token when the token field is left
+blank and uses the new settings after restart. Coder saves with an insecure or
+malformed URL are rejected without changing the on-disk config.
 
 ## Package Provisioning
 

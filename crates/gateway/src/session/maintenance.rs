@@ -12,7 +12,7 @@ impl LiveSessionService {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // Check for worktree cleanup before deleting metadata.
+        // Reject unsafe worktree deletion before changing sandbox or session state.
         if let Some(entry) = self.metadata.get(key).await
             && entry.worktree_branch.is_some()
             && let Some(ref project_id) = entry.project_id
@@ -22,7 +22,6 @@ impl LiveSessionService {
             let project_dir = &project.directory;
             let wt_dir = project_dir.join(".moltis-worktrees").join(key);
 
-            // Safety checks unless force is set.
             if !force
                 && wt_dir.exists()
                 && let Ok(true) =
@@ -32,6 +31,32 @@ impl LiveSessionService {
                     "worktree has uncommitted changes; use force: true to delete anyway".into(),
                 );
             }
+        }
+
+        // Preserve remote workspace changes before deleting anything that makes
+        // the session retryable. Force explicitly skips sync-out and continues.
+        if let Some(ref router) = self.sandbox_router {
+            if force {
+                if let Err(e) = router.force_cleanup_session(key).await {
+                    tracing::warn!(session = key, error = %e, "forced sandbox cleanup failed; continuing session deletion");
+                }
+            } else {
+                router
+                    .cleanup_session(key)
+                    .await
+                    .map_err(ServiceError::message)?;
+            }
+        }
+
+        // Clean up a project worktree only after sandbox sync-out succeeds.
+        if let Some(entry) = self.metadata.get(key).await
+            && entry.worktree_branch.is_some()
+            && let Some(ref project_id) = entry.project_id
+            && let Some(ref project_store) = self.project_store
+            && let Ok(Some(project)) = project_store.get(project_id).await
+        {
+            let project_dir = &project.directory;
+            let wt_dir = project_dir.join(".moltis-worktrees").join(key);
 
             // Run teardown command if configured.
             if let Some(ref cmd) = project.teardown_command
@@ -49,13 +74,6 @@ impl LiveSessionService {
         }
 
         self.store.clear(key).await.map_err(ServiceError::message)?;
-
-        // Clean up sandbox resources for this session.
-        if let Some(ref router) = self.sandbox_router
-            && let Err(e) = router.cleanup_session(key).await
-        {
-            tracing::warn!("sandbox cleanup for session {key}: {e}");
-        }
 
         // Cascade-delete session state.
         if let Some(ref state_store) = self.state_store
@@ -360,5 +378,164 @@ impl LiveSessionService {
                 "assistantMessages": assistant_messages,
             }
         }))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use {
+        super::*,
+        async_trait::async_trait,
+        moltis_tools::{
+            error::{Error, Result},
+            exec::{ExecOpts, ExecResult},
+            sandbox::{Sandbox, SandboxConfig, SandboxId, SandboxRouter},
+        },
+        std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    struct DeletionSandbox {
+        exec_calls: AtomicUsize,
+        cleanup_calls: AtomicUsize,
+        cleanup_fails: bool,
+    }
+
+    impl DeletionSandbox {
+        fn new(cleanup_fails: bool) -> Self {
+            Self {
+                exec_calls: AtomicUsize::new(0),
+                cleanup_calls: AtomicUsize::new(0),
+                cleanup_fails,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Sandbox for DeletionSandbox {
+        fn backend_name(&self) -> &'static str {
+            "deletion-test"
+        }
+
+        fn is_isolated(&self) -> bool {
+            true
+        }
+
+        async fn ensure_ready(&self, _id: &SandboxId, _image: Option<&str>) -> Result<()> {
+            Ok(())
+        }
+
+        async fn exec(
+            &self,
+            _id: &SandboxId,
+            command: &str,
+            _opts: &ExecOpts,
+        ) -> Result<ExecResult> {
+            self.exec_calls.fetch_add(1, Ordering::SeqCst);
+            let (stdout, stderr, exit_code) = if command.starts_with("if [ -d") {
+                ("non-empty".into(), String::new(), 0)
+            } else if command.starts_with("tar -czf") {
+                (String::new(), "sync transfer failed".into(), 1)
+            } else {
+                (String::new(), String::new(), 0)
+            };
+            Ok(ExecResult {
+                stdout,
+                stderr,
+                exit_code,
+            })
+        }
+
+        async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+            self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
+            if self.cleanup_fails {
+                return Err(Error::message("backend cleanup failed"));
+            }
+            Ok(())
+        }
+    }
+
+    async fn metadata() -> Arc<SqliteSessionMetadata> {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        moltis_projects::run_migrations(&pool).await.unwrap();
+        SqliteSessionMetadata::init(&pool).await.unwrap();
+        Arc::new(SqliteSessionMetadata::new(pool))
+    }
+
+    #[tokio::test]
+    async fn non_force_delete_keeps_session_retryable_when_sync_out_fails() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(data.path().to_path_buf()));
+        let metadata = metadata().await;
+        let key = "session:sync-delete";
+        store
+            .append(
+                key,
+                &serde_json::json!({"role": "user", "content": "keep me"}),
+            )
+            .await
+            .unwrap();
+        metadata.upsert(key, Some("Keep".into())).await.unwrap();
+        let backend = Arc::new(DeletionSandbox::new(false));
+        let router = Arc::new(SandboxRouter::with_backend(
+            SandboxConfig {
+                shared_home_dir: Some(workspace.path().to_path_buf()),
+                ..Default::default()
+            },
+            Arc::clone(&backend) as Arc<dyn Sandbox>,
+        ));
+        let service = LiveSessionService::new(Arc::clone(&store), Arc::clone(&metadata))
+            .with_sandbox_router(router);
+
+        let error = service
+            .delete_impl(serde_json::json!({"key": key}))
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("sync transfer failed"));
+        assert_eq!(store.read(key).await.unwrap().len(), 1);
+        assert!(metadata.get(key).await.is_some());
+        assert_eq!(backend.cleanup_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn force_delete_discards_sync_out_and_continues_after_cleanup_failure() {
+        let data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(data.path().to_path_buf()));
+        let metadata = metadata().await;
+        let key = "session:force-delete";
+        store
+            .append(
+                key,
+                &serde_json::json!({"role": "user", "content": "discard me"}),
+            )
+            .await
+            .unwrap();
+        metadata.upsert(key, Some("Discard".into())).await.unwrap();
+        let backend = Arc::new(DeletionSandbox::new(true));
+        let router = Arc::new(SandboxRouter::with_backend(
+            SandboxConfig {
+                shared_home_dir: Some(workspace.path().to_path_buf()),
+                ..Default::default()
+            },
+            Arc::clone(&backend) as Arc<dyn Sandbox>,
+        ));
+        let service = LiveSessionService::new(Arc::clone(&store), Arc::clone(&metadata))
+            .with_sandbox_router(router);
+
+        service
+            .delete_impl(serde_json::json!({"key": key, "force": true}))
+            .await
+            .unwrap();
+
+        assert!(store.read(key).await.unwrap().is_empty());
+        assert!(metadata.get(key).await.is_none());
+        assert_eq!(backend.exec_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(backend.cleanup_calls.load(Ordering::SeqCst), 1);
     }
 }

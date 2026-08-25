@@ -279,5 +279,6 @@ mod linux;
 mod network;
 mod platform;
 mod restricted_host;
+mod router_lifecycle;
 #[cfg(feature = "wasm")]
 mod wasm;

@@ -170,6 +170,14 @@ pub fn validate_toml_str(toml_str: &str) -> ValidationResult {
     }
 }
 
+/// Validate a Coder deployment URL for use by config diagnostics and API callers.
+///
+/// Coder credentials must only be sent over HTTPS, except when connecting to
+/// localhost or a literal loopback address during local development.
+pub fn validate_coder_url(value: &str) -> Result<(), String> {
+    semantic::validate_coder_url(value)
+}
+
 fn levenshtein(a: &str, b: &str) -> usize {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();

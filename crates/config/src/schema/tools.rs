@@ -794,10 +794,11 @@ pub struct SandboxConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daytona_image: Option<String>,
 
-    /// Coder deployment URL.
+    /// Coder deployment URL. Must use HTTPS, except HTTP is allowed for
+    /// localhost and literal loopback addresses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coder_url: Option<String>,
-    /// Coder session token.
+    /// Coder session token. Required when the Coder backend is selected.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -811,16 +812,16 @@ pub struct SandboxConfig {
     /// Coder user name, ID, or `me`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coder_user: Option<String>,
-    /// Coder template ID.
+    /// Coder template ID. Either this or `coder_template_name` is required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coder_template_id: Option<String>,
-    /// Coder template name.
+    /// Coder template name. Either this or `coder_template_id` is required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coder_template_name: Option<String>,
     /// Prefix for Moltis-created Coder workspaces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coder_workspace_prefix: Option<String>,
-    /// Workspace TTL in milliseconds.
+    /// Workspace autostop TTL in milliseconds. Zero disables autostop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coder_ttl_ms: Option<i64>,
     /// Logical workspace size key used with `coder_template_presets`.

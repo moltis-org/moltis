@@ -464,14 +464,17 @@ port = {port}                           # Port number (auto-generated for this i
 # allow_nested_podman = false       # DANGEROUS: privileged nested Podman sandbox
                                     # Both require backend = "podman" and are mutually exclusive
 
-# Remote Coder workspaces. Preset values may be Coder preset names or UUIDs.
+# Remote Coder workspaces. URL, token, and either template ID or name are required.
+# Use HTTPS except for local development at localhost or a literal loopback address.
+# Preset values may be Coder preset names or UUIDs.
 # coder_url = "https://coder.example.com"
 # coder_token = "${{CODER_SESSION_TOKEN}}"
 # coder_organization = "default"
 # coder_user = "me"
+# coder_template_id = "00000000-0000-0000-0000-000000000000"
 # coder_template_name = "moltis-devbox"
 # coder_workspace_prefix = "moltis"
-# coder_ttl_ms = 300000
+# coder_ttl_ms = 300000              # Zero disables Coder workspace autostop
 # coder_size = "medium"
 # coder_template_presets = {{ small = "small", medium = "medium", large = "large", xlarge = "xlarge" }}
 

@@ -1140,6 +1140,31 @@ fn apply_env_overrides_coder_aliases() {
 }
 
 #[test]
+fn coder_env_sources_require_nonblank_effective_aliases() {
+    let config = MoltisConfig::default();
+    let sources = coder_env_sources_with_vars(&config, &[
+        ("CODER_URL".into(), "https://coder.example.com".into()),
+        ("CODER_SESSION_TOKEN".into(), " \t ".into()),
+    ]);
+
+    assert!(sources.url);
+    assert!(!sources.token);
+}
+
+#[test]
+fn coder_env_sources_respect_explicit_config_precedence() {
+    let mut config = MoltisConfig::default();
+    config.tools.exec.sandbox.coder_url = Some("https://configured.example.com".into());
+    config.tools.exec.sandbox.coder_token = Some(Secret::new("configured-token".into()));
+    let sources = coder_env_sources_with_vars(&config, &[
+        ("CODER_URL".into(), "https://stale.example.com".into()),
+        ("CODER_SESSION_TOKEN".into(), "stale-token".into()),
+    ]);
+
+    assert_eq!(sources, CoderEnvSources::default());
+}
+
+#[test]
 fn apply_env_overrides_alias_does_not_overwrite_explicit() {
     let vars = vec![("VERCEL_TOKEN".into(), "from_env".into())];
     let mut config = MoltisConfig::default();

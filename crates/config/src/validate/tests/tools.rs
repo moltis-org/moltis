@@ -184,6 +184,163 @@ managed_files_mount = "rw"
 }
 
 #[test]
+fn coder_url_accepts_https_and_local_loopback_http() {
+    for url in [
+        "https://coder.example.com",
+        "https://coder.example.com/base/path",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://127.42.0.9",
+        "http://[::1]:3000",
+    ] {
+        let result = validate_toml_str(&format!("[tools.exec.sandbox]\ncoder_url = {url:?}\n"));
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.path != "tools.exec.sandbox.coder_url"),
+            "expected {url:?} to be accepted: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn coder_url_rejects_insecure_or_ambiguous_urls() {
+    for url in [
+        "http://coder.example.com",
+        "http://192.168.1.10",
+        "ftp://coder.example.com",
+        "https://user@coder.example.com",
+        "https://@coder.example.com",
+        "https://coder.example.com?token=secret",
+        "https://coder.example.com/#settings",
+        "coder.example.com",
+        "https://",
+    ] {
+        let result = validate_toml_str(&format!("[tools.exec.sandbox]\ncoder_url = {url:?}\n"));
+        assert!(
+            result.diagnostics.iter().any(|diagnostic| {
+                diagnostic.severity == Severity::Error
+                    && diagnostic.path == "tools.exec.sandbox.coder_url"
+            }),
+            "expected {url:?} to be rejected: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn explicit_coder_backend_requires_core_configuration() {
+    let result = validate_toml_str(
+        r#"
+[tools.exec.sandbox]
+backend = "coder"
+"#,
+    );
+
+    for path in [
+        "tools.exec.sandbox.coder_url",
+        "tools.exec.sandbox.coder_token",
+        "tools.exec.sandbox",
+    ] {
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.severity == Severity::Error && diagnostic.path == path),
+            "expected missing Coder field diagnostic at {path}: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn explicit_coder_backend_accepts_template_id_or_name() {
+    for template in [
+        "coder_template_id = \"template-id\"",
+        "coder_template_name = \"devbox\"",
+    ] {
+        let result = validate_toml_str(&format!(
+            r#"
+[tools.exec.sandbox]
+backend = "coder"
+coder_url = "https://coder.example.com"
+coder_token = "token"
+{template}
+"#
+        ));
+        assert!(
+            !result.has_errors(),
+            "expected valid Coder config: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn explicit_coder_backend_rejects_whitespace_token() {
+    let result = validate_toml_str(
+        r#"
+[tools.exec.sandbox]
+backend = "coder"
+coder_url = "https://coder.example.com"
+coder_token = "   "
+coder_template_name = "devbox"
+"#,
+    );
+
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        diagnostic.severity == Severity::Error
+            && diagnostic.path == "tools.exec.sandbox.coder_token"
+    }));
+}
+
+#[test]
+fn coder_ttl_rejects_negative_values_and_accepts_zero() {
+    let negative = validate_toml_str(
+        r#"
+[tools.exec.sandbox]
+coder_ttl_ms = -1
+"#,
+    );
+    assert!(negative.diagnostics.iter().any(|diagnostic| {
+        diagnostic.severity == Severity::Error
+            && diagnostic.path == "tools.exec.sandbox.coder_ttl_ms"
+    }));
+
+    let zero = validate_toml_str(
+        r#"
+[tools.exec.sandbox]
+coder_ttl_ms = 0
+"#,
+    );
+    assert!(zero.diagnostics.iter().all(|diagnostic| {
+        diagnostic.path != "tools.exec.sandbox.coder_ttl_ms"
+            || diagnostic.severity != Severity::Error
+    }));
+}
+
+#[test]
+fn coder_static_diagnostics_allow_unresolved_environment_placeholders() {
+    let result = validate_toml_str(
+        r#"
+[tools.exec.sandbox]
+backend = "coder"
+coder_url = "${CODER_URL}"
+coder_token = "${CODER_SESSION_TOKEN}"
+coder_template_name = "${CODER_TEMPLATE_NAME}"
+"#,
+    );
+
+    assert!(
+        !result.has_errors(),
+        "unresolved environment placeholders should be deferred: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn unknown_security_level_warned() {
     let toml = r#"
 [tools.exec]

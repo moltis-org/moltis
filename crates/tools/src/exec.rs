@@ -682,135 +682,14 @@ impl AgentTool for ExecTool {
         let result = if let Some(ref router) = self.sandbox_router {
             let sk = session_key.unwrap_or("main");
             if is_sandboxed {
-                let id = router.sandbox_id_for(sk);
-                let backend = router.resolve_backend(sk).await;
-                let image = router
-                    .resolve_image_for_backend_nowait(sk, None, backend.backend_name())
-                    .await;
-                info!(session = sk, sandbox_id = %id, backend = backend.backend_name(), image, "sandbox ensure_ready");
-                let announce_prepare = router.mark_preparing_once(sk).await;
-                if announce_prepare {
-                    router.emit_event(crate::sandbox::SandboxEvent::Preparing {
-                        session_key: sk.to_string(),
-                        backend: backend.backend_name().to_string(),
-                        image: image.clone(),
-                    });
-                }
-
-                if let Err(error) = backend.ensure_ready(&id, Some(&image)).await {
-                    if announce_prepare {
-                        router.clear_prepared_session(sk).await;
-                        if backend.is_isolated() {
-                            router.mark_sync_failed(sk, error.to_string()).await;
-                        }
-                        router.emit_event(crate::sandbox::SandboxEvent::PrepareFailed {
-                            session_key: sk.to_string(),
-                            backend: backend.backend_name().to_string(),
-                            image: image.clone(),
-                            error: error.to_string(),
-                        });
-                    }
-                    return Err(error.into());
-                }
-                if backend.provides_fs_isolation() != has_container_backend {
+                let prepared = router.prepare_session(sk, None).await?;
+                if prepared.backend.provides_fs_isolation() != has_container_backend {
                     let error = "sandbox backend changed isolation mode during preparation; retry the command";
-                    if announce_prepare {
-                        router.clear_prepared_session(sk).await;
-                        router.emit_event(crate::sandbox::SandboxEvent::PrepareFailed {
-                            session_key: sk.to_string(),
-                            backend: backend.backend_name().to_string(),
-                            image: image.clone(),
-                            error: error.to_string(),
-                        });
-                    }
                     return Err(Error::message(error).into());
                 }
-
-                if announce_prepare {
-                    router.emit_event(crate::sandbox::SandboxEvent::Prepared {
-                        session_key: sk.to_string(),
-                        backend: backend.backend_name().to_string(),
-                        image: image.clone(),
-                    });
-
-                    // Sync workspace and provision packages for isolated backends on first run.
-                    if backend.is_isolated() {
-                        let sync_ok = if let Some(host_workspace) =
-                            crate::sandbox::sync::resolve_sync_workspace(router.config(), &id)
-                        {
-                            let sandbox_workspace = backend.workspace_dir_for(&id).await;
-                            match crate::sandbox::sync::sync_in(
-                                &*backend,
-                                &id,
-                                &host_workspace,
-                                &sandbox_workspace,
-                            )
-                            .await
-                            {
-                                Ok(()) => true,
-                                Err(e) => {
-                                    let error = e.to_string();
-                                    warn!(
-                                        session = sk,
-                                        sandbox_id = %id,
-                                        error = %error,
-                                        "workspace sync-in failed"
-                                    );
-                                    router.clear_prepared_session(sk).await;
-                                    router.mark_sync_failed(sk, error.clone()).await;
-                                    return Err(Error::message(format!(
-                                        "workspace sync-in failed: {error}"
-                                    ))
-                                    .into());
-                                },
-                            }
-                        } else {
-                            true
-                        };
-
-                        // Provision packages only if sync succeeded (no point
-                        // provisioning if we couldn't even connect to the sandbox)
-                        // and no pre-built image was used.
-                        if sync_ok {
-                            let has_prebuilt = image
-                                != crate::sandbox::types::DEFAULT_SANDBOX_IMAGE
-                                && !image.is_empty();
-                            let packages = &router.config().packages;
-                            if !has_prebuilt
-                                && !packages.is_empty()
-                                && let Err(e) = backend.provision_packages(&id, packages).await
-                            {
-                                warn!(
-                                    session = sk,
-                                    sandbox_id = %id,
-                                    error = %e,
-                                    "package provisioning failed (non-fatal)"
-                                );
-                            }
-                        }
-
-                        // Always mark synced to unblock concurrent waiters.
-                        // The sandbox is ready for exec regardless of sync outcome.
-                        router.mark_synced(sk).await;
-                    }
-                } else if backend.is_isolated() && !router.is_synced(sk).await {
-                    // Another caller is performing sync_in; wait for it.
-                    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-                    while !router.is_synced(sk).await {
-                        if tokio::time::Instant::now() >= deadline {
-                            warn!(session = sk, "timed out waiting for workspace sync-in");
-                            break;
-                        }
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                    }
-                }
-                if let Some(error) = router.sync_failure(sk).await {
-                    return Err(
-                        Error::message(format!("sandbox preparation failed: {error}")).into(),
-                    );
-                }
-                debug!(session = sk, sandbox_id = %id, command_bytes = command.len(), "sandbox running command");
-                let mut sandbox_result = backend.exec(&id, command, &opts).await?;
+                debug!(session = sk, sandbox_id = %prepared.id, command_bytes = command.len(), "sandbox running command");
+                let mut sandbox_result =
+                    prepared.backend.exec(&prepared.id, command, &opts).await?;
                 for retry_idx in 1..=MAX_SANDBOX_RECOVERY_RETRIES {
                     if sandbox_result.exit_code == 0
                         || !is_container_not_running_exec_error(&sandbox_result.stderr)
@@ -820,22 +699,25 @@ impl AgentTool for ExecTool {
 
                     warn!(
                         session = sk,
-                        sandbox_id = %id,
+                        sandbox_id = %prepared.id,
                         command_bytes = command.len(),
                         retry_idx,
                         max_retries = MAX_SANDBOX_RECOVERY_RETRIES,
                         "sandbox exec failed because container is unavailable, reinitializing and retrying"
                     );
-                    if let Err(error) = backend.cleanup(&id).await {
+                    if let Err(error) = prepared.backend.cleanup(&prepared.id).await {
                         warn!(
                             session = sk,
-                            sandbox_id = %id,
+                            sandbox_id = %prepared.id,
                             %error,
                             "failed to clean up stale sandbox before retry, continuing"
                         );
                     }
-                    backend.ensure_ready(&id, Some(&image)).await?;
-                    sandbox_result = backend.exec(&id, command, &opts).await?;
+                    prepared
+                        .backend
+                        .ensure_ready(&prepared.id, Some(&prepared.image))
+                        .await?;
+                    sandbox_result = prepared.backend.exec(&prepared.id, command, &opts).await?;
                 }
                 sandbox_result
             } else {

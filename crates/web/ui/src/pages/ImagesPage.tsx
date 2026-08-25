@@ -9,6 +9,14 @@ import { localizedApiErrorMessage } from "../helpers";
 import { updateNavCount } from "../nav-counts";
 import { sandboxInfo } from "../signals";
 import type { SandboxGonInfo } from "../types/gon";
+import {
+	fetchRemoteBackends,
+	REMOTE_BACKEND_TABS,
+	type RemoteBackendId,
+	RemoteBackendTabContent,
+	resetRemoteBackends,
+	saveDefaultBackend,
+} from "./sandboxes/RemoteBackendTabs";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -50,24 +58,6 @@ interface SharedHomeConfig {
 	configured_path?: string;
 }
 
-interface RemoteBackendsConfig {
-	vercel: {
-		configured: boolean;
-		from_env?: boolean;
-		project_id?: string;
-		team_id?: string;
-		runtime: string;
-		timeout_ms: number;
-		vcpus: number;
-	};
-	daytona: {
-		configured: boolean;
-		from_env?: boolean;
-		api_url: string;
-		target?: string;
-	};
-}
-
 // ── Signals ──────────────────────────────────────────────────
 
 const defaultImage = signal("");
@@ -95,25 +85,14 @@ const sharedHomeLoading = signal(false);
 const sharedHomeSaving = signal(false);
 const sharedHomeMsg = signal("");
 const sharedHomeErr = signal("");
-const remoteConfig = signal<RemoteBackendsConfig | null>(null);
-const remoteLoading = signal(false);
-const remoteSaving = signal("");
-const remoteMsg = signal("");
-const remoteErr = signal("");
-const vercelToken = signal("");
-const vercelProjectId = signal("");
-const vercelTeamId = signal("");
-const daytonaApiKey = signal("");
-const daytonaApiUrl = signal("");
 const activeTab = signal("general");
 const SANDBOX_TABS = [
 	{ id: "general", label: "General" },
-	{ id: "vercel", label: "Vercel" },
-	{ id: "daytona", label: "Daytona" },
+	...REMOTE_BACKEND_TABS,
 	{ id: "containers", label: "Containers & Images" },
 ];
 const SANDBOX_DISABLED_HINT =
-	"No local container runtime detected. Install Docker, configure a remote backend (Vercel or Daytona), or deploy on a VM with Docker to enable sandboxes.";
+	"No local container runtime detected. Install Docker, configure a remote backend (Vercel, Daytona, or Coder), or deploy on a VM with Docker to enable sandboxes.";
 
 function sandboxRuntimeAvailable(): boolean {
 	return ((sandboxInfo.value as SandboxInfoValue | null)?.backend || "none") !== "none";
@@ -404,57 +383,6 @@ function saveSharedHomeConfig(): void {
 		});
 }
 
-function fetchRemoteBackends(): void {
-	remoteLoading.value = true;
-	remoteErr.value = "";
-	fetch("/api/sandbox/remote-backends")
-		.then(async (r) => {
-			if (!r.ok) throw new Error(await responseErrorMessage(r, "Failed to load remote backend config."));
-			return r.json() as Promise<RemoteBackendsConfig>;
-		})
-		.then((data) => {
-			remoteConfig.value = data;
-			vercelProjectId.value = data.vercel?.project_id || "";
-			vercelTeamId.value = data.vercel?.team_id || "";
-			daytonaApiUrl.value = data.daytona?.api_url || "https://app.daytona.io/api";
-		})
-		.catch((e: Error) => {
-			remoteErr.value = e.message;
-		})
-		.finally(() => {
-			remoteLoading.value = false;
-		});
-}
-
-function saveRemoteBackend(backend: string, config: Record<string, unknown>): void {
-	remoteSaving.value = backend;
-	remoteErr.value = "";
-	remoteMsg.value = "";
-	fetch("/api/sandbox/remote-backends", {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ backend, config }),
-	})
-		.then(async (r) => {
-			if (!r.ok) throw new Error(await responseErrorMessage(r, "Failed to save remote backend config."));
-			return r.json();
-		})
-		.then((data) => {
-			if (data?.config) remoteConfig.value = data.config;
-			if (backend !== "_global") {
-				remoteMsg.value = `${backend} configuration saved. Restart Moltis to apply.`;
-				vercelToken.value = "";
-				daytonaApiKey.value = "";
-			}
-		})
-		.catch((e: Error) => {
-			remoteErr.value = e.message;
-		})
-		.finally(() => {
-			remoteSaving.value = "";
-		});
-}
-
 function formatBytes(bytes: number | null | undefined): string {
 	if (bytes == null) return "\u2014";
 	if (bytes < 1024) return `${bytes} B`;
@@ -714,7 +642,7 @@ function SandboxBanner(): VNode | null {
 
 	function changeDefault(backendId: string): void {
 		backendSaving.value = true;
-		saveRemoteBackend("_global", { backend: backendId });
+		saveDefaultBackend(backendId);
 		defaultBackendId.value = backendId;
 		setTimeout(() => {
 			backendSaving.value = false;
@@ -1010,8 +938,9 @@ function ImagesPage(): VNode {
 			/>
 			<div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
 				{activeTab.value === "general" && <GeneralTabContent />}
-				{activeTab.value === "vercel" && <VercelTabContent />}
-				{activeTab.value === "daytona" && <DaytonaTabContent />}
+				{REMOTE_BACKEND_TABS.some((tab) => tab.id === activeTab.value) && (
+					<RemoteBackendTabContent backend={activeTab.value as RemoteBackendId} />
+				)}
 				{activeTab.value === "containers" && <ContainersTabContent />}
 			</div>
 		</div>
@@ -1025,198 +954,6 @@ function GeneralTabContent(): VNode {
 			<DefaultImageSelector />
 			<SharedHomeSection />
 		</>
-	);
-}
-
-function VercelTabContent(): VNode {
-	const cfg = remoteConfig.value;
-
-	function saveVercel(): void {
-		const config: Record<string, unknown> = {};
-		if (vercelToken.value.trim()) config.token = vercelToken.value.trim();
-		if (vercelProjectId.value.trim()) config.project_id = vercelProjectId.value.trim();
-		if (vercelTeamId.value.trim()) config.team_id = vercelTeamId.value.trim();
-		saveRemoteBackend("vercel", config);
-	}
-
-	return (
-		<div className="max-w-form">
-			<div className="flex items-center gap-2" style={{ marginBottom: "8px" }}>
-				<h3 className="text-sm font-medium text-[var(--text-strong)]">Vercel Sandbox</h3>
-				{cfg?.vercel?.configured ? (
-					<span
-						className="text-[10px] px-1.5 py-0.5 rounded-full border"
-						style={{ borderColor: "var(--success)", color: "var(--success)" }}
-					>
-						configured
-					</span>
-				) : (
-					<span
-						className="text-[10px] px-1.5 py-0.5 rounded-full border"
-						style={{ borderColor: "var(--muted)", color: "var(--muted)" }}
-					>
-						not configured
-					</span>
-				)}
-			</div>
-			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: "0 0 12px" }}>
-				Firecracker microVMs via the Vercel API. Each session gets an ephemeral isolated VM with millisecond boot times.
-			</p>
-			<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-				<input
-					type="password"
-					className="provider-key-input"
-					placeholder={
-						cfg?.vercel?.from_env
-							? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set via VERCEL_TOKEN env var)"
-							: cfg?.vercel?.configured
-								? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set in config)"
-								: "Vercel token (VERCEL_TOKEN)"
-					}
-					style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-					value={vercelToken.value}
-					disabled={cfg?.vercel?.from_env}
-					onInput={(e) => {
-						vercelToken.value = (e.target as HTMLInputElement).value;
-					}}
-				/>
-				{cfg?.vercel?.from_env && (
-					<div className="text-[10px] text-[var(--muted)]">
-						Token managed by environment variable. Remove VERCEL_TOKEN from env to configure here.
-					</div>
-				)}
-				<div style={{ display: "flex", gap: "6px" }}>
-					<input
-						type="text"
-						className="provider-key-input"
-						placeholder="Project ID (required)"
-						style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-						value={vercelProjectId.value}
-						onInput={(e) => {
-							vercelProjectId.value = (e.target as HTMLInputElement).value;
-						}}
-					/>
-					<input
-						type="text"
-						className="provider-key-input"
-						placeholder="Team ID (optional)"
-						style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-						value={vercelTeamId.value}
-						onInput={(e) => {
-							vercelTeamId.value = (e.target as HTMLInputElement).value;
-						}}
-					/>
-				</div>
-				<button
-					className="provider-btn"
-					style={{ alignSelf: "flex-start" }}
-					onClick={saveVercel}
-					disabled={remoteSaving.value === "vercel" || !vercelToken.value.trim() || !vercelProjectId.value.trim()}
-				>
-					{remoteSaving.value === "vercel" ? "Saving\u2026" : "Save"}
-				</button>
-			</div>
-			{remoteMsg.value && remoteMsg.value.includes("vercel") && (
-				<div className="text-xs" style={{ marginTop: "8px", color: "var(--success)" }}>
-					{remoteMsg.value}
-				</div>
-			)}
-			{remoteErr.value && (
-				<div className="alert-error-text" style={{ marginTop: "8px" }}>
-					{remoteErr.value}
-				</div>
-			)}
-		</div>
-	);
-}
-
-function DaytonaTabContent(): VNode {
-	const cfg = remoteConfig.value;
-
-	function saveDaytona(): void {
-		const config: Record<string, unknown> = {};
-		if (daytonaApiKey.value.trim()) config.api_key = daytonaApiKey.value.trim();
-		if (daytonaApiUrl.value.trim()) config.api_url = daytonaApiUrl.value.trim();
-		saveRemoteBackend("daytona", config);
-	}
-
-	return (
-		<div className="max-w-form">
-			<div className="flex items-center gap-2" style={{ marginBottom: "8px" }}>
-				<h3 className="text-sm font-medium text-[var(--text-strong)]">Daytona</h3>
-				{cfg?.daytona?.configured ? (
-					<span
-						className="text-[10px] px-1.5 py-0.5 rounded-full border"
-						style={{ borderColor: "var(--success)", color: "var(--success)" }}
-					>
-						configured
-					</span>
-				) : (
-					<span
-						className="text-[10px] px-1.5 py-0.5 rounded-full border"
-						style={{ borderColor: "var(--muted)", color: "var(--muted)" }}
-					>
-						not configured
-					</span>
-				)}
-			</div>
-			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: "0 0 12px" }}>
-				Open-source cloud sandboxes. Self-hostable on your own infrastructure (Proxmox, bare-metal) or use the managed
-				Daytona service.
-			</p>
-			<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-				<input
-					type="password"
-					className="provider-key-input"
-					placeholder={
-						cfg?.daytona?.from_env
-							? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set via DAYTONA_API_KEY env var)"
-							: cfg?.daytona?.configured
-								? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set in config)"
-								: "Daytona API key (DAYTONA_API_KEY)"
-					}
-					style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-					value={daytonaApiKey.value}
-					disabled={cfg?.daytona?.from_env}
-					onInput={(e) => {
-						daytonaApiKey.value = (e.target as HTMLInputElement).value;
-					}}
-				/>
-				{cfg?.daytona?.from_env && (
-					<div className="text-[10px] text-[var(--muted)]">
-						Token managed by environment variable. Remove DAYTONA_API_KEY from env to configure here.
-					</div>
-				)}
-				<input
-					type="text"
-					className="provider-key-input"
-					placeholder="API URL (default: https://app.daytona.io/api)"
-					style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-					value={daytonaApiUrl.value}
-					onInput={(e) => {
-						daytonaApiUrl.value = (e.target as HTMLInputElement).value;
-					}}
-				/>
-				<button
-					className="provider-btn"
-					style={{ alignSelf: "flex-start" }}
-					onClick={saveDaytona}
-					disabled={remoteSaving.value === "daytona" || !daytonaApiKey.value.trim()}
-				>
-					{remoteSaving.value === "daytona" ? "Saving\u2026" : "Save"}
-				</button>
-			</div>
-			{remoteMsg.value && remoteMsg.value.includes("daytona") && (
-				<div className="text-xs" style={{ marginTop: "8px", color: "var(--success)" }}>
-					{remoteMsg.value}
-				</div>
-			)}
-			{remoteErr.value && (
-				<div className="alert-error-text" style={{ marginTop: "8px" }}>
-					{remoteErr.value}
-				</div>
-			)}
-		</div>
 	);
 }
 
@@ -1367,16 +1104,7 @@ export function initImages(container: HTMLElement): void {
 	sharedHomeErr.value = "";
 	activeTab.value = "general";
 	availableBackendsList.value = [];
-	remoteConfig.value = null;
-	remoteLoading.value = false;
-	remoteSaving.value = "";
-	remoteMsg.value = "";
-	remoteErr.value = "";
-	vercelToken.value = "";
-	vercelProjectId.value = "";
-	vercelTeamId.value = "";
-	daytonaApiKey.value = "";
-	daytonaApiUrl.value = "";
+	resetRemoteBackends();
 	render(<ImagesPage />, container);
 }
 

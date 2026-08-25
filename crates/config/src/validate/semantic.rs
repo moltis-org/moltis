@@ -2,10 +2,59 @@ use {
     super::*,
     crate::schema::{KNOWN_PROVIDER_NAMES, MoltisConfig, ToolChoice},
     secrecy::ExposeSecret,
-    std::path::Path,
+    std::{net::IpAddr, path::Path},
+    url::{Host, Url},
 };
 
 const PROVIDERS_META_KEYS: &[&str] = &["offered", "show_legacy_models"];
+
+pub(super) fn validate_coder_url(value: &str) -> Result<(), String> {
+    let parsed =
+        Url::parse(value).map_err(|_| "coder_url must be a valid absolute URL".to_string())?;
+
+    let authority_has_userinfo = value
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split(['/', '?', '#']).next())
+        .is_some_and(|authority| authority.contains('@'));
+    if authority_has_userinfo || !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("coder_url must not contain user information".into());
+    }
+    if parsed.query().is_some() {
+        return Err("coder_url must not contain a query string".into());
+    }
+    if parsed.fragment().is_some() {
+        return Err("coder_url must not contain a fragment".into());
+    }
+
+    let host = parsed
+        .host()
+        .ok_or_else(|| "coder_url must include a host".to_string())?;
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" if coder_http_host_is_loopback(host) => Ok(()),
+        "http" => Err(
+            "coder_url must use HTTPS; HTTP is allowed only for localhost or a literal loopback address"
+                .into(),
+        ),
+        _ => Err("coder_url must use HTTPS, or HTTP for localhost/loopback only".into()),
+    }
+}
+
+fn coder_http_host_is_loopback(host: Host<&str>) -> bool {
+    match host {
+        Host::Domain(domain) => domain.eq_ignore_ascii_case("localhost"),
+        Host::Ipv4(address) => IpAddr::V4(address).is_loopback(),
+        Host::Ipv6(address) => IpAddr::V6(address).is_loopback(),
+    }
+}
+
+fn configured_string(value: Option<&str>) -> bool {
+    value.is_some_and(|value| !value.trim().is_empty())
+}
+
+fn unresolved_env_placeholder(value: &str) -> bool {
+    value.contains("${")
+}
 
 pub(super) fn check_deprecated_fields(
     toml_value: &toml::Value,
@@ -172,7 +221,7 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         });
     }
     if let Some(public_ip) = config.tls.public_ip.as_deref() {
-        match public_ip.parse::<std::net::IpAddr>() {
+        match public_ip.parse::<IpAddr>() {
             Ok(ip) if ip.is_loopback() || ip.is_unspecified() => {
                 diagnostics.push(Diagnostic {
                     severity: Severity::Warning,
@@ -260,6 +309,62 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             path: "tools.exec.sandbox".into(),
             message: "allow_host_podman and allow_nested_podman are mutually exclusive".into(),
         });
+    }
+
+    let sandbox = &config.tools.exec.sandbox;
+    if let Some(coder_url) = sandbox.coder_url.as_deref()
+        && !unresolved_env_placeholder(coder_url)
+        && let Err(message) = validate_coder_url(coder_url)
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: "tools.exec.sandbox.coder_url".into(),
+            message,
+        });
+    }
+
+    if sandbox.coder_ttl_ms.is_some_and(|ttl_ms| ttl_ms < 0) {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: "tools.exec.sandbox.coder_ttl_ms".into(),
+            message: "coder_ttl_ms must be zero or a positive number of milliseconds".into(),
+        });
+    }
+
+    if sandbox.backend == "coder" {
+        if !configured_string(sandbox.coder_url.as_deref()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "missing-value",
+                path: "tools.exec.sandbox.coder_url".into(),
+                message: "backend = \"coder\" requires coder_url".into(),
+            });
+        }
+        if !sandbox
+            .coder_token
+            .as_ref()
+            .is_some_and(|token| !token.expose_secret().trim().is_empty())
+        {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "missing-value",
+                path: "tools.exec.sandbox.coder_token".into(),
+                message: "backend = \"coder\" requires coder_token".into(),
+            });
+        }
+        if !configured_string(sandbox.coder_template_id.as_deref())
+            && !configured_string(sandbox.coder_template_name.as_deref())
+        {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "missing-value",
+                path: "tools.exec.sandbox".into(),
+                message: "backend = \"coder\" requires coder_template_id or coder_template_name"
+                    .into(),
+            });
+        }
     }
 
     // tools.fs: must_read_before_write requires track_reads

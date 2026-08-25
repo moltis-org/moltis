@@ -389,6 +389,52 @@ struct NonWaitingSandbox {
     image: std::sync::Mutex<Option<String>>,
 }
 
+struct BlockingRouterExecSandbox {
+    exec_entered: tokio::sync::Notify,
+    release_exec: tokio::sync::Semaphore,
+    cleanup_calls: AtomicUsize,
+}
+
+impl Default for BlockingRouterExecSandbox {
+    fn default() -> Self {
+        Self {
+            exec_entered: tokio::sync::Notify::new(),
+            release_exec: tokio::sync::Semaphore::new(0),
+            cleanup_calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl Sandbox for BlockingRouterExecSandbox {
+    fn backend_name(&self) -> &'static str {
+        "docker"
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+        Ok(())
+    }
+
+    async fn exec(&self, _id: &SandboxId, _command: &str, _opts: &ExecOpts) -> Result<ExecResult> {
+        self.exec_entered.notify_one();
+        let _permit = self.release_exec.acquire().await;
+        Ok(ExecResult {
+            stdout: "completed".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+        })
+    }
+
+    async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+        self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl Sandbox for NonWaitingSandbox {
     fn backend_name(&self) -> &'static str {
@@ -577,6 +623,34 @@ async fn test_exec_tool_stops_after_max_container_retries() {
         sandbox.exec_calls.load(Ordering::SeqCst),
         MAX_SANDBOX_RECOVERY_RETRIES + 1
     );
+}
+
+#[tokio::test]
+async fn test_router_exec_retry_cleanup_does_not_deadlock() {
+    use crate::sandbox::{SandboxConfig, SandboxRouter};
+
+    let sandbox = Arc::new(RetryRecoverySandbox::new(false, 1));
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig::default(),
+        Arc::clone(&sandbox) as Arc<dyn Sandbox>,
+    ));
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        ExecTool::default()
+            .with_sandbox_router(router)
+            .execute(serde_json::json!({
+                "command": "echo hi",
+                "_session_key": "session:router-retry"
+            })),
+    )
+    .await
+    .expect("retry cleanup must not reacquire the active operation permit")
+    .unwrap();
+
+    assert_eq!(result["exit_code"], 0);
+    assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(sandbox.cleanup_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sandbox.exec_calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -792,7 +866,46 @@ async fn test_exec_tool_with_sandbox_router_does_not_wait_for_background_image_b
 }
 
 #[tokio::test]
-async fn test_exec_tool_marks_synced_when_isolated_ensure_ready_fails() {
+async fn router_cleanup_waits_for_active_exec() {
+    use crate::sandbox::{SandboxConfig, SandboxRouter};
+
+    let sandbox = Arc::new(BlockingRouterExecSandbox::default());
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig::default(),
+        Arc::clone(&sandbox) as Arc<dyn Sandbox>,
+    ));
+    let exec_router = Arc::clone(&router);
+    let exec = tokio::spawn(async move {
+        ExecTool::default()
+            .with_sandbox_router(exec_router)
+            .execute(serde_json::json!({
+                "command": "printf completed",
+                "_session_key": "session:active-exec"
+            }))
+            .await
+    });
+    sandbox.exec_entered.notified().await;
+
+    let cleanup_router = Arc::clone(&router);
+    let mut cleanup =
+        tokio::spawn(async move { cleanup_router.cleanup_session("session:active-exec").await });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut cleanup)
+            .await
+            .is_err(),
+        "cleanup must wait until the exec operation releases its session permit"
+    );
+    assert_eq!(sandbox.cleanup_calls.load(Ordering::SeqCst), 0);
+
+    sandbox.release_exec.add_permits(1);
+    let result = exec.await.unwrap().unwrap();
+    assert_eq!(result["stdout"], "completed");
+    cleanup.await.unwrap().unwrap();
+    assert_eq!(sandbox.cleanup_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn test_exec_tool_does_not_publish_readiness_when_ensure_ready_fails() {
     use crate::sandbox::{SandboxConfig, SandboxRouter};
 
     let router = Arc::new(SandboxRouter::with_backend(
@@ -810,14 +923,8 @@ async fn test_exec_tool_marks_synced_when_isolated_ensure_ready_fails() {
         .await;
 
     assert!(result.is_err());
-    assert!(router.is_synced(session_key).await);
-    assert_eq!(
-        router.sync_failure(session_key).await.as_deref(),
-        Some("ensure_ready failed")
-    );
-    assert!(router.mark_preparing_once(session_key).await);
     assert!(!router.is_synced(session_key).await);
-    assert!(router.sync_failure(session_key).await.is_none());
+    assert!(!router.is_prepared(session_key).await);
 }
 
 #[tokio::test]
@@ -848,14 +955,8 @@ async fn test_exec_tool_clears_prepared_session_when_sync_in_fails() {
     assert!(result.is_err());
     assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 1);
     assert_eq!(sandbox.write_file_calls.load(Ordering::SeqCst), 1);
-    assert!(router.is_synced(session_key).await);
-    assert_eq!(
-        router.sync_failure(session_key).await.as_deref(),
-        Some("upload failed")
-    );
-    assert!(router.mark_preparing_once(session_key).await);
     assert!(!router.is_synced(session_key).await);
-    assert!(router.sync_failure(session_key).await.is_none());
+    assert!(!router.is_prepared(session_key).await);
 }
 
 /// Regression test: when SandboxMode=All (the default) but the backend is

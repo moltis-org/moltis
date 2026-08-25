@@ -352,6 +352,66 @@ fn update_config_preserves_override_boundary() {
 }
 
 #[test]
+fn fallible_update_does_not_persist_rejected_changes() {
+    let _guard = CONFIG_DIR_TEST_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("moltis.toml");
+    std::fs::write(&config_path, "[server]\nport = 54321\n").expect("write seed");
+    set_config_dir(dir.path().to_path_buf());
+
+    let result = update_config_fallible(|config| -> crate::Result<()> {
+        config.server.port = 12345;
+        Err(crate::Error::message("rejected candidate"))
+    });
+
+    assert!(result.is_err());
+    let saved = std::fs::read_to_string(&config_path).expect("read saved");
+    assert!(saved.contains("port = 54321"));
+    assert!(!saved.contains("port = 12345"));
+    clear_config_dir();
+}
+
+#[test]
+fn fallible_updates_validate_fresh_config_under_save_lock() {
+    let _guard = CONFIG_DIR_TEST_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("moltis.toml");
+    std::fs::write(&config_path, "[auth]\ndisabled = false\n").expect("write seed");
+    set_config_dir(dir.path().to_path_buf());
+
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let first = std::thread::spawn(move || {
+        update_config_fallible(|config| -> crate::Result<()> {
+            config.auth.disabled = true;
+            entered_tx.send(()).expect("signal entered closure");
+            release_rx.recv().expect("wait for release");
+            Ok(())
+        })
+    });
+    entered_rx.recv().expect("first update entered closure");
+
+    let second = std::thread::spawn(|| {
+        update_config_fallible(|config| -> crate::Result<()> {
+            assert!(config.auth.disabled, "second update must reload first save");
+            config.server.http_request_logs = true;
+            Err(crate::Error::message("reject concurrent candidate"))
+        })
+    });
+    release_tx.send(()).expect("release first update");
+
+    first
+        .join()
+        .expect("first update thread")
+        .expect("first save");
+    assert!(second.join().expect("second update thread").is_err());
+    let saved = std::fs::read_to_string(&config_path).expect("read saved");
+    assert!(saved.contains("disabled = true"));
+    assert!(!saved.contains("http_request_logs = true"));
+    clear_config_dir();
+}
+
+#[test]
 fn layered_load_user_override_wins_over_defaults() {
     let _guard = CONFIG_DIR_TEST_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().expect("tempdir");

@@ -17,13 +17,17 @@ use {
         time::Duration,
     },
     tar::{Archive, Builder, EntryType, Header},
+    tokio::sync::OwnedSemaphorePermit,
 };
 
 use crate::{
     Result,
     error::Error,
     exec::ExecOpts,
-    sandbox::{Sandbox, SandboxId, SandboxRouter, containers::container_exec_shell_args},
+    sandbox::{
+        Sandbox, SandboxId, SandboxRouter, containers::container_exec_shell_args,
+        router::PreparedSandboxSession,
+    },
 };
 
 /// Maximum file size Write/Edit/MultiEdit can send into a sandbox in a
@@ -196,12 +200,26 @@ pub trait SandboxFileSystem: Send + Sync {
 pub struct CommandSandboxFileSystem {
     backend: Arc<dyn Sandbox>,
     id: SandboxId,
+    _operation_permit: Option<OwnedSemaphorePermit>,
 }
 
 impl CommandSandboxFileSystem {
     #[must_use]
     pub fn new(backend: Arc<dyn Sandbox>, id: SandboxId) -> Self {
-        Self { backend, id }
+        Self {
+            backend,
+            id,
+            _operation_permit: None,
+        }
+    }
+
+    fn from_prepared(prepared: PreparedSandboxSession) -> Self {
+        let (backend, id, operation_permit) = prepared.into_file_system_parts();
+        Self {
+            backend,
+            id,
+            _operation_permit: Some(operation_permit),
+        }
     }
 }
 
@@ -210,13 +228,8 @@ pub async fn sandbox_file_system_for_session(
     router: &SandboxRouter,
     session_key: &str,
 ) -> Result<Arc<dyn SandboxFileSystem>> {
-    let id = router.sandbox_id_for(session_key);
-    let backend = router.resolve_backend(session_key).await;
-    let image = router
-        .resolve_image_for_backend_nowait(session_key, None, backend.backend_name())
-        .await;
-    backend.ensure_ready(&id, Some(&image)).await?;
-    Ok(Arc::new(CommandSandboxFileSystem::new(backend, id)))
+    let prepared = router.prepare_session(session_key, None).await?;
+    Ok(Arc::new(CommandSandboxFileSystem::from_prepared(prepared)))
 }
 
 /// Default command-based sandbox read implementation used by the file service
@@ -1344,206 +1357,5 @@ pub(crate) mod test_helpers {
     }
 }
 
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
-mod tests {
-
-    #[test]
-    fn transfer_timeout_scales_with_payload_size() {
-        let small = transfer_opts(1024).timeout;
-        assert_eq!(
-            small, DEFAULT_SANDBOX_TIMEOUT,
-            "small writes keep the default"
-        );
-
-        let large = transfer_opts(16 * 1024 * 1024).timeout;
-        assert!(
-            large > DEFAULT_SANDBOX_TIMEOUT,
-            "a 16 MB transfer must not inherit the 30s default"
-        );
-        assert!(large <= Duration::from_secs(600), "timeout stays bounded");
-    }
-
-    #[test]
-    fn transfer_timeout_is_capped_for_absurd_sizes() {
-        assert_eq!(
-            transfer_opts(usize::MAX).timeout,
-            Duration::from_secs(600),
-            "an overflowing size must clamp, not wrap"
-        );
-    }
-
-    use {
-        super::{test_helpers::MockSandbox, *},
-        crate::{exec::ExecResult, sandbox::types::SandboxScope},
-    };
-
-    fn test_id() -> SandboxId {
-        SandboxId {
-            scope: SandboxScope::Session,
-            key: "test".to_string(),
-        }
-    }
-
-    #[tokio::test]
-    async fn read_file_decodes_base64() {
-        let encoded = BASE64.encode(b"hello sandbox");
-        let mock = MockSandbox::new(vec![ExecResult {
-            stdout: encoded,
-            stderr: String::new(),
-            exit_code: 0,
-        }]);
-        let fs = CommandSandboxFileSystem::new(mock.clone(), test_id());
-
-        let result = fs.read_file("/data/x.txt", 1024).await.unwrap();
-        match result {
-            SandboxReadResult::Ok(bytes) => assert_eq!(bytes, b"hello sandbox"),
-            other => panic!("expected Ok, got {other:?}"),
-        }
-        assert!(mock.last_command().unwrap().contains("/data/x.txt"));
-    }
-
-    #[tokio::test]
-    async fn read_file_maps_too_large() {
-        let mock = MockSandbox::new(vec![ExecResult {
-            stdout: String::new(),
-            stderr: "12345\n".to_string(),
-            exit_code: EXIT_TOO_LARGE,
-        }]);
-        let fs = CommandSandboxFileSystem::new(mock, test_id());
-
-        let result = fs.read_file("/big", 100).await.unwrap();
-        assert!(matches!(result, SandboxReadResult::TooLarge(12345)));
-    }
-
-    #[tokio::test]
-    async fn write_file_encodes_content() {
-        let mock = MockSandbox::new(vec![ExecResult {
-            stdout: String::new(),
-            stderr: String::new(),
-            exit_code: 0,
-        }]);
-        let fs = CommandSandboxFileSystem::new(mock.clone(), test_id());
-
-        let result = fs.write_file("/data/out.txt", b"abc").await.unwrap();
-        assert!(result.is_none());
-        let cmd = mock.last_command().unwrap();
-        assert!(cmd.contains("/data/out.txt"));
-        assert!(cmd.contains(&BASE64.encode(b"abc")));
-        assert!(cmd.contains("sync \"$tmp\""));
-    }
-
-    #[tokio::test]
-    async fn list_files_reads_find_output() {
-        let mock = MockSandbox::new(vec![ExecResult {
-            stdout: "/data/a.rs\n/data/b.rs\n".to_string(),
-            stderr: String::new(),
-            exit_code: 0,
-        }]);
-        let fs = CommandSandboxFileSystem::new(mock, test_id());
-
-        let files = fs.list_files("/data").await.unwrap();
-        assert_eq!(files.files, vec!["/data/a.rs", "/data/b.rs"]);
-        assert!(!files.truncated);
-    }
-
-    #[test]
-    fn parse_listed_files_marks_outputs_over_cap_as_truncated() {
-        let result = parse_listed_files("/data/a.rs\n/data/b.rs\n/data/c.rs\n", 2);
-        assert_eq!(result.files, vec!["/data/a.rs", "/data/b.rs"]);
-        assert!(result.truncated);
-        assert_eq!(result.limit, Some(2));
-    }
-
-    #[tokio::test]
-    async fn grep_content_applies_paging() {
-        let mock = MockSandbox::new(vec![ExecResult {
-            stdout: "/data/lib.rs:3:fn alpha()\n/data/lib.rs:9:fn beta()\n".to_string(),
-            stderr: String::new(),
-            exit_code: 0,
-        }]);
-        let fs = CommandSandboxFileSystem::new(mock, test_id());
-
-        let value = fs
-            .grep(SandboxGrepOptions {
-                pattern: "fn".to_string(),
-                path: "/data".to_string(),
-                mode: SandboxGrepMode::Content,
-                case_insensitive: false,
-                include_globs: Vec::new(),
-                offset: 1,
-                head_limit: Some(1),
-                match_cap: None,
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(value["mode"], "content");
-        assert_eq!(value["truncated"], false);
-        let matches = value["matches"].as_array().unwrap();
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0]["line"], 9);
-    }
-
-    #[test]
-    fn build_single_file_tar_round_trips() {
-        let tar_bytes = build_single_file_tar("/tmp/example.txt", b"hello tar").unwrap();
-        let result = extract_single_file_from_tar(&tar_bytes, "/tmp/example.txt", 1024).unwrap();
-        match result {
-            SandboxReadResult::Ok(bytes) => assert_eq!(bytes, b"hello tar"),
-            other => panic!("expected Ok, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn extract_single_file_from_tar_rejects_large_entry() {
-        let tar_bytes = build_single_file_tar("/tmp/example.txt", b"hello tar").unwrap();
-        let result = extract_single_file_from_tar(&tar_bytes, "/tmp/example.txt", 4).unwrap();
-        assert!(matches!(result, SandboxReadResult::TooLarge(9)));
-    }
-
-    #[tokio::test]
-    async fn oci_read_reports_copy_stderr_when_tar_stream_is_empty() {
-        let dir = tempfile::tempdir().unwrap();
-        let cli_path = dir.path().join("fake-oci");
-        std::fs::write(
-            &cli_path,
-            "#!/bin/sh\n\
-             if [ \"$1\" = \"exec\" ]; then printf 'file\\t5\\n'; exit 0; fi\n\
-             if [ \"$1\" = \"cp\" ]; then echo 'Error: no such file or directory' >&2; exit 1; fi\n\
-             exit 2\n",
-        )
-        .unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            let mut permissions = std::fs::metadata(&cli_path).unwrap().permissions();
-            permissions.set_mode(0o755);
-            std::fs::set_permissions(&cli_path, permissions).unwrap();
-        }
-
-        let result = oci_container_read_file(
-            cli_path.to_str().unwrap(),
-            "fake-container",
-            "/tmp/example.txt",
-            1024,
-        )
-        .await
-        .unwrap();
-
-        assert!(matches!(result, SandboxReadResult::NotFound));
-    }
-
-    #[test]
-    fn oci_copy_failure_detail_is_not_empty_when_stderr_is_empty() {
-        assert_eq!(
-            container_copy_failure_detail("", Some(1)),
-            "copy command exited with code 1 and no stderr"
-        );
-        assert_eq!(
-            container_copy_failure_detail("explicit failure", Some(1)),
-            "explicit failure"
-        );
-    }
-}
+mod tests;

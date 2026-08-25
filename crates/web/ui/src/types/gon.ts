@@ -56,6 +56,7 @@ export type SandboxBackendId =
 	| "wasm"
 	| "vercel"
 	| "daytona"
+	| "coder"
 	| "firecracker"
 	| "none";
 

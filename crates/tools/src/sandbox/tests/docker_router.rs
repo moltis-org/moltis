@@ -1,7 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use std::{env, sync::atomic::Ordering};
+use std::{
+    env,
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
-use super::*;
+use {super::*, crate::sandbox::file_system::sandbox_file_system_for_session};
 
 #[test]
 fn test_create_sandbox_off_uses_no_sandbox() {
@@ -499,10 +505,11 @@ fn test_sandbox_router_sandbox_id_for() {
     };
     let router = SandboxRouter::new(config);
     let id = router.sandbox_id_for("session:abc");
-    assert_eq!(id.key, "session-abc");
-    // Plain alphanumeric keys pass through unchanged.
+    assert!(id.key.starts_with("session-abc-"));
     let id2 = router.sandbox_id_for("main");
-    assert_eq!(id2.key, "main");
+    assert!(id2.key.starts_with("main-"));
+    assert_eq!(id.key.len(), "session-abc-".len() + 12);
+    assert_eq!(id2.key.len(), "main-".len() + 12);
 }
 
 #[tokio::test]
@@ -794,11 +801,6 @@ async fn test_sandbox_router_events() {
         },
         _ => panic!("unexpected event variant"),
     }
-
-    assert!(router.mark_preparing_once("main").await);
-    assert!(!router.mark_preparing_once("main").await);
-    router.clear_prepared_session("main").await;
-    assert!(router.mark_preparing_once("main").await);
 }
 
 #[tokio::test]
@@ -1161,23 +1163,21 @@ async fn test_set_backend_override_clears_runtime_state() {
         backend: "docker".into(),
         ..Default::default()
     };
-    let mut router = SandboxRouter::new(config);
+    let mut router =
+        SandboxRouter::with_backend(config, Arc::new(TestSandbox::new("docker", None, None)));
     router.register_backend(Arc::new(RestrictedHostSandbox::new(
         SandboxConfig::default(),
     )));
 
-    assert!(router.mark_preparing_once("session:abc").await);
-    router.mark_synced("session:abc").await;
-    assert!(!router.mark_preparing_once("session:abc").await);
-    assert!(router.is_synced("session:abc").await);
+    router.prepare_session("session:abc", None).await.unwrap();
+    assert!(router.is_prepared("session:abc").await);
 
     router
         .set_backend_override("session:abc", "restricted-host")
         .await
         .unwrap();
 
-    assert!(router.mark_preparing_once("session:abc").await);
-    assert!(!router.is_synced("session:abc").await);
+    assert!(!router.is_prepared("session:abc").await);
 }
 
 #[tokio::test]
@@ -1246,4 +1246,142 @@ async fn test_cleanup_session_clears_backend_override() {
         router.resolve_backend("session:abc").await.backend_name(),
         "docker"
     );
+}
+
+#[test]
+fn test_explicit_coder_without_token_fails_closed() {
+    let router = SandboxRouter::new(SandboxConfig {
+        backend: "coder".into(),
+        coder_url: Some("https://coder.example.com".into()),
+        ..Default::default()
+    });
+    let backend = router.backend();
+
+    assert_eq!(backend.backend_name(), "coder");
+    assert!(!backend.is_real());
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        assert!(router.is_sandboxed("main").await);
+        let error = router.prepare_session("main", None).await.err().unwrap();
+        assert!(error.to_string().contains("CODER_SESSION_TOKEN"));
+    });
+}
+
+#[test]
+fn test_explicit_coder_without_url_fails_closed() {
+    let router = SandboxRouter::new(SandboxConfig {
+        backend: "coder".into(),
+        coder_token: Some(secrecy::Secret::new("token".into())),
+        ..Default::default()
+    });
+    let backend = router.backend();
+
+    assert_eq!(backend.backend_name(), "coder");
+    assert!(!backend.is_real());
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let error = backend
+            .exec(
+                &router.sandbox_id_for("main"),
+                "echo unsafe",
+                &ExecOpts::default(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("CODER_URL"));
+    });
+}
+
+#[derive(Default)]
+struct SyncOrderingSandbox {
+    ensure_ready_calls: AtomicUsize,
+    calls: Mutex<Vec<&'static str>>,
+}
+
+#[async_trait::async_trait]
+impl Sandbox for SyncOrderingSandbox {
+    fn backend_name(&self) -> &'static str {
+        "sync-ordering"
+    }
+
+    fn is_isolated(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+        self.ensure_ready_calls.fetch_add(1, Ordering::SeqCst);
+        self.calls.lock().unwrap().push("ensure-ready");
+        Ok(())
+    }
+
+    async fn exec(&self, _id: &SandboxId, command: &str, _opts: &ExecOpts) -> Result<ExecResult> {
+        if command.contains("moltis-sync-in.tar.gz") {
+            self.calls.lock().unwrap().push("sync-in-extract");
+        }
+        Ok(ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+        })
+    }
+
+    async fn read_file(
+        &self,
+        _id: &SandboxId,
+        _file_path: &str,
+        _max_bytes: u64,
+    ) -> Result<SandboxReadResult> {
+        self.calls.lock().unwrap().push("read-file");
+        Ok(SandboxReadResult::Ok(b"synced".to_vec()))
+    }
+
+    async fn write_file(
+        &self,
+        _id: &SandboxId,
+        file_path: &str,
+        _content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        if file_path == "/tmp/moltis-sync-in.tar.gz" {
+            self.calls.lock().unwrap().push("sync-in-upload");
+        }
+        Ok(None)
+    }
+
+    async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_file_system_prepares_and_syncs_before_first_operation() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("input.txt"), "sync me").unwrap();
+    let backend = Arc::new(SyncOrderingSandbox::default());
+    let router = SandboxRouter::with_backend(
+        SandboxConfig {
+            shared_home_dir: Some(workspace.path().to_path_buf()),
+            ..Default::default()
+        },
+        Arc::clone(&backend) as Arc<dyn Sandbox>,
+    );
+
+    let fs = sandbox_file_system_for_session(&router, "session:files")
+        .await
+        .unwrap();
+    let result = fs.read_file("/home/sandbox/input.txt", 1024).await.unwrap();
+    assert!(matches!(result, SandboxReadResult::Ok(_)));
+    assert_eq!(*backend.calls.lock().unwrap(), [
+        "ensure-ready",
+        "sync-in-upload",
+        "sync-in-extract",
+        "read-file"
+    ]);
+    drop(fs);
+
+    sandbox_file_system_for_session(&router, "session:files")
+        .await
+        .unwrap();
+    assert_eq!(backend.ensure_ready_calls.load(Ordering::SeqCst), 2);
 }
