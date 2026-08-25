@@ -48,6 +48,9 @@ pub struct WebSearchTool {
     ddg_blocked_until: Mutex<Option<Instant>>,
     /// Optional runtime env provider (credential store) for hot key updates.
     env_provider: Option<Arc<dyn EnvVarProvider>>,
+    /// Test-only endpoint override used to exercise the complete Brave HTTP flow.
+    #[cfg(test)]
+    brave_endpoint_override: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -228,7 +231,24 @@ impl WebSearchTool {
             fallback_enabled,
             ddg_blocked_until: Mutex::new(None),
             env_provider: None,
+            #[cfg(test)]
+            brave_endpoint_override: None,
         }
+    }
+
+    #[cfg(test)]
+    fn with_brave_endpoint(mut self, endpoint: String) -> Self {
+        self.brave_endpoint_override = Some(endpoint);
+        self
+    }
+
+    fn brave_endpoint(&self) -> &str {
+        #[cfg(test)]
+        if let Some(endpoint) = self.brave_endpoint_override.as_deref() {
+            return endpoint;
+        }
+
+        brave::ENDPOINT
     }
 
     /// Attach a runtime environment provider (credential store).
@@ -367,7 +387,7 @@ impl WebSearchTool {
         }
 
         let brave_params = brave::Params::from_json(params);
-        let url = brave_params.request_url(query, count);
+        let url = brave_params.request_url(self.brave_endpoint(), query, count);
         let mut resp = self
             .send_brave_request(&url, accept_language, api_key)
             .await?;
@@ -378,7 +398,8 @@ impl WebSearchTool {
             debug!(
                 "Brave rejected optional search parameters; retrying without localization or freshness"
             );
-            let retry_url = brave::Params::default().request_url(query, count);
+            let retry_url =
+                brave::Params::default().request_url(self.brave_endpoint(), query, count);
             resp = self
                 .send_brave_request(&retry_url, accept_language, api_key)
                 .await?;
@@ -935,6 +956,120 @@ mod tests {
             .unwrap();
         assert!(result["error"].as_str().unwrap().contains("not configured"));
         assert!(result["hint"].as_str().unwrap().contains("BRAVE_API_KEY"));
+    }
+
+    #[tokio::test]
+    async fn test_brave_retries_422_without_optional_filters() {
+        let mut server = mockito::Server::new_async().await;
+        let first_request = server
+            .mock("GET", "/res/v1/web/search")
+            .match_query(mockito::Matcher::Exact(
+                "q=edge%20query&count=5&country=ALL&search_lang=es&freshness=pw".into(),
+            ))
+            .match_header("x-subscription-token", "test-key")
+            .match_header("accept-language", "pt-BR")
+            .with_status(422)
+            .expect(1)
+            .create_async()
+            .await;
+        let retry_request = server
+            .mock("GET", "/res/v1/web/search")
+            .match_query(mockito::Matcher::Exact("q=edge%20query&count=5".into()))
+            .match_header("x-subscription-token", "test-key")
+            .match_header("accept-language", "pt-BR")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"web":{"results":[{"title":"Recovered","url":"https://example.com","description":"Retry result"}]}}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let tool = brave_tool().with_brave_endpoint(format!("{}/res/v1/web/search", server.url()));
+
+        let result = tool
+            .search_brave(
+                "edge query",
+                5,
+                &serde_json::json!({
+                    "country": "PY",
+                    "search_lang": "es-AR",
+                    "ui_lang": "es-PY",
+                    "freshness": "week",
+                }),
+                Some("pt-BR"),
+                "test-key",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result["provider"], "brave");
+        assert_eq!(result["query"], "edge query");
+        assert_eq!(result["results"][0]["title"], "Recovered");
+        first_request.assert_async().await;
+        retry_request.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_brave_does_not_retry_422_without_optional_filters() {
+        let mut server = mockito::Server::new_async().await;
+        let request = server
+            .mock("GET", "/res/v1/web/search")
+            .match_query(mockito::Matcher::Exact("q=plain&count=5".into()))
+            .with_status(422)
+            .with_body("invalid query")
+            .expect(1)
+            .create_async()
+            .await;
+        let tool = brave_tool().with_brave_endpoint(format!("{}/res/v1/web/search", server.url()));
+
+        let error = tool
+            .search_brave("plain", 5, &serde_json::json!({}), None, "test-key")
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("422 Unprocessable Entity"));
+        assert!(error.to_string().contains("invalid query"));
+        request.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_brave_surfaces_retry_response_error() {
+        let mut server = mockito::Server::new_async().await;
+        let first_request = server
+            .mock("GET", "/res/v1/web/search")
+            .match_query(mockito::Matcher::Exact(
+                "q=unavailable&count=5&country=US".into(),
+            ))
+            .with_status(422)
+            .expect(1)
+            .create_async()
+            .await;
+        let retry_request = server
+            .mock("GET", "/res/v1/web/search")
+            .match_query(mockito::Matcher::Exact("q=unavailable&count=5".into()))
+            .with_status(503)
+            .with_body("temporary outage")
+            .expect(1)
+            .create_async()
+            .await;
+        let tool = brave_tool().with_brave_endpoint(format!("{}/res/v1/web/search", server.url()));
+
+        let error = tool
+            .search_brave(
+                "unavailable",
+                5,
+                &serde_json::json!({"country": "US"}),
+                None,
+                "test-key",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("503 Service Unavailable"));
+        assert!(error.to_string().contains("temporary outage"));
+        first_request.assert_async().await;
+        retry_request.assert_async().await;
     }
 
     #[tokio::test]

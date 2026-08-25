@@ -1,6 +1,6 @@
 use serde_json::{Map, Value, json};
 
-const ENDPOINT: &str = "https://api.search.brave.com/res/v1/web/search";
+pub(super) const ENDPOINT: &str = "https://api.search.brave.com/res/v1/web/search";
 
 // Keep these values aligned with Brave's Web Search API enums. They are intentionally
 // provider-local: Perplexity, Firecrawl, and DuckDuckGo do not share this contract.
@@ -59,9 +59,9 @@ impl Params {
             || self.freshness.is_some()
     }
 
-    pub(super) fn request_url(&self, query: &str, count: u8) -> String {
+    pub(super) fn request_url(&self, endpoint: &str, query: &str, count: u8) -> String {
         let mut url = format!(
-            "{ENDPOINT}?q={}&count={count}",
+            "{endpoint}?q={}&count={count}",
             super::urlencoding::encode(query)
         );
         append_param(&mut url, "country", self.country);
@@ -244,7 +244,7 @@ mod tests {
             "freshness": "week",
         }));
         assert_eq!(
-            params.request_url("ração senior", 5),
+            params.request_url(ENDPOINT, "ração senior", 5),
             concat!(
                 "https://api.search.brave.com/res/v1/web/search?",
                 "q=ra%C3%A7%C3%A3o%20senior&count=5&country=ALL&search_lang=es&freshness=pw"
