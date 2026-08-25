@@ -20,6 +20,8 @@ use {
 
 use crate::exec::EnvVarProvider;
 
+mod brave;
+
 /// Cached search result with expiry.
 struct CacheEntry {
     value: serde_json::Value,
@@ -364,35 +366,23 @@ impl WebSearchTool {
             }));
         }
 
-        let mut url = format!(
-            "https://api.search.brave.com/res/v1/web/search?q={}&count={count}",
-            urlencoding::encode(query)
-        );
+        let brave_params = brave::Params::from_json(params);
+        let url = brave_params.request_url(query, count);
+        let mut resp = self
+            .send_brave_request(&url, accept_language, api_key)
+            .await?;
 
-        if let Some(country) = params.get("country").and_then(|v| v.as_str()) {
-            url.push_str(&format!("&country={country}"));
+        if resp.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY
+            && brave_params.has_optional_filters()
+        {
+            debug!(
+                "Brave rejected optional search parameters; retrying without localization or freshness"
+            );
+            let retry_url = brave::Params::default().request_url(query, count);
+            resp = self
+                .send_brave_request(&retry_url, accept_language, api_key)
+                .await?;
         }
-        if let Some(lang) = params.get("search_lang").and_then(|v| v.as_str()) {
-            url.push_str(&format!("&search_lang={lang}"));
-        }
-        if let Some(lang) = params.get("ui_lang").and_then(|v| v.as_str()) {
-            url.push_str(&format!("&ui_lang={lang}"));
-        }
-        if let Some(freshness) = params.get("freshness").and_then(|v| v.as_str()) {
-            url.push_str(&format!("&freshness={freshness}"));
-        }
-
-        let client = crate::shared_http_client();
-
-        let mut req = client
-            .get(&url)
-            .timeout(self.timeout)
-            .header("Accept", "application/json")
-            .header("X-Subscription-Token", api_key);
-        if let Some(lang) = accept_language {
-            req = req.header("Accept-Language", lang);
-        }
-        let resp = req.send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -418,6 +408,24 @@ impl WebSearchTool {
             "query": query,
             "results": results,
         }))
+    }
+
+    async fn send_brave_request(
+        &self,
+        url: &str,
+        accept_language: Option<&str>,
+        api_key: &str,
+    ) -> crate::Result<reqwest::Response> {
+        let client = crate::shared_http_client();
+        let mut request = client
+            .get(url)
+            .timeout(self.timeout)
+            .header("Accept", "application/json")
+            .header("X-Subscription-Token", api_key);
+        if let Some(lang) = accept_language {
+            request = request.header("Accept-Language", lang);
+        }
+        Ok(request.send().await?)
     }
 
     async fn search_perplexity(
@@ -732,36 +740,32 @@ impl AgentTool for WebSearchTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": {
+        let mut properties = serde_json::Map::from_iter([
+            (
+                "query".to_string(),
+                serde_json::json!({
                     "type": "string",
                     "description": "The search query"
-                },
-                "count": {
+                }),
+            ),
+            (
+                "count".to_string(),
+                serde_json::json!({
                     "type": "integer",
                     "description": "Number of results (1-10, default 5)",
                     "minimum": 1,
                     "maximum": 10
-                },
-                "country": {
-                    "type": "string",
-                    "description": "Country code for search results (e.g. 'US', 'GB')"
-                },
-                "search_lang": {
-                    "type": "string",
-                    "description": "Search language (e.g. 'en')"
-                },
-                "ui_lang": {
-                    "type": "string",
-                    "description": "UI language (e.g. 'en-US')"
-                },
-                "freshness": {
-                    "type": "string",
-                    "description": "Freshness filter (Brave only): 'pd' (past day), 'pw' (past week), 'pm' (past month), 'py' (past year)"
-                }
-            },
+                }),
+            ),
+        ]);
+
+        if matches!(&self.provider, SearchProvider::Brave) {
+            properties.extend(brave::parameter_properties());
+        }
+
+        serde_json::json!({
+            "type": "object",
+            "properties": properties,
             "required": ["query"]
         })
     }
@@ -899,6 +903,19 @@ mod tests {
         assert_eq!(tool.name(), "web_search");
         let schema = tool.parameters_schema();
         assert_eq!(schema["required"][0], "query");
+        assert!(schema["properties"]["country"]["enum"].is_array());
+        assert!(schema["properties"]["search_lang"]["enum"].is_array());
+        assert!(schema["properties"]["ui_lang"]["enum"].is_array());
+    }
+
+    #[test]
+    fn test_non_brave_schema_omits_brave_parameters() {
+        let schema = perplexity_tool().parameters_schema();
+        let properties = schema["properties"].as_object().expect("properties");
+        assert!(!properties.contains_key("country"));
+        assert!(!properties.contains_key("search_lang"));
+        assert!(!properties.contains_key("ui_lang"));
+        assert!(!properties.contains_key("freshness"));
     }
 
     #[tokio::test]
