@@ -20,6 +20,101 @@ impl WebhookTool {
     }
 }
 
+fn object_or_json_string_schema(description: &str) -> Value {
+    json!({
+        "description": description,
+        "anyOf": [
+            { "type": "object" },
+            {
+                "type": "string",
+                "description": "JSON-encoded object; use this form with strict tool-calling providers."
+            },
+            { "type": "null" }
+        ]
+    })
+}
+
+fn webhook_patch_parameter_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Fields to update (for update). Any subset of webhook fields.",
+        "properties": {
+            "name": { "type": "string" },
+            "description": { "type": ["string", "null"] },
+            "enabled": { "type": "boolean" },
+            "agentId": { "type": ["string", "null"] },
+            "model": { "type": ["string", "null"] },
+            "systemPromptSuffix": { "type": ["string", "null"] },
+            "toolPolicy": {
+                "type": ["object", "null"],
+                "properties": {
+                    "allow": { "type": "array", "items": { "type": "string" } },
+                    "deny": { "type": "array", "items": { "type": "string" } }
+                }
+            },
+            "authMode": {
+                "type": "string",
+                "enum": ["none", "static_header", "bearer", "github_hmac_sha256", "gitlab_token", "stripe_webhook_signature", "linear_webhook_signature", "pagerduty_v2_signature", "sentry_webhook_signature"]
+            },
+            "authConfig": object_or_json_string_schema("Authentication configuration object."),
+            "sourceConfig": object_or_json_string_schema("Source-profile configuration object."),
+            "eventFilter": {
+                "type": "object",
+                "properties": {
+                    "allow": { "type": "array", "items": { "type": "string" } },
+                    "deny": { "type": "array", "items": { "type": "string" } }
+                }
+            },
+            "sessionMode": { "type": "string", "enum": ["per_delivery", "per_entity", "named_session"] },
+            "namedSessionKey": { "type": ["string", "null"] },
+            "allowedCidrs": { "type": "array", "items": { "type": "string" } },
+            "maxBodyBytes": { "type": "integer" },
+            "rateLimitPerMinute": { "type": "integer" },
+            "deliverOnly": { "type": "boolean" },
+            "promptTemplate": { "type": ["string", "null"] },
+            "deliverTo": { "type": ["string", "null"] },
+            "deliverExtra": object_or_json_string_schema("Extra channel delivery configuration object.")
+        }
+    })
+}
+
+fn normalize_stringified_object_fields(value: &mut Value, fields: &[&str]) -> anyhow::Result<()> {
+    let Some(object) = value.as_object_mut() else {
+        return Ok(());
+    };
+    for field in fields {
+        let Some(raw) = object.get_mut(*field) else {
+            continue;
+        };
+        let Value::String(encoded) = raw else {
+            continue;
+        };
+        let decoded: Value = serde_json::from_str(encoded)
+            .map_err(|error| anyhow::anyhow!("invalid JSON object in '{field}': {error}"))?;
+        if !decoded.is_object() {
+            return Err(anyhow::anyhow!("'{field}' must encode a JSON object"));
+        }
+        *raw = decoded;
+    }
+    Ok(())
+}
+
+fn normalize_nullable_filter_arrays(value: &mut Value) {
+    let Some(patch) = value.as_object_mut() else {
+        return;
+    };
+    for field in ["toolPolicy", "eventFilter"] {
+        let Some(filter) = patch.get_mut(field).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        for array_field in ["allow", "deny"] {
+            if filter.get(array_field).is_some_and(Value::is_null) {
+                filter.remove(array_field);
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl AgentTool for WebhookTool {
     fn name(&self) -> &str {
@@ -101,10 +196,7 @@ impl AgentTool for WebhookTool {
                     "type": "integer",
                     "description": "Max results (for deliveries). Default: 20."
                 },
-                "patch": {
-                    "type": "object",
-                    "description": "Fields to update (for update). Any subset of webhook fields."
-                }
+                "patch": webhook_patch_parameter_schema()
             }
         })
     }
@@ -184,7 +276,13 @@ impl AgentTool for WebhookTool {
                     .get("id")
                     .and_then(|v| v.as_i64())
                     .ok_or_else(|| anyhow::anyhow!("missing 'id' for update"))?;
-                let patch = params.get("patch").cloned().unwrap_or(json!({}));
+                let mut patch = params.get("patch").cloned().unwrap_or(json!({}));
+                normalize_stringified_object_fields(&mut patch, &[
+                    "authConfig",
+                    "sourceConfig",
+                    "deliverExtra",
+                ])?;
+                normalize_nullable_filter_arrays(&mut patch);
                 self.service
                     .update(json!({ "id": id, "patch": patch }))
                     .await
@@ -218,5 +316,74 @@ impl AgentTool for WebhookTool {
                 "unknown action '{other}'. Use: list, create, get, update, delete, profiles, deliveries"
             )),
         }
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webhook_patch_schema_preserves_supported_shapes() {
+        let patch = webhook_patch_parameter_schema();
+        let properties = &patch["properties"];
+        assert!(
+            properties.is_object(),
+            "webhook patch schema must declare properties"
+        );
+
+        assert_eq!(properties["name"]["type"], "string");
+        assert_eq!(properties["eventFilter"]["type"], "object");
+        assert!(
+            properties["eventFilter"]["properties"]
+                .get("allow")
+                .is_some()
+        );
+
+        for field in ["authConfig", "sourceConfig", "deliverExtra"] {
+            let supports_json_string = properties[field]["anyOf"]
+                .as_array()
+                .is_some_and(|variants| variants.iter().any(|schema| schema["type"] == "string"));
+            assert!(
+                supports_json_string,
+                "webhook patch field '{field}' must accept a JSON string"
+            );
+        }
+    }
+
+    #[test]
+    fn normalizes_json_encoded_webhook_config_objects() {
+        let mut patch = json!({
+            "authConfig": "{\"header\":\"x-secret\"}",
+            "deliverExtra": {"chat_id": "123"}
+        });
+
+        normalize_stringified_object_fields(&mut patch, &[
+            "authConfig",
+            "sourceConfig",
+            "deliverExtra",
+        ])
+        .unwrap();
+
+        assert_eq!(patch["authConfig"]["header"], "x-secret");
+        assert_eq!(patch["deliverExtra"]["chat_id"], "123");
+    }
+
+    #[test]
+    fn removes_strict_mode_nulls_from_webhook_filter_arrays() {
+        let mut patch = json!({
+            "description": null,
+            "toolPolicy": { "allow": null, "deny": ["shell"] },
+            "eventFilter": { "allow": ["push"], "deny": null }
+        });
+
+        normalize_nullable_filter_arrays(&mut patch);
+
+        assert!(patch["description"].is_null());
+        assert!(patch["toolPolicy"].get("allow").is_none());
+        assert_eq!(patch["toolPolicy"]["deny"], json!(["shell"]));
+        assert_eq!(patch["eventFilter"]["allow"], json!(["push"]));
+        assert!(patch["eventFilter"].get("deny").is_none());
     }
 }

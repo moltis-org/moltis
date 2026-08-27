@@ -291,6 +291,9 @@ Conventional commits: `feat|fix|docs|style|refactor|test|chore(scope): descripti
 - Prefer descriptive commit subjects over terse "change stuff" summaries.
 - For bug fixes, behavioral changes, and non-obvious refactors, include a commit body that explains the concrete problem, the root cause, and why the chosen fix is correct.
 - Write commit messages so `git log` is useful without opening the diff first.
+- If GPG signing or pinentry fails, do **not** bypass it with `--no-gpg-sign` or
+  create an unsigned commit. Stop and wait for the maintainer to return to their
+  computer and complete the pinentry or YubiKey interaction.
 **No `Co-Authored-By` trailers.** Do **not** add `Claude-Session:` URLs (or any
 other AI/assistant session links) to commit messages or PR descriptions. Update
 `README.md` features list with `feat` commits.

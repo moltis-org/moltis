@@ -156,6 +156,17 @@ impl ChannelRegistry {
         index.get(account_id).cloned()
     }
 
+    /// Resolve an account to one of the built-in channel types.
+    ///
+    /// The registry keeps string identifiers internally so it can route
+    /// dynamically named plugins. Domain consumers should use this typed
+    /// boundary when they need [`ChannelType`] semantics.
+    pub fn resolve_known_channel_type(&self, account_id: &str) -> Result<Option<ChannelType>> {
+        self.resolve_channel_type(account_id)
+            .map(|channel_type| channel_type.parse())
+            .transpose()
+    }
+
     /// Resolve an outbound sender for the given account.
     pub async fn resolve_outbound(&self, account_id: &str) -> Option<Arc<dyn ChannelOutbound>> {
         let channel_type = self.resolve_channel_type(account_id)?;
@@ -902,6 +913,26 @@ mod tests {
             registry.resolve_channel_type("bot1"),
             Some("telegram".into())
         );
+        assert_eq!(
+            registry.resolve_known_channel_type("bot1").unwrap(),
+            Some(ChannelType::Telegram)
+        );
+    }
+
+    #[test]
+    fn typed_resolution_distinguishes_missing_and_unknown_channel_types() {
+        let registry = ChannelRegistry::new();
+
+        assert_eq!(
+            registry.resolve_known_channel_type("missing").unwrap(),
+            None
+        );
+
+        registry.index_account("custom-account", "custom-plugin");
+        let error = registry
+            .resolve_known_channel_type("custom-account")
+            .unwrap_err();
+        assert!(error.to_string().contains("unknown channel type"));
     }
 
     #[tokio::test]

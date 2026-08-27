@@ -2,6 +2,7 @@ use std::fmt;
 
 const DEFAULT_BASE_IMAGE: &str = "ubuntu:25.10";
 const MAX_BASE_IMAGE_LEN: usize = 255;
+const MAX_IMAGE_NAME_LEN: usize = 128;
 const MAX_PACKAGE_COUNT: usize = 100;
 const MAX_PACKAGE_NAME_LEN: usize = 128;
 
@@ -109,16 +110,43 @@ impl TryFrom<String> for BaseImageReference {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ImageName(String);
+
+impl ImageName {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for ImageName {
+    type Error = ImageInputError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let value = value.trim();
+        if value.is_empty()
+            || value.len() > MAX_IMAGE_NAME_LEN
+            || !value.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            })
+        {
+            return Err(ImageInputError::ImageNameInvalid);
+        }
+
+        Ok(Self(value.to_string()))
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ValidatedImageRequest {
-    name: String,
+    name: Option<ImageName>,
     base: BaseImageReference,
     packages: Vec<PackageName>,
 }
 
 impl ValidatedImageRequest {
-    pub(crate) fn name(&self) -> &str {
-        &self.name
+    pub(crate) fn name(&self) -> Option<&ImageName> {
+        self.name.as_ref()
     }
 
     pub(crate) fn base(&self) -> &BaseImageReference {
@@ -143,11 +171,6 @@ pub(crate) fn package_check_args(request: &ValidatedImageRequest) -> Vec<&str> {
     ];
     args.extend(request.packages().iter().map(PackageName::as_str));
     args
-}
-
-pub(crate) fn is_valid_image_name(name: &str) -> bool {
-    name.chars()
-        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
 }
 
 impl TryFrom<serde_json::Value> for ValidatedImageRequest {
@@ -180,8 +203,15 @@ impl TryFrom<ImageRequest> for ValidatedImageRequest {
             .collect::<Result<_, _>>()?;
         let base = BaseImageReference::try_from(request.base.unwrap_or_default())?;
 
+        let name = request
+            .name
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .map(ImageName::try_from)
+            .transpose()?;
+
         Ok(Self {
-            name: request.name.unwrap_or_default().trim().to_string(),
+            name,
             base,
             packages,
         })
@@ -208,6 +238,8 @@ pub(crate) enum ImageInputError {
     BaseImageInvalid,
     #[error("packages list exceeds the maximum of 100 entries")]
     TooManyPackages,
+    #[error("image name must contain only ASCII letters, digits, dash, or underscore")]
+    ImageNameInvalid,
 }
 
 #[cfg(test)]
@@ -385,8 +417,18 @@ mod tests {
 
     #[test]
     fn image_name_validation_is_ascii_only() {
-        assert!(is_valid_image_name("developer_1-test"));
-        assert!(!is_valid_image_name("déveloper"));
+        assert_eq!(
+            ImageName::try_from("developer_1-test".to_string()),
+            Ok(ImageName("developer_1-test".to_string()))
+        );
+        assert_eq!(
+            ImageName::try_from("déveloper".to_string()),
+            Err(ImageInputError::ImageNameInvalid)
+        );
+        assert_eq!(
+            ImageName::try_from("a".repeat(MAX_IMAGE_NAME_LEN + 1)),
+            Err(ImageInputError::ImageNameInvalid)
+        );
     }
 
     #[test]
@@ -401,7 +443,7 @@ mod tests {
             panic!("expected request to be valid: {result:?}");
         };
 
-        assert_eq!(request.name(), "developer");
+        assert_eq!(request.name(), Some(&ImageName("developer".to_string())));
         assert_eq!(request.base().as_str(), "ghcr.io/moltis-org/base:v1");
         assert_eq!(request.packages(), &[
             PackageName("curl".to_string()),

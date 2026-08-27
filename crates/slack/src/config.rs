@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use {
     moltis_channels::{
-        config_view::ChannelConfigView,
+        config_view::{ChannelConfigView, UntrustedAudience, UntrustedTools},
         gating::{DmPolicy, GroupPolicy, MentionMode},
     },
     moltis_common::secret_serde,
@@ -104,6 +104,16 @@ pub struct SlackAccountConfig {
     #[serde(default)]
     pub channel_allowlist: Vec<String>,
 
+    /// Tool audience ceiling for turns outside an operator direct chat
+    /// (default: `public`).
+    #[serde(default)]
+    pub untrusted_audience: UntrustedAudience,
+
+    /// Name policy for turns outside an operator direct chat
+    /// (default: `deny_all`).
+    #[serde(default)]
+    pub untrusted_tools: UntrustedTools,
+
     /// Default model for this account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -178,6 +188,8 @@ impl std::fmt::Debug for SlackAccountConfig {
             .field("allowlist", &self.allowlist)
             .field("operators", &self.operators)
             .field("channel_allowlist", &self.channel_allowlist)
+            .field("untrusted_audience", &self.untrusted_audience)
+            .field("untrusted_tools", &self.untrusted_tools)
             .field("model", &self.model)
             .field("model_provider", &self.model_provider)
             .field("agent_id", &self.agent_id)
@@ -210,6 +222,8 @@ impl Default for SlackAccountConfig {
             allowlist: Vec::new(),
             operators: Vec::new(),
             channel_allowlist: Vec::new(),
+            untrusted_audience: UntrustedAudience::default(),
+            untrusted_tools: UntrustedTools::default(),
             model: None,
             model_provider: None,
             agent_id: None,
@@ -239,6 +253,14 @@ impl ChannelConfigView for SlackAccountConfig {
 
     fn group_allowlist(&self) -> &[String] {
         &self.channel_allowlist
+    }
+
+    fn untrusted_audience(&self) -> UntrustedAudience {
+        self.untrusted_audience
+    }
+
+    fn untrusted_tools(&self) -> UntrustedTools {
+        self.untrusted_tools
     }
 
     fn dm_policy(&self) -> DmPolicy {
@@ -292,7 +314,7 @@ pub struct RedactedConfig<'a>(pub &'a SlackAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 17; // always-present fields
+        let mut count = 20; // always-present fields
         count += c.signing_secret.is_some() as usize;
         count += !c.reaction_trigger_emojis.is_empty() as usize;
         count += c.model.is_some() as usize;
@@ -314,6 +336,8 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("allowlist", &c.allowlist)?;
         s.serialize_field("operators", &c.operators)?;
         s.serialize_field("channel_allowlist", &c.channel_allowlist)?;
+        s.serialize_field("untrusted_audience", &c.untrusted_audience)?;
+        s.serialize_field("untrusted_tools", &c.untrusted_tools)?;
         if c.model.is_some() {
             s.serialize_field("model", &c.model)?;
         }
@@ -365,6 +389,8 @@ mod tests {
         assert!(cfg.group_allowlist().is_empty());
         assert_eq!(cfg.dm_policy(), DmPolicy::Allowlist);
         assert_eq!(cfg.group_policy(), GroupPolicy::Open);
+        assert_eq!(cfg.untrusted_audience(), UntrustedAudience::Public);
+        assert_eq!(cfg.untrusted_tools(), UntrustedTools::DenyAll);
         assert!(cfg.model().is_none());
         assert!(cfg.model_provider().is_none());
     }
@@ -477,6 +503,41 @@ mod tests {
         assert!(!cfg.ack_reactions);
         let redacted = serde_json::to_value(RedactedConfig(&cfg)).unwrap();
         assert_eq!(redacted["ack_reactions"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn untrusted_tool_ceiling_round_trips_and_redacts() {
+        let cfg: SlackAccountConfig = serde_json::from_value(serde_json::json!({
+            "bot_token": "xoxb-test",
+            "app_token": "xapp-test",
+            "untrusted_audience": "trusted",
+            "untrusted_tools": "policy",
+        }))
+        .unwrap();
+
+        assert_eq!(cfg.untrusted_audience(), UntrustedAudience::Trusted);
+        assert_eq!(cfg.untrusted_tools(), UntrustedTools::Policy);
+
+        let stored = serde_json::to_value(&cfg).unwrap();
+        let round_tripped: SlackAccountConfig = serde_json::from_value(stored).unwrap();
+        assert_eq!(
+            round_tripped.untrusted_audience(),
+            UntrustedAudience::Trusted
+        );
+        assert_eq!(round_tripped.untrusted_tools(), UntrustedTools::Policy);
+
+        let redacted = serde_json::to_value(RedactedConfig(&round_tripped)).unwrap();
+        assert_eq!(redacted["untrusted_audience"], "trusted");
+        assert_eq!(redacted["untrusted_tools"], "policy");
+    }
+
+    #[test]
+    fn invalid_untrusted_tool_ceiling_is_rejected() {
+        let invalid_audience = serde_json::json!({ "untrusted_audience": "everyone" });
+        assert!(serde_json::from_value::<SlackAccountConfig>(invalid_audience).is_err());
+
+        let invalid_tools = serde_json::json!({ "untrusted_tools": "allow_all" });
+        assert!(serde_json::from_value::<SlackAccountConfig>(invalid_tools).is_err());
     }
 
     #[test]

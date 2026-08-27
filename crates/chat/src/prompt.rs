@@ -381,6 +381,7 @@ pub(crate) fn channel_binding_from_runtime_context(
         channel_type: host.channel_type.clone(),
         account_id: host.channel_account_id.clone(),
         chat_id: host.channel_chat_id.clone(),
+        outbound_to: host.channel_outbound_to.clone(),
         chat_type: host.channel_chat_type.clone(),
         sender_id: host.channel_sender_id.clone(),
     };
@@ -498,6 +499,7 @@ pub(crate) async fn build_prompt_runtime_context(
         channel_type: channel_context.channel_type,
         channel_account_id: channel_context.account_id,
         channel_chat_id: channel_context.chat_id,
+        channel_outbound_to: channel_context.outbound_to,
         channel_chat_type: channel_context.chat_type,
         data_dir: Some(data_dir_display),
         files_dir: Some(moltis_config::managed_files_dir().display().to_string()),
@@ -782,5 +784,20 @@ mod tests {
             Some("/workspace/project")
         );
         assert!(context.get("working_dir").is_none());
+    }
+
+    #[test]
+    fn tool_context_preserves_canonical_channel_destination() {
+        let mut runtime = PromptRuntimeContext::default();
+        runtime.host.channel_type = Some("telegram".into());
+        runtime.host.channel_account_id = Some("main".into());
+        runtime.host.channel_chat_id = Some("-100123".into());
+        runtime.host.channel_outbound_to = Some("-100123:42".into());
+
+        let context = build_tool_context("telegram:main:-100123:42", None, None, Some(&runtime));
+
+        assert_eq!(context["_channel"]["account_id"], "main");
+        assert_eq!(context["_channel"]["chat_id"], "-100123");
+        assert_eq!(context["_channel"]["outbound_to"], "-100123:42");
     }
 }

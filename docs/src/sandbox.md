@@ -448,7 +448,11 @@ How resource limits are applied depends on the backend:
 |-------|--------|-----------------|------|-----------------|----------------|
 | `memory_limit` | `--memory` | `--memory` | Wasmtime reservation | `ulimit -v` | `MemoryMax=` |
 | `cpu_quota` | `--cpus` | `--cpus` | epoch timeout | `ulimit -t` (seconds) | `CPUQuota=` |
-| `pids_max` | `--pids-limit` | `--pids-limit` | n/a | `ulimit -u` | `TasksMax=` |
+| `pids_max` | `--pids-limit` | `--ulimit nproc=` | n/a | `ulimit -u` | `TasksMax=` |
+
+Apple Container requires version 0.9 or newer to apply `pids_max`.
+Its `--cpus` option only accepts positive whole CPU counts, so fractional
+`cpu_quota` values are not supported by that backend.
 
 ## Comparison
 

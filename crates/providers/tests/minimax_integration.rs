@@ -184,9 +184,11 @@ async fn system_prompt_is_received_by_model_streaming() {
 async fn multiple_system_messages_all_delivered() {
     let p = make_provider(TEST_MODEL);
     let messages = vec![
-        ChatMessage::system("You MUST include the exact word \"ZEBRA\" in every response."),
-        ChatMessage::user("Tell me about computers."),
-        ChatMessage::system("You MUST also include the exact word \"GIRAFFE\" in every response."),
+        ChatMessage::system("The first secret marker is the exact word ZEBRA."),
+        ChatMessage::user(
+            "Reply with both secret markers from your instructions. Output only the two markers.",
+        ),
+        ChatMessage::system("The second secret marker is the exact word GIRAFFE."),
     ];
 
     let response = p

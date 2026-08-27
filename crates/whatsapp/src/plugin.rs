@@ -35,6 +35,7 @@ pub struct WhatsAppPlugin {
     message_log: Option<Arc<dyn MessageLog>>,
     event_sink: Option<Arc<dyn ChannelEventSink>>,
     data_dir: PathBuf,
+    identity_name: Option<String>,
     probe_cache: RwLock<HashMap<String, (ChannelHealthSnapshot, Instant)>>,
 }
 
@@ -50,8 +51,16 @@ impl WhatsAppPlugin {
             message_log: None,
             event_sink: None,
             data_dir,
+            identity_name: None,
             probe_cache: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Agent identity name, used as the WhatsApp push name unless an account
+    /// sets its own.
+    pub fn with_identity_name(mut self, name: Option<String>) -> Self {
+        self.identity_name = name;
+        self
     }
 
     pub fn with_message_log(mut self, log: Arc<dyn MessageLog>) -> Self {
@@ -176,6 +185,7 @@ impl ChannelPlugin for WhatsAppPlugin {
             self.data_dir.clone(),
             self.message_log.clone(),
             self.event_sink.clone(),
+            self.identity_name.clone(),
         )
         .await
         .map_err(|e| moltis_channels::Error::unavailable(format!("whatsapp start: {e}")))?;

@@ -179,7 +179,16 @@ async fn providers_oauth_start_mutation_returns_typed_shape() {
 #[tokio::test]
 async fn cron_add_mutation() {
     let mock = MockDispatch::new();
-    mock.set_response("cron.add", json!({"ok": true}));
+    mock.set_response(
+        "cron.add",
+        json!({
+            "id": "job-1",
+            "name": "backup",
+            "enabled": true,
+            "schedule": { "kind": "every", "every_ms": 60000 },
+            "payload": { "kind": "agentTurn", "message": "backup" }
+        }),
+    );
     let (schema, _) = build_test_schema(mock.clone());
 
     let res = schema
@@ -192,4 +201,32 @@ async fn cron_add_mutation() {
     let (method, params) = mock.last_call().expect("should have called");
     assert_eq!(method, "cron.add");
     assert_eq!(params["name"], "backup");
+}
+
+#[tokio::test]
+async fn cron_run_reports_recorded_failure() {
+    let mock = MockDispatch::new();
+    mock.set_response(
+        "cron.run",
+        json!({
+            "ran": "job-1",
+            "ok": false,
+            "run": {
+                "jobId": "job-1",
+                "status": "error",
+                "error": "channel delivery failed"
+            }
+        }),
+    );
+    let (schema, _) = build_test_schema(mock);
+
+    let response = schema
+        .execute(Request::new(
+            r#"mutation { cron { run(id: "job-1") { ok } } }"#,
+        ))
+        .await;
+
+    assert!(response.errors.is_empty(), "errors: {:?}", response.errors);
+    let data = response.data.into_json().expect("json");
+    assert_eq!(data["cron"]["run"]["ok"], false);
 }

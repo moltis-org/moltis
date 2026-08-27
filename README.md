@@ -235,10 +235,6 @@ fly secrets set MOLTIS_PASSWORD="your-password"
 All cloud configs use `--no-tls` because the provider handles TLS termination.
 See [Cloud Deploy docs](https://docs.moltis.org/cloud-deploy.html) for details.
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=moltis-org/moltis&type=date&legend=top-left)](https://www.star-history.com/#moltis-org/moltis&type=date&legend=top-left)
-
 ## License
 
 MIT

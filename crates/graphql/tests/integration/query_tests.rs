@@ -60,6 +60,24 @@ async fn cron_list_query() {
 }
 
 #[tokio::test]
+async fn cron_runs_query_forwards_job_id() {
+    let mock = MockDispatch::new();
+    mock.set_response("cron.runs", json!([]));
+    let (schema, _) = build_test_schema(mock.clone());
+
+    let res = schema
+        .execute(Request::new(
+            r#"{ cron { runs(jobId: "job-1") { status } } }"#,
+        ))
+        .await;
+
+    assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    let (method, params) = mock.last_call().expect("should have called");
+    assert_eq!(method, "cron.runs");
+    assert_eq!(params["id"], "job-1");
+}
+
+#[tokio::test]
 async fn sessions_list_query() {
     let mock = MockDispatch::new();
     mock.set_response(

@@ -17,6 +17,25 @@ use crate::{
 /// Shared client handle behind an Arc.
 type SharedClient = Arc<HomeAssistantClient>;
 
+fn optional_object_parameter(params: &Value, field: &str) -> anyhow::Result<Option<Value>> {
+    let Some(value) = params.get(field) else {
+        return Ok(None);
+    };
+    match value {
+        Value::Null => Ok(None),
+        Value::Object(_) => Ok(Some(value.clone())),
+        Value::String(encoded) => {
+            let decoded: Value = serde_json::from_str(encoded)
+                .map_err(|error| anyhow::anyhow!("invalid JSON object in '{field}': {error}"))?;
+            if !decoded.is_object() {
+                return Err(anyhow::anyhow!("'{field}' must encode a JSON object"));
+            }
+            Ok(Some(decoded))
+        },
+        _ => Err(anyhow::anyhow!("'{field}' must be a JSON object")),
+    }
+}
+
 /// Home Assistant agent tool providing entity control and state queries.
 ///
 /// Connections to HA instances are lazily initialised on first use.
@@ -183,8 +202,14 @@ impl AgentTool for HomeAssistantTool {
                     "description": "Service name for call_service (e.g. 'turn_on')"
                 },
                 "data": {
-                    "type": "object",
-                    "description": "JSON object data (for call_service or fire_event)"
+                    "description": "JSON object data (for call_service or fire_event)",
+                    "anyOf": [
+                        { "type": "object" },
+                        {
+                            "type": "string",
+                            "description": "JSON-encoded object; use this form with strict tool-calling providers."
+                        }
+                    ]
                 },
                 "event_type": {
                     "type": "string",
@@ -337,15 +362,10 @@ impl AgentTool for HomeAssistantTool {
                 }
                 let target =
                     (!target.entity_id.is_empty() || !target.area_id.is_empty()).then_some(target);
+                let data = optional_object_parameter(&params, "data")?;
 
                 let result = client
-                    .call_service(
-                        domain,
-                        service,
-                        target.as_ref(),
-                        params.get("data").cloned(),
-                        false,
-                    )
+                    .call_service(domain, service, target.as_ref(), data, false)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -432,8 +452,9 @@ impl AgentTool for HomeAssistantTool {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("missing 'event_type' parameter"))?;
 
+                let data = optional_object_parameter(&params, "data")?;
                 client
-                    .fire_event(event_type, params.get("data").cloned())
+                    .fire_event(event_type, data)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -691,6 +712,36 @@ mod tests {
         assert!(ops.contains(&json!("get_history")));
         assert!(ops.contains(&json!("fire_event")));
         assert!(ops.contains(&json!("health_check")));
+    }
+
+    #[tokio::test]
+    async fn tool_schema_allows_json_encoded_data_object() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let schema = tool.parameters_schema();
+        let variants = schema
+            .pointer("/properties/data/anyOf")
+            .unwrap()
+            .as_array()
+            .unwrap();
+
+        assert!(variants.iter().any(|variant| variant["type"] == "string"));
+    }
+
+    #[test]
+    fn parses_json_encoded_data_object() {
+        let params = json!({"data": "{\"brightness\":128}"});
+        let data = optional_object_parameter(&params, "data").unwrap().unwrap();
+
+        assert_eq!(data["brightness"], 128);
+    }
+
+    #[test]
+    fn rejects_json_encoded_non_object_data() {
+        let params = json!({"data": "[1,2,3]"});
+        let error = optional_object_parameter(&params, "data").unwrap_err();
+
+        assert!(error.to_string().contains("must encode a JSON object"));
     }
 
     // --- execute: list_entities ---

@@ -148,6 +148,10 @@ pub(crate) fn sandbox_container_prefix(instance_slug: &str) -> String {
     format!("moltis-{instance_slug}-sandbox")
 }
 
+pub fn sandbox_container_prefix_for_config(config: &moltis_config::MoltisConfig) -> String {
+    sandbox_container_prefix(&instance_slug(config))
+}
+
 pub(crate) fn browser_container_prefix(instance_slug: &str) -> String {
     format!("moltis-{instance_slug}-browser")
 }
@@ -577,34 +581,242 @@ pub(crate) fn log_startup_config_storage_diagnostics() {
 
 // ── Cron delivery ────────────────────────────────────────────────────────────
 
+pub(crate) struct CronDeliveryHistory {
+    pub(crate) registry: Arc<moltis_channels::ChannelRegistry>,
+    pub(crate) metadata: Arc<moltis_sessions::metadata::SqliteSessionMetadata>,
+    pub(crate) store: Arc<moltis_sessions::store::SessionStore>,
+    pub(crate) delivery_id: String,
+}
+
+fn cron_delivery_target(
+    registry: &moltis_channels::ChannelRegistry,
+    account_id: &str,
+    outbound_to: &str,
+) -> Option<moltis_channels::ChannelReplyTarget> {
+    let channel_type = match registry.resolve_known_channel_type(account_id) {
+        Ok(Some(channel_type)) => channel_type,
+        Ok(None) => return None,
+        Err(error) => {
+            warn!(
+                account_id,
+                %error,
+                "cannot add cron delivery to history for an unknown channel type"
+            );
+            return None;
+        },
+    };
+    let (chat_id, thread_id) = match channel_type {
+        moltis_channels::ChannelType::Telegram => match outbound_to.split_once(':') {
+            Some((chat_id, thread_id)) if !chat_id.is_empty() && !thread_id.is_empty() => {
+                (chat_id.to_string(), Some(thread_id.to_string()))
+            },
+            Some(_) => return None,
+            None => (outbound_to.to_string(), None),
+        },
+        // WhatsApp accepts bare phone numbers for outbound sends, but inbound
+        // conversations are keyed by their canonical phone-number JID.
+        moltis_channels::ChannelType::Whatsapp if !outbound_to.contains('@') => {
+            (format!("{outbound_to}@s.whatsapp.net"), None)
+        },
+        _ => (outbound_to.to_string(), None),
+    };
+
+    Some(moltis_channels::ChannelReplyTarget {
+        channel_type,
+        account_id: account_id.to_string(),
+        chat_id,
+        message_id: None,
+        thread_id,
+        ack_message_id: None,
+    })
+}
+
+fn same_channel_conversation(
+    left: &moltis_channels::ChannelReplyTarget,
+    right: &moltis_channels::ChannelReplyTarget,
+) -> bool {
+    left.channel_type == right.channel_type
+        && left.account_id == right.account_id
+        && left.chat_id == right.chat_id
+        && left.thread_id == right.thread_id
+}
+
+async fn bound_cron_delivery_session(
+    history: &CronDeliveryHistory,
+    account_id: &str,
+    outbound_to: &str,
+) -> Option<String> {
+    let target = cron_delivery_target(&history.registry, account_id, outbound_to)?;
+    let session_key = history
+        .metadata
+        .get_active_session(
+            target.channel_type.as_str(),
+            &target.account_id,
+            &target.chat_id,
+            target.thread_id.as_deref(),
+        )
+        .await
+        .unwrap_or_else(|| target.default_session_key());
+    let entry = history.metadata.get(&session_key).await?;
+    let binding = entry.channel_binding.as_deref()?;
+    let bound_target = serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding).ok()?;
+    same_channel_conversation(&target, &bound_target).then_some(session_key)
+}
+
+fn cron_delivery_run_id(delivery_id: &str) -> String {
+    format!("cron-delivery:{delivery_id}")
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum CronDeliveryRole {
+    Assistant,
+}
+
+#[derive(serde::Serialize)]
+struct CronDeliveryChannelContext {
+    private_context: bool,
+}
+
+#[derive(serde::Serialize)]
+struct CronDeliveryMessage<'a> {
+    role: CronDeliveryRole,
+    content: &'a str,
+    created_at: u64,
+    run_id: &'a str,
+    channel: CronDeliveryChannelContext,
+}
+
+fn cron_delivery_message<'a>(delivery_text: &'a str, run_id: &'a str) -> CronDeliveryMessage<'a> {
+    let created_at = u64::try_from(
+        (time::OffsetDateTime::now_utc() - time::OffsetDateTime::UNIX_EPOCH).whole_milliseconds(),
+    )
+    .unwrap_or_default();
+    CronDeliveryMessage {
+        role: CronDeliveryRole::Assistant,
+        content: delivery_text,
+        created_at,
+        run_id,
+        // A scheduled answer delivered to a shared chat is already public to
+        // that audience. Marking it keeps the message in that chat's public
+        // history filter without exposing anything from the isolated run.
+        channel: CronDeliveryChannelContext {
+            private_context: false,
+        },
+    }
+}
+
+async fn cron_delivery_was_recorded(
+    history: &CronDeliveryHistory,
+    session_key: &str,
+    run_id: &str,
+) -> bool {
+    match history.store.read_by_run_id(session_key, run_id).await {
+        Ok(messages) => !messages.is_empty(),
+        Err(error) => {
+            warn!(
+                session = session_key,
+                %error,
+                "could not check cron delivery history; continuing delivery"
+            );
+            false
+        },
+    }
+}
+
+async fn record_cron_delivery(
+    history: &CronDeliveryHistory,
+    session_key: &str,
+    delivery_text: &str,
+    run_id: &str,
+) -> moltis_sessions::Result<()> {
+    let message = serde_json::to_value(cron_delivery_message(delivery_text, run_id))?;
+    history.store.append(session_key, &message).await?;
+    let message_count = history.store.count(session_key).await?;
+    history.metadata.touch(session_key, message_count).await;
+    Ok(())
+}
+
 pub(crate) async fn maybe_deliver_cron_output(
     outbound: Option<Arc<dyn moltis_channels::ChannelOutbound>>,
     req: &moltis_cron::service::AgentTurnRequest,
     delivery_text: &str,
-) {
+    history: Option<&CronDeliveryHistory>,
+) -> moltis_cron::Result<()> {
     if !req.deliver || delivery_text.trim().is_empty() {
-        return;
+        return Ok(());
     }
 
     let (Some(channel_account), Some(chat_id)) = (&req.channel, &req.to) else {
-        return;
+        return Err(moltis_cron::Error::message(
+            "cron delivery requires both channel and destination",
+        ));
     };
 
-    if let Some(outbound) = outbound {
-        if let Err(error) = outbound
-            .send_text(channel_account, chat_id, delivery_text, None)
-            .await
+    let outbound = outbound.ok_or_else(|| {
+        moltis_cron::Error::message("cron delivery requested but channel outbound is unavailable")
+    })?;
+
+    let bound_session = match history {
+        Some(history) => bound_cron_delivery_session(history, channel_account, chat_id).await,
+        None => None,
+    };
+    let run_id = history.map(|history| cron_delivery_run_id(&history.delivery_id));
+    if let (Some(history), Some(session_key), Some(run_id)) =
+        (history, bound_session.as_deref(), run_id.as_deref())
+        && cron_delivery_was_recorded(history, session_key, run_id).await
+    {
+        debug!(
+            session = session_key,
+            delivery_id = %history.delivery_id,
+            "cron output delivery already recorded; skipping duplicate"
+        );
+        return Ok(());
+    }
+
+    outbound
+        .send_text(channel_account, chat_id, delivery_text, None)
+        .await
+        .map_err(|error| {
+            moltis_cron::Error::message(format!(
+                "failed to deliver cron output to {channel_account}: {error}"
+            ))
+        })?;
+
+    let bound_session_after_delivery = match history {
+        Some(history) => bound_cron_delivery_session(history, channel_account, chat_id).await,
+        None => None,
+    };
+    if let (Some(history), Some(session_key), Some(run_id)) =
+        (history, bound_session.as_deref(), run_id.as_deref())
+    {
+        if bound_session_after_delivery.as_deref() != Some(session_key) {
+            warn!(
+                session = session_key,
+                delivery_id = %history.delivery_id,
+                "cron output was delivered but the channel session changed; skipping history"
+            );
+            return Ok(());
+        }
+
+        if let Err(error) = record_cron_delivery(history, session_key, delivery_text, run_id).await
         {
-            tracing::warn!(
-                channel = %channel_account,
-                to = %chat_id,
-                error = %error,
-                "cron job channel delivery failed"
+            warn!(
+                session = session_key,
+                delivery_id = %history.delivery_id,
+                %error,
+                "cron output was delivered but could not be added to channel history"
+            );
+        } else {
+            debug!(
+                session = session_key,
+                delivery_id = %history.delivery_id,
+                "added delivered cron output to channel history"
             );
         }
-    } else {
-        tracing::debug!("cron job delivery requested but no channel outbound configured");
     }
+
+    Ok(())
 }
 
 // ── Skill hot-reload watcher ─────────────────────────────────────────────────
@@ -639,5 +851,18 @@ pub(crate) fn restore_saved_local_llm_models(
     #[cfg(not(feature = "local-llm"))]
     {
         let _ = (registry, providers_config);
+    }
+}
+
+#[cfg(test)]
+mod container_prefix_tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_prefix_for_config_is_identity_scoped() {
+        let prefix = sandbox_container_prefix_for_config(&moltis_config::MoltisConfig::default());
+
+        assert!(prefix.starts_with("moltis-"));
+        assert!(prefix.ends_with("-sandbox"));
     }
 }

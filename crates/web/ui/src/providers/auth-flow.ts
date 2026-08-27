@@ -802,7 +802,12 @@ function showMultiModelSelector(
 	m.title.textContent = `${providerDisplayName} \u2014 Preferred Models`;
 	m.body.textContent = "";
 
-	const selectedIds: Set<string> = new Set(savedModels);
+	const savedModelTokens = new Set(Array.from(savedModels, stripModelNamespace));
+	const selectedIds: Set<string> = new Set(
+		models
+			.filter((model) => savedModels.has(model.id) || savedModelTokens.has(stripModelNamespace(model.id)))
+			.map((model) => model.id),
+	);
 
 	// Track per-model probe state: "probing" | "ok" | { error: string }
 	const probeResults: Map<string, string | ProbeResult> = new Map();

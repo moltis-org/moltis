@@ -6,11 +6,13 @@ use async_trait::async_trait;
 
 use {
     crate::{
+        client_slot::ClientSlot,
         error::{Error, Result},
         traits::McpClientTrait,
         types::{McpToolDef, ToolContent},
     },
     moltis_config::schema::McpServerId,
+    tokio::sync::RwLock,
 };
 
 /// Recursively strip null values from nested objects and arrays.
@@ -47,7 +49,7 @@ pub struct McpToolBridge {
     server_name: McpServerId,
     description: String,
     input_schema: serde_json::Value,
-    client: Arc<tokio::sync::RwLock<dyn McpClientTrait>>,
+    client_slot: Arc<ClientSlot>,
 }
 
 impl McpToolBridge {
@@ -55,7 +57,19 @@ impl McpToolBridge {
     pub fn new(
         server_name: &str,
         tool_def: &McpToolDef,
-        client: Arc<tokio::sync::RwLock<dyn McpClientTrait>>,
+        client: Arc<RwLock<dyn McpClientTrait>>,
+    ) -> Self {
+        Self::from_slot_tool(
+            server_name,
+            tool_def,
+            Arc::new(ClientSlot::with_client(client)),
+        )
+    }
+
+    fn from_slot_tool(
+        server_name: &str,
+        tool_def: &McpToolDef,
+        client_slot: Arc<ClientSlot>,
     ) -> Self {
         Self {
             prefixed_name: format!("mcp__{}__{}", server_name, tool_def.name),
@@ -66,19 +80,31 @@ impl McpToolBridge {
                 .clone()
                 .unwrap_or_else(|| format!("MCP tool: {}", tool_def.name)),
             input_schema: tool_def.input_schema.clone(),
-            client,
+            client_slot,
         }
     }
 
-    /// Create bridges for all tools from a client.
+    /// Create bridges backed by the provided client.
     pub fn from_client(
         server_name: &str,
         tools: &[McpToolDef],
-        client: Arc<tokio::sync::RwLock<dyn McpClientTrait>>,
+        client: Arc<RwLock<dyn McpClientTrait>>,
+    ) -> Vec<Self> {
+        Self::from_slot(
+            server_name,
+            tools,
+            Arc::new(ClientSlot::with_client(client)),
+        )
+    }
+
+    pub(crate) fn from_slot(
+        server_name: &str,
+        tools: &[McpToolDef],
+        client_slot: Arc<ClientSlot>,
     ) -> Vec<Self> {
         tools
             .iter()
-            .map(|t| Self::new(server_name, t, Arc::clone(&client)))
+            .map(|tool| Self::from_slot_tool(server_name, tool, Arc::clone(&client_slot)))
             .collect()
     }
 
@@ -134,7 +160,12 @@ impl McpAgentTool for McpToolBridge {
             other => other,
         };
 
-        let client = self.client.read().await;
+        // Resolve the client for every call. Restarts replace the slot's
+        // client instance, while agent turns may retain this bridge for the
+        // lifetime of the turn.
+        let client = self.client_slot.read_client().await.ok_or_else(|| {
+            Error::message(format!("MCP server '{}' is not running", self.server_name))
+        })?;
         let result = client.call_tool(&self.original_name, params).await?;
 
         if result.is_error {
@@ -178,6 +209,7 @@ mod tests {
         super::*,
         crate::{
             client::McpClientState,
+            traits::McpClientTrait,
             types::{McpToolDef, ToolContent, ToolsCallResult},
         },
         std::sync::Arc,
@@ -240,6 +272,26 @@ mod tests {
         let name = "mcp__my-server__read_file";
         let parts: Vec<&str> = name.splitn(3, "__").collect();
         assert_eq!(parts, vec!["mcp", "my-server", "read_file"]);
+    }
+
+    #[test]
+    fn test_from_client_shares_slot_between_bridges() {
+        let client: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(MockMcpClient {
+            received_args: Arc::new(tokio::sync::Mutex::new(None)),
+        }));
+        let tools = ["first", "second"].map(|name| McpToolDef {
+            name: name.to_string(),
+            description: None,
+            input_schema: serde_json::json!({"type": "object"}),
+        });
+
+        let bridges = McpToolBridge::from_client("test", &tools, client);
+
+        assert_eq!(bridges.len(), 2);
+        assert!(Arc::ptr_eq(
+            &bridges[0].client_slot,
+            &bridges[1].client_slot
+        ));
     }
 
     #[tokio::test]
@@ -402,5 +454,65 @@ mod tests {
         let project = &forwarded["project"];
         assert_eq!(project["name"], "Inbox");
         assert!(project.get("color").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_execute_uses_replacement_client_after_restart() {
+        let old_received = Arc::new(tokio::sync::Mutex::new(None));
+        let old_client: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(MockMcpClient {
+            received_args: Arc::clone(&old_received),
+        }));
+        let slot = Arc::new(ClientSlot::with_client(old_client));
+
+        let tool_def = McpToolDef {
+            name: "query".to_string(),
+            description: Some("Search".to_string()),
+            input_schema: serde_json::json!({"type": "object"}),
+        };
+        let bridge = McpToolBridge::from_slot_tool("search", &tool_def, Arc::clone(&slot));
+
+        let replacement_received = Arc::new(tokio::sync::Mutex::new(None));
+        let replacement: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(MockMcpClient {
+            received_args: Arc::clone(&replacement_received),
+        }));
+        let _ = slot.replace(replacement).await;
+
+        let params = serde_json::json!({"query": "moltis"});
+        bridge.execute(params.clone()).await.unwrap();
+
+        assert!(old_received.lock().await.is_none());
+        assert_eq!(replacement_received.lock().await.as_ref(), Some(&params));
+    }
+
+    #[tokio::test]
+    async fn test_invalidated_slot_does_not_follow_recreated_server() {
+        let old_received = Arc::new(tokio::sync::Mutex::new(None));
+        let old_client: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(MockMcpClient {
+            received_args: Arc::clone(&old_received),
+        }));
+        let old_slot = Arc::new(ClientSlot::with_client(old_client));
+
+        let tool_def = McpToolDef {
+            name: "query".to_string(),
+            description: Some("Search".to_string()),
+            input_schema: serde_json::json!({"type": "object"}),
+        };
+        let bridge = McpToolBridge::from_slot_tool("search", &tool_def, Arc::clone(&old_slot));
+
+        let _ = old_slot.take().await;
+        let replacement_received = Arc::new(tokio::sync::Mutex::new(None));
+        let replacement: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(MockMcpClient {
+            received_args: Arc::clone(&replacement_received),
+        }));
+        let _new_slot = ClientSlot::with_client(replacement);
+
+        let error = bridge
+            .execute(serde_json::json!({"query": "moltis"}))
+            .await
+            .expect_err("invalidated bridge should not call a recreated server");
+
+        assert!(error.to_string().contains("is not running"));
+        assert!(old_received.lock().await.is_none());
+        assert!(replacement_received.lock().await.is_none());
     }
 }

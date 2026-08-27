@@ -427,6 +427,8 @@ pub struct BrowserConfig {
     /// Path to the Obscura binary (auto-detected from PATH if not set).
     /// Obscura is a lightweight Rust-based headless browser that supports CDP.
     pub obscura_path: Option<String>,
+    /// Whether to launch Obscura with its anti-detection mode enabled.
+    pub obscura_stealth: bool,
     /// Path to the Lightpanda binary (auto-detected from PATH if not set).
     /// Lightpanda is a lightweight Zig-based headless browser that supports CDP.
     pub lightpanda_path: Option<String>,
@@ -477,7 +479,8 @@ pub struct BrowserConfig {
     /// browser sandbox containers from inside another container.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_data_dir: Option<PathBuf>,
-    /// Browserless API compatibility mode (`v1` or `v2`).
+    /// Browserless container API compatibility mode (`v1` or `v2`).
+    /// Must match the configured sandbox image.
     pub browserless_api_version: BrowserlessApiVersion,
 }
 
@@ -512,6 +515,7 @@ impl Default for BrowserConfig {
             enabled: true,
             chrome_path: None,
             obscura_path: None,
+            obscura_stealth: true,
             lightpanda_path: None,
             headless: true,
             viewport_width: 2560,
@@ -559,6 +563,7 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             enabled: cfg.enabled,
             chrome_path: cfg.chrome_path.clone(),
             obscura_path: cfg.obscura_path.clone(),
+            obscura_stealth: cfg.obscura_stealth,
             lightpanda_path: cfg.lightpanda_path.clone(),
             headless: cfg.headless,
             viewport_width: cfg.viewport_width,
@@ -672,6 +677,16 @@ mod tests {
             Err(error) => panic!("failed to deserialize browser preference: {error}"),
         };
         assert_eq!(value, BrowserPreference::Brave);
+    }
+
+    #[test]
+    fn config_conversion_preserves_obscura_stealth_setting() {
+        let source = moltis_config::schema::BrowserConfig {
+            obscura_stealth: false,
+            ..Default::default()
+        };
+
+        assert!(!BrowserConfig::from(&source).obscura_stealth);
     }
 
     #[test]

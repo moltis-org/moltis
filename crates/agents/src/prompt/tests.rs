@@ -357,6 +357,7 @@ fn test_runtime_context_injected_when_provided() {
             channel_type: None,
             channel_account_id: None,
             channel_chat_id: None,
+            channel_outbound_to: None,
             channel_chat_type: None,
             channel_sender_id: None,
             data_dir: Some("/home/moltis/.moltis".into()),

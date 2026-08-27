@@ -154,6 +154,37 @@ mod tests {
     }
 
     #[test]
+    fn test_cron_six_field_with_seconds() {
+        let schedule = CronSchedule::Cron {
+            expr: "30 0 9 * * *".into(),
+            tz: None,
+        };
+        let now_ms = 1_706_745_600_000; // 2024-02-01T00:00:00Z
+
+        let next = compute_next_run(&schedule, now_ms).unwrap().unwrap();
+        let dt = DateTime::from_timestamp_millis(next as i64).unwrap();
+
+        assert_eq!(dt.format("%H:%M:%S").to_string(), "09:00:30");
+    }
+
+    #[test]
+    fn test_cron_seven_field_with_year() {
+        let schedule = CronSchedule::Cron {
+            expr: "0 0 9 1 2 * 2025".into(),
+            tz: None,
+        };
+        let now_ms = 1_706_745_600_000; // 2024-02-01T00:00:00Z
+
+        let next = compute_next_run(&schedule, now_ms).unwrap().unwrap();
+        let dt = DateTime::from_timestamp_millis(next as i64).unwrap();
+
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2025-02-01 09:00:00"
+        );
+    }
+
+    #[test]
     fn test_cron_with_timezone() {
         let s = CronSchedule::Cron {
             expr: "0 9 * * *".into(),
@@ -165,6 +196,28 @@ mod tests {
         // 9:00 Paris = 08:00 UTC in winter (CET = UTC+1)
         let dt = DateTime::from_timestamp_millis(next as i64).unwrap();
         assert_eq!(dt.format("%H:%M").to_string(), "08:00");
+    }
+
+    #[test]
+    fn test_cron_named_weekdays_with_timezone() {
+        let schedule = CronSchedule::Cron {
+            expr: "0 17 * * MON-FRI".into(),
+            tz: Some("America/Sao_Paulo".into()),
+        };
+        // Friday 2024-02-02 at 18:00 in São Paulo.
+        let now_ms = Utc
+            .with_ymd_and_hms(2024, 2, 2, 21, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+
+        let next = compute_next_run(&schedule, now_ms).unwrap().unwrap();
+        let expected = Utc
+            .with_ymd_and_hms(2024, 2, 5, 20, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+        assert_eq!(next, expected, "next run should be Monday at 17:00 BRT");
     }
 
     #[test]

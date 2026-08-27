@@ -205,6 +205,10 @@ fn write_default_config_writes_template_to_requested_path() {
         raw.contains("YOUR overrides only"),
         "generated template should explain it is override-only"
     );
+    assert!(
+        raw.contains("# push_name = \"Moltis\""),
+        "generated template should document the WhatsApp push name override"
+    );
 
     let parsed: MoltisConfig = parse_config(&raw, &path).expect("parse generated config");
     assert_eq!(

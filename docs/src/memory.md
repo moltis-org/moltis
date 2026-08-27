@@ -67,6 +67,10 @@ watching pipeline as the built-in backend.
 
 **Setup:**
 
+The Docker image and default source build include zvec. Standalone release
+packages use the self-contained `portable` feature set and currently omit zvec
+because its native runtime is not available for every supported target.
+
 1. Build moltis with the `zvec` feature flag:
    ```bash
    cargo build --release --features zvec
@@ -267,7 +271,7 @@ The built-in backend supports multiple embedding providers:
 
 | Provider | Model | Dimensions | Notes |
 |----------|-------|------------|-------|
-| Local (GGUF) | EmbeddingGemma-300M | 768 | Offline, ~300MB download |
+| Local (GGUF) | EmbeddingGemma-300M | 768 | Offline, ~300MB download, 2048-token context |
 | Ollama | nomic-embed-text | 768 | Requires Ollama running |
 | OpenAI | text-embedding-3-small | 1536 | Requires API key |
 | Custom | Configurable | Varies | OpenAI-compatible endpoint |
@@ -276,6 +280,11 @@ The system auto-detects available providers and creates a fallback chain:
 1. Try configured provider first
 2. Fall back to other available providers if it fails
 3. Use keyword-only search if no embedding provider is available
+
+The local provider reads the context capacity from the GGUF model and sizes a
+single encoder batch for each input. Inputs longer than the model context are
+truncated at the token boundary so an oversized line or query cannot terminate
+the Moltis process.
 
 ## Memory Directories
 

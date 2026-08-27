@@ -45,17 +45,29 @@ async function setSwitchRpcSendMode(page, mode, delayMs = 0) {
 				ws.send = window.__origSwitchWsSend;
 				return;
 			}
+			if (desiredMode === "release") {
+				ws.send = window.__origSwitchWsSend;
+				const heldPayload = window.__heldSwitchWsPayload;
+				window.__heldSwitchWsPayload = null;
+				if (heldPayload) window.__origSwitchWsSend(heldPayload);
+				return;
+			}
 
+			const sendSwitchPayload = (payload) => {
+				if (desiredMode === "drop") return;
+				if (desiredMode === "hold") {
+					window.__heldSwitchWsPayload = payload;
+					return;
+				}
+				if (desiredMode === "delay") {
+					setTimeout(() => window.__origSwitchWsSend(payload), desiredDelayMs);
+					return;
+				}
+				return window.__origSwitchWsSend(payload);
+			};
 			ws.send = (payload) => {
 				try {
-					const parsed = JSON.parse(payload);
-					if (parsed?.method === "sessions.switch") {
-						if (desiredMode === "drop") return;
-						if (desiredMode === "delay") {
-							setTimeout(() => window.__origSwitchWsSend(payload), desiredDelayMs);
-							return;
-						}
-					}
+					if (JSON.parse(payload)?.method === "sessions.switch") return sendSwitchPayload(payload);
 				} catch (_err) {
 					// Fall through to the original sender.
 				}
@@ -683,6 +695,21 @@ test.describe("Session management", () => {
 		// No thinking indicator initially
 		await expect(page.locator("#thinkingIndicator")).toHaveCount(0);
 
+		// Hold a cached session refresh open so its replying snapshot predates
+		// the realtime thinking event below.
+		await setSwitchRpcSendMode(page, "hold");
+		await page.evaluate(async (key) => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const sessions = await import(`${prefix}js/sessions.js`);
+			sessions.switchSession(key);
+		}, sessionKey);
+		await expect
+			.poll(() => page.evaluate(() => window.__moltis_stores?.sessionStore?.refreshInProgressKey?.value || ""))
+			.toBe(sessionKey);
+
 		// Trigger thinking state via system-event
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
@@ -692,9 +719,26 @@ test.describe("Session management", () => {
 				runId: "run-stop-e2e",
 			},
 		});
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey,
+				state: "thinking_text",
+				runId: "run-stop-e2e",
+				text: "Newer realtime thinking",
+			},
+		});
 
-		// Thinking indicator appears and the composer send button becomes stop.
-		await expect(page.locator("#thinkingIndicator")).toBeVisible({ timeout: 5_000 });
+		// Thinking appears before the stale refresh response is released.
+		const thinkingIndicator = page.locator("#thinkingIndicator");
+		await expect(thinkingIndicator).toContainText("Newer realtime thinking", { timeout: 5_000 });
+		await setSwitchRpcSendMode(page, "release");
+		await expect
+			.poll(() => page.evaluate(() => window.__moltis_stores?.sessionStore?.refreshInProgressKey?.value || ""))
+			.toBe("");
+
+		// The delayed snapshot must not clear the newer run state.
+		await expect(thinkingIndicator).toContainText("Newer realtime thinking");
 		const stopBtn = page.locator("#sendBtn");
 		await expect(stopBtn).toBeVisible({ timeout: 5_000 });
 		await expect(stopBtn).toHaveAttribute("data-mode", "stop");

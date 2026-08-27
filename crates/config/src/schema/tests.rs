@@ -796,6 +796,15 @@ browserless_api_version = "v2"
 }
 
 #[test]
+fn obscura_stealth_defaults_enabled_and_can_be_disabled() {
+    let defaults: BrowserConfig = toml::from_str("").unwrap();
+    assert!(defaults.obscura_stealth);
+
+    let disabled: BrowserConfig = toml::from_str("obscura_stealth = false").unwrap();
+    assert!(!disabled.obscura_stealth);
+}
+
+#[test]
 fn browserless_api_version_rejects_non_lowercase_variants() {
     let parsed: Result<BrowserConfig, _> = toml::from_str(
         r#"

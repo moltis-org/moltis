@@ -19,6 +19,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260827.01] - 2026-08-27
+### Fixed
+- Fix Fastmail MCP OAuth scope registration (#1244)
+- [providers] Allow replacing preferred models (#1104)
+
+## [20260826.01] - 2026-08-26
+### Fixed
+- [cron] Preserve delivered channel context (#1243)
+- [tools] Validate Brave search parameters (#1245)
+
+## [20260824.01] - 2026-08-24
+### Removed
+- Remove accidental handoff document
+
+
+### Fixed
+- [whatsapp] Render Markdown in outbound messages (#1220)
+- [memory] Bound local embedding encoder batches (#1236)
+- [memory] Normalize built-in backend config value (#1235)
+- [skills] Materialize recursive bundled sidecars (#1234)
+- [mcp] Resolve current client after server restart (#1231)
+- [browser] Support Browserless v2 containers (#1229)
+- [whatsapp] Persist inbound files for local tools (#1228)
+- [browser] Enable Obscura stealth mode by default (#1227)
+- [i18n] Update and improve zh-TW Traditional Chinese locale (#1225)
+- [cron] Deliver scheduled output to the originating chat (#1226)
+- [whatsapp] Bound inbound media downloads while streaming (#1233)
+
+## [20260820.01] - 2026-08-20
+### Fixed
+- [release] Harden transient integration checks
+
+## [20260819.01] - 2026-08-19
+### Fixed
+- [web] Preserve run state during session refresh
+- [httpd] Require authentication for vault unlock and recovery (#1216)
+- [whatsapp] Treat a reply to the bot as addressing it (#1217)
+- [channels] Make the untrusted-turn tool ceiling configurable (#1219)
+- [whatsapp] Stop hardcoding the push name to "Moltis" (#1218)
+
+## [20260818.10] - 2026-08-18
+### Added
+- Add GPT-5.6 Luna routing coverage (#1213)
+
+
+### Fixed
+- Fix Apple Container status parsing across versions (#1214)
+- Fix Apple Container sandbox resource limits (#1215)
+
+## [20260818.09] - 2026-08-18
+### Fixed
+- Preserve Responses routing for explicit OpenAI endpoints (#1212)
+
+## [20260818.08] - 2026-08-18
+### Fixed
+- [gateway] Keep core service methods within size limit
+
+## [20260818.07] - 2026-08-18
+### Removed
+- Remove broken star history chart
+
+
+### Fixed
+- [ci] Run clippy and tests in parallel
+- [gateway] Treat heartbeat.update params as a patch, not a whole config (#1209)
+
+## [20260818.06] - 2026-08-18
+### Fixed
+- [release] Keep standalone packages self-contained
+
+## [20260818.05] - 2026-08-18
+### Fixed
+- [docker] Package zvec runtime in release image
+
 ## [20260818.04] - 2026-08-18
 ### Fixed
 - [web] Cover bare session refreshes in midnight E2E

@@ -481,6 +481,7 @@ Default `tool_overrides` entries:
 | `enabled` | bool | `true` | Whether browser support is enabled. |
 | `chrome_path` | optional string | `null` | Path to Chrome/Chromium binary (auto-detected if not set). |
 | `obscura_path` | optional string | `null` | Path to the Obscura binary for `browser = "obscura"` requests (auto-detected from `OBSCURA` or `PATH` if not set). |
+| `obscura_stealth` | bool | `true` | Pass `--stealth` when launching Obscura. Full TLS impersonation requires an Obscura binary built with its upstream `stealth` feature. |
 | `lightpanda_path` | optional string | `null` | Path to the Lightpanda binary for `browser = "lightpanda"` requests (auto-detected from `LIGHTPANDA` or `PATH` if not set). |
 | `headless` | bool | `true` | Whether to run in headless mode. |
 | `viewport_width` | integer | `2560` | Default viewport width in pixels. |
@@ -492,13 +493,13 @@ Default `tool_overrides` entries:
 | `navigation_timeout_ms` | integer | `30000` | Default navigation timeout in milliseconds. |
 | `user_agent` | optional string | `null` | Custom user agent string (uses Chrome default if not set). |
 | `chrome_args` | array | `[]` | Additional Chrome command-line arguments. |
-| `sandbox_image` | string | `"docker.io/browserless/chrome"` | Docker image for sandboxed browser instances. |
+| `sandbox_image` | string | `"docker.io/browserless/chrome"` | Docker image for sandboxed browser instances. Must match `browserless_api_version`; use a pinned `ghcr.io/browserless/chromium:v2.x` image for v2. |
 | `allowed_domains` | array | `[]` | Allowed navigation domains (empty = all allowed). Supports wildcards (`"*.example.com"`). |
 | `low_memory_threshold_mb` | integer | `2048` | System RAM threshold (MB) below which memory-saving Chrome flags are injected (0 to disable). |
 | `persist_profile` | bool | `true` | Persist Chrome user profile (cookies, auth, local storage) across sessions. |
 | `profile_dir` | optional string | `null` | Custom path for persistent Chrome profile directory. Implies `persist_profile = true`. |
 | `container_host` | string | `"127.0.0.1"` | Hostname/IP to connect to the browser container from the host. Use `"host.docker.internal"` when Moltis runs inside Docker. |
-| `browserless_api_version` | enum: `"v1"`, `"v2"` | `"v1"` | Browserless API compatibility mode for websocket endpoints. |
+| `browserless_api_version` | enum: `"v1"`, `"v2"` | `"v1"` | Browserless container protocol for environment settings, launch options, and WebSocket paths. Must match `sandbox_image`; see [Browser Automation](browser-automation.md#browserless-v2-setup-checklist) for the complete v2 setup. |
 
 ---
 

@@ -516,6 +516,7 @@ fn format_embedding_model(config: &moltis_config::MoltisConfig) -> String {
     }
 }
 
+#[cfg(feature = "zvec")]
 fn compute_disk_usage(stem: &std::path::Path) -> u64 {
     let Some(parent) = stem.parent() else {
         return 0;
@@ -545,6 +546,7 @@ fn compute_disk_usage(stem: &std::path::Path) -> u64 {
     total
 }
 
+#[cfg(feature = "zvec")]
 fn format_bytes(bytes: u64) -> String {
     if bytes >= 1_073_741_824 {
         format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
@@ -821,6 +823,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[serial_test::serial(data_dir)]
     fn test_memory_db_path_contains_memory_db() {
         let path = memory_db_path();
         assert!(
@@ -831,6 +834,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(data_dir)]
     async fn test_search_missing_db() {
         // Point data dir to a temp directory with no memory.db
         let tmp = tempfile::TempDir::new().unwrap();
@@ -848,6 +852,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(data_dir)]
     async fn test_search_with_results() {
         let tmp = tempfile::TempDir::new().unwrap();
         let db_path = tmp.path().join("memory.db");
@@ -901,6 +906,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(data_dir)]
     async fn test_search_no_results() {
         let tmp = tempfile::TempDir::new().unwrap();
         let db_path = tmp.path().join("memory.db");
@@ -921,6 +927,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(data_dir)]
     async fn test_status_missing_db() {
         let tmp = tempfile::TempDir::new().unwrap();
         moltis_config::set_data_dir(tmp.path().to_path_buf());
@@ -931,6 +938,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(data_dir)]
     async fn test_status_with_db() {
         let tmp = tempfile::TempDir::new().unwrap();
         let db_path = tmp.path().join("memory.db");

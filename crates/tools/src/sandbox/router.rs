@@ -26,7 +26,8 @@ use {
         file_system::{SandboxGrepOptions, SandboxListFilesResult, SandboxReadResult},
         platform::RestrictedHostSandbox,
         types::{
-            BuildImageResult, DEFAULT_SANDBOX_IMAGE, Sandbox, SandboxConfig, SandboxId, SandboxMode,
+            BuildImageResult, DEFAULT_SANDBOX_IMAGE, Sandbox, SandboxConfig, SandboxId,
+            SandboxMode, SandboxRuntimeInfo,
         },
     },
     crate::{
@@ -105,6 +106,19 @@ impl Sandbox for FailoverSandbox {
         } else {
             self.primary_name
         }
+    }
+
+    async fn runtime_name(&self, id: &SandboxId) -> Option<String> {
+        self.runtime_info(id).await.runtime_name
+    }
+
+    async fn runtime_info(&self, id: &SandboxId) -> SandboxRuntimeInfo {
+        let backend = if self.fallback_enabled().await {
+            Arc::clone(&self.fallback)
+        } else {
+            Arc::clone(&self.primary)
+        };
+        backend.runtime_info(id).await
     }
 
     fn provides_fs_isolation(&self) -> bool {

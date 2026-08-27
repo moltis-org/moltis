@@ -18,7 +18,8 @@ use {
 };
 
 use crate::{
-    image_input::{ValidatedImageRequest, is_valid_image_name, package_check_args},
+    container_management::{managed_container_name, managed_container_prefixes},
+    image_input::{ImageInputError, ValidatedImageRequest, package_check_args},
     templates::{build_nav_counts, onboarding_completed},
 };
 
@@ -66,41 +67,10 @@ fn configured_secret(secret: &Option<Secret<String>>) -> bool {
         .is_some_and(|secret| !secret.expose_secret().is_empty())
 }
 
-fn sandbox_container_prefix_from_config(config: &moltis_config::MoltisConfig) -> String {
-    config
-        .tools
-        .exec
-        .sandbox
-        .container_prefix
-        .clone()
-        .unwrap_or_else(|| "moltis-sandbox".to_string())
-}
-
-fn browser_container_prefix_from_config(config: &moltis_config::MoltisConfig) -> String {
-    let _ = config;
-    "moltis-browser".to_string()
-}
-
-fn managed_container_prefixes(config: &moltis_config::MoltisConfig) -> Vec<String> {
-    let sandbox_prefix = sandbox_container_prefix_from_config(config);
-    let browser_prefix = browser_container_prefix_from_config(config);
-    if sandbox_prefix == browser_prefix {
-        vec![sandbox_prefix]
-    } else {
-        vec![sandbox_prefix, browser_prefix]
-    }
-}
-
 fn browser_image_repository(config: &moltis_config::MoltisConfig) -> Option<String> {
     let image = config.tools.browser.sandbox_image.trim();
     let (repo, _) = image.rsplit_once(':').unwrap_or((image, "latest"));
     (!repo.is_empty()).then(|| repo.to_string())
-}
-
-fn managed_container_name(config: &moltis_config::MoltisConfig, name: &str) -> bool {
-    managed_container_prefixes(config)
-        .iter()
-        .any(|prefix| name.starts_with(prefix))
 }
 
 #[derive(serde::Deserialize)]
@@ -877,6 +847,13 @@ pub async fn api_check_packages_handler(
 ) -> impl IntoResponse {
     let request = match ValidatedImageRequest::try_from(body) {
         Ok(request) => request,
+        Err(ImageInputError::ImageNameInvalid) => {
+            return api_error_response(
+                StatusCode::BAD_REQUEST,
+                SANDBOX_IMAGE_NAME_INVALID,
+                "name must be alphanumeric, dash, or underscore",
+            );
+        },
         Err(error) => {
             return api_error_response(
                 StatusCode::BAD_REQUEST,
@@ -1198,6 +1175,13 @@ pub async fn api_build_image_handler(
 ) -> impl IntoResponse {
     let request = match ValidatedImageRequest::try_from(body) {
         Ok(request) => request,
+        Err(ImageInputError::ImageNameInvalid) => {
+            return api_error_response(
+                StatusCode::BAD_REQUEST,
+                SANDBOX_IMAGE_NAME_INVALID,
+                "name must be alphanumeric, dash, or underscore",
+            );
+        },
         Err(error) => {
             return api_error_response(
                 StatusCode::BAD_REQUEST,
@@ -1206,27 +1190,18 @@ pub async fn api_build_image_handler(
             );
         },
     };
-    let name = request.name();
-    if name.is_empty() {
+    let Some(name) = request.name() else {
         return api_error_response(
             StatusCode::BAD_REQUEST,
             SANDBOX_IMAGE_NAME_REQUIRED,
             "name is required",
         );
-    }
+    };
     if request.packages().is_empty() {
         return api_error_response(
             StatusCode::BAD_REQUEST,
             SANDBOX_IMAGE_PACKAGES_REQUIRED,
             "packages list is empty",
-        );
-    }
-
-    if !is_valid_image_name(name) {
-        return api_error_response(
-            StatusCode::BAD_REQUEST,
-            SANDBOX_IMAGE_NAME_INVALID,
-            "name must be alphanumeric, dash, or underscore",
         );
     }
 
@@ -1269,20 +1244,22 @@ WORKDIR /home/sandbox\n",
         &config.tools.exec.sandbox.backend,
     );
     tracing::debug!(
-        name,
+        name = name.as_str(),
         cli = builder.cli_name(),
         "starting image build via API"
     );
-    let result = builder.ensure_image(name, &dockerfile_path, &tmp_dir).await;
+    let result = builder
+        .ensure_image(name.as_str(), &dockerfile_path, &tmp_dir)
+        .await;
     let _ = std::fs::remove_dir_all(&tmp_dir);
     match result {
         Ok(tag) => {
-            tracing::info!(name, tag, "image build succeeded via API");
+            tracing::info!(name = name.as_str(), tag, "image build succeeded via API");
             Json(serde_json::json!({ "tag": tag })).into_response()
         },
         Err(e) => {
             let detail = e.to_string();
-            tracing::warn!(name, error = %detail, "image build failed via API");
+            tracing::warn!(name = name.as_str(), error = %detail, "image build failed via API");
             let message = if detail.contains("Cannot connect")
                 || detail.contains("connect to the Docker daemon")
                 || detail.contains("No such file or directory")
@@ -1306,9 +1283,11 @@ WORKDIR /home/sandbox\n",
 
 // ── Containers ───────────────────────────────────────────────────────────────
 
-pub async fn api_list_containers_handler() -> impl IntoResponse {
-    let config = moltis_config::discover_and_load();
-    let prefixes = managed_container_prefixes(&config);
+pub async fn api_list_containers_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let prefixes = managed_container_prefixes(
+        &state.gateway.config,
+        state.gateway.sandbox_router.as_deref(),
+    );
     match moltis_tools::sandbox::list_running_containers_for_prefixes(&prefixes).await {
         Ok(containers) => Json(serde_json::json!({ "containers": containers })).into_response(),
         Err(e) => api_error_response(
@@ -1319,9 +1298,15 @@ pub async fn api_list_containers_handler() -> impl IntoResponse {
     }
 }
 
-pub async fn api_stop_container_handler(Path(name): Path<String>) -> impl IntoResponse {
-    let config = moltis_config::discover_and_load();
-    if !managed_container_name(&config, &name) {
+pub async fn api_stop_container_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    if !managed_container_name(
+        &state.gateway.config,
+        state.gateway.sandbox_router.as_deref(),
+        &name,
+    ) {
         return api_error_response(
             StatusCode::FORBIDDEN,
             SANDBOX_CONTAINER_PREFIX_MISMATCH,
@@ -1338,9 +1323,15 @@ pub async fn api_stop_container_handler(Path(name): Path<String>) -> impl IntoRe
     }
 }
 
-pub async fn api_remove_container_handler(Path(name): Path<String>) -> impl IntoResponse {
-    let config = moltis_config::discover_and_load();
-    if !managed_container_name(&config, &name) {
+pub async fn api_remove_container_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    if !managed_container_name(
+        &state.gateway.config,
+        state.gateway.sandbox_router.as_deref(),
+        &name,
+    ) {
         return api_error_response(
             StatusCode::FORBIDDEN,
             SANDBOX_CONTAINER_PREFIX_MISMATCH,
@@ -1357,10 +1348,12 @@ pub async fn api_remove_container_handler(Path(name): Path<String>) -> impl Into
     }
 }
 
-pub async fn api_clean_all_containers_handler() -> impl IntoResponse {
-    let config = moltis_config::discover_and_load();
+pub async fn api_clean_all_containers_handler(State(state): State<AppState>) -> impl IntoResponse {
     let mut removed = 0usize;
-    for prefix in managed_container_prefixes(&config) {
+    for prefix in managed_container_prefixes(
+        &state.gateway.config,
+        state.gateway.sandbox_router.as_deref(),
+    ) {
         match moltis_tools::sandbox::clean_all_containers(&prefix).await {
             Ok(count) => removed += count,
             Err(e) => {

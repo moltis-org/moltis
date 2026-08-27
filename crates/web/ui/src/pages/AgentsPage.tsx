@@ -121,6 +121,14 @@ function parseModesPayload(value: unknown): ModePreset[] {
 	return value.modes.map(parseModePayload).filter((mode): mode is ModePreset => mode !== null);
 }
 
+function isRetryableRpcFailure(response: RpcResponse | null | undefined): boolean {
+	return (
+		response?.error?.code === "UNAVAILABLE" ||
+		response?.error?.code === "TIMEOUT" ||
+		response?.error?.message === "WebSocket not connected"
+	);
+}
+
 export function initAgents(container: HTMLElement, subPath?: string | null): void {
 	containerRef = container;
 	render(<AgentsPageComponent subPath={subPath || undefined} />, container);
@@ -266,10 +274,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 		let attempts = 0;
 		function load(): void {
 			sendRpc("agents.identity.get", { agent_id: agentId }).then((res) => {
-				if (
-					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
-					attempts < WS_RETRY_LIMIT
-				) {
+				if (isRetryableRpcFailure(res) && attempts < WS_RETRY_LIMIT) {
 					attempts += 1;
 					window.setTimeout(load, WS_RETRY_DELAY_MS);
 					return;
@@ -1052,10 +1057,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 		let attempts = 0;
 		function load(): void {
 			sendRpc("agents.list", {}).then((res) => {
-				if (
-					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
-					attempts < WS_RETRY_LIMIT
-				) {
+				if (isRetryableRpcFailure(res) && attempts < WS_RETRY_LIMIT) {
 					attempts += 1;
 					window.setTimeout(load, WS_RETRY_DELAY_MS);
 					return;
@@ -1077,10 +1079,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 		let attempts = 0;
 		function load(): void {
 			sendRpc("agents.presets_list", {}).then((res) => {
-				if (
-					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
-					attempts < WS_RETRY_LIMIT
-				) {
+				if (isRetryableRpcFailure(res) && attempts < WS_RETRY_LIMIT) {
 					attempts += 1;
 					window.setTimeout(load, WS_RETRY_DELAY_MS);
 					return;
@@ -1097,10 +1096,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 		let attempts = 0;
 		function load(): void {
 			sendRpc("modes.list", {}).then((res) => {
-				if (
-					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
-					attempts < WS_RETRY_LIMIT
-				) {
+				if (isRetryableRpcFailure(res) && attempts < WS_RETRY_LIMIT) {
 					attempts += 1;
 					window.setTimeout(load, WS_RETRY_DELAY_MS);
 					return;

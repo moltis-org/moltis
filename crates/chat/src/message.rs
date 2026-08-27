@@ -343,3 +343,58 @@ pub(crate) fn user_documents_for_persistence(
             .collect(),
     )
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn inbound_document_metadata_resolves_to_the_persisted_local_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(temp.path().to_path_buf());
+        let session_key = "channel:whatsapp:test";
+        let filename = "0123456789abcdef0123456789abcdef_document.pdf";
+        store
+            .save_media(session_key, filename, b"synthetic test document")
+            .await
+            .unwrap();
+        let params = serde_json::json!({
+            "_document_files": [{
+                "display_name": "test document.pdf",
+                "stored_filename": filename,
+                "mime_type": "application/pdf",
+                "size_bytes": 23,
+            }]
+        });
+
+        let documents = user_documents_from_params(&params, session_key, &store).unwrap();
+        let local_path = documents[0].absolute_path.as_deref().unwrap();
+        let context = format_user_documents_context(&documents).unwrap();
+
+        assert_eq!(
+            std::fs::read(local_path).unwrap(),
+            b"synthetic test document"
+        );
+        assert!(context.contains(&format!("local_path: {local_path}")));
+        assert_eq!(
+            documents[0].media_ref,
+            SessionStore::media_reference(session_key, filename).unwrap()
+        );
+    }
+
+    #[test]
+    fn inbound_document_metadata_rejects_path_traversal() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(temp.path().to_path_buf());
+        let params = serde_json::json!({
+            "_document_files": [{
+                "display_name": "test document.pdf",
+                "stored_filename": "../outside.pdf",
+                "mime_type": "application/pdf",
+            }]
+        });
+
+        assert!(user_documents_from_params(&params, "channel:whatsapp:test", &store).is_none());
+    }
+}

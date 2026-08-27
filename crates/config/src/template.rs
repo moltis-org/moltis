@@ -527,11 +527,15 @@ port = {port}                           # Port number (auto-generated for this i
 # device_scale_factor = 2.0         # HiDPI/Retina scaling
 # max_instances = 3                 # Maximum concurrent browser instances
 # idle_timeout_secs = 300           # Close idle browsers after this many seconds
-# sandbox = false                   # Run browser in container for isolation
 # allowed_domains = []              # Domain restrictions (empty = all allowed)
 # chrome_path = "/path/to/chrome"   # Custom Chrome binary path
 # obscura_path = "/path/to/obscura" # Custom Obscura binary path for browser = "obscura"
+# obscura_stealth = true             # Pass --stealth (full TLS mode needs a stealth build)
 # lightpanda_path = "/path/to/lightpanda" # Custom Lightpanda binary path for browser = "lightpanda"
+# sandbox_image = "docker.io/browserless/chrome" # Default Browserless v1 image
+# browserless_api_version = "v1"    # Must match the Browserless image API
+# Browserless v2 example: set sandbox_image = "ghcr.io/browserless/chromium:v2.56.0"
+# and browserless_api_version = "v2" together.
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SKILLS
@@ -881,6 +885,12 @@ port = {port}                           # Port number (auto-generated for this i
 # [channels]
 # offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]
 
+# Example WhatsApp account. Pair the account by scanning the QR code after startup.
+# [channels.whatsapp.my-bot]
+# push_name = "Moltis"        # Falls back to [identity] name, then "Moltis".
+# dm_policy = "allowlist"
+# allowlist = []
+
 # Example Slack account. api_base_url defaults to Slack; set it only for
 # Slack-compatible proxies, mock servers, or gateways.
 # [channels.slack.my-bot]
@@ -890,6 +900,8 @@ port = {port}                           # Port number (auto-generated for this i
 # dm_policy = "allowlist"
 # allowlist = []
 # operators = []             # Exact sender IDs allowed to run privileged commands; empty means nobody.
+# untrusted_audience = "public" # "trusted" makes MCP and other trusted-audience tools eligible.
+# untrusted_tools = "deny_all"  # "policy" lets configured policy layers decide.
 # thread_replies = true
 # stream_mode = "edit_in_place" # use "native" for Slack live text and tool task cards
 # ack_reactions = true       # 👀 on receipt, phase emoji while working, ✅/❌ on completion

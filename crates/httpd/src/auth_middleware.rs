@@ -504,6 +504,25 @@ mod tests {
         let admin_result = RequireAdmin::from_request_parts(&mut admin_parts, &state).await;
         assert!(admin_result.is_ok());
 
+        for method in [
+            AuthMethod::Password,
+            AuthMethod::Passkey,
+            AuthMethod::Loopback,
+        ] {
+            let mut unrestricted_parts = axum::http::Request::new(axum::body::Body::empty())
+                .into_parts()
+                .0;
+            unrestricted_parts.extensions.insert(AuthIdentity {
+                method,
+                scopes: Vec::new(),
+            });
+            let result = RequireAdmin::from_request_parts(&mut unrestricted_parts, &state).await;
+            assert!(
+                result.is_ok(),
+                "{method:?} identity should have full access"
+            );
+        }
+
         let mut fallback_parts = axum::http::Request::new(axum::body::Body::empty())
             .into_parts()
             .0;

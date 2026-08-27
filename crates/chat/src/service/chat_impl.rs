@@ -687,20 +687,23 @@ impl ChatService for LiveChatService {
                 Some(img) if !img.is_empty() => img,
                 _ => router.resolve_default_image_nowait().await,
             };
+            let id = router.sandbox_id_for(&session_key);
+            let resolved_backend = router.resolve_backend(&session_key).await;
+            let runtime_info = resolved_backend.runtime_info(&id).await;
             let container_name = {
-                let id = router.sandbox_id_for(&session_key);
-                format!(
+                let fallback = format!(
                     "{}-{}",
                     config
                         .container_prefix
                         .as_deref()
                         .unwrap_or("moltis-sandbox"),
                     id.key
-                )
+                );
+                runtime_info.runtime_name.unwrap_or(fallback)
             };
             serde_json::json!({
                 "enabled": is_sandboxed,
-                "backend": router.backend_name(),
+                "backend": runtime_info.backend_name,
                 "mode": config.mode,
                 "scope": config.scope,
                 "workspaceMount": config.workspace_mount,

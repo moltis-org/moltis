@@ -340,6 +340,30 @@ fn parse_memory_backend(value: &str) -> Result<moltis_config::MemoryBackend, Err
     }
 }
 
+fn configured_memory_backend_name(backend: moltis_config::MemoryBackend) -> &'static str {
+    match backend {
+        moltis_config::MemoryBackend::Builtin => "builtin",
+        moltis_config::MemoryBackend::Qmd => "qmd",
+        #[cfg(feature = "zvec")]
+        moltis_config::MemoryBackend::Zvec => "zvec",
+        #[cfg(not(feature = "zvec"))]
+        moltis_config::MemoryBackend::Zvec => "builtin",
+    }
+}
+
+fn editable_memory_backend_name(
+    configured_backend: moltis_config::MemoryBackend,
+    active_backend: Option<&str>,
+) -> &'static str {
+    match active_backend {
+        Some("sqlite") => "builtin",
+        Some("qmd") => "qmd",
+        #[cfg(feature = "zvec")]
+        Some("zvec") => "zvec",
+        _ => configured_memory_backend_name(configured_backend),
+    }
+}
+
 fn parse_memory_provider(value: &str) -> Result<Option<moltis_config::MemoryProvider>, ErrorShape> {
     match value {
         "auto" => Ok(None),
@@ -512,6 +536,7 @@ mod channels;
 mod connectors;
 mod core;
 mod feedback;
+mod heartbeat_patch;
 mod instrumentation;
 mod modes;
 mod sessions;
@@ -610,6 +635,41 @@ mod tests {
         }
     }
 
+    fn memory_config_test_state(
+        memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
+    ) -> Arc<GatewayState> {
+        GatewayState::with_options(
+            ResolvedAuth {
+                mode: AuthMode::Token,
+                token: None,
+                password: None,
+            },
+            GatewayServices::noop(),
+            moltis_config::MoltisConfig::default(),
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            None,
+            memory_manager,
+            Arc::new(moltis_code_index::CodeIndex::config_only(
+                moltis_code_index::CodeIndexConfig::default(),
+            )),
+            18789,
+            false,
+            None,
+            None,
+            #[cfg(feature = "metrics")]
+            None,
+            #[cfg(feature = "metrics")]
+            None,
+            #[cfg(feature = "vault")]
+            None,
+        )
+    }
+
     async fn dispatch_memory_method(method: &str, params: serde_json::Value) -> serde_json::Value {
         let mut reg = MethodRegistry::default();
         register(&mut reg);
@@ -644,6 +704,15 @@ mod tests {
         method: &str,
         params: serde_json::Value,
     ) -> moltis_protocol::ResponseFrame {
+        dispatch_memory_method_response_with_state(method, params, memory_config_test_state(None))
+            .await
+    }
+
+    async fn dispatch_memory_method_response_with_state(
+        method: &str,
+        params: serde_json::Value,
+        state: Arc<GatewayState>,
+    ) -> moltis_protocol::ResponseFrame {
         let mut reg = MethodRegistry::default();
         register(&mut reg);
         reg.dispatch(MethodContext {
@@ -653,14 +722,7 @@ mod tests {
             client_conn_id: "conn-1".into(),
             client_role: "operator".into(),
             client_scopes: vec!["operator.write".into(), "operator.read".into()],
-            state: GatewayState::new(
-                ResolvedAuth {
-                    mode: AuthMode::Token,
-                    token: None,
-                    password: None,
-                },
-                GatewayServices::noop(),
-            ),
+            state,
             channel: None,
         })
         .await
@@ -696,6 +758,79 @@ mod tests {
         assert_eq!(payload["search_merge_strategy"], "linear");
         assert_eq!(payload["session_export"], "off");
         assert_eq!(payload["prompt_memory_mode"], "frozen-at-session-start");
+    }
+
+    #[tokio::test]
+    async fn memory_config_builtin_backend_round_trips_with_active_sqlite_runtime() {
+        let _guard = MemoryConfigTestGuard::new();
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .unwrap_or_else(|error| panic!("in-memory SQLite should open: {error}"));
+        moltis_memory::schema::run_migrations(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("memory migrations should succeed: {error}"));
+        let manager = moltis_memory::manager::MemoryManager::keyword_only(
+            moltis_memory::config::MemoryConfig::default(),
+            Box::new(moltis_memory::store_sqlite::SqliteMemoryStore::new(pool)),
+        );
+        let state = memory_config_test_state(Some(Arc::new(manager)));
+
+        let get_response = dispatch_memory_method_response_with_state(
+            "memory.config.get",
+            serde_json::json!({}),
+            Arc::clone(&state),
+        )
+        .await;
+        assert!(get_response.ok, "config get should succeed");
+        let payload = get_response
+            .payload
+            .unwrap_or_else(|| panic!("config get should return a payload"));
+        assert_eq!(payload["backend"], "builtin");
+
+        let update_response = dispatch_memory_method_response_with_state(
+            "memory.config.update",
+            serde_json::json!({ "backend": payload["backend"] }),
+            state,
+        )
+        .await;
+        assert!(
+            update_response.ok,
+            "config get backend should be accepted by config update: {:?}",
+            update_response.error
+        );
+    }
+
+    #[test]
+    fn editable_memory_backend_names_match_update_contract() {
+        assert_eq!(
+            editable_memory_backend_name(moltis_config::MemoryBackend::Builtin, None),
+            "builtin"
+        );
+        assert_eq!(
+            editable_memory_backend_name(moltis_config::MemoryBackend::Qmd, None),
+            "qmd"
+        );
+        assert_eq!(
+            editable_memory_backend_name(moltis_config::MemoryBackend::Qmd, Some("sqlite")),
+            "builtin"
+        );
+        assert_eq!(
+            editable_memory_backend_name(moltis_config::MemoryBackend::Builtin, Some("qmd")),
+            "qmd"
+        );
+        assert_eq!(
+            editable_memory_backend_name(
+                moltis_config::MemoryBackend::Qmd,
+                Some("unknown-backend")
+            ),
+            "qmd"
+        );
+
+        #[cfg(feature = "zvec")]
+        assert_eq!(
+            editable_memory_backend_name(moltis_config::MemoryBackend::Builtin, Some("zvec")),
+            "zvec"
+        );
     }
 
     #[tokio::test]

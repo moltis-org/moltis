@@ -8,7 +8,7 @@ use std::sync::Arc;
 use {
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
-    serde_json::{Value, json},
+    serde_json::{Map, Value, json},
 };
 
 use crate::services::McpService;
@@ -62,6 +62,36 @@ impl McpAddTool {
     }
 }
 
+fn normalize_env(mut params: Value) -> anyhow::Result<Value> {
+    let Some(env) = params.get_mut("env") else {
+        return Ok(params);
+    };
+    if env.is_null() {
+        return Ok(params);
+    }
+    let entries = env
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("'env' must be an array of name/value entries"))?;
+    let mut normalized = Map::new();
+    for entry in entries {
+        let name = entry
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("each 'env' entry must have a non-empty name"))?;
+        let value = entry
+            .get("value")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("each 'env' entry must have a string value"))?;
+        if normalized.contains_key(name) {
+            return Err(anyhow::anyhow!("duplicate 'env' entry name '{name}'"));
+        }
+        normalized.insert(name.to_string(), Value::String(value.to_string()));
+    }
+    *env = Value::Object(normalized);
+    Ok(params)
+}
+
 #[async_trait]
 impl AgentTool for McpAddTool {
     fn name(&self) -> &str {
@@ -100,8 +130,16 @@ impl AgentTool for McpAddTool {
                     "description": "URL for remote transports (sse, streamable-http)"
                 },
                 "env": {
-                    "type": "object",
-                    "description": "Environment variables as key-value pairs"
+                    "type": "array",
+                    "description": "Environment variables as name/value entries.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Environment variable name" },
+                            "value": { "type": "string", "description": "Environment variable value" }
+                        },
+                        "required": ["name", "value"]
+                    }
                 },
                 "display_name": {
                     "type": "string",
@@ -112,6 +150,7 @@ impl AgentTool for McpAddTool {
     }
 
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
+        let params = normalize_env(params)?;
         self.service
             .add(params)
             .await
@@ -245,5 +284,60 @@ impl AgentTool for McpRestartTool {
             .restart(params)
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+mod tests {
+    use moltis_service_traits::NoopMcpService;
+
+    use super::*;
+
+    #[test]
+    fn env_schema_uses_name_value_entries() {
+        let tool = McpAddTool::new(Arc::new(NoopMcpService));
+        let schema = tool.parameters_schema();
+        let env = &schema["properties"]["env"];
+        let items = &env["items"];
+
+        assert_eq!(env["type"], "array");
+        assert_eq!(items["type"], "object");
+        assert_eq!(items["properties"]["name"]["type"], "string");
+        assert_eq!(items["properties"]["value"]["type"], "string");
+        assert_eq!(items["required"], json!(["name", "value"]));
+    }
+
+    #[test]
+    fn normalizes_env_entries_to_object() {
+        let params = normalize_env(json!({
+            "name": "example",
+            "env": [
+                { "name": "API_TOKEN", "value": "secret" },
+                { "name": "REGION", "value": "eu" }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(params["env"]["API_TOKEN"], "secret");
+        assert_eq!(params["env"]["REGION"], "eu");
+    }
+
+    #[test]
+    fn rejects_object_env_input() {
+        let error = normalize_env(json!({"env": {"API_TOKEN": "secret"}})).unwrap_err();
+        assert!(error.to_string().contains("must be an array"));
+    }
+
+    #[test]
+    fn rejects_duplicate_env_entry_names() {
+        let error = normalize_env(json!({
+            "env": [
+                { "name": "API_TOKEN", "value": "first" },
+                { "name": "API_TOKEN", "value": "second" }
+            ]
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("duplicate 'env' entry name"));
     }
 }

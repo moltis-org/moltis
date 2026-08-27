@@ -232,13 +232,10 @@ impl LiveProviderSetupService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'provider' parameter".to_string())?;
 
-        let models: Vec<String> = params
-            .get("models")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| "missing 'models' array parameter".to_string())?
-            .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
+        if !params.get("models").is_some_and(Value::is_array) {
+            return Err("missing 'models' array parameter".into());
+        }
+        let models = parse_models_param(&params);
 
         // Validate provider exists (known or custom).
         if !is_custom_provider(provider_name) {
@@ -248,6 +245,12 @@ impl LiveProviderSetupService {
             }
         }
 
+        let previous_models = self
+            .key_store
+            .load_config(provider_name)
+            .map(|config| config.models)
+            .unwrap_or_default();
+
         self.key_store
             .save_config(provider_name, None, None, Some(models.clone()))
             .map_err(ServiceError::message)?;
@@ -255,6 +258,9 @@ impl LiveProviderSetupService {
         // Update the cross-provider priority list.
         if let Some(ref priority) = self.priority_models {
             let mut list = priority.write().await;
+            for previous in previous_models {
+                list.retain(|existing| existing != &previous);
+            }
             for m in models.iter().rev() {
                 list.retain(|existing| existing != m);
                 list.insert(0, m.clone());
@@ -269,5 +275,101 @@ impl LiveProviderSetupService {
         );
         self.queue_registry_rebuild(provider_name, "save_models");
         Ok(serde_json::json!({ "ok": true }))
+    }
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::RwLock;
+
+    use {
+        super::LiveProviderSetupService, crate::key_store::KeyStore,
+        moltis_config::schema::ProvidersConfig, moltis_providers::ProviderRegistry,
+    };
+
+    fn test_service(
+        key_store: KeyStore,
+        priority: Arc<RwLock<Vec<String>>>,
+    ) -> LiveProviderSetupService {
+        let mut service = LiveProviderSetupService::new(
+            Arc::new(RwLock::new(ProviderRegistry::empty())),
+            ProvidersConfig::default(),
+            None,
+        );
+        service.key_store = key_store;
+        service.set_priority_models(priority);
+        service
+    }
+
+    #[tokio::test]
+    async fn save_models_replaces_previous_provider_priorities() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_store = KeyStore::with_path(dir.path().join("provider_keys.json"));
+        key_store
+            .save_config(
+                "openai",
+                Some("sk-test".to_string()),
+                None,
+                Some(vec!["old-a".to_string(), "old-b".to_string()]),
+            )
+            .unwrap();
+        let priority = Arc::new(RwLock::new(vec![
+            "other-provider-model".to_string(),
+            "old-a".to_string(),
+            "old-b".to_string(),
+        ]));
+        let service = test_service(key_store.clone(), Arc::clone(&priority));
+
+        service
+            .save_models_inner(serde_json::json!({
+                "provider": "openai",
+                "models": ["openai::new-a"]
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(key_store.load_config("openai").unwrap().models, vec![
+            "new-a"
+        ]);
+        assert_eq!(*priority.read().await, vec![
+            "new-a".to_string(),
+            "other-provider-model".to_string()
+        ]);
+    }
+
+    #[tokio::test]
+    async fn save_models_empty_selection_clears_previous_provider_priorities() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_store = KeyStore::with_path(dir.path().join("provider_keys.json"));
+        key_store
+            .save_config(
+                "openai",
+                Some("sk-test".to_string()),
+                None,
+                Some(vec!["old-a".to_string(), "old-b".to_string()]),
+            )
+            .unwrap();
+        let priority = Arc::new(RwLock::new(vec![
+            "old-a".to_string(),
+            "other-provider-model".to_string(),
+            "old-b".to_string(),
+        ]));
+        let service = test_service(key_store.clone(), Arc::clone(&priority));
+
+        service
+            .save_models_inner(serde_json::json!({
+                "provider": "openai",
+                "models": []
+            }))
+            .await
+            .unwrap();
+
+        assert!(key_store.load_config("openai").unwrap().models.is_empty());
+        assert_eq!(*priority.read().await, vec![
+            "other-provider-model".to_string()
+        ]);
     }
 }

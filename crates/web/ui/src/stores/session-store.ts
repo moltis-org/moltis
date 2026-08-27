@@ -205,6 +205,7 @@ export const sessions = signal<Session[]>([]);
 export const activeSessionKey = signal<string>(localStorage.getItem("moltis-session") || "main");
 export const switchInProgress = signal<boolean>(false);
 export const refreshInProgressKey = signal<string>("");
+const runStateRevisions = new Map<string, number>();
 /** Session list tab filter: "all" | "sessions" | "cron" */
 export const sessionListTab = signal<string>(localStorage.getItem("moltis-session-tab") || "sessions");
 export const showArchivedSessions = signal<boolean>(localStorage.getItem("moltis-show-archived-sessions") === "1");
@@ -270,6 +271,10 @@ export function setAll(serverSessions: SessionMeta[]): void {
 	}
 
 	sessions.value = result;
+	const retainedKeys = new Set(result.map((session) => session.key));
+	for (const key of runStateRevisions.keys()) {
+		if (key !== activeSessionKey.value && !retainedKeys.has(key)) runStateRevisions.delete(key);
+	}
 }
 
 /**
@@ -291,6 +296,7 @@ export function upsert(serverData: SessionMeta): Session | null {
 
 /** Remove a session by key. Returns true when a session was removed. */
 export function remove(key: string): boolean {
+	runStateRevisions.delete(key);
 	if (!key) return false;
 	const existing = getByKey(key);
 	if (!existing) return false;
@@ -301,6 +307,15 @@ export function remove(key: string): boolean {
 		localStorage.setItem("moltis-session", fallback);
 	}
 	return true;
+}
+
+export function getSessionRunStateRevision(key: string): number {
+	return runStateRevisions.get(key) || 0;
+}
+
+export function markSessionRunStateChanged(key: string): void {
+	if (!key) return;
+	runStateRevisions.set(key, getSessionRunStateRevision(key) + 1);
 }
 
 /** Fetch sessions from the server via HTTP (gzip-friendly). */

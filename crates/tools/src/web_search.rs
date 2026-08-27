@@ -20,6 +20,8 @@ use {
 
 use crate::exec::EnvVarProvider;
 
+mod brave;
+
 /// Cached search result with expiry.
 struct CacheEntry {
     value: serde_json::Value,
@@ -46,6 +48,9 @@ pub struct WebSearchTool {
     ddg_blocked_until: Mutex<Option<Instant>>,
     /// Optional runtime env provider (credential store) for hot key updates.
     env_provider: Option<Arc<dyn EnvVarProvider>>,
+    /// Test-only endpoint override used to exercise the complete Brave HTTP flow.
+    #[cfg(test)]
+    brave_endpoint_override: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -226,7 +231,24 @@ impl WebSearchTool {
             fallback_enabled,
             ddg_blocked_until: Mutex::new(None),
             env_provider: None,
+            #[cfg(test)]
+            brave_endpoint_override: None,
         }
+    }
+
+    #[cfg(test)]
+    fn with_brave_endpoint(mut self, endpoint: String) -> Self {
+        self.brave_endpoint_override = Some(endpoint);
+        self
+    }
+
+    fn brave_endpoint(&self) -> &str {
+        #[cfg(test)]
+        if let Some(endpoint) = self.brave_endpoint_override.as_deref() {
+            return endpoint;
+        }
+
+        brave::ENDPOINT
     }
 
     /// Attach a runtime environment provider (credential store).
@@ -349,11 +371,29 @@ impl WebSearchTool {
         }
     }
 
+    fn cache_key(
+        &self,
+        key_state: &str,
+        query: &str,
+        count: u8,
+        brave_params: &brave::Params,
+        accept_language: Option<&str>,
+    ) -> String {
+        let provider_context = match &self.provider {
+            SearchProvider::Brave => format!(":{brave_params:?}:{accept_language:?}"),
+            _ => String::new(),
+        };
+        format!(
+            "{:?}:{key_state}:{query:?}:{count}{provider_context}",
+            self.provider
+        )
+    }
+
     async fn search_brave(
         &self,
         query: &str,
         count: u8,
-        params: &serde_json::Value,
+        params: &brave::Params,
         accept_language: Option<&str>,
         api_key: &str,
     ) -> crate::Result<serde_json::Value> {
@@ -364,35 +404,23 @@ impl WebSearchTool {
             }));
         }
 
-        let mut url = format!(
-            "https://api.search.brave.com/res/v1/web/search?q={}&count={count}",
-            urlencoding::encode(query)
-        );
+        let url = params.request_url(self.brave_endpoint(), query, count);
+        let mut resp = self
+            .send_brave_request(&url, accept_language, api_key)
+            .await?;
 
-        if let Some(country) = params.get("country").and_then(|v| v.as_str()) {
-            url.push_str(&format!("&country={country}"));
+        if resp.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY
+            && params.has_optional_filters()
+        {
+            debug!(
+                "Brave rejected optional search parameters; retrying without localization or freshness"
+            );
+            let retry_url =
+                brave::Params::default().request_url(self.brave_endpoint(), query, count);
+            resp = self
+                .send_brave_request(&retry_url, accept_language, api_key)
+                .await?;
         }
-        if let Some(lang) = params.get("search_lang").and_then(|v| v.as_str()) {
-            url.push_str(&format!("&search_lang={lang}"));
-        }
-        if let Some(lang) = params.get("ui_lang").and_then(|v| v.as_str()) {
-            url.push_str(&format!("&ui_lang={lang}"));
-        }
-        if let Some(freshness) = params.get("freshness").and_then(|v| v.as_str()) {
-            url.push_str(&format!("&freshness={freshness}"));
-        }
-
-        let client = crate::shared_http_client();
-
-        let mut req = client
-            .get(&url)
-            .timeout(self.timeout)
-            .header("Accept", "application/json")
-            .header("X-Subscription-Token", api_key);
-        if let Some(lang) = accept_language {
-            req = req.header("Accept-Language", lang);
-        }
-        let resp = req.send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -418,6 +446,24 @@ impl WebSearchTool {
             "query": query,
             "results": results,
         }))
+    }
+
+    async fn send_brave_request(
+        &self,
+        url: &str,
+        accept_language: Option<&str>,
+        api_key: &str,
+    ) -> crate::Result<reqwest::Response> {
+        let client = crate::shared_http_client();
+        let mut request = client
+            .get(url)
+            .timeout(self.timeout)
+            .header("Accept", "application/json")
+            .header("X-Subscription-Token", api_key);
+        if let Some(lang) = accept_language {
+            request = request.header("Accept-Language", lang);
+        }
+        Ok(request.send().await?)
     }
 
     async fn search_perplexity(
@@ -732,36 +778,32 @@ impl AgentTool for WebSearchTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": {
+        let mut properties = serde_json::Map::from_iter([
+            (
+                "query".to_string(),
+                serde_json::json!({
                     "type": "string",
                     "description": "The search query"
-                },
-                "count": {
+                }),
+            ),
+            (
+                "count".to_string(),
+                serde_json::json!({
                     "type": "integer",
                     "description": "Number of results (1-10, default 5)",
                     "minimum": 1,
                     "maximum": 10
-                },
-                "country": {
-                    "type": "string",
-                    "description": "Country code for search results (e.g. 'US', 'GB')"
-                },
-                "search_lang": {
-                    "type": "string",
-                    "description": "Search language (e.g. 'en')"
-                },
-                "ui_lang": {
-                    "type": "string",
-                    "description": "UI language (e.g. 'en-US')"
-                },
-                "freshness": {
-                    "type": "string",
-                    "description": "Freshness filter (Brave only): 'pd' (past day), 'pw' (past week), 'pm' (past month), 'py' (past year)"
-                }
-            },
+                }),
+            ),
+        ]);
+
+        if matches!(&self.provider, SearchProvider::Brave) {
+            properties.extend(brave::parameter_properties());
+        }
+
+        serde_json::json!({
+            "type": "object",
+            "properties": properties,
             "required": ["query"]
         })
     }
@@ -787,13 +829,13 @@ impl AgentTool for WebSearchTool {
         } else {
             "has-key"
         };
-        let cache_key = format!("{:?}:{key_state}:{query}:{count}", self.provider);
+        let accept_language = params.get("_accept_language").and_then(|v| v.as_str());
+        let brave_params = brave::Params::from_json(&params);
+        let cache_key = self.cache_key(key_state, query, count, &brave_params, accept_language);
         if let Some(cached) = self.cache_get(&cache_key) {
             debug!("web_search cache hit for: {query}");
             return Ok(cached);
         }
-
-        let accept_language = params.get("_accept_language").and_then(|v| v.as_str());
 
         debug!("web_search: {query} (count={count})");
 
@@ -810,7 +852,7 @@ impl AgentTool for WebSearchTool {
         } else {
             match &self.provider {
                 SearchProvider::Brave => {
-                    self.search_brave(query, count, &params, accept_language, &api_key)
+                    self.search_brave(query, count, &brave_params, accept_language, &api_key)
                         .await?
                 },
                 SearchProvider::Perplexity {
@@ -899,6 +941,56 @@ mod tests {
         assert_eq!(tool.name(), "web_search");
         let schema = tool.parameters_schema();
         assert_eq!(schema["required"][0], "query");
+        assert!(schema["properties"]["country"]["enum"].is_array());
+        assert!(schema["properties"]["search_lang"]["enum"].is_array());
+        assert!(schema["properties"]["ui_lang"]["enum"].is_array());
+    }
+
+    #[test]
+    fn test_non_brave_schema_omits_brave_parameters() {
+        let schema = perplexity_tool().parameters_schema();
+        let properties = schema["properties"].as_object().expect("properties");
+        assert!(!properties.contains_key("country"));
+        assert!(!properties.contains_key("search_lang"));
+        assert!(!properties.contains_key("ui_lang"));
+        assert!(!properties.contains_key("freshness"));
+    }
+
+    #[test]
+    fn test_brave_cache_key_uses_normalized_localization() {
+        let tool = brave_tool();
+        let normalized = brave::Params::from_json(&serde_json::json!({
+            "country": "BR",
+            "search_lang": "pt-br",
+            "ui_lang": "pt-BR",
+            "freshness": "pw",
+        }));
+        let aliases = brave::Params::from_json(&serde_json::json!({
+            "country": "br",
+            "search_lang": "pt",
+            "ui_lang": "pt_BR",
+            "freshness": "week",
+        }));
+        let other_market = brave::Params::from_json(&serde_json::json!({
+            "country": "US",
+            "search_lang": "en",
+            "ui_lang": "en-US",
+            "freshness": "pw",
+        }));
+
+        let key = tool.cache_key("has-key", "query", 5, &normalized, Some("pt-BR"));
+        assert_eq!(
+            key,
+            tool.cache_key("has-key", "query", 5, &aliases, Some("pt-BR"))
+        );
+        assert_ne!(
+            key,
+            tool.cache_key("has-key", "query", 5, &other_market, Some("pt-BR"))
+        );
+        assert_ne!(
+            key,
+            tool.cache_key("has-key", "query", 5, &normalized, Some("en-US"))
+        );
     }
 
     #[tokio::test]
@@ -912,12 +1004,120 @@ mod tests {
     #[tokio::test]
     async fn test_brave_missing_api_key_returns_hint() {
         let tool = brave_tool();
+        let params = brave::Params::default();
         let result = tool
-            .search_brave("test", 5, &serde_json::json!({}), None, "")
+            .search_brave("test", 5, &params, None, "")
             .await
             .unwrap();
         assert!(result["error"].as_str().unwrap().contains("not configured"));
         assert!(result["hint"].as_str().unwrap().contains("BRAVE_API_KEY"));
+    }
+
+    #[tokio::test]
+    async fn test_brave_retries_422_without_optional_filters() {
+        let mut server = mockito::Server::new_async().await;
+        let first_request = server
+            .mock("GET", "/res/v1/web/search")
+            .match_query(mockito::Matcher::Exact(
+                "q=edge%20query&count=5&country=ALL&search_lang=es&freshness=pw".into(),
+            ))
+            .match_header("x-subscription-token", "test-key")
+            .match_header("accept-language", "pt-BR")
+            .with_status(422)
+            .expect(1)
+            .create_async()
+            .await;
+        let retry_request = server
+            .mock("GET", "/res/v1/web/search")
+            .match_query(mockito::Matcher::Exact("q=edge%20query&count=5".into()))
+            .match_header("x-subscription-token", "test-key")
+            .match_header("accept-language", "pt-BR")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"web":{"results":[{"title":"Recovered","url":"https://example.com","description":"Retry result"}]}}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let tool = brave_tool().with_brave_endpoint(format!("{}/res/v1/web/search", server.url()));
+
+        let params = brave::Params::from_json(&serde_json::json!({
+            "country": "PY",
+            "search_lang": "es-AR",
+            "ui_lang": "es-PY",
+            "freshness": "week",
+        }));
+
+        let result = tool
+            .search_brave("edge query", 5, &params, Some("pt-BR"), "test-key")
+            .await
+            .unwrap();
+
+        assert_eq!(result["provider"], "brave");
+        assert_eq!(result["query"], "edge query");
+        assert_eq!(result["results"][0]["title"], "Recovered");
+        first_request.assert_async().await;
+        retry_request.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_brave_does_not_retry_422_without_optional_filters() {
+        let mut server = mockito::Server::new_async().await;
+        let request = server
+            .mock("GET", "/res/v1/web/search")
+            .match_query(mockito::Matcher::Exact("q=plain&count=5".into()))
+            .with_status(422)
+            .with_body("invalid query")
+            .expect(1)
+            .create_async()
+            .await;
+        let tool = brave_tool().with_brave_endpoint(format!("{}/res/v1/web/search", server.url()));
+
+        let params = brave::Params::default();
+        let error = tool
+            .search_brave("plain", 5, &params, None, "test-key")
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("422 Unprocessable Entity"));
+        assert!(error.to_string().contains("invalid query"));
+        request.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_brave_surfaces_retry_response_error() {
+        let mut server = mockito::Server::new_async().await;
+        let first_request = server
+            .mock("GET", "/res/v1/web/search")
+            .match_query(mockito::Matcher::Exact(
+                "q=unavailable&count=5&country=US".into(),
+            ))
+            .with_status(422)
+            .expect(1)
+            .create_async()
+            .await;
+        let retry_request = server
+            .mock("GET", "/res/v1/web/search")
+            .match_query(mockito::Matcher::Exact("q=unavailable&count=5".into()))
+            .with_status(503)
+            .with_body("temporary outage")
+            .expect(1)
+            .create_async()
+            .await;
+        let tool = brave_tool().with_brave_endpoint(format!("{}/res/v1/web/search", server.url()));
+
+        let params = brave::Params::from_json(&serde_json::json!({"country": "US"}));
+
+        let error = tool
+            .search_brave("unavailable", 5, &params, None, "test-key")
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("503 Service Unavailable"));
+        assert!(error.to_string().contains("temporary outage"));
+        first_request.assert_async().await;
+        retry_request.assert_async().await;
     }
 
     #[tokio::test]

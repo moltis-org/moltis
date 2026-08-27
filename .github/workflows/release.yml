@@ -26,6 +26,9 @@ permissions: {}
 env:
   # Must match rust-toolchain.toml (single source of truth for the nightly pin).
   NIGHTLY_TOOLCHAIN: nightly-2026-06-20
+  # Standalone packages cannot bundle zvec's native runtime on every target.
+  # Docker builds run in an isolated context and keep the default `full` set.
+  MOLTIS_BUILD_FEATURES: portable
   RELEASE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
   RELEASE_PRE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.pre_release && 'true' || 'false' }}
 
@@ -1274,7 +1277,7 @@ jobs:
         shell: bash
         env:
           MOLTIS_VERSION: ${{ steps.version.outputs.version }}
-        run: MOLTIS_BUILD_FEATURES=full,embedded-assets,embedded-wasm ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
+        run: MOLTIS_BUILD_FEATURES=portable,embedded-assets,embedded-wasm ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Package .exe
         shell: bash

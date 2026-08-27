@@ -186,4 +186,90 @@ test.describe("Provider setup page", () => {
 			.toContain("Custom.gguf configured successfully!");
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("preferred model selector replaces existing selections", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await openProvidersPage(page);
+
+		await page.evaluate(async () => {
+			const [providers, state] = await Promise.all([import("/assets/js/providers.js"), import("/assets/js/state.js")]);
+			window.__providerSaveModelsCalls = [];
+
+			state.setWs({
+				readyState: WebSocket.OPEN,
+				send(raw) {
+					const frame = JSON.parse(raw);
+					const respond = (payload) => {
+						queueMicrotask(() => {
+							const pending = state.pending[frame.id];
+							if (!pending) return;
+							pending(payload);
+							delete state.pending[frame.id];
+						});
+					};
+
+					if (frame.method === "models.list") {
+						respond({
+							ok: true,
+							payload: [
+								{
+									id: "openai::gpt-preferred-a",
+									provider: "openai",
+									displayName: "GPT Preferred A",
+									supportsTools: true,
+									preferred: true,
+								},
+								{
+									id: "openai::gpt-preferred-b",
+									provider: "openai",
+									displayName: "GPT Preferred B",
+									supportsTools: true,
+									preferred: true,
+								},
+							],
+						});
+						return;
+					}
+
+					if (frame.method === "providers.available") {
+						respond({
+							ok: true,
+							payload: [
+								{
+									name: "openai",
+									displayName: "OpenAI",
+									authType: "api-key",
+									models: ["gpt-preferred-a", "gpt-preferred-b"],
+								},
+							],
+						});
+						return;
+					}
+
+					if (frame.method === "providers.save_models") {
+						window.__providerSaveModelsCalls.push(frame.params);
+						respond({ ok: true, payload: { ok: true } });
+						return;
+					}
+
+					respond({ ok: true, payload: {} });
+				},
+			});
+
+			providers.openModelSelectorForProvider("openai", "OpenAI");
+		});
+
+		await expect(page.locator("#providerModal")).toBeVisible();
+		await expect(page.locator("#providerModalBody .model-card.selected")).toHaveCount(2);
+
+		await page.locator("#providerModalBody .model-card", { hasText: "GPT Preferred B" }).click();
+		await expect(page.locator("#providerModalBody .model-card.selected")).toHaveCount(1);
+		await page.getByRole("button", { name: "Save", exact: true }).click();
+
+		await expect
+			.poll(() => page.evaluate(() => window.__providerSaveModelsCalls || []))
+			.toEqual([{ provider: "openai", models: ["openai::gpt-preferred-a"] }]);
+
+		expect(pageErrors).toEqual([]);
+	});
 });

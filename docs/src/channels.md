@@ -273,10 +273,11 @@ current chat (`/attach`, `/sessions`, `/context`, `/insights`, `/peek`, `/btw`).
 New commands default to operator direct-chat only, so adding one is safe until
 it is deliberately reviewed.
 
-Guest, shared-room, and unknown-topology channel turns receive no tools. The
-gateway applies both the registry's public audience ceiling and a deny-all name
-policy, so account, group, and per-sender tool policies cannot restore even a
-tool reviewed for other untrusted origins.
+By default, guest, shared-room, and unknown-topology channel turns receive no
+tools. The gateway applies both the registry's public audience ceiling and a
+deny-all name policy, so account, group, and per-sender tool policies cannot
+restore even a tool reviewed for other untrusted origins unless the channel
+account explicitly lifts that ceiling as described below.
 
 Every normal turn in a shared room is untrusted, including turns sent by an
 operator, because the shared history contains messages from other people.
@@ -378,10 +379,16 @@ separately.
 ```
 
 Untrusted tool restrictions stack with the per-channel tool policy
-(`channels.<type>.<account>.tools.groups.<chat_type>`). Those policies can
-further restrict an operator DM, but cannot enable tools for a guest, shared
-room, or unknown chat. Grant eligibility for privileged access by adding the
-sender to `operators`; the sender must still use a proven direct chat.
+(`channels.<type>.<account>.tools.groups.<chat_type>`). By default those
+policies can further restrict an operator DM, but cannot enable tools for a
+guest, shared room, or unknown chat: the untrusted ceiling denies everything
+before they are consulted. An account that raises its ceiling with
+`untrusted_audience` and `untrusted_tools` hands the decision back to those
+policies for its own untrusted turns. Slack and WhatsApp support these settings.
+The `/sh` shortcut stays restricted to operator direct chats either way.
+
+Grant eligibility for privileged access by adding the sender to `operators`;
+the sender must still use a proven direct chat.
 
 ### OTP Self-Approval
 

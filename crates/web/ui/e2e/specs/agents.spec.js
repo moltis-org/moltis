@@ -185,8 +185,38 @@ async function expectActiveSessionExternalAgent(page, kind) {
 }
 
 test.describe("Agents settings page", () => {
-	test("settings/agents loads and shows heading", async ({ page }) => {
+	test("settings/agents loads and retries modes after a timeout", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+		await page.addInitScript(() => {
+			window.__agentsModesListAttempts = 0;
+			const originalSend = WebSocket.prototype.send;
+			WebSocket.prototype.send = function (payload) {
+				try {
+					const parsed = JSON.parse(typeof payload === "string" ? payload : "");
+					if (parsed?.method === "modes.list") {
+						window.__agentsModesListAttempts++;
+						if (window.__agentsModesListAttempts === 1) {
+							queueMicrotask(() => {
+								this.dispatchEvent(
+									new MessageEvent("message", {
+										data: JSON.stringify({
+											type: "res",
+											id: parsed.id,
+											ok: false,
+											error: { code: "TIMEOUT", message: "RPC request timed out (modes.list)" },
+										}),
+									}),
+								);
+							});
+							return;
+						}
+					}
+				} catch (_err) {
+					// Fall through to the original sender.
+				}
+				return originalSend.call(this, payload);
+			};
+		});
 		await navigateAndWait(page, "/settings/agents");
 
 		await expect(page).toHaveURL(/\/settings\/agents$/);
@@ -205,6 +235,7 @@ test.describe("Agents settings page", () => {
 			timeout: 10_000,
 		});
 		await expect(modesPanel.locator(".backend-card").filter({ hasText: "Review" })).toBeVisible();
+		await expect.poll(() => page.evaluate(() => window.__agentsModesListAttempts)).toBe(2);
 
 		expect(pageErrors).toEqual([]);
 	});

@@ -17,7 +17,7 @@ import {
 	getSessionHistory,
 	replaceSessionHistory,
 } from "../stores/session-history-cache";
-import { insertSessionInOrder, Session, sessionStore } from "../stores/session-store";
+import { getSessionRunStateRevision, insertSessionInOrder, Session, sessionStore } from "../stores/session-store";
 import type { HistoryMessage, RpcResponse, SessionMeta } from "../types";
 
 import {
@@ -216,6 +216,11 @@ function applyReplyingStateFromSwitchPayload(key: string, payload: SwitchPayload
 	}
 }
 
+function currentThinkingText(): string | null {
+	const text = document.querySelector("#thinkingIndicator .thinking-text")?.textContent?.trim();
+	return text || null;
+}
+
 /** Clear history for the currently active session and reset local UI state. */
 export function clearActiveSession(): Promise<RpcResponse> {
 	const prevHistoryIdx = S.lastHistoryIndex;
@@ -269,6 +274,7 @@ export function switchSession(key: string, searchContext?: SearchContext | null,
 			: cachedHistory?.length
 		: null;
 	startSessionRefresh(key, !hasCache);
+	const runStateRevisionAtRequest = getSessionRunStateRevision(key);
 	if (hasCache) {
 		renderHistory(key, cachedHistory!, searchContext || null, null, cachedHistoryCount, false);
 	} else {
@@ -337,8 +343,15 @@ export function switchSession(key: string, searchContext?: SearchContext | null,
 			const resolvedHistory = getSessionHistory(key) || serverHistory;
 			if (stillActive) {
 				restoreSessionState(entry, projectId);
-				applyReplyingStateFromSwitchPayload(key, switchPayload);
-				const thinkingText = switchPayload.replying ? switchPayload.thinkingText || null : null;
+				const runStateChanged = getSessionRunStateRevision(key) !== runStateRevisionAtRequest;
+				if (!runStateChanged) {
+					applyReplyingStateFromSwitchPayload(key, switchPayload);
+				}
+				const thinkingText = runStateChanged
+					? currentThinkingText()
+					: switchPayload.replying
+						? switchPayload.thinkingText || null
+						: null;
 				const totalCountHint = Number.isInteger(entry.messageCount)
 					? entry.messageCount!
 					: Number(historyPayload.totalMessages) || resolvedHistory.length;

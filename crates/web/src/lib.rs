@@ -7,6 +7,7 @@
 
 pub mod api;
 pub mod assets;
+mod container_management;
 pub mod error;
 pub mod gon;
 mod image_input;
