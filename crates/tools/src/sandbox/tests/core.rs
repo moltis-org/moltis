@@ -388,6 +388,32 @@ fn test_sysfs_mask_paths_constant_contains_expected_entries() {
 }
 
 #[test]
+fn test_parse_docker_daemon_arch_recognizes_x86_64() {
+    assert_eq!(parse_docker_daemon_arch("x86_64"), DaemonArch::X86_64);
+    assert_eq!(parse_docker_daemon_arch("amd64"), DaemonArch::X86_64);
+    // docker info's output is newline-terminated and can vary in case.
+    assert_eq!(parse_docker_daemon_arch("X86_64\n"), DaemonArch::X86_64);
+    assert_eq!(parse_docker_daemon_arch("  amd64  \n"), DaemonArch::X86_64);
+}
+
+#[test]
+fn test_parse_docker_daemon_arch_recognizes_arm64() {
+    assert_eq!(parse_docker_daemon_arch("aarch64"), DaemonArch::Arm64);
+    assert_eq!(parse_docker_daemon_arch("arm64"), DaemonArch::Arm64);
+    assert_eq!(parse_docker_daemon_arch("ARM64\n"), DaemonArch::Arm64);
+}
+
+#[test]
+fn test_parse_docker_daemon_arch_unrecognized_output_is_unknown() {
+    assert_eq!(parse_docker_daemon_arch(""), DaemonArch::Unknown);
+    assert_eq!(parse_docker_daemon_arch("armv7l"), DaemonArch::Unknown);
+    assert_eq!(
+        parse_docker_daemon_arch("Error: Cannot connect to the Docker daemon"),
+        DaemonArch::Unknown
+    );
+}
+
+#[test]
 fn test_workspace_mount_display() {
     assert_eq!(WorkspaceMount::None.to_string(), "none");
     assert_eq!(WorkspaceMount::Ro.to_string(), "ro");

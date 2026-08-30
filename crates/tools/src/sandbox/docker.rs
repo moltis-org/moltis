@@ -1329,6 +1329,17 @@ pub(crate) enum DaemonArch {
     Unknown,
 }
 
+/// Parse the trimmed stdout of `docker info --format {{.Architecture}}`.
+/// Split out from `docker_daemon_arch` so the parsing logic is unit-testable
+/// without shelling out to a real `docker` binary.
+pub(crate) fn parse_docker_daemon_arch(output: &str) -> DaemonArch {
+    match output.trim().to_lowercase().as_str() {
+        "x86_64" | "amd64" => DaemonArch::X86_64,
+        "aarch64" | "arm64" => DaemonArch::Arm64,
+        _ => DaemonArch::Unknown,
+    }
+}
+
 /// Query the Docker daemon's architecture via `docker info`. Never panics;
 /// returns `Unknown` on any failure (docker missing, non-UTF8 output, etc.).
 pub(crate) fn docker_daemon_arch() -> DaemonArch {
@@ -1338,32 +1349,42 @@ pub(crate) fn docker_daemon_arch() -> DaemonArch {
     else {
         return DaemonArch::Unknown;
     };
-    match String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .to_lowercase()
-        .as_str()
-    {
-        "x86_64" | "amd64" => DaemonArch::X86_64,
-        "aarch64" | "arm64" => DaemonArch::Arm64,
-        _ => DaemonArch::Unknown,
-    }
+    parse_docker_daemon_arch(&String::from_utf8_lossy(&output.stdout))
 }
 
+/// Cached daemon architecture. `Unknown` is deliberately never cached: it
+/// usually means the daemon wasn't reachable yet (e.g. Docker Desktop still
+/// starting), and caching it would permanently downgrade masking for every
+/// later sandbox even after the daemon comes up as a confirmed x86_64 host.
+/// A confirmed X86_64/Arm64 result is cached forever — the daemon's
+/// architecture cannot change during the process's lifetime.
+fn cached_docker_daemon_arch() -> DaemonArch {
+    static ARCH: OnceLock<DaemonArch> = OnceLock::new();
+    if let Some(arch) = ARCH.get() {
+        return *arch;
+    }
+    let arch = docker_daemon_arch();
+    if arch != DaemonArch::Unknown {
+        let _ = ARCH.set(arch);
+    }
+    arch
+}
+
+/// Not cached as a whole: the Linux branch is a cheap local-filesystem probe
+/// (safe and fine to repeat), and the non-Linux branch defers to
+/// `cached_docker_daemon_arch`, which already caches the one part that's
+/// actually expensive (the `docker info` subprocess) — see its doc comment
+/// for why a failed probe must not be cached.
 pub(crate) fn sysfs_paths_to_mask() -> Vec<&'static str> {
-    static PATHS: OnceLock<Vec<&'static str>> = OnceLock::new();
-    PATHS
-        .get_or_init(|| {
-            let paths = sysfs_paths_to_mask_from("/sys", docker_daemon_arch);
-            let skipped = SYSFS_MASK_PATHS.len() - paths.len();
-            if skipped > 0 {
-                warn!(
-                    skipped,
-                    "some sysfs mask paths do not exist on this host/daemon and will be skipped"
-                );
-            }
-            paths
-        })
-        .clone()
+    let paths = sysfs_paths_to_mask_from("/sys", cached_docker_daemon_arch);
+    let skipped = SYSFS_MASK_PATHS.len() - paths.len();
+    if skipped > 0 {
+        warn!(
+            skipped,
+            "some sysfs mask paths do not exist on this host/daemon and will be skipped"
+        );
+    }
+    paths
 }
 
 /// Testable inner helper: probes each `SYSFS_MASK_PATHS` entry and returns
