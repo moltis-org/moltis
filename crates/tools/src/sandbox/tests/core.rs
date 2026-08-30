@@ -36,14 +36,13 @@ fn test_docker_hardening_args_prebuilt() {
         "sandbox",
         "--hostname value should be 'sandbox'"
     );
-    // Sysfs masks are present (actual set depends on host — macOS includes
-    // all because /sys doesn't exist; Linux includes only existing paths).
-    // On macOS CI all four are present.
+    // Sysfs masks: the exact set is host/daemon-dependent (see the dedicated
+    // sysfs_paths_to_mask_from tests for the DMI/arch logic), but
+    // /sys/firmware and /sys/class/block are never arch-conditional and
+    // must always be present on non-Linux hosts.
     #[cfg(not(target_os = "linux"))]
     {
         assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
-        assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
-        assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
         assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
     }
 }
@@ -69,11 +68,13 @@ fn test_docker_hardening_args_not_prebuilt() {
         "sandbox",
         "--hostname value should be 'sandbox'"
     );
+    // Sysfs masks: the exact set is host/daemon-dependent (see the dedicated
+    // sysfs_paths_to_mask_from tests for the DMI/arch logic), but
+    // /sys/firmware and /sys/class/block are never arch-conditional and
+    // must always be present on non-Linux hosts.
     #[cfg(not(target_os = "linux"))]
     {
         assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
-        assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
-        assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
         assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
     }
 }
@@ -326,16 +327,35 @@ fn test_docker_run_error_does_not_get_podman_context() {
 }
 
 #[test]
-fn test_sysfs_paths_to_mask_no_sysfs_root_returns_all() {
-    // When /sys doesn't exist (macOS), all paths should be returned because
-    // Docker Desktop runs in a Linux VM with full sysfs.
-    let paths = sysfs_paths_to_mask_from("/nonexistent/sysfs/root");
+fn test_sysfs_paths_to_mask_no_sysfs_root_x86_returns_all() {
+    // When /sys doesn't exist (macOS) and the daemon is confirmed x86_64,
+    // all paths should be returned — DMI is a real x86 SMBIOS feature there.
+    let paths = sysfs_paths_to_mask_from("/nonexistent/sysfs/root", || DaemonArch::X86_64);
     assert_eq!(paths, vec![
         "/sys/firmware",
         "/sys/class/dmi",
         "/sys/devices/virtual/dmi",
         "/sys/class/block",
     ]);
+}
+
+#[test]
+fn test_sysfs_paths_to_mask_no_sysfs_root_arm_drops_dmi() {
+    // When /sys doesn't exist (macOS) and the daemon is arm64 (default
+    // Docker Desktop VM on Apple Silicon), DMI paths must be dropped:
+    // DMI is x86-only and mounting it fails with a read-only-sysfs error
+    // that prevents the sandbox from starting at all (#1085).
+    let paths = sysfs_paths_to_mask_from("/nonexistent/sysfs/root", || DaemonArch::Arm64);
+    assert_eq!(paths, vec!["/sys/firmware", "/sys/class/block"]);
+}
+
+#[test]
+fn test_sysfs_paths_to_mask_no_sysfs_root_unknown_arch_drops_dmi() {
+    // If we can't determine the daemon's architecture (docker missing,
+    // unexpected output), fail safe: drop DMI rather than risk the same
+    // mkdirat failure on an arm64 daemon we couldn't detect.
+    let paths = sysfs_paths_to_mask_from("/nonexistent/sysfs/root", || DaemonArch::Unknown);
+    assert_eq!(paths, vec!["/sys/firmware", "/sys/class/block"]);
 }
 
 #[test]
@@ -349,7 +369,10 @@ fn test_sysfs_paths_to_mask_filters_missing_paths() {
     std::fs::create_dir_all(sysfs_root.join("firmware")).unwrap();
     std::fs::create_dir_all(sysfs_root.join("class/block")).unwrap();
 
-    let paths = sysfs_paths_to_mask_from(sysfs_root.to_str().unwrap());
+    // detect_arch must not even be called when the sysfs root exists.
+    let paths = sysfs_paths_to_mask_from(sysfs_root.to_str().unwrap(), || {
+        panic!("detect_arch should not be called when sysfs_root exists")
+    });
     // Only the two paths that exist under the tempdir sysfs root are returned.
     assert_eq!(paths, vec!["/sys/firmware", "/sys/class/block"]);
 }

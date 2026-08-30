@@ -1301,9 +1301,13 @@ impl Sandbox for NoSandbox {
 /// mountpoints on the read-only sysfs.  We probe each path and only mount
 /// the ones that actually exist.
 ///
-/// On non-Linux hosts (macOS), Docker Desktop runs in a Linux VM with full
-/// sysfs, so all paths are included unconditionally — the host `/sys` layout
-/// is irrelevant.
+/// On non-Linux hosts (macOS), Docker Desktop runs in a Linux VM and the host
+/// `/sys` layout is irrelevant — but the VM's sysfs is not guaranteed to have
+/// every path either.  `/sys/class/dmi` and `/sys/devices/virtual/dmi` are
+/// x86 SMBIOS-only: an arm64 VM (the default on Apple Silicon) doesn't have
+/// them, and the mkdirat failure above happens there too (#1085).  We ask the
+/// daemon for its actual architecture and drop the DMI paths when it isn't
+/// x86_64.
 pub(crate) const SYSFS_MASK_PATHS: &[&str] = &[
     "/sys/firmware",
     "/sys/class/dmi",
@@ -1311,16 +1315,50 @@ pub(crate) const SYSFS_MASK_PATHS: &[&str] = &[
     "/sys/class/block",
 ];
 
+/// Architecture of the Docker daemon actually running containers — not the
+/// host's, since Docker Desktop runs a VM that can differ (and on macOS the
+/// host has no `/sys` to probe at all).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DaemonArch {
+    X86_64,
+    Arm64,
+    /// `docker info` failed or returned something unrecognized. Treated the
+    /// same as Arm64: masking fewer paths only weakens isolation slightly,
+    /// while assuming x86_64 on an arm64 daemon breaks sandbox startup
+    /// outright, which is the worse failure mode.
+    Unknown,
+}
+
+/// Query the Docker daemon's architecture via `docker info`. Never panics;
+/// returns `Unknown` on any failure (docker missing, non-UTF8 output, etc.).
+pub(crate) fn docker_daemon_arch() -> DaemonArch {
+    let Ok(output) = std::process::Command::new("docker")
+        .args(["info", "--format", "{{.Architecture}}"])
+        .output()
+    else {
+        return DaemonArch::Unknown;
+    };
+    match String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
+        "x86_64" | "amd64" => DaemonArch::X86_64,
+        "aarch64" | "arm64" => DaemonArch::Arm64,
+        _ => DaemonArch::Unknown,
+    }
+}
+
 pub(crate) fn sysfs_paths_to_mask() -> Vec<&'static str> {
     static PATHS: OnceLock<Vec<&'static str>> = OnceLock::new();
     PATHS
         .get_or_init(|| {
-            let paths = sysfs_paths_to_mask_from("/sys");
+            let paths = sysfs_paths_to_mask_from("/sys", docker_daemon_arch);
             let skipped = SYSFS_MASK_PATHS.len() - paths.len();
             if skipped > 0 {
                 warn!(
                     skipped,
-                    "some sysfs mask paths do not exist on this host and will be skipped"
+                    "some sysfs mask paths do not exist on this host/daemon and will be skipped"
                 );
             }
             paths
@@ -1330,12 +1368,22 @@ pub(crate) fn sysfs_paths_to_mask() -> Vec<&'static str> {
 
 /// Testable inner helper: probes each `SYSFS_MASK_PATHS` entry and returns
 /// only those that exist under `sysfs_root`.  If `sysfs_root` itself doesn't
-/// exist (macOS), all paths are returned — Docker Desktop's VM will have them.
-pub(crate) fn sysfs_paths_to_mask_from(sysfs_root: &str) -> Vec<&'static str> {
+/// exist (macOS), `detect_arch` decides which paths the Docker VM actually
+/// has: DMI paths are dropped unless the daemon is confirmed x86_64.
+pub(crate) fn sysfs_paths_to_mask_from(
+    sysfs_root: &str,
+    detect_arch: impl FnOnce() -> DaemonArch,
+) -> Vec<&'static str> {
     let root = Path::new(sysfs_root);
     if !root.exists() {
-        // Non-Linux host (macOS): Docker runs in a VM with full sysfs.
-        return SYSFS_MASK_PATHS.to_vec();
+        // Non-Linux host (macOS): Docker runs in a VM, so probe the daemon's
+        // reported architecture instead of a host sysfs that doesn't exist.
+        let is_x86 = detect_arch() == DaemonArch::X86_64;
+        return SYSFS_MASK_PATHS
+            .iter()
+            .copied()
+            .filter(|p| is_x86 || !p.contains("dmi"))
+            .collect();
     }
     SYSFS_MASK_PATHS
         .iter()
