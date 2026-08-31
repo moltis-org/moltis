@@ -436,18 +436,21 @@ impl AgentTool for ExecTool {
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .map(String::from);
+        let clear_default_node = params.get("node").is_some_and(serde_json::Value::is_null);
         // Determine the effective node reference, distinguishing model-supplied
         // values from the admin-configured default.  When no nodes are connected:
         // - Model-hallucinated values are silently dropped (fall through to local).
         // - A configured `default_node` produces a clear error so the admin knows
         //   the intended remote host is unavailable.
         let node_ref = if let Some(provider) = &self.node_provider {
-            if provider.has_connected_nodes() {
+            if clear_default_node {
+                None
+            } else if provider.has_connected_nodes() {
                 match model_node.or_else(|| self.default_node.clone()) {
                     Some(node_ref) => Some(node_ref),
                     None => provider.default_node_ref().await,
                 }
-            } else if let Some(ref dn) = self.default_node {
+            } else if !clear_default_node && let Some(ref dn) = self.default_node {
                 return Err(Error::message(format!(
                     "default node '{dn}' is configured but no nodes are currently connected"
                 ))
