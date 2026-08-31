@@ -396,7 +396,7 @@ impl AgentTool for ExecTool {
             obj.insert(
                 "node".to_string(),
                 serde_json::json!({
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": "Node name or ID to run on. Omit to use the session's default node."
                 }),
             );

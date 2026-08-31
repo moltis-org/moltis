@@ -1177,6 +1177,14 @@ async fn test_exec_schema_hides_node_when_no_nodes_connected() {
 }
 
 #[tokio::test]
+async fn test_exec_schema_allows_explicit_null_node_when_connected() {
+    let tool = ExecTool::default().with_node_provider(Arc::new(ConnectedNodeProvider), None);
+
+    let schema = tool.parameters_schema();
+    assert_eq!(schema["properties"]["node"]["type"], serde_json::json!(["string", "null"]));
+}
+
+#[tokio::test]
 async fn test_exec_errors_when_default_node_configured_but_disconnected() {
     let temp_dir = tempfile::tempdir().unwrap();
     let tool = ExecTool {
