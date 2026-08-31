@@ -85,6 +85,20 @@ A connection is classified as **local** only when **all four** checks pass:
 
 If **any** check fails, the connection is treated as remote.
 
+#### Docker and check 4
+
+Docker's default bridge networking rewrites the container-side TCP source to
+a bridge-network address via DNAT, even when the published port is bound
+only to `127.0.0.1` on the host (`-p 127.0.0.1:PORT:PORT`). Check 4 above can
+never pass in that mode, so Tier 2 (local dev convenience, including
+`auth_disabled`) never applies to a default Docker deployment — only
+`--network host` avoids this by sharing the host's network namespace
+directly. If you've confirmed your own deployment publishes the port
+loopback-only and want checks 1–3 to be sufficient on their own, set
+`MOLTIS_TRUST_DOCKER_LOOPBACK=true`. This does **not** relax checks 1–3 — a
+proxy header, a non-loopback `Host`, or `MOLTIS_BEHIND_PROXY=true` still
+force the connection to be treated as remote.
+
 ## Credential Types
 
 ### Password

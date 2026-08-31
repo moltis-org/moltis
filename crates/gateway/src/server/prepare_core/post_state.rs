@@ -294,6 +294,7 @@ pub(super) async fn complete_startup(
         Some(pairing_store),
         is_localhost,
         env_flag_enabled("MOLTIS_BEHIND_PROXY"),
+        env_flag_enabled("MOLTIS_TRUST_DOCKER_LOOPBACK"),
         tls_enabled_for_gateway,
         hook_registry.clone(),
         memory_manager.clone(),

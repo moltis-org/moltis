@@ -652,6 +652,7 @@ mod tests {
             false,
             false,
             false,
+            false,
             None,
             memory_manager,
             Arc::new(moltis_code_index::CodeIndex::config_only(

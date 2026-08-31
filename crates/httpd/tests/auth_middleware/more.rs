@@ -760,6 +760,7 @@ pub(super) async fn start_server_with_onboarding(
         None, // pairing_store
         false,
         behind_proxy,
+        false, // trust_docker_loopback
         false,
         None,
         None,

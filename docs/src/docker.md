@@ -78,7 +78,14 @@ whose SANs cover the public hostname and set `tls.cert_path` and `tls.key_path`
 in `moltis.toml`.
 
 ```admonish note
-When accessing from localhost, no authentication is required. If you access Moltis from a different machine (e.g., over the network), a setup code is printed to the container logs for authentication setup:
+When accessing from localhost, no authentication is required. If you access Moltis from a different machine (e.g., over the network), a setup code is printed to the container logs for authentication setup.
+
+Docker's default bridge networking rewrites the request's apparent source
+address, so this "no auth needed" convenience does not apply automatically
+inside a container even when the browser genuinely is on the same machine
+— see [Docker and check 4](authentication.md#docker-and-check-4) for why,
+and the `MOLTIS_TRUST_DOCKER_LOOPBACK` opt-in if you've confirmed your own
+port publish is loopback-only.
 
 ~~~bash
 docker logs moltis

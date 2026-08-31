@@ -132,7 +132,12 @@ pub async fn auth_gate(
         return next.run(request).await;
     };
 
-    let is_local = is_local_connection(request.headers(), addr, state.gateway.behind_proxy);
+    let is_local = is_local_connection(
+        request.headers(),
+        addr,
+        state.gateway.behind_proxy,
+        state.gateway.trust_docker_loopback,
+    );
 
     match check_auth(store, request.headers(), is_local).await {
         AuthResult::Allowed(identity) => {
@@ -394,7 +399,14 @@ where
         let is_local = parts
             .extensions
             .get::<ConnectInfo<SocketAddr>>()
-            .is_some_and(|ci| is_local_connection(&parts.headers, ci.0, gw.behind_proxy));
+            .is_some_and(|ci| {
+                is_local_connection(
+                    &parts.headers,
+                    ci.0,
+                    gw.behind_proxy,
+                    gw.trust_docker_loopback,
+                )
+            });
 
         match check_auth(store, &parts.headers, is_local).await {
             AuthResult::Allowed(identity) => Ok(AuthSession(identity)),

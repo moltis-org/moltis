@@ -281,7 +281,12 @@ async fn should_bypass_throttling(state: &AppState, headers: &HeaderMap, addr: S
         return true;
     };
 
-    let is_local = is_local_connection(headers, addr, state.gateway.behind_proxy);
+    let is_local = is_local_connection(
+        headers,
+        addr,
+        state.gateway.behind_proxy,
+        state.gateway.trust_docker_loopback,
+    );
     matches!(
         crate::auth_middleware::check_auth(store, headers, is_local).await,
         crate::auth_middleware::AuthResult::Allowed(_)

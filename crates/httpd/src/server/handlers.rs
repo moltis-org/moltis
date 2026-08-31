@@ -108,7 +108,12 @@ pub(super) async fn ws_upgrade_handler(
     // for the LLM to reason about locale or location.
     let remote_ip = extract_ws_client_ip(&headers, addr).filter(|ip| is_public_ip(ip));
 
-    let is_local = is_local_connection(&headers, addr, state.gateway.behind_proxy);
+    let is_local = is_local_connection(
+        &headers,
+        addr,
+        state.gateway.behind_proxy,
+        state.gateway.trust_docker_loopback,
+    );
     let header_identity =
         websocket_header_authenticate(&headers, state.gateway.credential_store.as_ref(), is_local)
             .await;

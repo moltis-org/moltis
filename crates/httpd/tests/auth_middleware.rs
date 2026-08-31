@@ -133,6 +133,7 @@ async fn start_auth_server_impl(
         None, // pairing_store
         localhost_only,
         behind_proxy,
+        false, // trust_docker_loopback
         false,
         None,
         None,
@@ -207,6 +208,7 @@ async fn start_localhost_server_with_vault() -> (
         None, // pairing_store
         true,
         false,
+        false, // trust_docker_loopback
         false,
         None,
         None,
@@ -284,6 +286,7 @@ async fn start_localhost_server_with_vault_and_session_store() -> (
         None, // pairing_store
         true,
         false,
+        false, // trust_docker_loopback
         false,
         None,
         None,

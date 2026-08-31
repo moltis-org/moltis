@@ -149,7 +149,12 @@ async fn status_handler(
     let has_password = state.credential_store.has_password().await.unwrap_or(false);
     let has_passkeys = state.credential_store.has_passkeys().await.unwrap_or(false);
 
-    let is_local = is_local_connection(&headers, addr, state.gateway_state.behind_proxy);
+    let is_local = is_local_connection(
+        &headers,
+        addr,
+        state.gateway_state.behind_proxy,
+        state.gateway_state.trust_docker_loopback,
+    );
     let auth_result = check_auth(&state.credential_store, &headers, is_local).await;
     let authenticated = matches!(auth_result, AuthResult::Allowed(_));
     let setup_required = matches!(auth_result, AuthResult::SetupRequired);
@@ -249,7 +254,12 @@ async fn setup_handler(
     #[cfg(feature = "vault")]
     let mut vault_recovery_key = None;
 
-    let is_local = is_local_connection(&headers, addr, state.gateway_state.behind_proxy);
+    let is_local = is_local_connection(
+        &headers,
+        addr,
+        state.gateway_state.behind_proxy,
+        state.gateway_state.trust_docker_loopback,
+    );
     if password.is_empty() && is_local {
         // Local connection with no password: skip setup without setting one.
         if let Err(e) = state.credential_store.clear_auth_disabled().await {
