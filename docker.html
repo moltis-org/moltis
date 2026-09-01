@@ -97,7 +97,8 @@ proxy with public CA certificates. Run Moltis with <code>--no-tls</code>, set
 If you want Moltis to serve HTTPS directly, mount a certificate and private key
 whose SANs cover the public hostname and set <code>tls.cert_path</code> and <code>tls.key_path</code>
 in <code>moltis.toml</code>.</p>
-<aside class="admonition admonition-note"><div class="admonition-title">Note</div><div class="admonition-body"><p>When accessing from localhost, no authentication is required. If you access Moltis from a different machine (e.g., over the network), a setup code is printed to the container logs for authentication setup:</p>
+<aside class="admonition admonition-note"><div class="admonition-title">Note</div><div class="admonition-body"><p>When accessing from localhost, no authentication is required. If you access Moltis from a different machine (e.g., over the network), a setup code is printed to the container logs for authentication setup.</p>
+<p>Docker's default bridge networking rewrites the request's apparent source<br>address, so this "no auth needed" convenience does not apply automatically<br>inside a container even when the browser genuinely is on the same machine<br>— see <a href="/authentication.html#docker-and-check-4">Docker and check 4</a> for why,<br>and the <code>MOLTIS_TRUST_DOCKER_LOOPBACK</code> opt-in if you've confirmed your own<br>port publish is loopback-only.</p>
 <p>~~~bash<br>docker logs moltis<br>~~~</p></div></aside>
 <h2 id="volume-mounts">Volume Mounts</h2>
 <p>Moltis uses two directories that should be persisted:</p>
