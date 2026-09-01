@@ -363,13 +363,7 @@ pub async fn prepare_gateway_core_with_profile(
         let mut merged = mcp_reg;
         for (name, entry) in &config.mcp.servers {
             if !merged.servers.contains_key(name.as_str()) {
-                let transport = match entry.transport.as_str() {
-                    "sse" => moltis_mcp::registry::TransportType::Sse,
-                    "streamable_http" | "streamable-http" | "http" => {
-                        moltis_mcp::registry::TransportType::StreamableHttp
-                    },
-                    _ => moltis_mcp::registry::TransportType::Stdio,
-                };
+                let transport = entry.transport_type();
                 let oauth = entry
                     .oauth
                     .as_ref()

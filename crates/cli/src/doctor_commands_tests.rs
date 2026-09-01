@@ -271,7 +271,11 @@ fn check_mcp_servers_streamable_http_with_url_ok() {
             Status::Ok,
             "transport: {transport}"
         );
-        assert!(section.items[0].message.contains(transport));
+        assert!(
+            section.items[0]
+                .message
+                .contains("streamable-http transport")
+        );
     }
 }
 
@@ -297,6 +301,31 @@ fn check_mcp_servers_streamable_http_without_url_fails() {
     assert_eq!(section.items[0].status, Status::Fail);
     assert!(section.items[0].message.contains("no url configured"));
     assert!(!section.items[0].message.contains("command"));
+}
+
+#[test]
+fn check_mcp_servers_streamable_http_with_invalid_url_fails() {
+    for url in ["", "not a url", "http://[::1"] {
+        let mut config = MoltisConfig::default();
+        let entry = moltis_config::schema::McpServerEntry {
+            command: String::new(),
+            args: vec![],
+            env: Default::default(),
+            headers: Default::default(),
+            enabled: true,
+            transport: "streamable-http".to_string(),
+            url: Some(url.to_string()),
+            oauth: None,
+            display_name: None,
+            request_timeout_secs: None,
+        };
+        config.mcp.servers.insert("broken-http".into(), entry);
+
+        let section = check_mcp_servers(&config);
+        assert_eq!(section.items.len(), 1);
+        assert_eq!(section.items[0].status, Status::Fail, "url: {url:?}");
+        assert!(section.items[0].message.contains("invalid url"));
+    }
 }
 
 #[test]

@@ -24,9 +24,7 @@ pub fn parse_server_config(
     existing: Option<&McpServerConfig>,
 ) -> Result<McpServerConfig> {
     let transport = match params.get("transport").and_then(|v| v.as_str()) {
-        Some("sse") => TransportType::Sse,
-        Some("streamable-http" | "streamable_http" | "http") => TransportType::StreamableHttp,
-        Some(_) => TransportType::Stdio,
+        Some(value) => TransportType::from(value),
         None => existing
             .map(|cfg| cfg.transport)
             .unwrap_or(TransportType::Stdio),

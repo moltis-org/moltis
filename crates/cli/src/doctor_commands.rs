@@ -10,6 +10,7 @@ use {
     anyhow::Result,
     moltis_config::{
         MoltisConfig,
+        schema::McpTransport,
         validate::{self, Severity},
     },
     secrecy::ExposeSecret,
@@ -643,20 +644,25 @@ fn check_mcp_servers(config: &MoltisConfig) -> Section {
             continue;
         }
 
-        // Remote transports don't need a local command.
-        let transport = entry.transport.as_str();
-        if matches!(
-            transport,
-            "sse" | "streamable-http" | "streamable_http" | "http"
-        ) {
-            if let Some(ref url) = entry.url {
-                section.push(Status::Ok, format!("{name}: {transport} transport ({url})"));
-            } else {
+        let transport = entry.transport_type();
+        if matches!(transport, McpTransport::Sse | McpTransport::StreamableHttp) {
+            let Some(url) = entry.url.as_deref() else {
                 section.push(
                     Status::Fail,
                     format!("{name}: {transport} transport but no url configured"),
                 );
+                continue;
+            };
+
+            if reqwest::Url::parse(url.trim()).is_err() {
+                section.push(
+                    Status::Fail,
+                    format!("{name}: {transport} transport has an invalid url"),
+                );
+                continue;
             }
+
+            section.push(Status::Ok, format!("{name}: {transport} transport ({url})"));
             continue;
         }
 

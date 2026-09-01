@@ -200,6 +200,45 @@ pub struct McpServerEntry {
     pub display_name: Option<String>,
 }
 
+impl McpServerEntry {
+    /// Return the normalized transport used by runtime consumers.
+    #[must_use]
+    pub fn transport_type(&self) -> McpTransport {
+        McpTransport::from(self.transport.as_str())
+    }
+}
+
+/// Transport type for MCP server connections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTransport {
+    #[default]
+    Stdio,
+    Sse,
+    #[serde(rename = "streamable-http", alias = "streamable_http", alias = "http")]
+    StreamableHttp,
+}
+
+impl From<&str> for McpTransport {
+    fn from(value: &str) -> Self {
+        match value {
+            "sse" => Self::Sse,
+            "streamable-http" | "streamable_http" | "http" => Self::StreamableHttp,
+            _ => Self::Stdio,
+        }
+    }
+}
+
+impl std::fmt::Display for McpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stdio => write!(f, "stdio"),
+            Self::Sse => write!(f, "sse"),
+            Self::StreamableHttp => write!(f, "streamable-http"),
+        }
+    }
+}
+
 /// Manual OAuth configuration override for an MCP server.
 ///
 /// Used when the server doesn't implement RFC 9728/8414 discovery or

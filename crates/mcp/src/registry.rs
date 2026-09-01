@@ -13,26 +13,8 @@ use {
 
 use crate::error::{Context, Result};
 
-/// Transport type for MCP server connections.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum TransportType {
-    #[default]
-    Stdio,
-    Sse,
-    #[serde(rename = "streamable-http", alias = "streamable_http", alias = "http")]
-    StreamableHttp,
-}
-
-impl std::fmt::Display for TransportType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Stdio => write!(f, "stdio"),
-            Self::Sse => write!(f, "sse"),
-            Self::StreamableHttp => write!(f, "streamable-http"),
-        }
-    }
-}
+/// MCP transport type shared with static configuration.
+pub type TransportType = moltis_config::schema::McpTransport;
 
 /// Manual OAuth override for MCP servers that don't support standard discovery.
 #[derive(Debug, Clone, Serialize, Deserialize)]

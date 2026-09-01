@@ -228,6 +228,26 @@ fn mcp_config_defaults_request_timeout() {
 }
 
 #[test]
+fn mcp_server_entry_maps_transport_aliases_to_shared_type() {
+    for transport in ["streamable-http", "streamable_http", "http"] {
+        let entry = McpServerEntry {
+            command: String::new(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            enabled: true,
+            request_timeout_secs: None,
+            transport: transport.to_string(),
+            url: None,
+            headers: HashMap::new(),
+            oauth: None,
+            display_name: None,
+        };
+
+        assert_eq!(entry.transport_type(), McpTransport::StreamableHttp);
+    }
+}
+
+#[test]
 fn mcp_server_entry_parses_request_timeout_override() {
     let config: MoltisConfig = toml::from_str(
         r#"
