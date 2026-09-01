@@ -8936,6 +8936,7 @@ dependencies = [
  "futures",
  "gix",
  "include_dir",
+ "moltis-auth",
  "moltis-channels",
  "moltis-config",
  "moltis-cron",

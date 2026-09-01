@@ -1,72 +1,13 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
-/// Returns `true` when the request carries headers typically set by reverse proxies.
-fn has_proxy_headers(headers: &axum::http::HeaderMap) -> bool {
-    headers.contains_key("x-forwarded-for")
-        || headers.contains_key("x-real-ip")
-        || headers.contains_key("cf-connecting-ip")
-        || headers.get("forwarded").is_some()
-}
-
-/// Returns `true` when `host` (without port) is a loopback name/address.
-fn is_loopback_host(host: &str) -> bool {
-    // Strip port (IPv6 bracket form, bare IPv6, or simple host:port).
-    let name = if host.starts_with('[') {
-        // [::1]:port or [::1]
-        host.rsplit_once("]:")
-            .map_or(host, |(addr, _)| addr)
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-    } else if host.matches(':').count() > 1 {
-        // Bare IPv6 like ::1 (multiple colons, no brackets) — no port stripping.
-        host
-    } else {
-        host.rsplit_once(':').map_or(host, |(addr, _)| addr)
-    };
-    matches!(name, "localhost" | "127.0.0.1" | "::1") || name.ends_with(".localhost")
-}
-
-/// Determine whether a connection is a **direct local** connection (no proxy
-/// in between).  This is the per-request check used by the three-tier auth
-/// model:
-///
-/// 1. Password set -> always require auth
-/// 2. No password + local -> full access (dev convenience)
-/// 3. No password + remote/proxied -> onboarding only
-///
-/// A connection is considered local when **all** of the following hold:
-///
-/// - `MOLTIS_BEHIND_PROXY` is **not** set (`behind_proxy == false`)
-/// - No proxy headers are present (X-Forwarded-For, X-Real-IP, etc.)
-/// - The `Host` header resolves to a loopback address (or is absent)
-/// - The TCP source IP is loopback
-pub(crate) fn is_local_connection(
-    headers: &axum::http::HeaderMap,
-    remote_addr: SocketAddr,
-    behind_proxy: bool,
-) -> bool {
-    // Hard override: env var says we're behind a proxy.
-    if behind_proxy {
-        return false;
-    }
-
-    // Proxy headers present -> proxied traffic.
-    if has_proxy_headers(headers) {
-        return false;
-    }
-
-    // Host header points to a non-loopback name -> likely proxied.
-    if let Some(host) = headers
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        && !is_loopback_host(host)
-    {
-        return false;
-    }
-
-    // TCP source must be loopback.
-    remote_addr.ip().is_loopback()
-}
+/// Locality detection lives in `moltis_auth::locality` — the single source
+/// of truth for the three-tier auth model's "is this connection local?"
+/// question. This used to be a separate copy of the same logic in this file,
+/// which silently fell out of sync with the real implementation (it never
+/// picked up `MOLTIS_TRUST_DOCKER_LOOPBACK`, so the terminal WebSocket
+/// handler kept rejecting Docker-loopback connections the global auth gate
+/// had already accepted). Re-export instead of duplicating.
+pub(crate) use moltis_auth::locality::is_local_connection;
 
 pub(crate) async fn websocket_header_authenticated(
     headers: &axum::http::HeaderMap,

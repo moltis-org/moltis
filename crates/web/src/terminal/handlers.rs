@@ -225,7 +225,12 @@ pub async fn api_terminal_ws_upgrade_handler(
         }
     }
 
-    let is_local = is_local_connection(&headers, addr, state.gateway.behind_proxy);
+    let is_local = is_local_connection(
+        &headers,
+        addr,
+        state.gateway.behind_proxy,
+        state.gateway.trust_docker_loopback,
+    );
     let header_authenticated =
         websocket_header_authenticated(&headers, state.gateway.credential_store.as_ref(), is_local)
             .await;
