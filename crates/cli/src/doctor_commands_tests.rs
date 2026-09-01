@@ -329,6 +329,61 @@ fn check_mcp_servers_streamable_http_with_invalid_url_fails() {
 }
 
 #[test]
+fn check_mcp_servers_streamable_http_resolves_config_env_url() {
+    for placeholder in ["$MCP_URL", "${MCP_URL}"] {
+        let mut config = MoltisConfig::default();
+        config.env.insert(
+            "MCP_URL".to_string(),
+            "http://localhost:3131/mcp".to_string(),
+        );
+        let entry = moltis_config::schema::McpServerEntry {
+            command: String::new(),
+            args: vec![],
+            env: Default::default(),
+            headers: Default::default(),
+            enabled: true,
+            transport: "streamable-http".to_string(),
+            url: Some(placeholder.to_string()),
+            oauth: None,
+            display_name: None,
+            request_timeout_secs: None,
+        };
+        config.mcp.servers.insert("remote".into(), entry);
+
+        let section = check_mcp_servers(&config);
+        assert_eq!(section.items.len(), 1);
+        assert_eq!(section.items[0].status, Status::Ok);
+    }
+}
+
+#[test]
+fn check_mcp_servers_streamable_http_defers_unavailable_env_url() {
+    let mut config = MoltisConfig::default();
+    let entry = moltis_config::schema::McpServerEntry {
+        command: String::new(),
+        args: vec![],
+        env: Default::default(),
+        headers: Default::default(),
+        enabled: true,
+        transport: "streamable-http".to_string(),
+        url: Some("$MCP_URL".to_string()),
+        oauth: None,
+        display_name: None,
+        request_timeout_secs: None,
+    };
+    config.mcp.servers.insert("remote".into(), entry);
+
+    let section = check_mcp_servers(&config);
+    assert_eq!(section.items.len(), 1);
+    assert_eq!(section.items[0].status, Status::Info);
+    assert!(
+        section.items[0]
+            .message
+            .contains("unavailable environment value")
+    );
+}
+
+#[test]
 fn check_mcp_servers_nonexistent_command_fails() {
     let mut config = MoltisConfig::default();
     let entry = moltis_config::schema::McpServerEntry {

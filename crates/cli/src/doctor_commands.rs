@@ -10,6 +10,7 @@ use {
     anyhow::Result,
     moltis_config::{
         MoltisConfig,
+        env_subst::{contains_env_placeholder, substitute_env_placeholders},
         schema::McpTransport,
         validate::{self, Severity},
     },
@@ -654,7 +655,18 @@ fn check_mcp_servers(config: &MoltisConfig) -> Section {
                 continue;
             };
 
-            if reqwest::Url::parse(url.trim()).is_err() {
+            let resolved_url = substitute_env_placeholders(url, &config.env);
+            if contains_env_placeholder(&resolved_url) {
+                section.push(
+                    Status::Info,
+                    format!(
+                        "{name}: {transport} transport URL depends on an unavailable environment value"
+                    ),
+                );
+                continue;
+            }
+
+            if reqwest::Url::parse(resolved_url.trim()).is_err() {
                 section.push(
                     Status::Fail,
                     format!("{name}: {transport} transport has an invalid url"),

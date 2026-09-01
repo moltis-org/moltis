@@ -1,6 +1,7 @@
 use std::{collections::HashMap, str::FromStr};
 
 use {
+    moltis_config::env_subst::{is_entire_env_placeholder, substitute_env_placeholders},
     reqwest::header::{HeaderMap, HeaderName, HeaderValue},
     secrecy::{ExposeSecret, Secret},
     url::Url,
@@ -83,7 +84,7 @@ pub fn sanitize_url_for_display(raw_url: &str) -> String {
         let redacted_pairs: Vec<(String, String)> = url
             .query_pairs()
             .map(|(key, value)| {
-                let value = if value.is_empty() || is_entire_env_placeholder_syntax(&value) {
+                let value = if value.is_empty() || is_entire_env_placeholder(&value) {
                     value.into_owned()
                 } else {
                     REDACTED_QUERY_VALUE.to_string()
@@ -108,71 +109,6 @@ pub fn sanitize_url_for_display(raw_url: &str) -> String {
 
 pub fn sanitize_reqwest_error(err: reqwest::Error) -> reqwest::Error {
     err.without_url()
-}
-
-pub fn substitute_env_placeholders(input: &str, env_overrides: &HashMap<String, String>) -> String {
-    let mut out = String::with_capacity(input.len());
-    let bytes = input.as_bytes();
-    let mut cursor = 0usize;
-
-    while let Some(relative_dollar) = input[cursor..].find('$') {
-        let dollar_idx = cursor + relative_dollar;
-        out.push_str(&input[cursor..dollar_idx]);
-
-        let after_dollar = dollar_idx + 1;
-        if after_dollar >= input.len() {
-            out.push('$');
-            cursor = after_dollar;
-            break;
-        }
-
-        if bytes[after_dollar] == b'{' {
-            let name_start = after_dollar + 1;
-            let Some(relative_close) = input[name_start..].find('}') else {
-                out.push_str(&input[dollar_idx..]);
-                cursor = input.len();
-                break;
-            };
-            let close_idx = name_start + relative_close;
-            if close_idx > name_start {
-                let name = &input[name_start..close_idx];
-                if let Some(value) = lookup_env(name, env_overrides) {
-                    out.push_str(&value);
-                } else {
-                    out.push_str(&input[dollar_idx..=close_idx]);
-                }
-                cursor = close_idx + 1;
-                continue;
-            }
-
-            out.push_str(&input[dollar_idx..]);
-            break;
-        }
-
-        let next = bytes[after_dollar];
-        if !is_env_ident_start(next as char) {
-            out.push('$');
-            cursor = after_dollar;
-            continue;
-        }
-
-        let name_start = after_dollar;
-        let mut name_end = name_start + 1;
-        while name_end < input.len() && is_env_ident_continue(bytes[name_end] as char) {
-            name_end += 1;
-        }
-
-        let name = &input[name_start..name_end];
-        if let Some(value) = lookup_env(name, env_overrides) {
-            out.push_str(&value);
-        } else {
-            out.push_str(&input[dollar_idx..name_end]);
-        }
-        cursor = name_end;
-    }
-
-    out.push_str(&input[cursor..]);
-    out
 }
 
 fn build_header_map(
@@ -216,31 +152,6 @@ fn build_header_map(
     Ok(resolved)
 }
 
-fn lookup_env(name: &str, env_overrides: &HashMap<String, String>) -> Option<String> {
-    env_overrides
-        .get(name)
-        .cloned()
-        .filter(|value| !value.trim().is_empty())
-}
-
-fn is_entire_env_placeholder_syntax(value: &str) -> bool {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    if let Some(name) = trimmed
-        .strip_prefix("${")
-        .and_then(|rest| rest.strip_suffix('}'))
-    {
-        return !name.is_empty() && name.chars().all(is_env_ident_continue);
-    }
-
-    trimmed
-        .strip_prefix('$')
-        .is_some_and(|name| !name.is_empty() && name.chars().all(is_env_ident_continue))
-}
-
 fn decode_display_escapes(value: &str) -> String {
     [
         ("%5B", "["),
@@ -257,14 +168,6 @@ fn decode_display_escapes(value: &str) -> String {
     .fold(value.to_string(), |acc, (encoded, decoded)| {
         acc.replace(encoded, decoded)
     })
-}
-
-fn is_env_ident_start(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_alphabetic()
-}
-
-fn is_env_ident_continue(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_alphanumeric()
 }
 
 fn is_reserved_header(name: &str) -> bool {
