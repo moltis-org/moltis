@@ -643,9 +643,12 @@ fn check_mcp_servers(config: &MoltisConfig) -> Section {
             continue;
         }
 
-        // SSE/HTTP transports don't need a local command
+        // Remote transports don't need a local command.
         let transport = entry.transport.as_str();
-        if transport == "sse" || transport == "http" {
+        if matches!(
+            transport,
+            "sse" | "streamable-http" | "streamable_http" | "http"
+        ) {
             if let Some(ref url) = entry.url {
                 section.push(Status::Ok, format!("{name}: {transport} transport ({url})"));
             } else {
