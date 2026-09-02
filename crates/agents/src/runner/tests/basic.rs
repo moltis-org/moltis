@@ -212,7 +212,10 @@ async fn test_tool_hook_lifecycle_shares_stable_call_id() {
         &UserContent::text("Hi"),
         None,
         None,
-        Some(serde_json::json!({"_session_key": "tool-session"})),
+        Some(serde_json::json!({
+            "_session_key": "tool-session",
+            "_trace_correlation_key": "turn-tool"
+        })),
         Some(Arc::new(hooks)),
         None,
     )
@@ -223,9 +226,28 @@ async fn test_tool_hook_lifecycle_shares_stable_call_id() {
     assert_eq!(payloads.len(), 3);
     for payload in payloads.iter() {
         let tool_call_id = match payload {
-            HookPayload::BeforeToolCall { tool_call_id, .. }
-            | HookPayload::AfterToolCall { tool_call_id, .. }
-            | HookPayload::ToolResultPersist { tool_call_id, .. } => tool_call_id,
+            HookPayload::BeforeToolCall {
+                turn_id,
+                tool_call_id,
+                ..
+            } => {
+                assert_eq!(turn_id.as_deref(), Some("turn-tool"));
+                tool_call_id
+            },
+            HookPayload::AfterToolCall {
+                turn_id,
+                tool_call_id,
+                arguments,
+                ..
+            } => {
+                assert_eq!(turn_id.as_deref(), Some("turn-tool"));
+                assert_eq!(
+                    arguments.as_ref().and_then(|value| value["text"].as_str()),
+                    Some("hi")
+                );
+                tool_call_id
+            },
+            HookPayload::ToolResultPersist { tool_call_id, .. } => tool_call_id,
             other => panic!("unexpected payload: {other:?}"),
         };
         assert_eq!(tool_call_id.as_deref(), Some("call_1"));
@@ -282,7 +304,10 @@ async fn test_non_streaming_runner_dispatches_before_agent_start_hook() {
         &UserContent::text("Hi"),
         None,
         None,
-        Some(serde_json::json!({"_session_key": "session-123"})),
+        Some(serde_json::json!({
+            "_session_key": "session-123",
+            "_trace_correlation_key": "turn-123"
+        })),
         Some(Arc::new(hooks)),
         None,
     )
@@ -332,10 +357,11 @@ async fn test_non_streaming_runner_dispatches_agent_end_hook() {
         &payloads[0],
         HookPayload::AgentEnd {
             session_key,
+            turn_id: Some(turn_id),
             text,
             iterations: 1,
             tool_calls: 0,
-        } if session_key == "session-123" && text == "Hello!"
+        } if session_key == "session-123" && turn_id == "turn-123" && text == "Hello!"
     ));
 }
 
@@ -681,7 +707,10 @@ async fn test_streaming_runner_dispatches_before_agent_start_hook() {
         &UserContent::text("Hi"),
         None,
         None,
-        Some(serde_json::json!({"_session_key": "stream-session-123"})),
+        Some(serde_json::json!({
+            "_session_key": "stream-session-123",
+            "_trace_correlation_key": "stream-turn-123"
+        })),
         Some(Arc::new(hooks)),
         None,
         None,
@@ -731,10 +760,11 @@ async fn test_streaming_runner_dispatches_agent_end_hook() {
         &payloads[0],
         HookPayload::AgentEnd {
             session_key,
+            turn_id: Some(turn_id),
             text,
             iterations: 1,
             tool_calls: 0,
-        } if session_key == "stream-session-123" && text == "cached reply"
+        } if session_key == "stream-session-123" && turn_id == "stream-turn-123" && text == "cached reply"
     ));
 }
 

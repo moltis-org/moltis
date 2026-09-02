@@ -743,6 +743,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                     if let Some(ref hooks) = hook_registry {
                         let payload = HookPayload::BeforeToolCall {
                             session_key: session_key.clone(),
+                            turn_id: trace_correlation_key.map(ToOwned::to_owned),
                             tool_call_id: Some(tc_id.clone()),
                             tool_name: tc_name.clone(),
                             arguments: args.clone(),
@@ -794,7 +795,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                     }
 
                     if let Some(tool) = tool {
-                        match tool.execute(args).await {
+                        match tool.execute(args.clone()).await {
                             Ok(val) => {
                                 let error = tool_result_failure(&val);
                                 let success = error.is_none();
@@ -802,8 +803,10 @@ pub async fn run_agent_loop_with_context_and_limits(
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
+                                        turn_id: trace_correlation_key.map(ToOwned::to_owned),
                                         tool_call_id: Some(tc_id.clone()),
                                         tool_name: tc_name.clone(),
+                                        arguments: Some(args.clone()),
                                         success,
                                         result: Some(val.clone()),
                                         channel: channel_for_hooks.clone(),
@@ -827,8 +830,10 @@ pub async fn run_agent_loop_with_context_and_limits(
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
+                                        turn_id: trace_correlation_key.map(ToOwned::to_owned),
                                         tool_call_id: Some(tc_id.clone()),
                                         tool_name: tc_name.clone(),
+                                        arguments: Some(args.clone()),
                                         success: false,
                                         result: None,
                                         channel: channel_for_hooks.clone(),
@@ -990,7 +995,13 @@ pub async fn run_agent_loop_with_context_and_limits(
     .await;
 
     if let Ok(agent_result) = &result {
-        dispatch_agent_end_hook(hook_registry.as_ref(), &session_key_for_hooks, agent_result).await;
+        dispatch_agent_end_hook(
+            hook_registry.as_ref(),
+            &session_key_for_hooks,
+            trace_correlation_key,
+            agent_result,
+        )
+        .await;
     }
     instrumentation::finish_turn(turn_recorder.as_ref().as_ref(), &result);
     result

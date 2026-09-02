@@ -686,6 +686,7 @@ impl LiveChatService {
             .filter(|binding| !binding.is_empty());
             let payload = moltis_common::hooks::HookPayload::MessageReceived {
                 session_key: session_key.clone(),
+                turn_id: Some(run_id.clone()),
                 content: text.clone(),
                 channel,
                 channel_binding,

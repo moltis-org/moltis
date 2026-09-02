@@ -174,6 +174,9 @@ pub enum HookPayload {
     },
     AgentEnd {
         session_key: String,
+        /// Stable identifier shared by every hook event in one admitted turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
         text: String,
         iterations: usize,
         tool_calls: usize,
@@ -206,6 +209,9 @@ pub enum HookPayload {
     },
     MessageReceived {
         session_key: String,
+        /// Stable identifier shared by every hook event in one admitted turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
         content: String,
         channel: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -221,6 +227,9 @@ pub enum HookPayload {
     },
     BeforeToolCall {
         session_key: String,
+        /// Stable identifier shared by every hook event in one admitted turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
         /// Stable identifier shared by every event for this tool invocation.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_call_id: Option<String>,
@@ -231,10 +240,16 @@ pub enum HookPayload {
     },
     AfterToolCall {
         session_key: String,
+        /// Stable identifier shared by every hook event in one admitted turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
         /// Stable identifier shared by every event for this tool invocation.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_call_id: Option<String>,
         tool_name: String,
+        /// Effective arguments after any `BeforeToolCall` rewrite.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        arguments: Option<Value>,
         success: bool,
         result: Option<Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -358,6 +373,7 @@ pub async fn dispatch_message_sent(
 pub async fn dispatch_agent_end(
     registry: Option<&HookRegistry>,
     session_key: &str,
+    turn_id: Option<&str>,
     text: &str,
     iterations: usize,
     tool_calls: usize,
@@ -367,6 +383,7 @@ pub async fn dispatch_agent_end(
     };
     let payload = HookPayload::AgentEnd {
         session_key: session_key.to_string(),
+        turn_id: turn_id.map(ToOwned::to_owned),
         text: text.to_string(),
         iterations,
         tool_calls,
@@ -867,6 +884,7 @@ mod tests {
     fn modifying_payload() -> HookPayload {
         HookPayload::BeforeToolCall {
             session_key: "test".into(),
+            turn_id: None,
             tool_call_id: Some("call-test".into()),
             tool_name: "exec".into(),
             arguments: serde_json::json!({}),
@@ -1021,6 +1039,7 @@ mod tests {
 
         let payload = HookPayload::MessageReceived {
             session_key: "test".into(),
+            turn_id: None,
             content: "hello".into(),
             channel: Some("telegram".into()),
             channel_binding: None,
@@ -1064,6 +1083,7 @@ mod tests {
 
         let payload = HookPayload::MessageReceived {
             session_key: "test".into(),
+            turn_id: None,
             content: "original".into(),
             channel: None,
             channel_binding: None,
@@ -1210,6 +1230,7 @@ mod tests {
         let binding = test_channel_binding();
         let before = HookPayload::BeforeToolCall {
             session_key: "s".into(),
+            turn_id: Some("turn-1".into()),
             tool_call_id: Some("call-1".into()),
             tool_name: "exec".into(),
             arguments: serde_json::json!({"command": "pwd"}),
@@ -1219,10 +1240,12 @@ mod tests {
         let deser: HookPayload = serde_json::from_str(&json).unwrap();
         match deser {
             HookPayload::BeforeToolCall {
+                turn_id,
                 tool_call_id,
                 channel,
                 ..
             } => {
+                assert_eq!(turn_id.as_deref(), Some("turn-1"));
                 assert_eq!(tool_call_id.as_deref(), Some("call-1"));
                 assert_eq!(channel, Some(binding.clone()));
             },
@@ -1231,6 +1254,7 @@ mod tests {
 
         let message = HookPayload::MessageReceived {
             session_key: "s".into(),
+            turn_id: None,
             content: "hello".into(),
             channel: Some("telegram".into()),
             channel_binding: Some(binding.clone()),
@@ -1261,8 +1285,10 @@ mod tests {
 
         let after = HookPayload::AfterToolCall {
             session_key: "s".into(),
+            turn_id: Some("turn-1".into()),
             tool_call_id: Some("call-1".into()),
             tool_name: "exec".into(),
+            arguments: Some(serde_json::json!({"command": "pwd"})),
             success: true,
             result: Some(serde_json::json!({"cwd": "/tmp"})),
             channel: Some(test_channel_binding()),
@@ -1271,11 +1297,15 @@ mod tests {
         let deser: HookPayload = serde_json::from_str(&json).unwrap();
         match deser {
             HookPayload::AfterToolCall {
+                turn_id,
                 tool_call_id,
+                arguments,
                 channel,
                 ..
             } => {
+                assert_eq!(turn_id.as_deref(), Some("turn-1"));
                 assert_eq!(tool_call_id.as_deref(), Some("call-1"));
+                assert_eq!(arguments, Some(serde_json::json!({"command": "pwd"})));
                 assert_eq!(channel, Some(test_channel_binding()));
             },
             other => panic!("unexpected payload: {other:?}"),

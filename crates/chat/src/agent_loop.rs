@@ -507,6 +507,7 @@ pub(crate) async fn run_explicit_shell_command(
     if let Some(hooks) = hook_registry {
         let payload = HookPayload::BeforeToolCall {
             session_key: session_key.to_string(),
+            turn_id: Some(run_id.to_string()),
             tool_call_id: Some(tool_call_id.clone()),
             tool_name: "exec".to_string(),
             arguments: tool_args.clone(),
@@ -588,7 +589,9 @@ pub(crate) async fn run_explicit_shell_command(
                 dispatch_direct_after_tool_call(
                     hook_registry,
                     session_key,
+                    run_id,
                     &tool_call_id,
+                    &tool_args,
                     true,
                     Some(result.clone()),
                     hook_channel.clone(),
@@ -666,7 +669,9 @@ pub(crate) async fn run_explicit_shell_command(
                 dispatch_direct_after_tool_call(
                     hook_registry,
                     session_key,
+                    run_id,
                     &tool_call_id,
+                    &tool_args,
                     false,
                     None,
                     hook_channel.clone(),
@@ -800,7 +805,9 @@ pub(crate) async fn run_explicit_shell_command(
 async fn dispatch_direct_after_tool_call(
     hook_registry: Option<&Arc<HookRegistry>>,
     session_key: &str,
+    turn_id: &str,
     tool_call_id: &str,
+    arguments: &Value,
     success: bool,
     result: Option<Value>,
     channel: Option<ChannelBinding>,
@@ -810,8 +817,10 @@ async fn dispatch_direct_after_tool_call(
     };
     let payload = HookPayload::AfterToolCall {
         session_key: session_key.to_string(),
+        turn_id: Some(turn_id.to_string()),
         tool_call_id: Some(tool_call_id.to_string()),
         tool_name: "exec".to_string(),
+        arguments: Some(arguments.clone()),
         success,
         result,
         channel,
@@ -1299,7 +1308,9 @@ mod tests {
         dispatch_direct_after_tool_call(
             Some(&registry),
             "session",
+            "turn",
             "sh_call_1",
+            &serde_json::json!({"command": "pwd"}),
             true,
             Some(serde_json::json!({"exit_code": 0})),
             None,
@@ -1322,8 +1333,17 @@ mod tests {
         assert_eq!(payloads.len(), 2);
         for payload in payloads.iter() {
             match payload {
-                HookPayload::AfterToolCall { tool_call_id, .. }
-                | HookPayload::ToolResultPersist { tool_call_id, .. } => {
+                HookPayload::AfterToolCall {
+                    turn_id,
+                    tool_call_id,
+                    arguments,
+                    ..
+                } => {
+                    assert_eq!(turn_id.as_deref(), Some("turn"));
+                    assert_eq!(arguments, &Some(serde_json::json!({"command": "pwd"})));
+                    assert_eq!(tool_call_id.as_deref(), Some("sh_call_1"));
+                },
+                HookPayload::ToolResultPersist { tool_call_id, .. } => {
                     assert_eq!(tool_call_id.as_deref(), Some("sh_call_1"));
                 },
                 other => panic!("unexpected payload: {other:?}"),

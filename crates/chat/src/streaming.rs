@@ -400,8 +400,15 @@ pub(crate) async fn run_streaming(
                         return None;
                     }
 
-                    dispatch_agent_end(hook_registry.as_deref(), session_key, &accumulated, 1, 0)
-                        .await;
+                    dispatch_agent_end(
+                        hook_registry.as_deref(),
+                        session_key,
+                        Some(run_id),
+                        &accumulated,
+                        1,
+                        0,
+                    )
+                    .await;
                     accumulated = match apply_message_sending_to_text(
                         hook_registry.as_deref(),
                         session_key,

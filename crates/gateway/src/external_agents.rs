@@ -601,6 +601,7 @@ impl ExternalAgentChatService {
             .and_then(|value| value.as_str())
             .ok_or_else(|| "external agents currently require text input".to_string())?
             .to_string();
+        let run_id = uuid::Uuid::new_v4().to_string();
         let hook_registry = self.state.inner.read().await.hook_registry.clone();
         let channel_reply_target = params
             .get("_channel_reply_target")
@@ -638,6 +639,7 @@ impl ExternalAgentChatService {
             };
             let payload = HookPayload::MessageReceived {
                 session_key: session_key.clone(),
+                turn_id: Some(run_id.clone()),
                 content: text.clone(),
                 channel: params
                     .get("channel")
@@ -692,7 +694,6 @@ impl ExternalAgentChatService {
             }
         }
         let seq = params.get("_seq").and_then(|value| value.as_u64());
-        let run_id = uuid::Uuid::new_v4().to_string();
         let created_at = now_ms();
         let mut history = self
             .session_store
@@ -876,6 +877,7 @@ impl ExternalAgentChatService {
         dispatch_agent_end(
             hook_registry.as_deref(),
             &session_key,
+            Some(&run_id),
             &assistant_text,
             1,
             tool_calls,

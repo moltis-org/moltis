@@ -386,11 +386,13 @@ pub(crate) async fn dispatch_before_agent_start_hook(
 pub(crate) async fn dispatch_agent_end_hook(
     hook_registry: Option<&std::sync::Arc<HookRegistry>>,
     session_key: &str,
+    turn_id: Option<&str>,
     result: &AgentRunResult,
 ) {
     dispatch_agent_end(
         hook_registry.map(AsRef::as_ref),
         session_key,
+        turn_id,
         &result.text,
         result.iterations,
         result.tool_calls_made,
