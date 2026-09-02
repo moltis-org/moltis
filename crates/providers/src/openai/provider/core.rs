@@ -260,7 +260,7 @@ impl OpenAiProvider {
                 | ReasoningEffort::Low
                 | ReasoningEffort::Medium
                 | ReasoningEffort::High => "high",
-                ReasoningEffort::ExtraHigh => "max",
+                ReasoningEffort::ExtraHigh | ReasoningEffort::Max => "max",
             }),
             ReasoningEffortPolicy::KimiMax => self.reasoning_effort.map(|_| "max"),
             ReasoningEffortPolicy::OpenAi => self.reasoning_effort.map(|e| match e {
@@ -274,10 +274,11 @@ impl OpenAiProvider {
                 ReasoningEffort::Low => "low",
                 ReasoningEffort::Medium => "medium",
                 ReasoningEffort::High => "high",
-                ReasoningEffort::ExtraHigh => {
+                ReasoningEffort::ExtraHigh | ReasoningEffort::Max => {
                     tracing::debug!(
                         model = %self.model,
-                        "reasoning effort ExtraHigh clamped to \"high\" (OpenAI maximum)"
+                        effort = e.as_str(),
+                        "reasoning effort clamped to \"high\" (OpenAI Chat Completions maximum)"
                     );
                     "high"
                 },

@@ -64,7 +64,7 @@ test.describe("reasoning effort toggle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("clicking toggle opens dropdown with Off/Low/Medium/High options", async ({ page }) => {
+	test("clicking toggle opens dropdown with all reasoning effort options", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
 		await setMockModels(
@@ -81,13 +81,14 @@ test.describe("reasoning effort toggle", () => {
 		await expect(dropdown).toBeVisible();
 
 		const items = page.locator("#reasoningDropdownList .model-dropdown-item");
-		await expect(items).toHaveCount(6);
+		await expect(items).toHaveCount(7);
 		await expect(items.nth(0)).toHaveText("Off");
 		await expect(items.nth(1)).toHaveText("Minimal");
 		await expect(items.nth(2)).toHaveText("Low");
 		await expect(items.nth(3)).toHaveText("Medium");
 		await expect(items.nth(4)).toHaveText("High");
 		await expect(items.nth(5)).toHaveText("Extra High");
+		await expect(items.nth(6)).toHaveText("Max");
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -141,12 +142,19 @@ test.describe("reasoning effort toggle", () => {
 			window.__chatWsSpyInstalled = true;
 		});
 
-		// Set up a reasoning model and select high effort
+		// Set up a reasoning model and select maximum effort
 		await setMockModels(
 			page,
-			[{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true }],
-			"claude-opus-4-5",
-			"high",
+			[
+				{
+					id: "openai-codex::gpt-5.6-sol",
+					displayName: "GPT-5.6 Sol",
+					provider: "openai-codex",
+					supportsReasoning: true,
+				},
+			],
+			"openai-codex::gpt-5.6-sol",
+			"max",
 		);
 
 		const chatInput = page.locator("#chatInput");
@@ -155,7 +163,7 @@ test.describe("reasoning effort toggle", () => {
 
 		const payloads = await page.evaluate(() => window.__chatSendPayloads);
 		expect(payloads.length).toBeGreaterThan(0);
-		expect(payloads[0].model).toBe("claude-opus-4-5@reasoning-high");
+		expect(payloads[0].model).toBe("openai-codex::gpt-5.6-sol@reasoning-max");
 
 		expect(pageErrors).toEqual([]);
 	});
