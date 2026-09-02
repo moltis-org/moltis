@@ -26,7 +26,6 @@ const TRANSIENT_RETRY_DELAYS: [u64; 3] = [5, 15, 30];
 const KNOWN_MODELS: &[&str] = &[
     "accounts/fireworks/models/kimi-k2p6",
     "accounts/fireworks/models/gpt-oss-120b",
-    "accounts/fireworks/models/deepseek-v4-pro",
 ];
 
 fn api_key() -> Secret<String> {
@@ -570,7 +569,7 @@ async fn detect_new_models_via_api() {
         for id in &new_models {
             eprintln!("  NEW -> {id}");
         }
-        eprintln!("-> Update FIREWORKS_MODELS in crates/providers/src/lib.rs");
+        eprintln!("-> Update FIREWORKS_MODELS in crates/providers/src/model_catalogs.rs");
     }
     eprintln!("=========================================\n");
 }

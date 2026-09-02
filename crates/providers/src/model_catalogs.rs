@@ -78,10 +78,6 @@ const FIREWORKS_KIMI_ROUTER_PREFIXES: &[&str] = &[
 pub(crate) const FIREWORKS_MODELS: &[(&str, &str)] = &[
     ("accounts/fireworks/models/kimi-k2p6", "Kimi K2.6"),
     ("accounts/fireworks/models/gpt-oss-120b", "GPT OSS 120B"),
-    (
-        "accounts/fireworks/models/deepseek-v4-pro",
-        "DeepSeek V4 Pro",
-    ),
 ];
 
 /// Known Alibaba Cloud Coding Plan models.

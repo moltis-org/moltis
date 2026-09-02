@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260902.01] - 2026-09-02
+### Fixed
+- [providers] Remove unavailable Fireworks model
+
 ## [20260901.01] - 2026-09-01
 ### Fixed
 - [auth] Let Docker loopback-only deployments count as local (#1249)
