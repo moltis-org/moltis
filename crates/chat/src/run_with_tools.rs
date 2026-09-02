@@ -1334,7 +1334,7 @@ pub(crate) async fn run_with_tools(
                 commit_terminal_and_finish_channel_stream(terminal_runs, run_id, None).await
             };
 
-            if !is_silent {
+            let channel_delivery_succeeded = if !is_silent {
                 #[cfg(feature = "push-notifications")]
                 {
                     tracing::info!("push: checking push notification (agent mode)");
@@ -1360,8 +1360,10 @@ pub(crate) async fn run_with_tools(
                     desired_reply_medium,
                     &streamed_target_keys,
                 )
-                .await;
-            }
+                .await
+            } else {
+                true
+            };
             let mut output = build_assistant_turn_output(
                 display_text,
                 UsageSnapshot::new(usage, Some(request_usage)),
@@ -1371,6 +1373,7 @@ pub(crate) async fn run_with_tools(
                 llm_api_response,
             );
             output.final_broadcast = Some(payload_val);
+            output.channel_delivery_succeeded = channel_delivery_succeeded;
             Some(output)
         },
         Err(e) => {

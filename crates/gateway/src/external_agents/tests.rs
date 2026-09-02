@@ -258,6 +258,31 @@ struct RecordingOutbound {
     messages: Mutex<Vec<(String, String, String, Option<String>)>>,
 }
 
+struct FailingOutbound;
+
+#[async_trait]
+impl moltis_channels::ChannelOutbound for FailingOutbound {
+    async fn send_text(
+        &self,
+        _account_id: &str,
+        _to: &str,
+        _text: &str,
+        _reply_to: Option<&str>,
+    ) -> moltis_channels::Result<()> {
+        Err(moltis_channels::Error::unavailable("test delivery failure"))
+    }
+
+    async fn send_media(
+        &self,
+        _account_id: &str,
+        _to: &str,
+        _payload: &moltis_common::types::ReplyPayload,
+        _reply_to: Option<&str>,
+    ) -> moltis_channels::Result<()> {
+        Err(moltis_channels::Error::unavailable("test delivery failure"))
+    }
+}
+
 #[async_trait]
 impl moltis_channels::ChannelOutbound for RecordingOutbound {
     async fn send_text(
@@ -666,6 +691,62 @@ async fn bound_chat_send_delivers_external_reply_to_channel_target() {
         "reply to hello".to_string(),
         Some("456".to_string()),
     )]);
+}
+
+#[tokio::test]
+async fn failed_external_channel_delivery_suppresses_message_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    let agent_state = Arc::new(FakeAgentState::default());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), agent_state);
+    external_agents
+        .bind(serde_json::json!({ "sessionKey": "telegram:bot:123", "kind": "codex" }))
+        .await
+        .expect("bind external agent");
+
+    let lifecycle_hook = Arc::new(ExternalLifecycleHook::default());
+    let mut hook_registry = HookRegistry::new();
+    hook_registry.register(lifecycle_hook.clone());
+    let state = test_gateway_state_with_services(
+        GatewayServices::noop().with_channel_outbound(Arc::new(FailingOutbound)),
+    );
+    state.inner.write().await.hook_registry = Some(Arc::new(hook_registry));
+    let chat = test_chat_service_with_state(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+        state,
+    )
+    .await;
+
+    chat.send(serde_json::json!({
+        "sessionKey": "telegram:bot:123",
+        "text": "hello",
+        "_channel_reply_target": {
+            "channel_type": "telegram",
+            "account_id": "bot",
+            "chat_id": "123",
+            "message_id": "456",
+            "thread_id": null,
+        },
+    }))
+    .await
+    .expect("complete external agent turn despite channel failure");
+
+    let payloads = lifecycle_hook
+        .payloads
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    assert_eq!(
+        payloads.iter().map(HookPayload::event).collect::<Vec<_>>(),
+        vec![
+            HookEvent::MessageReceived,
+            HookEvent::BeforeAgentStart,
+            HookEvent::AgentEnd,
+            HookEvent::MessageSending,
+        ]
+    );
 }
 
 #[tokio::test]

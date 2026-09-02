@@ -940,14 +940,16 @@ impl ExternalAgentChatService {
             BroadcastOpts::default(),
         )
         .await;
-        deliver_external_agent_channel_reply(
+        let channel_delivery_succeeded = deliver_external_agent_channel_reply(
             &self.state,
             channel_reply_target,
             &assistant_text,
             &session_key,
         )
         .await;
-        dispatch_message_sent(hook_registry.as_deref(), &session_key, &assistant_text).await;
+        if channel_delivery_succeeded {
+            dispatch_message_sent(hook_registry.as_deref(), &session_key, &assistant_text).await;
+        }
         info!(
             session = %session_key,
             kind = kind.as_str(),
@@ -974,9 +976,9 @@ async fn deliver_external_agent_channel_reply(
     target: Option<moltis_channels::ChannelReplyTarget>,
     text: &str,
     session_key: &str,
-) {
+) -> bool {
     let Some(target) = target else {
-        return;
+        return true;
     };
     if text.trim().is_empty() {
         info!(
@@ -985,7 +987,7 @@ async fn deliver_external_agent_channel_reply(
             chat_id = target.chat_id,
             "external-agent channel reply skipped: empty response text"
         );
-        return;
+        return false;
     }
     let Some(outbound) = state.services.channel_outbound_arc() else {
         warn!(
@@ -994,7 +996,7 @@ async fn deliver_external_agent_channel_reply(
             chat_id = target.chat_id,
             "external-agent channel reply skipped: outbound unavailable"
         );
-        return;
+        return false;
     };
     let to = target.outbound_to().into_owned();
     if let Err(error) = outbound
@@ -1009,7 +1011,9 @@ async fn deliver_external_agent_channel_reply(
             %error,
             "external-agent channel reply failed"
         );
+        return false;
     }
+    true
 }
 
 #[async_trait]

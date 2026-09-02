@@ -507,7 +507,7 @@ pub(crate) async fn run_streaming(
                     )
                     .await;
 
-                    if !is_silent {
+                    let channel_delivery_succeeded = if !is_silent {
                         #[cfg(feature = "push-notifications")]
                         {
                             tracing::info!("push: checking push notification");
@@ -533,8 +533,10 @@ pub(crate) async fn run_streaming(
                             desired_reply_medium,
                             &streamed_target_keys,
                         )
-                        .await;
-                    }
+                        .await
+                    } else {
+                        true
+                    };
                     let llm_api_response =
                         (!raw_llm_responses.is_empty()).then_some(Value::Array(raw_llm_responses));
                     let mut output = build_assistant_turn_output(
@@ -546,6 +548,7 @@ pub(crate) async fn run_streaming(
                         llm_api_response,
                     );
                     output.final_broadcast = Some(payload_val);
+                    output.channel_delivery_succeeded = channel_delivery_succeeded;
                     return Some(output);
                 },
                 StreamEvent::Error(msg) => {

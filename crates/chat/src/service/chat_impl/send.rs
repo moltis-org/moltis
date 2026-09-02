@@ -34,7 +34,10 @@ use {
     super::*,
     crate::service::{
         build_persisted_assistant_message,
-        types::{TurnAdmission, commit_successful_turn, commit_terminal_run},
+        types::{
+            TurnAdmission, commit_successful_turn, commit_terminal_run,
+            persist_successful_assistant,
+        },
     },
 };
 
@@ -1299,6 +1302,7 @@ impl LiveChatService {
             // a committed assistant message into an aborted run.
             if let Some(mut assistant_output) = assistant_text {
                 let sent_text = assistant_output.text.clone();
+                let channel_delivery_succeeded = assistant_output.channel_delivery_succeeded;
                 let final_payload = assistant_output.final_broadcast.take();
                 let assistant_msg = (!ephemeral).then(|| {
                     build_persisted_assistant_message(
@@ -1309,26 +1313,19 @@ impl LiveChatService {
                         Some(run_id_clone.clone()),
                     )
                 });
-                commit_successful_turn(
+                let persistence_succeeded = commit_successful_turn(
                     &terminal_runs,
                     &run_id_clone,
                     async {
-                        if let Some(assistant_msg) = assistant_msg
-                            && let Err(e) = session_store
-                                .append(&session_key_clone, &assistant_msg.to_value())
-                                .await
-                        {
-                            warn!("failed to persist assistant message: {e}");
-                        }
-                        if !ephemeral {
-                            crate::channel_feedback::record_web_reply_trace(
-                                &state,
-                                &session_key_clone,
-                                &run_id_clone,
-                            )
-                            .await;
-                        }
-                        crate::channel_acks::note_turn_finished(&state, &run_id_clone, true).await;
+                        persist_successful_assistant(
+                            &state,
+                            &session_store,
+                            &session_key_clone,
+                            &run_id_clone,
+                            assistant_msg,
+                            ephemeral,
+                        )
+                        .await
                     },
                     async {
                         if let Some(payload) = final_payload {
@@ -1337,12 +1334,14 @@ impl LiveChatService {
                     },
                 )
                 .await;
-                moltis_common::hooks::dispatch_message_sent(
-                    sent_hook_registry.as_deref(),
-                    &session_key_clone,
-                    &sent_text,
-                )
-                .await;
+                if persistence_succeeded && channel_delivery_succeeded {
+                    moltis_common::hooks::dispatch_message_sent(
+                        sent_hook_registry.as_deref(),
+                        &session_key_clone,
+                        &sent_text,
+                    )
+                    .await;
+                }
 
                 // Update metadata counts.
                 if !ephemeral && let Ok(count) = session_store.count(&session_key_clone).await {

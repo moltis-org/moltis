@@ -743,7 +743,7 @@ pub(crate) async fn run_explicit_shell_command(
     // before final delivery. This prevents a concurrent abort from emitting a
     // contradictory aborted terminal after the user already received output.
     commit_terminal_run(terminal_runs, run_id).await;
-    if !final_text.trim().is_empty() {
+    let channel_delivery_succeeded = if !final_text.trim().is_empty() {
         let streamed_target_keys = HashSet::new();
         deliver_channel_replies(
             state,
@@ -753,8 +753,10 @@ pub(crate) async fn run_explicit_shell_command(
             ReplyMedium::Text,
             &streamed_target_keys,
         )
-        .await;
-    }
+        .await
+    } else {
+        true
+    };
 
     let final_payload = build_chat_final_broadcast(
         run_id,
@@ -791,6 +793,7 @@ pub(crate) async fn run_explicit_shell_command(
         None,
     );
     output.final_broadcast = Some(payload);
+    output.channel_delivery_succeeded = channel_delivery_succeeded;
     output
 }
 

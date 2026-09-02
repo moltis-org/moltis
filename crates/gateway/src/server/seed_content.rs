@@ -64,7 +64,7 @@ echo "$(date -Iseconds) tool=$tool" >> /tmp/moltis-hook.log
 - `AgentEnd` — after an agent run completes
 - `AfterToolCall` — after a tool finishes (observe result)
 - `AfterCompaction` — after compaction completes
-- `MessageSent` — after the terminal assistant response is persisted and delivered
+- `MessageSent` — after persistence succeeds and all known channel targets accept delivery
 - `SessionStart` / `SessionEnd` — session lifecycle
 - `GatewayStart` / `GatewayStop` — server lifecycle
 

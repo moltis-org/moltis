@@ -61,6 +61,11 @@ delivery. `Block(reason)` prevents that terminal response from being persisted
 or delivered. In streaming-only mode, already-emitted deltas cannot be
 retracted; the hook still controls the authoritative terminal response.
 
+`MessageSent` is not emitted when authoritative response persistence fails,
+when a known channel target rejects the final reply, or when channel delivery
+times out. Web-only turns have no channel target; their final UI broadcast is
+emitted after persistence and immediately before `MessageSent`.
+
 ### Read-Only Events (Parallel)
 
 These events run hooks in parallel for performance. They cannot modify or block.
@@ -70,7 +75,7 @@ These events run hooks in parallel for performance. They cannot modify or block.
 | `AfterToolCall` | After a tool completes |
 | `AfterCompaction` | After context is compacted |
 | `AgentEnd` | When agent loop completes |
-| `MessageSent` | After response is delivered |
+| `MessageSent` | After persistence succeeds and all known channel targets accept delivery |
 | `SessionStart` | When a new session begins |
 | `SessionEnd` | When a session ends |
 | `GatewayStart` | When Moltis starts |

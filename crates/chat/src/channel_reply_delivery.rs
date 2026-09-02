@@ -34,9 +34,9 @@ async fn deliver_logbook_follow_up(
     logbook_html: &str,
     session_key: &str,
     trace_correlation_key: &str,
-) {
+) -> bool {
     if logbook_html.is_empty() {
-        return;
+        return true;
     }
     match outbound
         .send_html_reporting_ids(&target.account_id, to, logbook_html, None)
@@ -51,6 +51,7 @@ async fn deliver_logbook_follow_up(
                 trace_correlation_key,
             )
             .await;
+            true
         },
         Err(e) => {
             warn!(
@@ -59,6 +60,7 @@ async fn deliver_logbook_follow_up(
                 thread_id = target.thread_id.as_deref().unwrap_or("-"),
                 "failed to send logbook follow-up: {e}"
             );
+            false
         },
     }
 }
@@ -81,7 +83,7 @@ pub(crate) async fn deliver_text_reply(
     reply_to: Option<&str>,
     session_key: &str,
     trace_correlation_key: &str,
-) {
+) -> bool {
     let result = if logbook_html.is_empty() {
         outbound
             .send_text_reporting_ids(&target.account_id, to, text, reply_to)
@@ -107,6 +109,7 @@ pub(crate) async fn deliver_text_reply(
                 trace_correlation_key,
             )
             .await;
+            true
         },
         Err(e) => {
             warn!(
@@ -115,6 +118,7 @@ pub(crate) async fn deliver_text_reply(
                 thread_id = target.thread_id.as_deref().unwrap_or("-"),
                 "failed to send channel reply: {e}"
             );
+            false
         },
     }
 }
@@ -129,7 +133,7 @@ async fn deliver_media_reply(
     reply_to: Option<&str>,
     session_key: &str,
     trace_correlation_key: &str,
-) {
+) -> bool {
     match outbound
         .send_media_reporting_ids(&target.account_id, to, payload, reply_to)
         .await
@@ -143,6 +147,7 @@ async fn deliver_media_reply(
                 trace_correlation_key,
             )
             .await;
+            true
         },
         Err(e) => {
             warn!(
@@ -151,6 +156,7 @@ async fn deliver_media_reply(
                 thread_id = target.thread_id.as_deref().unwrap_or("-"),
                 "failed to send channel voice reply: {e}"
             );
+            false
         },
     }
 }
@@ -165,7 +171,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
     desired_reply_medium: ReplyMedium,
     status_log: Vec<String>,
     streamed_target_keys: &HashSet<ChannelReplyTargetKey>,
-) {
+) -> bool {
     let session_key = session_key.to_string();
     let trace_correlation_key = trace_correlation_key.to_string();
     let text = text.to_string();
@@ -199,7 +205,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
 
                         if text_already_streamed {
                             // Text was already streamed — send voice audio only.
-                            deliver_media_reply(
+                            let media_delivered = deliver_media_reply(
                                 &outbound,
                                 feedback.as_deref(),
                                 &target,
@@ -212,7 +218,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             .await;
                             // The answer went out some other way, so the logbook is the
                             // only text message of this turn.
-                            deliver_logbook_follow_up(
+                            let logbook_delivered = deliver_logbook_follow_up(
                                 &outbound,
                                 feedback.as_deref(),
                                 &target,
@@ -222,6 +228,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                                 &trace_correlation_key,
                             )
                             .await;
+                            media_delivered && logbook_delivered
                         } else {
                             // Check if transcript fits as Telegram caption (when feature enabled).
                             // When telegram feature is disabled, this evaluates to false and we
@@ -235,7 +242,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             if fits_in_caption {
                                 // Short transcript fits as a caption on the voice message.
                                 payload.text = transcript;
-                                deliver_media_reply(
+                                let media_delivered = deliver_media_reply(
                                     &outbound,
                                     feedback.as_deref(),
                                     &target,
@@ -248,7 +255,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                                 .await;
                                 // The answer went out some other way, so the logbook is the
                                 // only text message of this turn.
-                                deliver_logbook_follow_up(
+                                let logbook_delivered = deliver_logbook_follow_up(
                                     &outbound,
                                     feedback.as_deref(),
                                     &target,
@@ -258,10 +265,11 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                                     &trace_correlation_key,
                                 )
                                 .await;
+                                media_delivered && logbook_delivered
                             } else {
                                 // Transcript too long for a caption — send voice
                                 // without caption, then the full text as a follow-up.
-                                deliver_media_reply(
+                                let media_delivered = deliver_media_reply(
                                     &outbound,
                                     feedback.as_deref(),
                                     &target,
@@ -276,7 +284,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                                 // of this turn's answer, so it is as much a
                                 // reaction target as a plain text reply and
                                 // goes out through the same attributing path.
-                                deliver_text_reply(
+                                let text_delivered = deliver_text_reply(
                                     &outbound,
                                     feedback.as_deref(),
                                     &target,
@@ -288,6 +296,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                                     &trace_correlation_key,
                                 )
                                 .await;
+                                media_delivered && text_delivered
                             }
                         }
                     },
@@ -303,7 +312,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             &session_key,
                             &trace_correlation_key,
                         )
-                        .await;
+                        .await
                     },
                     None => {
                         deliver_text_reply(
@@ -317,7 +326,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             &session_key,
                             &trace_correlation_key,
                         )
-                        .await;
+                        .await
                     },
                 },
                 _ => match tts_payload {
@@ -332,7 +341,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             &session_key,
                             &trace_correlation_key,
                         )
-                        .await;
+                        .await
                     },
                     None if text_already_streamed => {
                         // The answer went out some other way, so the logbook is the
@@ -346,7 +355,7 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             &session_key,
                             &trace_correlation_key,
                         )
-                        .await;
+                        .await
                     },
                     None => {
                         deliver_text_reply(
@@ -360,18 +369,24 @@ pub(crate) async fn deliver_channel_replies_to_targets(
                             &session_key,
                             &trace_correlation_key,
                         )
-                        .await;
+                        .await
                     },
                 },
             }
         }));
     }
 
+    let mut delivered = true;
     for task in tasks {
-        if let Err(e) = task.await {
-            warn!(error = %e, "channel reply task join failed");
+        match task.await {
+            Ok(target_delivered) => delivered &= target_delivered,
+            Err(e) => {
+                warn!(error = %e, "channel reply task join failed");
+                delivered = false;
+            },
         }
     }
+    delivered
 }
 
 #[cfg(test)]
@@ -389,6 +404,31 @@ mod tests {
     #[derive(Default)]
     struct ReportingOutbound {
         calls: Mutex<Vec<&'static str>>,
+    }
+
+    struct FailingOutbound;
+
+    #[async_trait]
+    impl moltis_channels::ChannelOutbound for FailingOutbound {
+        async fn send_text(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _text: &str,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            Err(moltis_channels::Error::unavailable("test delivery failure"))
+        }
+
+        async fn send_media(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _payload: &ReplyPayload,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            Err(moltis_channels::Error::unavailable("test delivery failure"))
+        }
     }
 
     #[async_trait]
@@ -660,5 +700,25 @@ mod tests {
 
         let calls = recorder.calls.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(*calls, vec!["send_text_reporting_ids"]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_plain_reply_reports_unsuccessful_delivery() {
+        let outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound> = Arc::new(FailingOutbound);
+
+        let delivered = deliver_text_reply(
+            &outbound,
+            None,
+            &reply_target(),
+            "chan",
+            "the answer",
+            "",
+            None,
+            "session",
+            "run",
+        )
+        .await;
+
+        assert!(!delivered);
     }
 }
