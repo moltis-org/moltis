@@ -11,6 +11,10 @@ mod security;
 use {
     async_trait::async_trait,
     futures::StreamExt,
+    moltis_common::hooks::{
+        HookAction, HookPayload, MessageSendingOutcome, dispatch_agent_end,
+        dispatch_message_sending, dispatch_message_sent,
+    },
     moltis_config::schema::ExternalAgentsConfig,
     moltis_external_agents::{
         AcpPermissionHandler, AgentTransportKind, ContextSnapshot, ExternalAgentEvent,
@@ -591,12 +595,13 @@ impl ExternalAgentChatService {
         session_key: String,
         kind: AgentTransportKind,
     ) -> ServiceResult {
-        let text = params
+        let mut text = params
             .get("text")
             .or_else(|| params.get("message"))
             .and_then(|value| value.as_str())
             .ok_or_else(|| "external agents currently require text input".to_string())?
             .to_string();
+        let hook_registry = self.state.inner.read().await.hook_registry.clone();
         let channel_reply_target = params
             .get("_channel_reply_target")
             .cloned()
@@ -613,6 +618,79 @@ impl ExternalAgentChatService {
                     },
                 }
             });
+        if let Some(ref hooks) = hook_registry {
+            let session_entry = self.session_metadata.get(&session_key).await;
+            let channel_binding = match moltis_channels::resolve_session_channel_binding(
+                &session_key,
+                session_entry
+                    .as_ref()
+                    .and_then(|entry| entry.channel_binding.as_deref()),
+            ) {
+                Ok(binding) => Some(binding).filter(|binding| !binding.is_empty()),
+                Err(error) => {
+                    warn!(
+                        session = %session_key,
+                        %error,
+                        "failed to resolve external-agent hook channel provenance"
+                    );
+                    None
+                },
+            };
+            let payload = HookPayload::MessageReceived {
+                session_key: session_key.clone(),
+                content: text.clone(),
+                channel: params
+                    .get("channel")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                channel_binding,
+            };
+            match hooks.dispatch(&payload).await {
+                Ok(HookAction::Continue) => {},
+                Ok(HookAction::ModifyPayload(value)) => {
+                    if let Some(replacement) = value.get("content").and_then(Value::as_str) {
+                        text = replacement.to_string();
+                    } else {
+                        warn!(
+                            session = %session_key,
+                            "external-agent MessageReceived hook modification ignored: expected object with `content` string"
+                        );
+                    }
+                },
+                Ok(HookAction::Block(reason)) => {
+                    crate::broadcast::broadcast(
+                        &self.state,
+                        "chat",
+                        serde_json::json!({
+                            "state": "rejected",
+                            "sessionKey": session_key,
+                            "reason": reason,
+                        }),
+                        BroadcastOpts::default(),
+                    )
+                    .await;
+                    deliver_external_agent_channel_reply(
+                        &self.state,
+                        channel_reply_target,
+                        &reason,
+                        &session_key,
+                    )
+                    .await;
+                    return Ok(serde_json::json!({
+                        "ok": false,
+                        "rejected": true,
+                        "reason": reason,
+                    }));
+                },
+                Err(error) => {
+                    warn!(
+                        session = %session_key,
+                        %error,
+                        "external-agent MessageReceived hook failed; proceeding fail-open"
+                    );
+                },
+            }
+        }
         let seq = params.get("_seq").and_then(|value| value.as_u64());
         let run_id = uuid::Uuid::new_v4().to_string();
         let created_at = now_ms();
@@ -650,6 +728,32 @@ impl ExternalAgentChatService {
             .as_ref()
             .and_then(|selected| selected.effort.as_deref());
         let message_model = selected_model.unwrap_or_else(|| kind.as_str());
+
+        if let Some(ref hooks) = hook_registry {
+            let payload = HookPayload::BeforeAgentStart {
+                session_key: session_key.clone(),
+                model: message_model.to_string(),
+            };
+            match hooks.dispatch(&payload).await {
+                Ok(HookAction::Continue) => {},
+                Ok(HookAction::Block(reason)) => {
+                    return Err(format!("blocked by BeforeAgentStart hook: {reason}").into());
+                },
+                Ok(HookAction::ModifyPayload(_)) => {
+                    warn!(
+                        session = %session_key,
+                        "external-agent BeforeAgentStart modification ignored"
+                    );
+                },
+                Err(error) => {
+                    warn!(
+                        session = %session_key,
+                        %error,
+                        "external-agent BeforeAgentStart hook failed; proceeding fail-open"
+                    );
+                },
+            }
+        }
 
         crate::broadcast::broadcast(
             &self.state,
@@ -711,6 +815,7 @@ impl ExternalAgentChatService {
         let mut thinking_text = String::new();
         let mut token_usage = None;
         let mut external_error = None;
+        let mut tool_calls = 0;
         while let Some(event) = events.next().await {
             match event {
                 ExternalAgentEvent::TextDelta(delta) => {
@@ -752,8 +857,8 @@ impl ExternalAgentChatService {
                 ExternalAgentEvent::Done { usage } => {
                     token_usage = usage;
                 },
-                ExternalAgentEvent::ToolCallStart { .. }
-                | ExternalAgentEvent::ToolCallEnd { .. } => {},
+                ExternalAgentEvent::ToolCallStart { .. } => tool_calls += 1,
+                ExternalAgentEvent::ToolCallEnd { .. } => {},
             }
         }
         if let Some(external_session_id) = session.external_session_id().map(str::to_string) {
@@ -768,6 +873,23 @@ impl ExternalAgentChatService {
             self.external_agents.shutdown_binding(&session_key).await;
             return Err(error.into());
         }
+        dispatch_agent_end(
+            hook_registry.as_deref(),
+            &session_key,
+            &assistant_text,
+            1,
+            tool_calls,
+        )
+        .await;
+        assistant_text =
+            match dispatch_message_sending(hook_registry.as_deref(), &session_key, &assistant_text)
+                .await
+            {
+                MessageSendingOutcome::Send(content) => content,
+                MessageSendingOutcome::Block(reason) => {
+                    return Err(format!("blocked by MessageSending hook: {reason}").into());
+                },
+            };
         let duration_ms = start.elapsed().as_millis() as u64;
         let assistant_msg = PersistedMessage::Assistant {
             content: assistant_text.clone(),
@@ -825,6 +947,7 @@ impl ExternalAgentChatService {
             &session_key,
         )
         .await;
+        dispatch_message_sent(hook_registry.as_deref(), &session_key, &assistant_text).await;
         info!(
             session = %session_key,
             kind = kind.as_str(),

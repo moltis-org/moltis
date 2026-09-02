@@ -193,6 +193,46 @@ async fn test_nested_error_data_does_not_fail_a_successful_tool_call() {
 }
 
 #[tokio::test]
+async fn test_tool_hook_lifecycle_shares_stable_call_id() {
+    let provider = Arc::new(ToolCallingProvider {
+        call_count: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut tools = ToolRegistry::new();
+    tools.register(Box::new(EchoTool));
+    let payloads = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut hooks = HookRegistry::new();
+    hooks.register(Arc::new(RecordingHook {
+        payloads: Arc::clone(&payloads),
+    }));
+
+    run_agent_loop_with_context(
+        provider,
+        &tools,
+        "You are a test bot.",
+        &UserContent::text("Hi"),
+        None,
+        None,
+        Some(serde_json::json!({"_session_key": "tool-session"})),
+        Some(Arc::new(hooks)),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let payloads = payloads.lock().unwrap();
+    assert_eq!(payloads.len(), 3);
+    for payload in payloads.iter() {
+        let tool_call_id = match payload {
+            HookPayload::BeforeToolCall { tool_call_id, .. }
+            | HookPayload::AfterToolCall { tool_call_id, .. }
+            | HookPayload::ToolResultPersist { tool_call_id, .. } => tool_call_id,
+            other => panic!("unexpected payload: {other:?}"),
+        };
+        assert_eq!(tool_call_id.as_deref(), Some("call_1"));
+    }
+}
+
+#[tokio::test]
 async fn test_non_streaming_runner_uses_max_iteration_override() {
     let provider = Arc::new(ToolCallingProvider {
         call_count: std::sync::atomic::AtomicUsize::new(0),
@@ -256,6 +296,46 @@ async fn test_non_streaming_runner_dispatches_before_agent_start_hook() {
         &payloads[0],
         HookPayload::BeforeAgentStart { session_key, model }
             if session_key == "session-123" && model == "mock-model"
+    ));
+}
+
+#[tokio::test]
+async fn test_non_streaming_runner_dispatches_agent_end_hook() {
+    let provider = Arc::new(MockProvider {
+        response_text: "Hello!".into(),
+    });
+    let tools = ToolRegistry::new();
+    let payloads = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut hooks = HookRegistry::new();
+    hooks.register(Arc::new(AgentEndRecordingHook {
+        payloads: Arc::clone(&payloads),
+    }));
+
+    let result = run_agent_loop_with_context(
+        provider,
+        &tools,
+        "You are a test bot.",
+        &UserContent::text("Hi"),
+        None,
+        None,
+        Some(serde_json::json!({"_session_key": "session-123"})),
+        Some(Arc::new(hooks)),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.text, "Hello!");
+    let payloads = payloads.lock().unwrap();
+    assert_eq!(payloads.len(), 1);
+    assert!(matches!(
+        &payloads[0],
+        HookPayload::AgentEnd {
+            session_key,
+            text,
+            iterations: 1,
+            tool_calls: 0,
+        } if session_key == "session-123" && text == "Hello!"
     ));
 }
 
@@ -616,6 +696,45 @@ async fn test_streaming_runner_dispatches_before_agent_start_hook() {
         &payloads[0],
         HookPayload::BeforeAgentStart { session_key, model }
             if session_key == "stream-session-123" && model == "streaming-usage-model"
+    ));
+}
+
+#[tokio::test]
+async fn test_streaming_runner_dispatches_agent_end_hook() {
+    let provider = Arc::new(StreamingUsageProvider);
+    let tools = ToolRegistry::new();
+    let payloads = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut hooks = HookRegistry::new();
+    hooks.register(Arc::new(AgentEndRecordingHook {
+        payloads: Arc::clone(&payloads),
+    }));
+
+    let result = run_agent_loop_streaming(
+        provider,
+        &tools,
+        "You are a test bot.",
+        &UserContent::text("Hi"),
+        None,
+        None,
+        Some(serde_json::json!({"_session_key": "stream-session-123"})),
+        Some(Arc::new(hooks)),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.text, "cached reply");
+    let payloads = payloads.lock().unwrap();
+    assert_eq!(payloads.len(), 1);
+    assert!(matches!(
+        &payloads[0],
+        HookPayload::AgentEnd {
+            session_key,
+            text,
+            iterations: 1,
+            tool_calls: 0,
+        } if session_key == "stream-session-123" && text == "cached reply"
     ));
 }
 

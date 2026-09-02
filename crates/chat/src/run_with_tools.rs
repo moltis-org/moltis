@@ -51,6 +51,7 @@ use crate::{
     memory_tools::{effective_tool_mode, install_agent_scoped_memory_tools},
     message::apply_voice_reply_suffix,
     models::DisabledModelsStore,
+    outbound_hooks::apply_message_sending_to_agent_result,
     prompt::{
         apply_runtime_tool_filters, build_policy_context, build_tool_context,
         prompt_build_limits_from_config,
@@ -1027,6 +1028,7 @@ pub(crate) async fn run_with_tools(
     }));
 
     let provider_ref = provider.clone();
+    let outbound_hook_registry = hook_registry.clone();
     let first_agent_future = run_agent_loop_streaming_with_limits(
         provider,
         &filtered_registry,
@@ -1192,6 +1194,12 @@ pub(crate) async fn run_with_tools(
         let trimmed = reasoning_text.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_string())
     };
+    let result = apply_message_sending_to_agent_result(
+        outbound_hook_registry.as_deref(),
+        session_key,
+        result,
+    )
+    .await;
     match result {
         Ok(result) => {
             clear_unsupported_model(state, model_store, model_id).await;

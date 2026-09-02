@@ -4,7 +4,9 @@ use std::borrow::Cow;
 
 use tracing::{info, warn};
 
-use moltis_common::hooks::{ChannelBinding, HookAction, HookPayload, HookRegistry};
+use moltis_common::hooks::{
+    ChannelBinding, HookAction, HookPayload, HookRegistry, dispatch_agent_end,
+};
 
 use crate::{
     model::{
@@ -375,6 +377,25 @@ pub(crate) async fn dispatch_before_agent_start_hook(
             Ok(())
         },
     }
+}
+
+/// Notify observers after a successful agent loop has produced its final result.
+///
+/// `AgentEnd` is informational, so hook failures are logged and never replace a
+/// response the provider already produced.
+pub(crate) async fn dispatch_agent_end_hook(
+    hook_registry: Option<&std::sync::Arc<HookRegistry>>,
+    session_key: &str,
+    result: &AgentRunResult,
+) {
+    dispatch_agent_end(
+        hook_registry.map(AsRef::as_ref),
+        session_key,
+        &result.text,
+        result.iterations,
+        result.tool_calls_made,
+    )
+    .await;
 }
 
 pub(crate) fn finish_agent_run(

@@ -45,7 +45,11 @@ impl HookHandler for RecordingHook {
     }
 
     fn events(&self) -> &[HookEvent] {
-        static EVENTS: [HookEvent; 2] = [HookEvent::BeforeToolCall, HookEvent::AfterToolCall];
+        static EVENTS: [HookEvent; 3] = [
+            HookEvent::BeforeToolCall,
+            HookEvent::AfterToolCall,
+            HookEvent::ToolResultPersist,
+        ];
         &EVENTS
     }
 
@@ -95,6 +99,31 @@ impl HookHandler for AgentStartRecordingHook {
 
     fn events(&self) -> &[HookEvent] {
         static EVENTS: [HookEvent; 1] = [HookEvent::BeforeAgentStart];
+        &EVENTS
+    }
+
+    async fn handle(
+        &self,
+        _event: HookEvent,
+        payload: &HookPayload,
+    ) -> moltis_common::error::Result<HookAction> {
+        self.payloads.lock().unwrap().push(payload.clone());
+        Ok(HookAction::Continue)
+    }
+}
+
+pub(super) struct AgentEndRecordingHook {
+    pub payloads: Arc<std::sync::Mutex<Vec<HookPayload>>>,
+}
+
+#[async_trait]
+impl HookHandler for AgentEndRecordingHook {
+    fn name(&self) -> &str {
+        "agent-end-recording-hook"
+    }
+
+    fn events(&self) -> &[HookEvent] {
+        static EVENTS: [HookEvent; 1] = [HookEvent::AgentEnd];
         &EVENTS
     }
 

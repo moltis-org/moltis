@@ -25,6 +25,8 @@ use {
     moltis_sessions::store::SessionStore,
 };
 
+use moltis_common::hooks::{HookRegistry, dispatch_agent_end};
+
 use crate::{
     agent_loop::{
         ChannelStreamDispatcher, clear_unsupported_model,
@@ -37,6 +39,7 @@ use crate::{
     chat_error::parse_chat_error,
     message::apply_voice_reply_suffix,
     models::DisabledModelsStore,
+    outbound_hooks::apply_message_sending_to_text,
     prompt::prompt_build_limits_from_config,
     runtime::ChatRuntime,
     service::ActiveAssistantDraft,
@@ -132,6 +135,7 @@ pub(crate) async fn run_streaming(
     project_context: Option<&str>,
     user_message_index: usize,
     _skills: &[moltis_skills::types::SkillMetadata],
+    hook_registry: Option<Arc<HookRegistry>>,
     runtime_context: Option<&PromptRuntimeContext>,
     sender_name: Option<String>,
     session_store: Option<&Arc<SessionStore>>,
@@ -395,6 +399,45 @@ pub(crate) async fn run_streaming(
                         broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
                         return None;
                     }
+
+                    dispatch_agent_end(hook_registry.as_deref(), session_key, &accumulated, 1, 0)
+                        .await;
+                    accumulated = match apply_message_sending_to_text(
+                        hook_registry.as_deref(),
+                        session_key,
+                        &accumulated,
+                    )
+                    .await
+                    {
+                        Ok(content) => content,
+                        Err(reason) => {
+                            let message = format!("blocked by MessageSending hook: {reason}");
+                            state.set_run_error(run_id, message.clone()).await;
+                            let error_obj = parse_chat_error(&message, Some(provider_name));
+                            commit_terminal_and_finish_channel_stream(
+                                terminal_runs,
+                                run_id,
+                                channel_stream_dispatcher.as_mut(),
+                            )
+                            .await;
+                            deliver_channel_error(state, session_key, &error_obj).await;
+                            broadcast(
+                                state,
+                                "chat",
+                                serde_json::json!({
+                                    "runId": run_id,
+                                    "sessionKey": session_key,
+                                    "state": "error",
+                                    "error": error_obj,
+                                    "seq": client_seq,
+                                }),
+                                BroadcastOpts::default(),
+                            )
+                            .await;
+                            return None;
+                        },
+                    };
+                    let is_silent = accumulated.trim().is_empty();
 
                     let assistant_message_index = user_message_index + 1;
 

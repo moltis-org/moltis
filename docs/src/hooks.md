@@ -8,7 +8,7 @@ Hooks let you observe, modify, or block actions at key points in the agent lifec
 ┌──────────────────────────────────────────────────────────────┐
 │                        Agent Loop                            │
 │                                                              │
-│  User Message ─→ BeforeLLMCall ─→ LLM Provider              │
+│  User Message ─→ MessageReceived ─→ BeforeLLMCall ─→ LLM    │
 │                       │                 │                    │
 │                  modify/block      AfterLLMCall              │
 │                                         │                    │
@@ -25,7 +25,9 @@ Hooks let you observe, modify, or block actions at key points in the agent lifec
 │                                         │                    │
 │                                         ▼                    │
 │                              (loop continues or)             │
-│                             Response → MessageSent           │
+│                 AgentEnd → MessageSending → Delivery         │
+│                                              │               │
+│                                         MessageSent          │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -52,6 +54,12 @@ via the originating channel (or broadcast as a `chat` rejection event for web
 clients). `ModifyPayload` must return an object of shape `{"content": "..."}`;
 the `content` string replaces the inbound text before it reaches the model or
 the session store.
+
+For `MessageSending`, `ModifyPayload` uses the same `{"content": "..."}`
+shape and replaces the terminal assistant response before persistence and
+delivery. `Block(reason)` prevents that terminal response from being persisted
+or delivered. In streaming-only mode, already-emitted deltas cannot be
+retracted; the hook still controls the authoritative terminal response.
 
 ### Read-Only Events (Parallel)
 
@@ -112,9 +120,14 @@ Fires after the LLM response is received but before tool calls execute. For stre
 
 ## Channel Provenance
 
-`BeforeToolCall`, `AfterToolCall`, `SessionStart`, and `MessageReceived` currently include channel provenance. The fields are optional so hooks keep working for sessions that do not originate from a channel integration.
+`BeforeToolCall`, `AfterToolCall`, `ToolResultPersist`, `SessionStart`, and `MessageReceived` currently include channel provenance. The fields are optional so hooks keep working for sessions that do not originate from a channel integration.
 
-`MessageReceived` keeps its legacy `channel` string field and adds the richer object as `channel_binding`. `BeforeToolCall`, `AfterToolCall`, and `SessionStart` expose the same richer object as `channel`. `ToolResultPersist` has a schema field reserved for the same shape, but that event is not currently dispatched.
+`MessageReceived` keeps its legacy `channel` string field and adds the richer object as `channel_binding`. `BeforeToolCall`, `AfterToolCall`, `ToolResultPersist`, and `SessionStart` expose the same richer object as `channel`.
+
+Every `BeforeToolCall`, `AfterToolCall`, and `ToolResultPersist` payload also
+includes `tool_call_id`. The same non-empty identifier is retained across all
+events for one invocation, so hooks can correlate a decision, result, and
+persistence record without relying on tool name or event order.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -132,6 +145,7 @@ Example `BeforeToolCall` payload excerpt:
 {
   "event": "BeforeToolCall",
   "session_key": "telegram:bot-main:-100123",
+  "tool_call_id": "call_01JXYZ",
   "tool_name": "exec",
   "arguments": {
     "command": "pwd"
@@ -265,6 +279,7 @@ The event payload is passed as JSON on stdin:
 {
   "event": "BeforeToolCall",
   "session_key": "abc123",
+  "tool_call_id": "call_01JXYZ",
   "tool_name": "exec",
   "arguments": {
     "command": "ls -la"

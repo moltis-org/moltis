@@ -363,6 +363,12 @@ impl LiveChatService {
             let session_store = Arc::clone(&self.session_store);
             let session_metadata = Arc::clone(&self.session_metadata);
             let tool_registry = Arc::clone(&request_tool_registry);
+            let hook_registry = self.hook_registry.clone();
+            let hook_channel = Some(resolve_channel_runtime_context(
+                &session_key,
+                self.session_metadata.get(&session_key).await.as_ref(),
+            ))
+            .filter(|binding| !binding.is_empty());
             let session_key_clone = session_key.clone();
             let message_queue = Arc::clone(&self.message_queue);
             let state_for_drain = Arc::clone(&self.state);
@@ -395,6 +401,8 @@ impl LiveChatService {
                     &run_id_clone,
                     &terminal_runs,
                     &tool_registry,
+                    hook_registry.as_ref(),
+                    hook_channel,
                     (!ephemeral).then_some(&session_store),
                     &session_key_clone,
                     &shell_command,
@@ -1162,6 +1170,7 @@ impl LiveChatService {
             let extraction_write_mode = persona.config.memory.agent_write_mode;
             let extraction_max_tool_result_bytes = persona.config.tools.max_tool_result_bytes;
             let auto_title_enabled = persona.config.chat.auto_title;
+            let sent_hook_registry = hook_registry.clone();
             let agent_fut = async {
                 if stream_only {
                     run_streaming(
@@ -1180,6 +1189,7 @@ impl LiveChatService {
                         ctx_ref,
                         user_message_index,
                         &discovered_skills,
+                        hook_registry.clone(),
                         Some(&runtime_context),
                         sender_name,
                         (!ephemeral).then_some(&session_store),
@@ -1288,6 +1298,7 @@ impl LiveChatService {
             // Claim terminal ownership before persistence so abort cannot turn
             // a committed assistant message into an aborted run.
             if let Some(mut assistant_output) = assistant_text {
+                let sent_text = assistant_output.text.clone();
                 let final_payload = assistant_output.final_broadcast.take();
                 let assistant_msg = (!ephemeral).then(|| {
                     build_persisted_assistant_message(
@@ -1324,6 +1335,12 @@ impl LiveChatService {
                             broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
                         }
                     },
+                )
+                .await;
+                moltis_common::hooks::dispatch_message_sent(
+                    sent_hook_registry.as_deref(),
+                    &session_key_clone,
+                    &sent_text,
                 )
                 .await;
 

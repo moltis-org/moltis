@@ -27,7 +27,7 @@ use super::{
     AUTO_CONTINUE_NUDGE, AgentLoopLimits, AgentRunError, AgentRunResult,
     MALFORMED_TOOL_RETRY_PROMPT, OnEvent, RunnerEvent, UsageAccumulator,
     apply_before_llm_call_modify_payload, apply_loop_detector_intervention,
-    channel_binding_from_tool_context, dispatch_after_llm_call_hook,
+    channel_binding_from_tool_context, dispatch_after_llm_call_hook, dispatch_agent_end_hook,
     dispatch_before_agent_start_hook, empty_tool_name_retry_prompt,
     explicit_shell_command_from_user_content, find_empty_tool_name_call, finish_agent_run,
     has_named_tool_call, instrumentation, is_substantive_answer_text, log_tool_argument_diagnostic,
@@ -656,7 +656,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                 let session_key = session_key_for_hooks.clone();
                 let channel_for_hooks = channel_for_hooks.clone();
                 let tc_name = resolved_name.to_string();
-                let _tc_id = tc.id.clone();
+                let tc_id = tc.id.clone();
 
                 if let Some(ref ctx) = tool_context
                     && let (Some(args_obj), Some(ctx_obj)) = (args.as_object_mut(), ctx.as_object())
@@ -743,6 +743,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                     if let Some(ref hooks) = hook_registry {
                         let payload = HookPayload::BeforeToolCall {
                             session_key: session_key.clone(),
+                            tool_call_id: Some(tc_id.clone()),
                             tool_name: tc_name.clone(),
                             arguments: args.clone(),
                             channel: channel_for_hooks.clone(),
@@ -801,6 +802,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
+                                        tool_call_id: Some(tc_id.clone()),
                                         tool_name: tc_name.clone(),
                                         success,
                                         result: Some(val.clone()),
@@ -825,6 +827,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
+                                        tool_call_id: Some(tc_id.clone()),
                                         tool_name: tc_name.clone(),
                                         success: false,
                                         result: None,
@@ -930,6 +933,7 @@ pub async fn run_agent_loop_with_context_and_limits(
             if let Some(ref hooks) = hook_registry {
                 let payload = HookPayload::ToolResultPersist {
                     session_key: session_key_for_hooks.clone(),
+                    tool_call_id: Some(tc.id.clone()),
                     tool_name: sanitize_tool_name(&tc.name).into_owned(),
                     result: result.clone(),
                     channel: channel_for_hooks.clone(),
@@ -985,6 +989,9 @@ pub async fn run_agent_loop_with_context_and_limits(
     }
     .await;
 
+    if let Ok(agent_result) = &result {
+        dispatch_agent_end_hook(hook_registry.as_ref(), &session_key_for_hooks, agent_result).await;
+    }
     instrumentation::finish_turn(turn_recorder.as_ref().as_ref(), &result);
     result
 }

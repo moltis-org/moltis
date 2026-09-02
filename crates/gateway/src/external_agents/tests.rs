@@ -7,6 +7,7 @@ use {
         services::GatewayServices,
     },
     futures::{Stream, stream},
+    moltis_common::hooks::{HookAction, HookEvent, HookHandler, HookPayload, HookRegistry},
     moltis_external_agents::{
         ExternalAgentTransport,
         types::{AcpPermissionOption, ExternalAgentStatus},
@@ -14,6 +15,49 @@ use {
     moltis_service_traits::{ExternalAgentService, NoopChatService},
     moltis_sessions::{metadata::SqliteSessionMetadata, store::SessionStore},
 };
+
+#[derive(Default)]
+struct ExternalLifecycleHook {
+    payloads: std::sync::Mutex<Vec<HookPayload>>,
+}
+
+#[async_trait]
+impl HookHandler for ExternalLifecycleHook {
+    fn name(&self) -> &str {
+        "external-lifecycle"
+    }
+
+    fn events(&self) -> &[HookEvent] {
+        static EVENTS: [HookEvent; 5] = [
+            HookEvent::MessageReceived,
+            HookEvent::BeforeAgentStart,
+            HookEvent::AgentEnd,
+            HookEvent::MessageSending,
+            HookEvent::MessageSent,
+        ];
+        &EVENTS
+    }
+
+    async fn handle(
+        &self,
+        event: HookEvent,
+        payload: &HookPayload,
+    ) -> moltis_common::Result<HookAction> {
+        self.payloads
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(payload.clone());
+        Ok(match event {
+            HookEvent::MessageReceived => {
+                HookAction::ModifyPayload(serde_json::json!({"content": "hooked prompt"}))
+            },
+            HookEvent::MessageSending => {
+                HookAction::ModifyPayload(serde_json::json!({"content": "hooked response"}))
+            },
+            _ => HookAction::Continue,
+        })
+    }
+}
 
 #[derive(Default)]
 struct FakeAgentState {
@@ -504,6 +548,79 @@ async fn bound_chat_send_reuses_live_external_session() {
             .and_then(|entry| entry.external_session_id),
         Some("fake-session-1".to_string())
     );
+}
+
+#[tokio::test]
+async fn bound_chat_send_dispatches_complete_hook_lifecycle() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    let agent_state = Arc::new(FakeAgentState::default());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+    external_agents
+        .bind(serde_json::json!({ "sessionKey": "main", "kind": "codex" }))
+        .await
+        .expect("bind external agent");
+
+    let lifecycle_hook = Arc::new(ExternalLifecycleHook::default());
+    let mut hook_registry = HookRegistry::new();
+    hook_registry.register(lifecycle_hook.clone());
+    let state = test_gateway_state();
+    state.inner.write().await.hook_registry = Some(Arc::new(hook_registry));
+    let chat = test_chat_service_with_state(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+        state,
+    )
+    .await;
+
+    let result = chat
+        .send(serde_json::json!({ "sessionKey": "main", "text": "hello" }))
+        .await
+        .expect("send external prompt");
+
+    assert_eq!(result["text"], "hooked response");
+    assert_eq!(
+        *agent_state
+            .prompts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()),
+        vec!["hooked prompt".to_string()]
+    );
+    let history = session_store.read("main").await.expect("read history");
+    assert_eq!(history[0]["content"], "hooked prompt");
+    assert_eq!(history[1]["content"], "hooked response");
+
+    let payloads = lifecycle_hook
+        .payloads
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    assert_eq!(
+        payloads.iter().map(HookPayload::event).collect::<Vec<_>>(),
+        vec![
+            HookEvent::MessageReceived,
+            HookEvent::BeforeAgentStart,
+            HookEvent::AgentEnd,
+            HookEvent::MessageSending,
+            HookEvent::MessageSent,
+        ]
+    );
+    let HookPayload::AgentEnd {
+        text,
+        iterations,
+        tool_calls,
+        ..
+    } = &payloads[2]
+    else {
+        panic!("expected AgentEnd payload");
+    };
+    assert_eq!(text, "reply to hooked prompt");
+    assert_eq!((*iterations, *tool_calls), (1, 0));
+    let HookPayload::MessageSent { content, .. } = &payloads[4] else {
+        panic!("expected MessageSent payload");
+    };
+    assert_eq!(content, "hooked response");
 }
 
 #[tokio::test]

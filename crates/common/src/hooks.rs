@@ -221,6 +221,9 @@ pub enum HookPayload {
     },
     BeforeToolCall {
         session_key: String,
+        /// Stable identifier shared by every event for this tool invocation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_call_id: Option<String>,
         tool_name: String,
         arguments: Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -228,6 +231,9 @@ pub enum HookPayload {
     },
     AfterToolCall {
         session_key: String,
+        /// Stable identifier shared by every event for this tool invocation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_call_id: Option<String>,
         tool_name: String,
         success: bool,
         result: Option<Value>,
@@ -236,6 +242,9 @@ pub enum HookPayload {
     },
     ToolResultPersist {
         session_key: String,
+        /// Stable identifier shared by every event for this tool invocation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_call_id: Option<String>,
         tool_name: String,
         result: Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -282,6 +291,88 @@ impl HookPayload {
             Self::GatewayStop => HookEvent::GatewayStop,
             Self::Command { .. } => HookEvent::Command,
         }
+    }
+}
+
+/// Effective response after mutable `MessageSending` hooks have run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessageSendingOutcome {
+    Send(String),
+    Block(String),
+}
+
+/// Dispatch the mutable response hook and apply its documented
+/// `{ "content": "..." }` replacement shape. Handler failures and malformed
+/// replacements fail open so an observer cannot wedge every response.
+pub async fn dispatch_message_sending(
+    registry: Option<&HookRegistry>,
+    session_key: &str,
+    content: &str,
+) -> MessageSendingOutcome {
+    let Some(registry) = registry else {
+        return MessageSendingOutcome::Send(content.to_string());
+    };
+    let payload = HookPayload::MessageSending {
+        session_key: session_key.to_string(),
+        content: content.to_string(),
+    };
+    match registry.dispatch(&payload).await {
+        Ok(HookAction::Continue) => MessageSendingOutcome::Send(content.to_string()),
+        Ok(HookAction::Block(reason)) => MessageSendingOutcome::Block(reason),
+        Ok(HookAction::ModifyPayload(value)) => {
+            let Some(replacement) = value.get("content").and_then(Value::as_str) else {
+                warn!(
+                    "MessageSending hook ModifyPayload ignored: expected object with `content` string"
+                );
+                return MessageSendingOutcome::Send(content.to_string());
+            };
+            MessageSendingOutcome::Send(replacement.to_string())
+        },
+        Err(error) => {
+            warn!(%error, "MessageSending hook dispatch failed; proceeding fail-open");
+            MessageSendingOutcome::Send(content.to_string())
+        },
+    }
+}
+
+/// Notify observers after the terminal response has been persisted and
+/// delivered to its UI/channel sinks.
+pub async fn dispatch_message_sent(
+    registry: Option<&HookRegistry>,
+    session_key: &str,
+    content: &str,
+) {
+    let Some(registry) = registry else {
+        return;
+    };
+    let payload = HookPayload::MessageSent {
+        session_key: session_key.to_string(),
+        content: content.to_string(),
+    };
+    if let Err(error) = registry.dispatch(&payload).await {
+        warn!(%error, "MessageSent hook dispatch failed");
+    }
+}
+
+/// Notify observers after a successful agent run completes.
+pub async fn dispatch_agent_end(
+    registry: Option<&HookRegistry>,
+    session_key: &str,
+    text: &str,
+    iterations: usize,
+    tool_calls: usize,
+) {
+    let Some(registry) = registry else {
+        return;
+    };
+    let payload = HookPayload::AgentEnd {
+        session_key: session_key.to_string(),
+        text: text.to_string(),
+        iterations,
+        tool_calls,
+    };
+    if let Err(error) = registry.dispatch(&payload).await {
+        warn!(%error, "AgentEnd hook dispatch failed");
     }
 }
 
@@ -776,6 +867,7 @@ mod tests {
     fn modifying_payload() -> HookPayload {
         HookPayload::BeforeToolCall {
             session_key: "test".into(),
+            tool_call_id: Some("call-test".into()),
             tool_name: "exec".into(),
             arguments: serde_json::json!({}),
             channel: None,
@@ -1118,6 +1210,7 @@ mod tests {
         let binding = test_channel_binding();
         let before = HookPayload::BeforeToolCall {
             session_key: "s".into(),
+            tool_call_id: Some("call-1".into()),
             tool_name: "exec".into(),
             arguments: serde_json::json!({"command": "pwd"}),
             channel: Some(binding.clone()),
@@ -1125,7 +1218,12 @@ mod tests {
         let json = serde_json::to_string(&before).unwrap();
         let deser: HookPayload = serde_json::from_str(&json).unwrap();
         match deser {
-            HookPayload::BeforeToolCall { channel, .. } => {
+            HookPayload::BeforeToolCall {
+                tool_call_id,
+                channel,
+                ..
+            } => {
+                assert_eq!(tool_call_id.as_deref(), Some("call-1"));
                 assert_eq!(channel, Some(binding.clone()));
             },
             other => panic!("unexpected payload: {other:?}"),
@@ -1163,6 +1261,7 @@ mod tests {
 
         let after = HookPayload::AfterToolCall {
             session_key: "s".into(),
+            tool_call_id: Some("call-1".into()),
             tool_name: "exec".into(),
             success: true,
             result: Some(serde_json::json!({"cwd": "/tmp"})),
@@ -1171,7 +1270,12 @@ mod tests {
         let json = serde_json::to_string(&after).unwrap();
         let deser: HookPayload = serde_json::from_str(&json).unwrap();
         match deser {
-            HookPayload::AfterToolCall { channel, .. } => {
+            HookPayload::AfterToolCall {
+                tool_call_id,
+                channel,
+                ..
+            } => {
+                assert_eq!(tool_call_id.as_deref(), Some("call-1"));
                 assert_eq!(channel, Some(test_channel_binding()));
             },
             other => panic!("unexpected payload: {other:?}"),
@@ -1179,6 +1283,7 @@ mod tests {
 
         let persist = HookPayload::ToolResultPersist {
             session_key: "s".into(),
+            tool_call_id: Some("call-1".into()),
             tool_name: "exec".into(),
             result: serde_json::json!({"cwd": "/tmp"}),
             channel: Some(test_channel_binding()),
@@ -1186,7 +1291,12 @@ mod tests {
         let json = serde_json::to_string(&persist).unwrap();
         let deser: HookPayload = serde_json::from_str(&json).unwrap();
         match deser {
-            HookPayload::ToolResultPersist { channel, .. } => {
+            HookPayload::ToolResultPersist {
+                tool_call_id,
+                channel,
+                ..
+            } => {
+                assert_eq!(tool_call_id.as_deref(), Some("call-1"));
                 assert_eq!(channel, Some(test_channel_binding()));
             },
             other => panic!("unexpected payload: {other:?}"),
@@ -1203,7 +1313,12 @@ mod tests {
         });
         let payload: HookPayload = serde_json::from_value(json).unwrap();
         match payload {
-            HookPayload::BeforeToolCall { channel, .. } => {
+            HookPayload::BeforeToolCall {
+                tool_call_id,
+                channel,
+                ..
+            } => {
+                assert!(tool_call_id.is_none());
                 assert!(channel.is_none());
             },
             other => panic!("unexpected payload: {other:?}"),
@@ -1234,7 +1349,12 @@ mod tests {
         });
         let payload: HookPayload = serde_json::from_value(json).unwrap();
         match payload {
-            HookPayload::AfterToolCall { channel, .. } => {
+            HookPayload::AfterToolCall {
+                tool_call_id,
+                channel,
+                ..
+            } => {
+                assert!(tool_call_id.is_none());
                 assert!(channel.is_none());
             },
             other => panic!("unexpected payload: {other:?}"),
