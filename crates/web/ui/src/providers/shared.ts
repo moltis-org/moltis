@@ -38,6 +38,7 @@ export const OPENAI_COMPATIBLE_PROVIDERS: string[] = [
 	"openai",
 	"mistral",
 	"openrouter",
+	"requesty",
 	"cerebras",
 	"minimax",
 	"moonshot",

@@ -168,6 +168,16 @@ pub fn known_providers() -> Vec<KnownProvider> {
             local_only: false,
         },
         KnownProvider {
+            name: "requesty",
+            display_name: "Requesty",
+            auth_type: AuthType::ApiKey,
+            env_key: Some("REQUESTY_API_KEY"),
+            default_base_url: Some("https://router.requesty.ai/v1"),
+            requires_model: false,
+            key_optional: false,
+            local_only: false,
+        },
+        KnownProvider {
             name: "cerebras",
             display_name: "Cerebras",
             auth_type: AuthType::ApiKey,
