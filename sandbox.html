@@ -419,11 +419,22 @@ home_persistence = &#x22;session&#x22;   # &#x22;off&#x22;, &#x22;session&#x22;,
 <span class="line"><span style="color:#C2C3C5;--shiki-dark:#6A737D"># shared_home_dir = "/path/to/shared-home"  # optional, used when mode is "shared"</span></span></code></pre>
 <ul>
 <li><code>off</code>: no home mount, container home is ephemeral</li>
-<li><code>session</code>: mount a per-session host folder to <code>/home/sandbox</code></li>
+<li><code>session</code>: mount a per-session host folder to <code>/home/sandbox</code>; folder names
+are opaque, collision-resistant identifiers rather than raw session keys</li>
 <li><code>shared</code>: mount one shared host folder to <code>/home/sandbox</code> for all sessions
 (defaults to <code>data_dir()/sandbox/home/shared</code>, or <code>shared_home_dir</code> if set)</li>
 </ul>
-<p>Moltis stores persisted homes under <code>data_dir()/sandbox/home/</code>.</p>
+<p>Moltis stores persisted homes under <code>data_dir()/sandbox/home/</code>. Per-session
+folder names are opaque, collision-resistant identifiers; do not derive or
+depend on them directly. The <code>shared</code> mode is intentionally visible to every
+sandbox session and is not a session-isolation boundary. Use <code>session</code> or <code>off</code>
+for credentials or other private state when sessions have different trust
+levels.</p>
+<p>After upgrading from a version that used readable session folder names, gateway
+startup discards legacy instance containers. Legacy home folders remain on disk
+but are not automatically reused because multiple session keys may have mapped
+to the same folder. Administrators can inspect and migrate trusted content
+manually.</p>
 <h2 id="managed-files-mount">Managed Files mount</h2>
 <p><a href="/managed-files.html">Managed Files</a> use a separate mount from the Moltis
 workspace and sandbox home:</p>

@@ -16,6 +16,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="removed">Removed</h3>
 <h3 id="fixed">Fixed</h3>
 <h3 id="security">Security</h3>
+<ul>
+<li>[sandbox] Prevent session keys from sharing sandbox containers and persisted
+homes. Thanks to <a href="https://github.com/DavidCarliez">@DavidCarliez</a> for
+responsibly reporting this issue.</li>
+</ul>
+<h2 id="2026090202---2026-09-02">[20260902.02] - 2026-09-02</h2>
+<h3 id="security-1">Security</h3>
+<ul>
+<li>[node-host] Replace shell-based remote execution with structured, allowlisted process invocation. Thanks to <a href="https://github.com/yubrew">@yubrew</a> for responsibly reporting this issue.</li>
+</ul>
 <h2 id="2026090201---2026-09-02">[20260902.01] - 2026-09-02</h2>
 <h3 id="fixed-1">Fixed</h3>
 <ul>
@@ -832,7 +842,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[e2e] Use .chat-session-name selector for rename assertion</li>
 <li>[ci] Copy scripts/ into Docker build and improve download retries</li>
 </ul>
-<h3 id="security-1">Security</h3>
+<h3 id="security-2">Security</h3>
 <ul>
 <li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
@@ -894,7 +904,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Use unique temp file for atomic writes</li>
 <li>[config] Move tempfile from dev-dependencies to dependencies</li>
 </ul>
-<h3 id="security-2">Security</h3>
+<h3 id="security-3">Security</h3>
 <ul>
 <li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
@@ -956,7 +966,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Use unique temp file for atomic writes</li>
 <li>[config] Move tempfile from dev-dependencies to dependencies</li>
 </ul>
-<h3 id="security-3">Security</h3>
+<h3 id="security-4">Security</h3>
 <ul>
 <li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
@@ -1003,7 +1013,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Collapse nested if-let in key_store timestamp check</li>
 <li>Derive Default for ModelLifecycleManager</li>
 </ul>
-<h3 id="security-4">Security</h3>
+<h3 id="security-5">Security</h3>
 <ul>
 <li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
@@ -1031,7 +1041,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[mcp] Prefer native MCP tools over mcporter (#874)</li>
 <li>[ci] Use keychain-profile for notarization and log failures</li>
 </ul>
-<h3 id="security-5">Security</h3>
+<h3 id="security-6">Security</h3>
 <ul>
 <li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
@@ -1059,7 +1069,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[mcp] Prefer native MCP tools over mcporter (#874)</li>
 <li>[ci] Use keychain-profile for notarization and log failures</li>
 </ul>
-<h3 id="security-6">Security</h3>
+<h3 id="security-7">Security</h3>
 <ul>
 <li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
@@ -1086,7 +1096,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[mcp] Prefer native MCP tools over mcporter (#874)</li>
 <li>[ci] Use keychain-profile for notarization and log failures</li>
 </ul>
-<h3 id="security-7">Security</h3>
+<h3 id="security-8">Security</h3>
 <ul>
 <li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
@@ -1110,7 +1120,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Remove pre-installed libnccl-dev from CUDA container</li>
 <li>[providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL</li>
 </ul>
-<h3 id="security-8">Security</h3>
+<h3 id="security-9">Security</h3>
 <ul>
 <li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
@@ -1133,7 +1143,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Remove pre-installed libnccl-dev from CUDA container</li>
 <li>[providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL</li>
 </ul>
-<h3 id="security-9">Security</h3>
+<h3 id="security-10">Security</h3>
 <ul>
 <li>[ci] Use correct security list-keychains syntax for macOS codesign</li>
 <li>[ci] Align macOS certificate import with working arbor pattern</li>
@@ -1782,7 +1792,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[tools] Simplify cron schema unions</li>
 <li>[agents] Preserve legacy tool-call compatibility</li>
 </ul>
-<h3 id="security-10">Security</h3>
+<h3 id="security-11">Security</h3>
 <ul>
 <li>[nodes] Define NodeInfoProvider trait for decoupling</li>
 </ul>
@@ -1945,7 +1955,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[config] Preserve TOML section order on web UI save</li>
 <li>Apply local fixes</li>
 </ul>
-<h3 id="security-11">Security</h3>
+<h3 id="security-12">Security</h3>
 <ul>
 <li>[config] Warn when preset tool policies are set but tools.policy is empty</li>
 <li>[nostr] Address PR review comments</li>
@@ -1982,7 +1992,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[skills] Per-subdir sidecar cap + data_dir-scoped discoverer</li>
 <li>[voice] Honor whisper.model and whisper.language in STT factory</li>
 </ul>
-<h3 id="security-12">Security</h3>
+<h3 id="security-13">Security</h3>
 <ul>
 <li>[hooks] Pin dcg install to tag and verify checksum</li>
 </ul>
@@ -2144,7 +2154,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Wrap cascade deletes in transactions to prevent partial data loss</li>
 <li>Resolve settings nav CI regression</li>
 </ul>
-<h3 id="security-13">Security</h3>
+<h3 id="security-14">Security</h3>
 <ul>
 <li>Add webhooks feature documentation</li>
 </ul>
@@ -2192,7 +2202,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[website] Sync i18n builder with locale pages</li>
 <li>[website] Correct i18n generator keys</li>
 </ul>
-<h3 id="security-14">Security</h3>
+<h3 id="security-15">Security</h3>
 <ul>
 <li>[providers] Redact CopilotTokenResponse token in Debug output</li>
 </ul>
@@ -2221,7 +2231,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[ci] Await channel preload in settings e2e</li>
 </ul>
 <h2 id="2026040506---2026-04-05">[20260405.06] - 2026-04-05</h2>
-<h3 id="security-15">Security</h3>
+<h3 id="security-16">Security</h3>
 <ul>
 <li>Add GitHub artifact attestations to release workflow</li>
 </ul>
@@ -3688,7 +3698,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[skills] Improve slug error messages and test isolation</li>
 <li>[gateway] Suppress update banner for dev builds</li>
 </ul>
-<h3 id="security-16">Security</h3>
+<h3 id="security-17">Security</h3>
 <ul>
 <li>[ci] Add zizmor workflow security scan to deb-packages workflow (#8)</li>
 <li>[skills] Add requirements system, spec compliance, and markdown rendering</li>
@@ -3804,7 +3814,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[chat] Skip duplicate text fallback when TTS disabled and voice streamed (#373)</li>
 <li>[web] Break redirect loop when accessing via Tailscale Serve (#356)</li>
 </ul>
-<h3 id="security-17">Security</h3>
+<h3 id="security-18">Security</h3>
 <ul>
 <li>[nodes] Add multi-node support with device pairing, remote exec, and UI (#291)</li>
 <li>[security] Add direct nginx websocket proxy example (#364)</li>
@@ -3882,7 +3892,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[web] Externalize SVG icons and restore empty-chat centering</li>
 <li>[web] Align e2e with controls modal and daily model refresh</li>
 </ul>
-<h3 id="security-18">Security</h3>
+<h3 id="security-19">Security</h3>
 <ul>
 <li>[nodes] Add multi-node support with device pairing, remote exec, and UI (#291)</li>
 </ul>
@@ -3934,7 +3944,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>[web] Auto-install node_modules in Tailwind build script</li>
 <li>[web] Retry openclaw onboarding scan until ws is ready</li>
 </ul>
-<h3 id="security-19">Security</h3>
+<h3 id="security-20">Security</h3>
 <ul>
 <li>[macos] Wire settings UI to rust config backend (#267)</li>
 <li>[channels] Shared channel webhook middleware pipeline (#290)</li>
@@ -3984,14 +3994,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>Release packaging now installs cross-compilation targets on the active nightly toolchain in the Homebrew binary job, fixing <code>error[E0463]: can't find crate for core</code> during macOS binary builds.</li>
 <li>Docker release builds now copy <code>apps/courier</code> into the image build context so Cargo workspace metadata resolves correctly during WASM component builds.</li>
 </ul>
-<h3 id="security-20">Security</h3>
+<h3 id="security-21">Security</h3>
 <h2 id="0101---2026-02-28">[0.10.1] - 2026-02-28</h2>
 <h3 id="added-72">Added</h3>
 <h3 id="changed-48">Changed</h3>
 <h3 id="deprecated-2">Deprecated</h3>
 <h3 id="removed-30">Removed</h3>
 <h3 id="fixed-152">Fixed</h3>
-<h3 id="security-21">Security</h3>
+<h3 id="security-22">Security</h3>
 <h2 id="0100---2026-02-28">[0.10.0] - 2026-02-28</h2>
 <h3 id="added-73">Added</h3>
 <ul>
@@ -4092,35 +4102,35 @@ centered spinner.</li>
 <li>Gateway startup now blocks the common reverse-proxy TLS mismatch (<code>MOLTIS_BEHIND_PROXY=true</code> with Moltis TLS enabled) and explains using <code>--no-tls</code>; HTTPS-upstream proxy setups can explicitly opt in with <code>MOLTIS_ALLOW_TLS_BEHIND_PROXY=true</code></li>
 <li>WebSocket same-origin checks now accept proxy deployments that rewrite <code>Host</code> by using <code>X-Forwarded-Host</code> in proxy mode, and treat implicit <code>:443</code>/<code>:80</code> as equivalent to default ports</li>
 </ul>
-<h3 id="security-22">Security</h3>
+<h3 id="security-23">Security</h3>
 <h2 id="0910---2026-02-21">[0.9.10] - 2026-02-21</h2>
 <h3 id="added-74">Added</h3>
 <h3 id="changed-50">Changed</h3>
 <h3 id="deprecated-4">Deprecated</h3>
 <h3 id="removed-32">Removed</h3>
 <h3 id="fixed-154">Fixed</h3>
-<h3 id="security-23">Security</h3>
+<h3 id="security-24">Security</h3>
 <h2 id="099---2026-02-21">[0.9.9] - 2026-02-21</h2>
 <h3 id="added-75">Added</h3>
 <h3 id="changed-51">Changed</h3>
 <h3 id="deprecated-5">Deprecated</h3>
 <h3 id="removed-33">Removed</h3>
 <h3 id="fixed-155">Fixed</h3>
-<h3 id="security-24">Security</h3>
+<h3 id="security-25">Security</h3>
 <h2 id="098---2026-02-21">[0.9.8] - 2026-02-21</h2>
 <h3 id="added-76">Added</h3>
 <h3 id="changed-52">Changed</h3>
 <h3 id="deprecated-6">Deprecated</h3>
 <h3 id="removed-34">Removed</h3>
 <h3 id="fixed-156">Fixed</h3>
-<h3 id="security-25">Security</h3>
+<h3 id="security-26">Security</h3>
 <h2 id="097---2026-02-20">[0.9.7] - 2026-02-20</h2>
 <h3 id="added-77">Added</h3>
 <h3 id="changed-53">Changed</h3>
 <h3 id="deprecated-7">Deprecated</h3>
 <h3 id="removed-35">Removed</h3>
 <h3 id="fixed-157">Fixed</h3>
-<h3 id="security-26">Security</h3>
+<h3 id="security-27">Security</h3>
 <h2 id="096---2026-02-20">[0.9.6] - 2026-02-20</h2>
 <h3 id="added-78">Added</h3>
 <ul>
@@ -4134,7 +4144,7 @@ centered spinner.</li>
 <li>Accessing <code>http://</code> on the HTTPS port now returns a 301 redirect to <code>https://</code> instead of a garbled TLS handshake page</li>
 <li>SQLite metrics store now uses WAL journal mode and <code>synchronous=NORMAL</code> to fix slow INSERT times (1-3s) on Docker/WSL2</li>
 </ul>
-<h3 id="security-27">Security</h3>
+<h3 id="security-28">Security</h3>
 <h2 id="095---2026-02-20">[0.9.5] - 2026-02-20</h2>
 <h3 id="added-79">Added</h3>
 <h3 id="changed-55">Changed</h3>
@@ -4144,21 +4154,21 @@ centered spinner.</li>
 <ul>
 <li>Skip jemalloc on Windows (platform-specific dependency gate)</li>
 </ul>
-<h3 id="security-28">Security</h3>
+<h3 id="security-29">Security</h3>
 <h2 id="094---2026-02-20">[0.9.4] - 2026-02-20</h2>
 <h3 id="added-80">Added</h3>
 <h3 id="changed-56">Changed</h3>
 <h3 id="deprecated-10">Deprecated</h3>
 <h3 id="removed-38">Removed</h3>
 <h3 id="fixed-160">Fixed</h3>
-<h3 id="security-29">Security</h3>
+<h3 id="security-30">Security</h3>
 <h2 id="093---2026-02-20">[0.9.3] - 2026-02-20</h2>
 <h3 id="added-81">Added</h3>
 <h3 id="changed-57">Changed</h3>
 <h3 id="deprecated-11">Deprecated</h3>
 <h3 id="removed-39">Removed</h3>
 <h3 id="fixed-161">Fixed</h3>
-<h3 id="security-30">Security</h3>
+<h3 id="security-31">Security</h3>
 <h2 id="092---2026-02-20">[0.9.2] - 2026-02-20</h2>
 <h3 id="added-82">Added</h3>
 <ul>
@@ -4175,7 +4185,7 @@ background task results.</li>
 <h3 id="deprecated-12">Deprecated</h3>
 <h3 id="removed-40">Removed</h3>
 <h3 id="fixed-162">Fixed</h3>
-<h3 id="security-31">Security</h3>
+<h3 id="security-32">Security</h3>
 <h2 id="091---2026-02-19">[0.9.1] - 2026-02-19</h2>
 <h3 id="added-83">Added</h3>
 <ul>
@@ -4240,7 +4250,7 @@ parsing robustness.</li>
 <li>Gateway: align <code>show_map</code> listing ratings to the right for consistent
 layout.</li>
 </ul>
-<h3 id="security-32">Security</h3>
+<h3 id="security-33">Security</h3>
 <h2 id="090---2026-02-17">[0.9.0] - 2026-02-17</h2>
 <h3 id="added-84">Added</h3>
 <ul>
@@ -4263,7 +4273,7 @@ updated provider and local-LLM snippets.</li>
 <code>tools.agent_max_iterations</code> in <code>moltis.toml</code> (default <code>25</code>) instead of
 being hardcoded at runtime.</li>
 </ul>
-<h3 id="security-33">Security</h3>
+<h3 id="security-34">Security</h3>
 <h2 id="0838---2026-02-17">[0.8.38] - 2026-02-17</h2>
 <h3 id="added-85">Added</h3>
 <ul>
@@ -4281,7 +4291,7 @@ delay the first streamed message until enough text has accumulated.</li>
 <h3 id="deprecated-15">Deprecated</h3>
 <h3 id="removed-43">Removed</h3>
 <h3 id="fixed-165">Fixed</h3>
-<h3 id="security-34">Security</h3>
+<h3 id="security-35">Security</h3>
 <h2 id="0837---2026-02-17">[0.8.37] - 2026-02-17</h2>
 <h3 id="added-86">Added</h3>
 <ul>
@@ -4347,7 +4357,7 @@ tabs (notably seen with <code>vim</code>).</li>
 post-connect settle window, fixing initial page-reload cases where tmux
 windows stayed at stale dimensions until a manual tab switch.</li>
 </ul>
-<h3 id="security-35">Security</h3>
+<h3 id="security-36">Security</h3>
 <h2 id="0836---2026-02-16">[0.8.36] - 2026-02-16</h2>
 <h3 id="added-87">Added</h3>
 <ul>
@@ -4376,7 +4386,7 @@ collapsing queued channel replies into a single batch delivery.</li>
 <li>MCP docs/config examples now use the current table-based config shape and <code>/mcp</code> endpoint examples for remote servers.</li>
 <li>Memory embeddings endpoint composition now avoids duplicated path segments like <code>/v1/v1/embeddings</code> and accepts base URLs ending in host-only, <code>/v1</code>, versioned paths (for example <code>/v4</code>), or <code>/embeddings</code></li>
 </ul>
-<h3 id="security-36">Security</h3>
+<h3 id="security-37">Security</h3>
 <h2 id="0835---2026-02-15">[0.8.35] - 2026-02-15</h2>
 <h3 id="added-88">Added</h3>
 <ul>
@@ -4386,7 +4396,7 @@ collapsing queued channel replies into a single batch delivery.</li>
 <h3 id="deprecated-18">Deprecated</h3>
 <h3 id="removed-46">Removed</h3>
 <h3 id="fixed-168">Fixed</h3>
-<h3 id="security-37">Security</h3>
+<h3 id="security-38">Security</h3>
 <h2 id="0834---2026-02-15">[0.8.34] - 2026-02-15</h2>
 <h3 id="added-89">Added</h3>
 <ul>
@@ -4398,7 +4408,7 @@ collapsing queued channel replies into a single batch delivery.</li>
 <h3 id="deprecated-19">Deprecated</h3>
 <h3 id="removed-47">Removed</h3>
 <h3 id="fixed-169">Fixed</h3>
-<h3 id="security-38">Security</h3>
+<h3 id="security-39">Security</h3>
 <h2 id="0833---2026-02-15">[0.8.33] - 2026-02-15</h2>
 <h3 id="added-90">Added</h3>
 <h3 id="changed-66">Changed</h3>
@@ -4409,7 +4419,7 @@ collapsing queued channel replies into a single batch delivery.</li>
 <li><strong>CI</strong>: remove unnecessary <code>std::path::</code> qualification in gateway server flagged
 by nightly clippy.</li>
 </ul>
-<h3 id="security-39">Security</h3>
+<h3 id="security-40">Security</h3>
 <h2 id="0832---2026-02-15">[0.8.32] - 2026-02-15</h2>
 <h3 id="added-91">Added</h3>
 <h3 id="changed-67">Changed</h3>
@@ -4420,7 +4430,7 @@ by nightly clippy.</li>
 <li><strong>CI</strong>: gate macOS-only sandbox helper functions with <code>#[cfg]</code> to fix dead-code
 errors on Linux CI.</li>
 </ul>
-<h3 id="security-40">Security</h3>
+<h3 id="security-41">Security</h3>
 <h2 id="0831---2026-02-15">[0.8.31] - 2026-02-15</h2>
 <h3 id="added-92">Added</h3>
 <ul>
@@ -4517,7 +4527,7 @@ tags is now stripped, preventing extra blank lines in streamed output.</li>
 <li><strong>Token bar visible at zero</strong>: the token usage bar no longer disappears
 when all counts are zero; it stays visible as a baseline indicator.</li>
 </ul>
-<h3 id="security-41">Security</h3>
+<h3 id="security-42">Security</h3>
 <h2 id="0830---2026-02-15">[0.8.30] - 2026-02-15</h2>
 <h3 id="added-93">Added</h3>
 <h3 id="changed-69">Changed</h3>
@@ -4529,7 +4539,7 @@ reasoning context instead of dropping it after refresh/share operations.</li>
 <h3 id="deprecated-23">Deprecated</h3>
 <h3 id="removed-51">Removed</h3>
 <h3 id="fixed-173">Fixed</h3>
-<h3 id="security-42">Security</h3>
+<h3 id="security-43">Security</h3>
 <h2 id="0829---2026-02-14">[0.8.29] - 2026-02-14</h2>
 <h3 id="added-94">Added</h3>
 <ul>
@@ -4556,7 +4566,7 @@ path validation, size limits, and automatic re-indexing after writes</li>
 directory root, which was previously excluded because the filter only matched
 directories</li>
 </ul>
-<h3 id="security-43">Security</h3>
+<h3 id="security-44">Security</h3>
 <h2 id="0828---2026-02-14">[0.8.28] - 2026-02-14</h2>
 <h3 id="added-95">Added</h3>
 <h3 id="changed-71">Changed</h3>
@@ -4573,7 +4583,7 @@ injected via tool call params.</li>
 <code>provider-validation.js</code> that was accidentally left unstaged in the DRY
 refactoring commit.</li>
 </ul>
-<h3 id="security-44">Security</h3>
+<h3 id="security-45">Security</h3>
 <h2 id="0827---2026-02-14">[0.8.27] - 2026-02-14</h2>
 <h3 id="added-96">Added</h3>
 <h3 id="changed-72">Changed</h3>
@@ -4592,7 +4602,7 @@ and <code>channel-utils.js</code> modules.</li>
 failure caused by <code>MOLTIS_IDENTITY__NAME</code> environment variable leaking
 into the test via <code>apply_env_overrides</code>.</li>
 </ul>
-<h3 id="security-45">Security</h3>
+<h3 id="security-46">Security</h3>
 <h2 id="0826---2026-02-14">[0.8.26] - 2026-02-14</h2>
 <h3 id="added-97">Added</h3>
 <ul>
@@ -4616,21 +4626,21 @@ synthetic IDs in the agent runner to prevent API errors.</li>
 before opening model selection during onboarding, aligning behavior with the
 Settings > LLM flow.</li>
 </ul>
-<h3 id="security-46">Security</h3>
+<h3 id="security-47">Security</h3>
 <h2 id="0825---2026-02-14">[0.8.25] - 2026-02-14</h2>
 <h3 id="added-98">Added</h3>
 <h3 id="changed-74">Changed</h3>
 <h3 id="deprecated-28">Deprecated</h3>
 <h3 id="removed-56">Removed</h3>
 <h3 id="fixed-178">Fixed</h3>
-<h3 id="security-47">Security</h3>
+<h3 id="security-48">Security</h3>
 <h2 id="0824---2026-02-13">[0.8.24] - 2026-02-13</h2>
 <h3 id="added-99">Added</h3>
 <h3 id="changed-75">Changed</h3>
 <h3 id="deprecated-29">Deprecated</h3>
 <h3 id="removed-57">Removed</h3>
 <h3 id="fixed-179">Fixed</h3>
-<h3 id="security-48">Security</h3>
+<h3 id="security-49">Security</h3>
 <h2 id="0823---2026-02-13">[0.8.23] - 2026-02-13</h2>
 <h3 id="added-100">Added</h3>
 <ul>
@@ -4686,7 +4696,7 @@ commands. They are now also injected into the Moltis process at startup,
 making them available to web search, embeddings, and provider API calls.</li>
 </ul>
 <h2 id="0814---2026-02-11">[0.8.14] - 2026-02-11</h2>
-<h3 id="security-49">Security</h3>
+<h3 id="security-50">Security</h3>
 <ul>
 <li><strong>Disconnect all WS clients on credential change</strong>: WebSocket connections
 opened before auth setup are now disconnected when credentials change
@@ -4815,7 +4825,7 @@ connections behind the platform’s reverse proxy.</li>
 <li><strong>WebAuthn origin scheme on PaaS</strong>: Non-localhost RP IDs now default to
 <code>https://</code> origin since PaaS platforms terminate TLS at the proxy.</li>
 </ul>
-<h3 id="security-50">Security</h3>
+<h3 id="security-51">Security</h3>
 <ul>
 <li><strong>Compaction prompt injection hardening</strong>: Session compaction now passes
 typed <code>ChatMessage</code> objects to the summarizer LLM instead of concatenated
@@ -4966,7 +4976,7 @@ dropdown pattern as the chat model selector for consistent UX.</li>
 <li><strong>Branch favicon contrast</strong>: Non-main branches now use a high-contrast purple
 favicon variant so branch sessions are visually distinct from <code>main</code>.</li>
 </ul>
-<h3 id="security-51">Security</h3>
+<h3 id="security-52">Security</h3>
 <ul>
 <li><strong>Content-Security-Policy header</strong>: HTML pages now include a nonce-based CSP
 header (<code>script-src 'self' 'nonce-&#x3C;UUID>'</code>), preventing inline script
@@ -4985,7 +4995,7 @@ audits security (file permissions, API keys in config), checks directory and
 database health, verifies provider readiness (API keys via config or env vars),
 inspects TLS certificates, and validates MCP server commands on PATH.</li>
 </ul>
-<h3 id="security-52">Security</h3>
+<h3 id="security-53">Security</h3>
 <ul>
 <li><strong>npm install —ignore-scripts</strong>: Skill dependency installation now passes
 <code>--ignore-scripts</code> to npm, preventing supply chain attacks via malicious
@@ -5523,7 +5533,7 @@ with vertical scrolling instead of being scaled down to fit the viewport.</li>
 <li><strong>Telegram typing indicator for long responses</strong>: Channel replies now wait for outbound delivery tasks to finish before chat completion returns, so periodic <code>typing...</code> updates continue until the Telegram message is actually sent.</li>
 <li><strong>Skills dependency install safety</strong>: <code>skills.install_dep</code> now requires explicit user confirmation and blocks host installs when sandbox mode is disabled (unless explicitly overridden in the RPC call).</li>
 </ul>
-<h3 id="security-53">Security</h3>
+<h3 id="security-54">Security</h3>
 <ul>
 <li><strong>Asset response hardening</strong>: Static assets now set <code>X-Content-Type-Options: nosniff</code>, and SVG responses include a restrictive <code>Content-Security-Policy</code> (<code>script-src 'none'</code>, <code>object-src 'none'</code>) to reduce stored-XSS risk if user-controlled SVGs are ever introduced.</li>
 <li><strong>Archive extraction hardening</strong>: Skills/plugin tarball installs now reject unsafe archive paths (<code>..</code>, absolute/path-prefix escapes) and reject symlink/hardlink archive entries to prevent path traversal and link-based escapes.</li>
