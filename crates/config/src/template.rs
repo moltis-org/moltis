@@ -350,6 +350,7 @@ port = {port}                           # Port number (auto-generated for this i
 # identity.theme = "thorough, skeptical, and evidence-oriented"
 # system_prompt_suffix = "..."
 # max_iterations = 16
+# reasoning_effort = "high"        # minimal | low | medium | high | xhigh | max
 # # Optional drift-resistant per-turn controls for spawned/preset agents:
 # # [agents.presets.research.tool_controls]
 # # active_tools = ["classify_destination"]
@@ -794,7 +795,7 @@ port = {port}                           # Port number (auto-generated for this i
 # binary = "codex"
 # args = ["app-server"]
 # models = ["gpt-5.5", "gpt-5.4"]
-# efforts = ["medium", "high", "xhigh"]
+# efforts = ["medium", "high", "xhigh", "max"]
 
 # Generic manual ACP server for advanced/custom CLIs not listed below.
 # If Moltis is missing a named default for an ACP agent, check the official
