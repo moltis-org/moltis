@@ -1334,36 +1334,34 @@ pub(crate) async fn run_with_tools(
                 commit_terminal_and_finish_channel_stream(terminal_runs, run_id, None).await
             };
 
-            let channel_delivery_succeeded = if !is_silent {
-                #[cfg(feature = "push-notifications")]
-                {
-                    tracing::info!("push: checking push notification (agent mode)");
-                    let push_state = Arc::clone(state);
-                    let push_session_key = session_key.to_string();
-                    let push_text = display_text.clone();
-                    let push_order = crate::channel_push::next_push_notification_order();
-                    tokio::spawn(async move {
-                        send_chat_push_notification(
-                            &push_state,
-                            &push_session_key,
-                            &push_text,
-                            push_order,
-                        )
-                        .await;
-                    });
-                }
-                deliver_channel_replies(
-                    state,
-                    run_id,
-                    session_key,
-                    &display_text,
-                    desired_reply_medium,
-                    &streamed_target_keys,
-                )
-                .await
-            } else {
-                true
-            };
+            #[cfg(feature = "push-notifications")]
+            if !is_silent {
+                tracing::info!("push: checking push notification (agent mode)");
+                let push_state = Arc::clone(state);
+                let push_session_key = session_key.to_string();
+                let push_text = display_text.clone();
+                let push_order = crate::channel_push::next_push_notification_order();
+                tokio::spawn(async move {
+                    send_chat_push_notification(
+                        &push_state,
+                        &push_session_key,
+                        &push_text,
+                        push_order,
+                    )
+                    .await;
+                });
+            }
+            // Delivery owns the distinction between no channel target and a
+            // channel-bound response erased by MessageSending.
+            let channel_delivery_succeeded = deliver_channel_replies(
+                state,
+                run_id,
+                session_key,
+                &display_text,
+                desired_reply_medium,
+                &streamed_target_keys,
+            )
+            .await;
             let mut output = build_assistant_turn_output(
                 display_text,
                 UsageSnapshot::new(usage, Some(request_usage)),

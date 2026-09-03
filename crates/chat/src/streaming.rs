@@ -514,36 +514,35 @@ pub(crate) async fn run_streaming(
                     )
                     .await;
 
-                    let channel_delivery_succeeded = if !is_silent {
-                        #[cfg(feature = "push-notifications")]
-                        {
-                            tracing::info!("push: checking push notification");
-                            let push_state = Arc::clone(state);
-                            let push_session_key = session_key.to_string();
-                            let push_text = accumulated.clone();
-                            let push_order = crate::channel_push::next_push_notification_order();
-                            tokio::spawn(async move {
-                                send_chat_push_notification(
-                                    &push_state,
-                                    &push_session_key,
-                                    &push_text,
-                                    push_order,
-                                )
-                                .await;
-                            });
-                        }
-                        deliver_channel_replies(
-                            state,
-                            run_id,
-                            session_key,
-                            &accumulated,
-                            desired_reply_medium,
-                            &streamed_target_keys,
-                        )
-                        .await
-                    } else {
-                        true
-                    };
+                    #[cfg(feature = "push-notifications")]
+                    if !is_silent {
+                        tracing::info!("push: checking push notification");
+                        let push_state = Arc::clone(state);
+                        let push_session_key = session_key.to_string();
+                        let push_text = accumulated.clone();
+                        let push_order = crate::channel_push::next_push_notification_order();
+                        tokio::spawn(async move {
+                            send_chat_push_notification(
+                                &push_state,
+                                &push_session_key,
+                                &push_text,
+                                push_order,
+                            )
+                            .await;
+                        });
+                    }
+                    // Always pass the terminal response through delivery. It
+                    // distinguishes a web-only turn from a channel-bound turn
+                    // whose MessageSending hook erased the response.
+                    let channel_delivery_succeeded = deliver_channel_replies(
+                        state,
+                        run_id,
+                        session_key,
+                        &accumulated,
+                        desired_reply_medium,
+                        &streamed_target_keys,
+                    )
+                    .await;
                     let llm_api_response =
                         (!raw_llm_responses.is_empty()).then_some(Value::Array(raw_llm_responses));
                     let mut output = build_assistant_turn_output(

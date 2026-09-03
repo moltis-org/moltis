@@ -110,7 +110,7 @@ async fn deliver_channel_replies_inner(
         }
         return true;
     }
-    if text.is_empty() {
+    if text.trim().is_empty() {
         let _ = state.drain_channel_status_log(session_key).await;
         if is_channel_session {
             info!(

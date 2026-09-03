@@ -63,8 +63,10 @@ retracted; the hook still controls the authoritative terminal response.
 
 `MessageSent` is not emitted when authoritative response persistence fails,
 when a known channel target rejects the final reply, or when channel delivery
-times out. Web-only turns have no channel target; their final UI broadcast is
-emitted after persistence and immediately before `MessageSent`.
+times out. A channel-bound `MessageSending` rewrite to empty content also
+suppresses `MessageSent` because no terminal response was delivered. Web-only
+turns have no channel target; their final UI broadcast is emitted after
+persistence and immediately before `MessageSent`.
 
 ### Read-Only Events (Parallel)
 
