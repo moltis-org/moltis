@@ -62,6 +62,8 @@ pub enum ReasoningEffort {
     /// Extra-high reasoning effort. Serializes as `"xhigh"`.
     #[serde(rename = "xhigh")]
     ExtraHigh,
+    /// Maximum reasoning effort. Serializes as `"max"`.
+    Max,
 }
 
 impl ReasoningEffort {
@@ -72,6 +74,7 @@ impl ReasoningEffort {
         Self::Medium,
         Self::High,
         Self::ExtraHigh,
+        Self::Max,
     ];
 
     /// Wire / serialization name (matches serde output).
@@ -83,6 +86,7 @@ impl ReasoningEffort {
             Self::Medium => "medium",
             Self::High => "high",
             Self::ExtraHigh => "xhigh",
+            Self::Max => "max",
         }
     }
 
@@ -95,6 +99,7 @@ impl ReasoningEffort {
             Self::Medium => "Medium",
             Self::High => "High",
             Self::ExtraHigh => "Extra High",
+            Self::Max => "Max",
         }
     }
 }
@@ -109,6 +114,7 @@ impl TryFrom<&str> for ReasoningEffort {
             "medium" => Ok(Self::Medium),
             "high" => Ok(Self::High),
             "xhigh" => Ok(Self::ExtraHigh),
+            "max" => Ok(Self::Max),
             other => Err(format!("unknown reasoning effort: {other}")),
         }
     }
