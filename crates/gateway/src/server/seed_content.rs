@@ -57,14 +57,14 @@ echo "$(date -Iseconds) tool=$tool" >> /tmp/moltis-hook.log
 - `MessageReceived` — when an inbound channel/UI message arrives;
   `Block(reason)` rejects it, `ModifyPayload({"content": "..."})` rewrites
   the text before the turn begins
-- `MessageSending` — before sending a message to the LLM
+- `MessageSending` — before delivering the terminal assistant response
 - `ToolResultPersist` — before persisting a tool result
 
 **Read-only (parallel dispatch, Block/Modify ignored):**
 - `AgentEnd` — after an agent run completes
 - `AfterToolCall` — after a tool finishes (observe result)
 - `AfterCompaction` — after compaction completes
-- `MessageSent` — after a message is sent
+- `MessageSent` — after persistence succeeds and all known channel targets accept delivery
 - `SessionStart` / `SessionEnd` — session lifecycle
 - `GatewayStart` / `GatewayStop` — server lifecycle
 

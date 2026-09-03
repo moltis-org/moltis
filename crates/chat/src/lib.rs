@@ -11,6 +11,7 @@ mod compaction_run;
 mod memory_tools;
 mod message;
 mod models;
+mod outbound_hooks;
 pub mod params;
 mod prompt;
 mod run_with_tools;

@@ -44,8 +44,8 @@ pub(crate) async fn deliver_channel_replies(
     text: &str,
     desired_reply_medium: ReplyMedium,
     streamed_target_keys: &HashSet<ChannelReplyTargetKey>,
-) {
-    if tokio::time::timeout(
+) -> bool {
+    match tokio::time::timeout(
         FINAL_CHANNEL_IO_TIMEOUT,
         deliver_channel_replies_inner(
             state,
@@ -57,13 +57,16 @@ pub(crate) async fn deliver_channel_replies(
         ),
     )
     .await
-    .is_err()
     {
-        warn!(
-            activity_id,
-            session_key, "timed out delivering final channel reply"
-        );
-        note_delivery_failed(state, activity_id).await;
+        Ok(delivered) => delivered,
+        Err(_) => {
+            warn!(
+                activity_id,
+                session_key, "timed out delivering final channel reply"
+            );
+            note_delivery_failed(state, activity_id).await;
+            false
+        },
     }
 }
 
@@ -74,7 +77,7 @@ async fn deliver_channel_replies_inner(
     text: &str,
     desired_reply_medium: ReplyMedium,
     streamed_target_keys: &HashSet<ChannelReplyTargetKey>,
-) {
+) -> bool {
     let drained_targets = state.drain_channel_replies(session_key).await;
     let mut targets = Vec::with_capacity(drained_targets.len());
     let mut streamed_targets = Vec::new();
@@ -105,9 +108,9 @@ async fn deliver_channel_replies_inner(
                 "channel reply delivery skipped: no pending targets after stream dedupe"
             );
         }
-        return;
+        return true;
     }
-    if text.is_empty() {
+    if text.trim().is_empty() {
         let _ = state.drain_channel_status_log(session_key).await;
         if is_channel_session {
             info!(
@@ -116,7 +119,7 @@ async fn deliver_channel_replies_inner(
                 "channel reply delivery skipped: empty response text"
             );
         }
-        return;
+        return false;
     }
     if is_channel_session {
         info!(
@@ -138,7 +141,7 @@ async fn deliver_channel_replies_inner(
                 );
             }
             note_delivery_failed(state, activity_id).await;
-            return;
+            return false;
         },
     };
     // Drain buffered status log entries to build a logbook suffix.
@@ -164,9 +167,9 @@ async fn deliver_channel_replies_inner(
                 "channel reply delivery completed via stream-only targets"
             );
         }
-        return;
+        return true;
     }
-    crate::channel_reply_delivery::deliver_channel_replies_to_targets(
+    let delivered = crate::channel_reply_delivery::deliver_channel_replies_to_targets(
         outbound,
         targets,
         session_key,
@@ -178,6 +181,10 @@ async fn deliver_channel_replies_inner(
         streamed_target_keys,
     )
     .await;
+    if !delivered {
+        note_delivery_failed(state, activity_id).await;
+    }
+    delivered
 }
 
 /// Format buffered status log entries into a Telegram expandable blockquote HTML.

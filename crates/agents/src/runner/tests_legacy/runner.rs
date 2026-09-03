@@ -489,7 +489,7 @@ pub async fn run_agent_loop_with_context(
                 let session_key = session_key_for_hooks.clone();
                 let channel_for_hooks = channel_for_hooks.clone();
                 let tc_name = sanitized.to_string();
-                let _tc_id = tc.id.clone();
+                let tc_id = tc.id.clone();
 
                 if let Some(ref ctx) = tool_context
                     && let (Some(args_obj), Some(ctx_obj)) = (args.as_object_mut(), ctx.as_object())
@@ -545,6 +545,8 @@ pub async fn run_agent_loop_with_context(
                     if let Some(ref hooks) = hook_registry {
                         let payload = HookPayload::BeforeToolCall {
                             session_key: session_key.clone(),
+                            turn_id: None,
+                            tool_call_id: Some(tc_id.clone()),
                             tool_name: tc_name.clone(),
                             arguments: args.clone(),
                             channel: channel_for_hooks.clone(),
@@ -571,7 +573,7 @@ pub async fn run_agent_loop_with_context(
                     }
 
                     if let Some(tool) = tool {
-                        match tool.execute(args).await {
+                        match tool.execute(args.clone()).await {
                             Ok(val) => {
                                 // Check if the result indicates a logical failure
                                 // (e.g., BrowserResponse with success: false)
@@ -589,7 +591,10 @@ pub async fn run_agent_loop_with_context(
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
+                                        turn_id: None,
+                                        tool_call_id: Some(tc_id.clone()),
                                         tool_name: tc_name.clone(),
+                                        arguments: Some(args.clone()),
                                         success: !has_error,
                                         result: Some(val.clone()),
                                         channel: channel_for_hooks.clone(),
@@ -612,7 +617,10 @@ pub async fn run_agent_loop_with_context(
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
+                                        turn_id: None,
+                                        tool_call_id: Some(tc_id.clone()),
                                         tool_name: tc_name.clone(),
+                                        arguments: Some(args.clone()),
                                         success: false,
                                         result: None,
                                         channel: channel_for_hooks.clone(),
@@ -714,6 +722,7 @@ pub async fn run_agent_loop_with_context(
             if let Some(ref hooks) = hook_registry {
                 let payload = HookPayload::ToolResultPersist {
                     session_key: session_key_for_hooks.clone(),
+                    tool_call_id: Some(tc.id.clone()),
                     tool_name: sanitize_tool_name(&tc.name).into_owned(),
                     result: result.clone(),
                     channel: channel_for_hooks.clone(),
