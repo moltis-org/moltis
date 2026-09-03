@@ -119,6 +119,29 @@ docker run -d \
 
 With bind mounts, you can edit `config/moltis.toml` directly on the host.
 
+```admonish warning
+On a fresh checkout, Docker auto-creates `./config` and `./data` as
+`root:root` the first time it bind-mounts them. Moltis runs as a non-root
+user inside the container, so the very first start can fail with `unable
+to open database file` before that user can write to them. Fix it once,
+before starting the container:
+
+~~~bash
+mkdir -p ./config ./data
+docker run --rm --user root --entrypoint chown \
+  -v ./config:/home/moltis/.config/moltis \
+  -v ./data:/home/moltis/.moltis \
+  ghcr.io/moltis-org/moltis:latest \
+  -R moltis:moltis /home/moltis/.config /home/moltis/.moltis
+~~~
+
+Using the image's own `moltis` username rather than a hardcoded UID keeps
+this working even if the image's UID assignment ever changes. Named
+volumes (the Quick Start example above) don't need this — Docker leaves an
+existing named volume's ownership alone, only bind-mount source
+directories get created as `root:root` on first use.
+```
+
 ## Docker Socket (Sandbox Execution)
 
 Moltis runs LLM-generated shell commands inside isolated containers for

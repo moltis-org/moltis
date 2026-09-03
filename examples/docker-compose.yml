@@ -14,6 +14,20 @@
 #   ./config - moltis.toml, credentials.json, mcp-servers.json
 #   ./data   - databases, sessions, memory files
 #
+# IMPORTANT — first run on a fresh checkout: Docker auto-creates ./config
+# and ./data as root:root the first time it bind-mounts them. Moltis runs
+# as a non-root user inside the container, so the very first `docker
+# compose up` can fail with "unable to open database file" before that
+# user can write to them. Fix it once, before starting the container:
+#
+#   mkdir -p ./config ./data
+#   docker compose run --rm --user root --entrypoint chown moltis \
+#     -R moltis:moltis /home/moltis/.config /home/moltis/.moltis
+#   docker compose up -d
+#
+# (Using the image's own `moltis` username rather than a hardcoded UID
+# keeps this working even if the image's UID assignment ever changes.)
+#
 # For Podman, see the rootless/rootful socket paths below.
 
 services:
