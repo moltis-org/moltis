@@ -343,7 +343,10 @@ async fn test_non_streaming_runner_dispatches_agent_end_hook() {
         &UserContent::text("Hi"),
         None,
         None,
-        Some(serde_json::json!({"_session_key": "session-123"})),
+        Some(serde_json::json!({
+            "_session_key": "session-123",
+            "_trace_correlation_key": "turn-123"
+        })),
         Some(Arc::new(hooks)),
         None,
     )
@@ -745,7 +748,10 @@ async fn test_streaming_runner_dispatches_agent_end_hook() {
         &UserContent::text("Hi"),
         None,
         None,
-        Some(serde_json::json!({"_session_key": "stream-session-123"})),
+        Some(serde_json::json!({
+            "_session_key": "stream-session-123",
+            "_trace_correlation_key": "stream-turn-123"
+        })),
         Some(Arc::new(hooks)),
         None,
         None,
