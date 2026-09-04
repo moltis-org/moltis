@@ -80,6 +80,7 @@ async function mockExternalAgentsRpc(page, listPayload, modelsPayload, bindFailu
 			window.__externalAgentE2EBindings = {};
 			window.__externalAgentE2EPendingResponses = [];
 			window.__externalAgentE2EHoldSwitches = holdSwitches;
+			window.__externalAgentE2EHoldChatSends = false;
 			window.__releaseExternalAgentE2EResponses = () => {
 				const pending = window.__externalAgentE2EPendingResponses.splice(0);
 				for (const sendResponse of pending) sendResponse();
@@ -111,6 +112,14 @@ async function mockExternalAgentsRpc(page, listPayload, modelsPayload, bindFailu
 
 			function respondToBackendSwitch(sendResponse) {
 				if (window.__externalAgentE2EHoldSwitches) {
+					window.__externalAgentE2EPendingResponses.push(sendResponse);
+					return;
+				}
+				sendResponse();
+			}
+
+			function respondToChatSend(sendResponse) {
+				if (window.__externalAgentE2EHoldChatSends) {
 					window.__externalAgentE2EPendingResponses.push(sendResponse);
 					return;
 				}
@@ -155,7 +164,7 @@ async function mockExternalAgentsRpc(page, listPayload, modelsPayload, bindFailu
 					}
 					if (parsed?.method === "chat.send") {
 						window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
-						respond(this, parsed.id, { runId: "external-agent-e2e" });
+						respondToChatSend(() => respond(this, parsed.id, { runId: "external-agent-e2e" }));
 						return;
 					}
 				} catch (_err) {
@@ -681,6 +690,14 @@ test.describe("Agents settings page", () => {
 		await expect(page.locator("#modelComboLabel")).toHaveText("Antigravity (AGY): gemini-3.8-flash-high");
 		await expect(page.locator("#reasoningCombo")).toBeHidden();
 
+		await page.evaluate(() => {
+			window.__moltisTestRpcTimeoutMs = 25;
+			window.__externalAgentE2EHoldChatSends = true;
+			window.__externalAgentE2ELongWaitElapsed = false;
+			setTimeout(() => {
+				window.__externalAgentE2ELongWaitElapsed = true;
+			}, 75);
+		});
 		await page.locator("#chatInput").fill("AGY model persistence probe");
 		await page.locator("#sendBtn").click();
 		await expect
@@ -696,6 +713,10 @@ test.describe("Agents settings page", () => {
 				{ timeout: 10_000 },
 			)
 			.toBe(1);
+		await expect.poll(() => page.evaluate(() => window.__externalAgentE2ELongWaitElapsed)).toBe(true);
+		await expect(page.locator("[data-chat-send-error='true']")).toHaveCount(0);
+		await expect.poll(() => page.evaluate(() => window.__externalAgentE2EPendingResponses.length)).toBe(1);
+		await page.evaluate(() => window.__releaseExternalAgentE2EResponses());
 		const chatParams = await page.evaluate((key) => {
 			const request = (window.__externalAgentE2ERequests || []).find(
 				(item) => item.method === "chat.send" && item.params?._session_key === key,

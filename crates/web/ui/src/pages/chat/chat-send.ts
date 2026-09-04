@@ -264,7 +264,14 @@ async function sendChatAsync(): Promise<void> {
 		setSessionReplying(sessionKey, true);
 		forActiveSession(sessionKey, () => setComposerStopButton(true, sessionKey));
 		try {
-			const res = await sendRpc<ChatSendPayload>("chat.send", chatParams, { timeoutMs: 120_000 });
+			const externalAgentKind = sessionStore.getByKey(sessionKey)?.external_agent_kind;
+			// External-agent runtimes enforce their configured turn timeout. A
+			// shorter client timer would report failure while that turn keeps running.
+			const res = await sendRpc<ChatSendPayload>(
+				"chat.send",
+				chatParams,
+				externalAgentKind ? { timeoutMs: null } : undefined,
+			);
 			handleChatSendRpcResponse(res, userEl, sessionKey);
 		} catch {
 			handleChatSendFailure(sessionKey, "Request failed");

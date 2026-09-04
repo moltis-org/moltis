@@ -22,6 +22,7 @@ struct FakeAgentState {
     models: std::sync::Mutex<Vec<Option<String>>>,
     efforts: std::sync::Mutex<Vec<Option<String>>>,
     shutdowns: std::sync::atomic::AtomicUsize,
+    fail_history_path: std::sync::Mutex<Option<PathBuf>>,
 }
 
 struct FakeTransport {
@@ -95,7 +96,19 @@ impl ExternalAgentSession for FakeSession {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .push(prompt.to_string());
-        if prompt == "tool-events" {
+        if prompt == "tool-events-write-failure" {
+            let history_path = self
+                .state
+                .fail_history_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("missing failure history path"))?;
+            let backup_path = history_path.with_extension("jsonl.before-write-failure");
+            std::fs::rename(&history_path, &backup_path)?;
+            std::fs::create_dir(&history_path)?;
+        }
+        if prompt == "tool-events" || prompt == "tool-events-write-failure" {
             return Ok(Box::pin(stream::iter([
                 ExternalAgentEvent::SessionBound {
                     external_session_id: "fake-stream-session".to_string(),
@@ -681,6 +694,50 @@ async fn external_tool_events_are_persisted_with_the_terminal_reply() {
         entry.external_session_id.as_deref(),
         Some("fake-stream-session")
     );
+}
+
+#[tokio::test]
+async fn failed_external_tool_writes_do_not_inflate_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let history_path = session_store.history_path_for("main");
+    let backup_path = history_path.with_extension("jsonl.before-write-failure");
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    let agent_state = Arc::new(FakeAgentState::default());
+    *agent_state
+        .fail_history_path
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(history_path.clone());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), agent_state);
+    external_agents
+        .bind(serde_json::json!({ "sessionKey": "main", "kind": "codex" }))
+        .await
+        .expect("bind external agent");
+    let chat = test_chat_service(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+    )
+    .await;
+
+    chat.send(serde_json::json!({
+        "sessionKey": "main",
+        "text": "tool-events-write-failure",
+    }))
+    .await
+    .expect_err("blocked history path should fail the terminal append");
+
+    std::fs::remove_dir(&history_path).expect("remove blocking directory");
+    std::fs::rename(&backup_path, &history_path).expect("restore history file");
+    assert_eq!(session_store.count("main").await.unwrap(), 1);
+    assert_eq!(metadata.get("main").await.unwrap().message_count, 1);
+}
+
+#[test]
+fn tool_result_index_requires_a_fully_persisted_pair() {
+    assert_eq!(persisted_tool_result_message_index(4, 2), Some(3));
+    assert_eq!(persisted_tool_result_message_index(3, 1), None);
+    assert_eq!(persisted_tool_result_message_index(2, 0), None);
 }
 
 #[tokio::test]

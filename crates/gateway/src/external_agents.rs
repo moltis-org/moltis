@@ -910,7 +910,7 @@ impl ExternalAgentChatService {
                         created_at: Some(now_ms()),
                         run_id: Some(run_id.clone()),
                     };
-                    persist_tool_history_pair(
+                    let persisted_pair_messages = persist_tool_history_pair(
                         &self.session_store,
                         &session_key,
                         assistant_tool_call,
@@ -919,26 +919,32 @@ impl ExternalAgentChatService {
                         "failed to persist external-agent tool result",
                     )
                     .await;
-                    persisted_tool_messages = persisted_tool_messages.saturating_add(2);
+                    persisted_tool_messages =
+                        persisted_tool_messages.saturating_add(persisted_pair_messages);
                     let message_count = history.len() + persisted_tool_messages;
                     self.session_metadata
                         .touch(&session_key, message_count as u32)
                         .await;
+                    let mut payload = serde_json::json!({
+                        "runId": run_id,
+                        "sessionKey": session_key,
+                        "state": "tool_call_end",
+                        "toolCallId": id,
+                        "toolName": tool_name,
+                        "success": success,
+                        "result": persisted_result,
+                        "error": error.map(|detail| serde_json::json!({ "detail": detail })),
+                        "seq": seq,
+                    });
+                    if let Some(message_index) =
+                        persisted_tool_result_message_index(message_count, persisted_pair_messages)
+                    {
+                        payload["messageIndex"] = serde_json::json!(message_index);
+                    }
                     crate::broadcast::broadcast(
                         &self.state,
                         "chat",
-                        serde_json::json!({
-                            "runId": run_id,
-                            "sessionKey": session_key,
-                            "state": "tool_call_end",
-                            "toolCallId": id,
-                            "toolName": tool_name,
-                            "success": success,
-                            "result": persisted_result,
-                            "error": error.map(|detail| serde_json::json!({ "detail": detail })),
-                            "messageIndex": message_count - 1,
-                            "seq": seq,
-                        }),
+                        payload,
                         BroadcastOpts::default(),
                     )
                     .await;
@@ -1268,6 +1274,15 @@ async fn resolve_session_key(params: &Value, state: &GatewayState) -> String {
         return key;
     }
     "main".to_string()
+}
+
+fn persisted_tool_result_message_index(
+    message_count: usize,
+    persisted_pair_messages: usize,
+) -> Option<usize> {
+    (persisted_pair_messages == 2)
+        .then(|| message_count.checked_sub(1))
+        .flatten()
 }
 
 fn context_from_history_with_project_context(

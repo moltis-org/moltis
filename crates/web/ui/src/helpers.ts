@@ -274,7 +274,8 @@ const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: tru
 const RPC_TIMEOUT_MS = 5_000;
 const CHAT_RPC_TIMEOUT_MS = 120_000;
 
-function rpcTimeoutMs(requested?: number, method?: string): number {
+function rpcTimeoutMs(requested?: number | null, method?: string): number | null {
+	if (requested === null) return null;
 	if (typeof window.__moltisTestRpcTimeoutMs === "number") return window.__moltisTestRpcTimeoutMs;
 	if (typeof requested === "number") return requested;
 	if (method === "chat.send" || method === "chat.send_sync") return CHAT_RPC_TIMEOUT_MS;
@@ -295,7 +296,7 @@ export function renderMarkdown(raw: string): string {
 export function sendRpc<T = unknown>(
 	method: string,
 	params: unknown,
-	timeout?: number | { timeoutMs?: number },
+	timeout?: number | { timeoutMs?: number | null },
 ): Promise<RpcResponse<T>> {
 	return new Promise((resolve) => {
 		if (!S.ws || S.ws.readyState !== WebSocket.OPEN) {
@@ -314,22 +315,25 @@ export function sendRpc<T = unknown>(
 		const id = nextId();
 		const requestedTimeoutMs = typeof timeout === "number" ? timeout : timeout?.timeoutMs;
 		const requestTimeoutMs = rpcTimeoutMs(requestedTimeoutMs, method);
-		const timer = setTimeout(() => {
-			if (S.pending[id]) {
-				delete S.pending[id];
-				const message = `${localizedRpcErrorMessage({ code: "TIMEOUT", message: "RPC request timed out" })} (${method})`;
-				console.warn("RPC request timed out", { method, timeoutMs: requestTimeoutMs });
-				resolve({
-					ok: false,
-					error: {
-						code: "TIMEOUT",
-						message,
-					},
-				} as unknown as RpcResponse<T>);
-			}
-		}, requestTimeoutMs);
+		const timer =
+			requestTimeoutMs === null
+				? null
+				: setTimeout(() => {
+						if (S.pending[id]) {
+							delete S.pending[id];
+							const message = `${localizedRpcErrorMessage({ code: "TIMEOUT", message: "RPC request timed out" })} (${method})`;
+							console.warn("RPC request timed out", { method, timeoutMs: requestTimeoutMs });
+							resolve({
+								ok: false,
+								error: {
+									code: "TIMEOUT",
+									message,
+								},
+							} as unknown as RpcResponse<T>);
+						}
+					}, requestTimeoutMs);
 		S.pending[id] = ((res: RpcResponse) => {
-			clearTimeout(timer);
+			if (timer !== null) clearTimeout(timer);
 			resolve(res as RpcResponse<T>);
 		}) as (value: RpcResponse) => void;
 		S.ws.send(JSON.stringify({ type: "req", id: id, method: method, params: params }));
