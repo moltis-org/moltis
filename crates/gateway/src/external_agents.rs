@@ -525,6 +525,17 @@ fn selected_external_agent(
     })
 }
 
+fn external_agent_binding_from_model_id(
+    selection_id: Option<&str>,
+) -> Option<(AgentTransportKind, SelectedExternalAgent)> {
+    let selection = parse_external_agent_model_id(selection_id?)?;
+    let kind = selection.kind.parse::<AgentTransportKind>().ok()?;
+    Some((kind, SelectedExternalAgent {
+        model: selection.model.map(ToOwned::to_owned),
+        effort: selection.effort.map(ToOwned::to_owned),
+    }))
+}
+
 pub struct ExternalAgentChatService {
     inner: Arc<dyn ChatService>,
     external_agents: Arc<GatewayExternalAgentService>,
@@ -558,12 +569,52 @@ impl ExternalAgentChatService {
             return None;
         }
         let session_key = resolve_session_key(params, &self.state).await;
-        let entry = self.session_metadata.get(&session_key).await?;
-        let kind = entry.external_agent_kind?;
-        if !security::allows_external_agent_request(params, entry.channel_binding.is_some()) {
+        let entry = self.session_metadata.get(&session_key).await;
+        let bound_kind = entry.as_ref().and_then(|entry| entry.external_agent_kind);
+        let explicit_model = params.get("model").and_then(Value::as_str);
+        let inferred_binding = if explicit_model.is_some() {
+            external_agent_binding_from_model_id(explicit_model)
+        } else {
+            external_agent_binding_from_model_id(
+                entry.as_ref().and_then(|entry| entry.model.as_deref()),
+            )
+        };
+        let kind = bound_kind.or_else(|| inferred_binding.as_ref().map(|(kind, _)| *kind))?;
+        if !security::allows_external_agent_request(
+            params,
+            entry
+                .as_ref()
+                .is_some_and(|entry| entry.channel_binding.is_some()),
+        ) {
             return Some(Err(
                 "external agents are unavailable for public or tool-restricted turns".into(),
             ));
+        }
+        if bound_kind.is_none() {
+            let (_, selected) = inferred_binding?;
+            let mut bind_params = serde_json::json!({
+                "sessionKey": session_key,
+                "kind": kind.as_str(),
+            });
+            if let Some(model) = selected.model {
+                bind_params["model"] = Value::String(model);
+            }
+            if let Some(effort) = selected.effort {
+                bind_params["effort"] = Value::String(effort);
+            }
+            if let Err(error) = self.external_agents.bind(bind_params).await {
+                return Some(Err(error));
+            }
+            warn!(
+                session = %session_key,
+                kind = kind.as_str(),
+                model = explicit_model.or_else(|| {
+                    entry.as_ref().and_then(|entry| entry.model.as_deref())
+                }).unwrap_or("-"),
+                "repaired missing external-agent binding from encoded model selection"
+            );
+            self.broadcast_external_agent_session_update(&session_key)
+                .await;
         }
         Some(self.send_external(params.clone(), session_key, kind).await)
     }

@@ -369,6 +369,123 @@ async fn selected_external_agent_model_is_passed_to_runtime() {
 }
 
 #[tokio::test]
+async fn encoded_external_model_repairs_missing_binding_before_chat_send() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    let agent_state = Arc::new(FakeAgentState::default());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+    let chat = test_chat_service(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+    )
+    .await;
+    let model_id = external_agent_model_id("codex", Some("gpt-5.2-codex"), Some("xhigh"));
+
+    let response = chat
+        .send(serde_json::json!({
+            "sessionKey": "fresh",
+            "text": "hello",
+            "model": model_id,
+        }))
+        .await
+        .expect("encoded external model should route to the external agent");
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(agent_state.starts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        agent_state
+            .models
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_slice(),
+        &[Some("gpt-5.2-codex".to_string())]
+    );
+    assert_eq!(
+        metadata
+            .get("fresh")
+            .await
+            .and_then(|entry| entry.external_agent_kind),
+        Some(AgentTransportKind::Codex)
+    );
+}
+
+#[tokio::test]
+async fn persisted_external_model_repairs_missing_binding_without_request_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    metadata.upsert("existing", None).await.unwrap();
+    metadata
+        .set_model(
+            "existing",
+            Some(external_agent_model_id(
+                "codex",
+                Some("gpt-5.2-codex"),
+                None,
+            )),
+        )
+        .await;
+    let agent_state = Arc::new(FakeAgentState::default());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+    let chat = test_chat_service(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+    )
+    .await;
+
+    chat.send(serde_json::json!({
+        "sessionKey": "existing",
+        "text": "hello",
+    }))
+    .await
+    .expect("persisted external model should repair the missing binding");
+
+    assert_eq!(agent_state.starts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        metadata
+            .get("existing")
+            .await
+            .and_then(|entry| entry.external_agent_kind),
+        Some(AgentTransportKind::Codex)
+    );
+}
+
+#[tokio::test]
+async fn restricted_request_does_not_repair_encoded_external_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    let agent_state = Arc::new(FakeAgentState::default());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+    let chat = test_chat_service(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+    )
+    .await;
+
+    let error = chat
+        .send(serde_json::json!({
+            "sessionKey": "public",
+            "text": "hello",
+            "model": external_agent_model_id("codex", Some("gpt-5.2-codex"), None),
+            "_private_context": false,
+        }))
+        .await
+        .expect_err("public request must not auto-bind an external agent");
+
+    assert_eq!(
+        error.to_string(),
+        "external agents are unavailable for public or tool-restricted turns"
+    );
+    assert!(metadata.get("public").await.is_none());
+    assert_eq!(agent_state.starts.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn list_returns_empty_when_external_agents_disabled() {
     let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
     let agent_state = Arc::new(FakeAgentState::default());
