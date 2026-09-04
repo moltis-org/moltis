@@ -13,5 +13,7 @@ pub mod pi_agent;
 #[cfg(feature = "acp")]
 pub mod acp;
 
+pub mod antigravity;
+
 mod env;
 mod process;

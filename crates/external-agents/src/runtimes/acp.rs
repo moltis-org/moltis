@@ -648,6 +648,17 @@ async fn run_acp_controller(
             .map_err(acp_error_to_anyhow)?;
         let session_id = session.session_id.to_string();
         client.set_session_id(session_id.clone());
+        if let Some(model) = &spec.model {
+            let req = acp::SetSessionConfigOptionRequest::new(
+                session.session_id.clone(),
+                "model",
+                model.clone(),
+            );
+            if let Err(_error) = conn.set_session_config_option(req).await {
+                #[cfg(feature = "tracing")]
+                tracing::warn!(error = %_error, %model, "failed to set ACP session model");
+            }
+        }
         set_status(&status, ExternalAgentStatus::Idle);
         Ok::<_, anyhow::Error>((child, conn, client, session_id))
     }
