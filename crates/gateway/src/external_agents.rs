@@ -11,11 +11,15 @@ mod security;
 use {
     async_trait::async_trait,
     futures::StreamExt,
+    moltis_chat::{build_tool_call_assistant_message, persist_tool_history_pair},
     moltis_config::schema::ExternalAgentsConfig,
     moltis_external_agents::{
         AcpPermissionHandler, AgentTransportKind, ContextSnapshot, ExternalAgentEvent,
         ExternalAgentRegistry, ExternalAgentSession, ExternalAgentSpec,
-        runtimes::{acp::AcpTransport, claude_code::ClaudeCodeTransport, codex::CodexTransport},
+        runtimes::{
+            acp::AcpTransport, antigravity::AgyTransport, claude_code::ClaudeCodeTransport,
+            codex::CodexTransport,
+        },
         types::ContextTurn,
     },
     moltis_service_traits::{ChatService, ExternalAgentService, ServiceResult, SessionService},
@@ -71,6 +75,7 @@ impl GatewayExternalAgentService {
         let mut registry = ExternalAgentRegistry::new();
         registry.register(Box::new(ClaudeCodeTransport::new()));
         registry.register(Box::new(CodexTransport::new()));
+        registry.register(Box::new(AgyTransport::new()));
         let acp_permission_handler: Arc<dyn AcpPermissionHandler> =
             Arc::new(GatewayAcpPermissionHandler::new(approval_manager));
         for (kind, binary, default_args) in [
@@ -691,6 +696,7 @@ impl ExternalAgentChatService {
             .map_err(|error| error.to_string())?;
         let mut session = live_session.lock().await;
         let external_session_id = session.external_session_id().map(str::to_string);
+        let mut bound_external_session_id = external_session_id.clone();
         if external_session_id.is_some() {
             self.session_metadata
                 .set_external_agent(&session_key, Some(kind), external_session_id.clone())
@@ -707,12 +713,27 @@ impl ExternalAgentChatService {
                 return Err(error.into());
             },
         };
+        // Direct-streaming transports own their in-flight child after
+        // `send_prompt`, so releasing this lock lets cancellation reach them.
+        drop(session);
         let mut assistant_text = String::new();
         let mut thinking_text = String::new();
         let mut token_usage = None;
         let mut external_error = None;
+        let mut persisted_tool_messages = 0usize;
+        let mut active_tool_calls: HashMap<String, (String, Option<Value>)> = HashMap::new();
         while let Some(event) = events.next().await {
             match event {
+                ExternalAgentEvent::SessionBound {
+                    external_session_id,
+                } => {
+                    bound_external_session_id = Some(external_session_id.clone());
+                    self.session_metadata
+                        .set_external_agent(&session_key, Some(kind), Some(external_session_id))
+                        .await;
+                    self.broadcast_external_agent_session_update(&session_key)
+                        .await;
+                },
                 ExternalAgentEvent::TextDelta(delta) => {
                     assistant_text.push_str(&delta);
                     crate::broadcast::broadcast(
@@ -752,18 +773,134 @@ impl ExternalAgentChatService {
                 ExternalAgentEvent::Done { usage } => {
                     token_usage = usage;
                 },
-                ExternalAgentEvent::ToolCallStart { .. }
-                | ExternalAgentEvent::ToolCallEnd { .. } => {},
+                ExternalAgentEvent::Notice(message) => {
+                    crate::broadcast::broadcast(
+                        &self.state,
+                        "chat",
+                        serde_json::json!({
+                            "runId": run_id,
+                            "sessionKey": session_key,
+                            "state": "notice",
+                            "title": kind.display_name(),
+                            "message": message,
+                            "seq": seq,
+                        }),
+                        BroadcastOpts::default(),
+                    )
+                    .await;
+                },
+                ExternalAgentEvent::ToolCallStart {
+                    id,
+                    name,
+                    arguments,
+                } => {
+                    let parsed_arguments =
+                        serde_json::from_str::<Value>(&arguments).ok().or_else(|| {
+                            (!arguments.trim().is_empty()).then(|| Value::String(arguments.clone()))
+                        });
+                    active_tool_calls.insert(id.clone(), (name.clone(), parsed_arguments.clone()));
+                    crate::broadcast::broadcast(
+                        &self.state,
+                        "chat",
+                        serde_json::json!({
+                            "runId": run_id,
+                            "sessionKey": session_key,
+                            "state": "tool_call_start",
+                            "toolCallId": id,
+                            "toolName": name,
+                            "arguments": parsed_arguments.unwrap_or_else(|| serde_json::json!({})),
+                            "seq": seq,
+                        }),
+                        BroadcastOpts::default(),
+                    )
+                    .await;
+                },
+                ExternalAgentEvent::ToolCallEnd {
+                    id,
+                    name,
+                    success,
+                    result,
+                } => {
+                    let (started_name, arguments) = active_tool_calls
+                        .remove(&id)
+                        .unwrap_or_else(|| (name.clone(), None));
+                    let tool_name = if name.trim().is_empty() {
+                        started_name
+                    } else {
+                        name
+                    };
+                    let persisted_result = result.as_ref().map(|output| {
+                        serde_json::json!({
+                            "stdout": output,
+                            "exit_code": if success { 0 } else { 1 },
+                        })
+                    });
+                    let error = (!success).then(|| {
+                        result
+                            .clone()
+                            .unwrap_or_else(|| format!("{tool_name} failed"))
+                    });
+                    let assistant_tool_call = build_tool_call_assistant_message(
+                        id.clone(),
+                        tool_name.clone(),
+                        arguments.clone(),
+                        None,
+                        seq,
+                        Some(&run_id),
+                    );
+                    let tool_result = PersistedMessage::ToolResult {
+                        tool_call_id: id.clone(),
+                        tool_name: tool_name.clone(),
+                        arguments,
+                        success,
+                        result: persisted_result.clone(),
+                        error: error.clone(),
+                        reasoning: None,
+                        created_at: Some(now_ms()),
+                        run_id: Some(run_id.clone()),
+                    };
+                    persist_tool_history_pair(
+                        &self.session_store,
+                        &session_key,
+                        assistant_tool_call,
+                        tool_result,
+                        "failed to persist external-agent tool call",
+                        "failed to persist external-agent tool result",
+                    )
+                    .await;
+                    persisted_tool_messages = persisted_tool_messages.saturating_add(2);
+                    let message_count = history.len() + persisted_tool_messages;
+                    self.session_metadata
+                        .touch(&session_key, message_count as u32)
+                        .await;
+                    crate::broadcast::broadcast(
+                        &self.state,
+                        "chat",
+                        serde_json::json!({
+                            "runId": run_id,
+                            "sessionKey": session_key,
+                            "state": "tool_call_end",
+                            "toolCallId": id,
+                            "toolName": tool_name,
+                            "success": success,
+                            "result": persisted_result,
+                            "error": error.map(|detail| serde_json::json!({ "detail": detail })),
+                            "messageIndex": message_count - 1,
+                            "seq": seq,
+                        }),
+                        BroadcastOpts::default(),
+                    )
+                    .await;
+                },
             }
         }
-        if let Some(external_session_id) = session.external_session_id().map(str::to_string) {
+        if let Some(external_session_id) = bound_external_session_id {
             self.session_metadata
                 .set_external_agent(&session_key, Some(kind), Some(external_session_id))
                 .await;
             self.broadcast_external_agent_session_update(&session_key)
                 .await;
         }
-        drop(session);
         if let Some(error) = external_error {
             self.external_agents.shutdown_binding(&session_key).await;
             return Err(error.into());
@@ -794,7 +931,7 @@ impl ExternalAgentChatService {
             .append(&session_key, &assistant_msg.to_value())
             .await
             .map_err(|error| error.to_string())?;
-        let message_count = history.len() + 1;
+        let message_count = history.len() + persisted_tool_messages + 1;
         self.session_metadata
             .touch(&session_key, message_count as u32)
             .await;

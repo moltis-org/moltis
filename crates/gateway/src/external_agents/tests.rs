@@ -95,6 +95,26 @@ impl ExternalAgentSession for FakeSession {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .push(prompt.to_string());
+        if prompt == "tool-events" {
+            return Ok(Box::pin(stream::iter([
+                ExternalAgentEvent::SessionBound {
+                    external_session_id: "fake-stream-session".to_string(),
+                },
+                ExternalAgentEvent::ToolCallStart {
+                    id: "tool-1".to_string(),
+                    name: "run_command".to_string(),
+                    arguments: r#"{"CommandLine":"pwd"}"#.to_string(),
+                },
+                ExternalAgentEvent::ToolCallEnd {
+                    id: "tool-1".to_string(),
+                    name: "run_command".to_string(),
+                    success: true,
+                    result: Some("/tmp\n".to_string()),
+                },
+                ExternalAgentEvent::TextDelta("tool reply".to_string()),
+                ExternalAgentEvent::Done { usage: None },
+            ])));
+        }
         Ok(Box::pin(stream::iter([
             ExternalAgentEvent::TextDelta(format!("reply to {prompt}")),
             ExternalAgentEvent::Done {
@@ -503,6 +523,46 @@ async fn bound_chat_send_reuses_live_external_session() {
             .await
             .and_then(|entry| entry.external_session_id),
         Some("fake-session-1".to_string())
+    );
+}
+
+#[tokio::test]
+async fn external_tool_events_are_persisted_with_the_terminal_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    let agent_state = Arc::new(FakeAgentState::default());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), agent_state);
+    external_agents
+        .bind(serde_json::json!({ "sessionKey": "main", "kind": "codex" }))
+        .await
+        .expect("bind external agent");
+    let chat = test_chat_service(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+    )
+    .await;
+
+    let result = chat
+        .send(serde_json::json!({ "sessionKey": "main", "text": "tool-events" }))
+        .await
+        .expect("send tool event turn");
+
+    assert_eq!(result["text"], "tool reply");
+    let history = session_store.read("main").await.expect("read history");
+    assert_eq!(history.len(), 4);
+    assert_eq!(history[1]["role"], "assistant");
+    assert_eq!(history[1]["tool_calls"][0]["id"], "tool-1");
+    assert_eq!(history[2]["role"], "tool_result");
+    assert_eq!(history[2]["tool_call_id"], "tool-1");
+    assert_eq!(history[2]["result"]["stdout"], "/tmp\n");
+    assert_eq!(history[3]["content"], "tool reply");
+    let entry = metadata.get("main").await.expect("session metadata");
+    assert_eq!(entry.message_count, 4);
+    assert_eq!(
+        entry.external_session_id.as_deref(),
+        Some("fake-stream-session")
     );
 }
 

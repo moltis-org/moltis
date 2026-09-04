@@ -33,6 +33,7 @@ tracing         = { optional = true, workspace = true }
 which           = { workspace = true }
 
 [dev-dependencies]
+tempfile   = { workspace = true }
 tokio-test = { workspace = true }
 
 [lints]

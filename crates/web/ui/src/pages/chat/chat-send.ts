@@ -23,6 +23,7 @@ import {
 } from "../../sessions";
 import * as S from "../../state";
 import { modelStore } from "../../stores/model-store";
+import { sessionStore } from "../../stores/session-store";
 import type { RpcResponse } from "../../types/rpc";
 import { handleSlashCommand, parseSlashCommand, shouldHandleSlashLocally, slashHideMenu } from "./slash-commands";
 
@@ -132,6 +133,11 @@ export function normalizeOutgoingText(text: string, hasAttachments: boolean): st
 }
 
 export function applySelectedModelToChatParams(chatParams: ChatSendParams, sessionKey: string): void {
+	// External-agent bindings own their model selection. The provider model
+	// store still points at the last native model, so writing it here would
+	// race external_agents.bind and silently replace the persisted AGY/ACP
+	// model ID when the first prompt is sent.
+	if (sessionStore.getByKey(sessionKey)?.external_agent_kind) return;
 	const effectiveId = modelStore.effectiveModelId.value;
 	if (!effectiveId) return;
 	chatParams.model = effectiveId;
@@ -258,7 +264,7 @@ async function sendChatAsync(): Promise<void> {
 		setSessionReplying(sessionKey, true);
 		forActiveSession(sessionKey, () => setComposerStopButton(true, sessionKey));
 		try {
-			const res = await sendRpc<ChatSendPayload>("chat.send", chatParams);
+			const res = await sendRpc<ChatSendPayload>("chat.send", chatParams, { timeoutMs: 120_000 });
 			handleChatSendRpcResponse(res, userEl, sessionKey);
 		} catch {
 			handleChatSendFailure(sessionKey, "Request failed");

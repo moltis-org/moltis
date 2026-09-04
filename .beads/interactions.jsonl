@@ -1,0 +1,1 @@
+{"id":"int-c4a6f994db5bc89ac1f34d2af996cc48","kind":"field_change","created_at":"2026-09-04T01:51:53.659621334Z","actor":"Tanger TAS","issue_id":"moltis-exj","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Implemented, deployed, production OAuth+TRA live-tool E2E passed, legacy bindings migrated, docs and tests complete"}}

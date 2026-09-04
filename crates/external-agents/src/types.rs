@@ -13,6 +13,10 @@ pub use moltis_sessions::metadata::ExternalAgentKind as AgentTransportKind;
 /// is unchanged.
 #[derive(Debug, Clone)]
 pub enum ExternalAgentEvent {
+    /// The external runtime established or refreshed its resumable session id.
+    SessionBound {
+        external_session_id: String,
+    },
     TextDelta(String),
     ThinkingDelta(String),
     ToolCallStart {
@@ -29,6 +33,7 @@ pub enum ExternalAgentEvent {
     Done {
         usage: Option<TokenUsage>,
     },
+    Notice(String),
     Error(String),
 }
 

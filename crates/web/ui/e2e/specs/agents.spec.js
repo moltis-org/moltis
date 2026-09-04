@@ -153,6 +153,11 @@ async function mockExternalAgentsRpc(page, listPayload, modelsPayload, bindFailu
 					if (parsed?.method === "sessions.patch") {
 						window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
 					}
+					if (parsed?.method === "chat.send") {
+						window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
+						respond(this, parsed.id, { runId: "external-agent-e2e" });
+						return;
+					}
 				} catch (_err) {
 					// Fall through to the original sender.
 				}
@@ -621,6 +626,99 @@ test.describe("Agents settings page", () => {
 			)
 			.toBe(true);
 
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("composer selector lists and binds a first-class AGY model", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockExternalAgentsRpc(
+			page,
+			[
+				{
+					kind: "agy",
+					name: "Antigravity (AGY)",
+					installed: true,
+					isAcp: false,
+					version: null,
+					models: ["gemini-3.8-flash-high", "claude-sonnet-4-6"],
+				},
+			],
+			[{ id: "e2e/model", displayName: "E2E Model", provider: "e2e", supportsReasoning: false }],
+		);
+		await page.goto("/chats");
+		await expectPageContentMounted(page);
+		await waitForWsConnected(page);
+		await createSession(page);
+		const sessionKey = await page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "");
+
+		const picker = page.locator("#modelComboBtn");
+		await expect(picker).toBeEnabled({ timeout: 10_000 });
+		await picker.click();
+		const modelEntry = page
+			.locator("#modelDropdownList .model-dropdown-item")
+			.filter({ hasText: "gemini-3.8-flash-high" });
+		await expect(modelEntry).toBeVisible();
+		await expect(modelEntry.locator(".model-item-provider")).toHaveText("Antigravity (AGY) agent");
+		await modelEntry.click();
+
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(
+						(key) =>
+							(window.__externalAgentE2ERequests || []).some(
+								(req) =>
+									req.method === "external_agents.bind" &&
+									req.params?.sessionKey === key &&
+									req.params?.kind === "agy" &&
+									req.params?.model === "gemini-3.8-flash-high",
+							),
+						sessionKey,
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
+		await expect(page.locator("#modelComboLabel")).toHaveText("Antigravity (AGY): gemini-3.8-flash-high");
+		await expect(page.locator("#reasoningCombo")).toBeHidden();
+
+		await page.locator("#chatInput").fill("AGY model persistence probe");
+		await page.locator("#sendBtn").click();
+		await expect
+			.poll(
+				() =>
+					page.evaluate(
+						(key) =>
+							(window.__externalAgentE2ERequests || []).filter(
+								(request) => request.method === "chat.send" && request.params?._session_key === key,
+							).length,
+						sessionKey,
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe(1);
+		const chatParams = await page.evaluate((key) => {
+			const request = (window.__externalAgentE2ERequests || []).find(
+				(item) => item.method === "chat.send" && item.params?._session_key === key,
+			);
+			return {
+				hasModel: Object.hasOwn(request?.params || {}, "model"),
+				model: request?.params?.model || null,
+			};
+		}, sessionKey);
+		expect(chatParams).toEqual({ hasModel: false, model: null });
+		await expect
+			.poll(
+				() =>
+					page.evaluate(
+						(key) =>
+							(window.__externalAgentE2ERequests || []).filter(
+								(request) => request.method === "sessions.patch" && request.params?.key === key,
+							).length,
+						sessionKey,
+					),
+				{ timeout: 1_000 },
+			)
+			.toBe(0);
 		expect(pageErrors).toEqual([]);
 	});
 

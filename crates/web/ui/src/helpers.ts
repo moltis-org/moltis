@@ -272,10 +272,12 @@ mdRenderer.html = ({ text }) => esc(text);
 
 const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
 const RPC_TIMEOUT_MS = 5_000;
+const CHAT_RPC_TIMEOUT_MS = 120_000;
 
-function rpcTimeoutMs(requested?: number): number {
+function rpcTimeoutMs(requested?: number, method?: string): number {
 	if (typeof window.__moltisTestRpcTimeoutMs === "number") return window.__moltisTestRpcTimeoutMs;
 	if (typeof requested === "number") return requested;
+	if (method === "chat.send" || method === "chat.send_sync") return CHAT_RPC_TIMEOUT_MS;
 	// server.rpc_timeout_ms via gon; ignore a misconfigured 0/negative.
 	const configured = gon.get("rpc_timeout_ms");
 	return typeof configured === "number" && configured > 0 ? configured : RPC_TIMEOUT_MS;
@@ -311,7 +313,7 @@ export function sendRpc<T = unknown>(
 		}
 		const id = nextId();
 		const requestedTimeoutMs = typeof timeout === "number" ? timeout : timeout?.timeoutMs;
-		const requestTimeoutMs = rpcTimeoutMs(requestedTimeoutMs);
+		const requestTimeoutMs = rpcTimeoutMs(requestedTimeoutMs, method);
 		const timer = setTimeout(() => {
 			if (S.pending[id]) {
 				delete S.pending[id];

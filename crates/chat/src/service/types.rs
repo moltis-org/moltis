@@ -238,7 +238,7 @@ fn build_persisted_tool_call(
     }
 }
 
-pub(crate) fn build_tool_call_assistant_message(
+pub fn build_tool_call_assistant_message(
     tool_call_id: impl Into<String>,
     tool_name: impl Into<String>,
     arguments: Option<Value>,
@@ -304,7 +304,7 @@ pub(crate) fn build_persisted_assistant_message(
     }
 }
 
-pub(crate) async fn persist_tool_history_pair(
+pub async fn persist_tool_history_pair(
     session_store: &Arc<SessionStore>,
     session_key: &str,
     assistant_tool_call_msg: PersistedMessage,
