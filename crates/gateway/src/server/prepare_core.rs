@@ -968,6 +968,7 @@ pub async fn prepare_gateway_core_with_profile(
         rate_limit_config,
         wake_cooldown_ms,
         events_queue,
+        Some(config.heartbeat.active_hours.clone()),
     );
 
     let live_cron = Arc::new(crate::cron::LiveCronService::new(Arc::clone(&cron_service)));
