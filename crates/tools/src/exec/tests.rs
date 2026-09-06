@@ -986,6 +986,31 @@ async fn test_exec_command_bad_working_dir_error_message() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn test_exec_command_missing_shell_reports_shell_when_working_dir_exists() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let opts = ExecOpts {
+        working_dir: Some(temp_dir.path().to_path_buf()),
+        env: vec![(
+            "PATH".to_owned(),
+            temp_dir.path().to_string_lossy().into_owned(),
+        )],
+        ..Default::default()
+    };
+
+    let err = exec_command("echo hello", &opts).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("shell 'sh' not found"),
+        "error should identify the missing shell, got: {msg}"
+    );
+    assert!(
+        !msg.contains("working directory"),
+        "error should not blame an existing working directory, got: {msg}"
+    );
+}
+
 #[tokio::test]
 async fn test_completion_callback_fires() {
     let called = Arc::new(AtomicBool::new(false));

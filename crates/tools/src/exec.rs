@@ -1,4 +1,9 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 #[cfg(feature = "metrics")]
 use std::time::Instant;
@@ -147,6 +152,24 @@ async fn read_output_limited(
     Ok(output)
 }
 
+/// Resolve the ambiguous `NotFound` spawn error without blaming a valid working directory.
+fn exec_start_error(error: std::io::Error, working_dir: Option<&Path>) -> Error {
+    if error.kind() != std::io::ErrorKind::NotFound {
+        return Error::message(format!("failed to start command: {error}"));
+    }
+
+    if let Some(dir) = working_dir
+        && !dir.is_dir()
+    {
+        return Error::message(format!(
+            "failed to start command: working directory '{}' does not exist",
+            dir.display()
+        ));
+    }
+
+    Error::message("failed to start command: shell 'sh' not found in PATH")
+}
+
 /// Execute a shell command with timeout and output limits.
 #[tracing::instrument(skip(command, opts), fields(timeout_secs = opts.timeout.as_secs()))]
 pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> {
@@ -170,20 +193,8 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
     cmd.stderr(std::process::Stdio::piped());
     // Prevent the child from inheriting stdin.
     cmd.stdin(std::process::Stdio::null());
-    let mut child = OwnedProcessTree::spawn(cmd).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            if let Some(ref dir) = opts.working_dir {
-                Error::message(format!(
-                    "failed to start command: working directory '{}' does not exist",
-                    dir.display()
-                ))
-            } else {
-                Error::message("failed to start command: shell 'sh' not found")
-            }
-        } else {
-            Error::message(format!("failed to start command: {e}"))
-        }
-    })?;
+    let mut child = OwnedProcessTree::spawn(cmd)
+        .map_err(|error| exec_start_error(error, opts.working_dir.as_deref()))?;
 
     let stdout = child
         .take_stdout()
