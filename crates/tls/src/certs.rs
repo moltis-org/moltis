@@ -340,7 +340,9 @@ pub(crate) fn load_rustls_config(cert_path: &Path, key_path: &Path) -> Result<Se
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .context("build rustls ServerConfig")?;
-    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    // Hyper does not enable RFC 8441 extended CONNECT, so advertising HTTP/2
+    // here makes browsers negotiate a protocol that cannot upgrade WebSockets.
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
     Ok(config)
 }
 
@@ -389,8 +391,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mgr = FsCertManager::with_dir(tmp.path().to_path_buf());
         let (_ca, cert, key) = mgr.ensure_certs(&[]).unwrap();
-        let config = mgr.build_rustls_config(&cert, &key);
-        assert!(config.is_ok());
+        let config = mgr.build_rustls_config(&cert, &key).unwrap();
+        assert_eq!(config.alpn_protocols, [b"http/1.1"]);
     }
 
     #[test]
