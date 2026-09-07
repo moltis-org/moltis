@@ -1221,11 +1221,7 @@ pub async fn start_gateway(
             moltis_protocol::PROTOCOL_VERSION,
             scheme,
             display_host,
-            if tls_active {
-                "HTTP/2 + HTTP/1.1"
-            } else {
-                "HTTP/1.1"
-            },
+            "HTTP/1.1",
         ),
         startup_bind_line(addr),
         format!("{} methods registered", banner.method_count),
