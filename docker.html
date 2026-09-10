@@ -144,6 +144,9 @@ for easier access to configuration files:</p>
 <span class="line"><span style="color:#2B5581;--shiki-dark:#79B8FF">  -v</span><span style="color:#2B5581;--shiki-dark:#9ECBFF"> /var/run/docker.sock:/var/run/docker.sock</span><span style="color:#24292EFF;--shiki-dark:#79B8FF"> \</span></span>
 <span class="line"><span style="color:#2B5581;--shiki-dark:#9ECBFF">  ghcr.io/moltis-org/moltis:latest</span></span></code></pre>
 <p>With bind mounts, you can edit <code>config/moltis.toml</code> directly on the host.</p>
+<aside class="admonition admonition-warning"><div class="admonition-title">Warning</div><div class="admonition-body"><p>On a fresh checkout, Docker auto-creates <code>./config</code> and <code>./data</code> as<br><code>root:root</code> the first time it bind-mounts them. Moltis runs as a non-root<br>user inside the container, so the very first start can fail with `unable<br>to open database file` before that user can write to them. Fix it once,<br>before starting the container:</p>
+<p>~~~bash<br>mkdir -p ./config ./data<br>docker run --rm --user root --entrypoint chown \<br>  -v ./config:/home/moltis/.config/moltis \<br>  -v ./data:/home/moltis/.moltis \<br>  ghcr.io/moltis-org/moltis:latest \<br>  -R moltis:moltis /home/moltis/.config /home/moltis/.moltis<br>~~~</p>
+<p>Using the image's own <code>moltis</code> username rather than a hardcoded UID keeps<br>this working even if the image's UID assignment ever changes. Named<br>volumes (the Quick Start example above) don't need this — Docker leaves an<br>existing named volume's ownership alone, only bind-mount source<br>directories get created as <code>root:root</code> on first use.</p></div></aside>
 <h2 id="docker-socket-sandbox-execution">Docker Socket (Sandbox Execution)</h2>
 <p>Moltis runs LLM-generated shell commands inside isolated containers for
 security. When Moltis itself runs in a container, it needs access to the host’s
