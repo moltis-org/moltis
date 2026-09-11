@@ -136,6 +136,11 @@ pub(crate) async fn init_memory_system(
                 "OPENROUTER_API_KEY",
                 "https://openrouter.ai/api/v1",
             ),
+            (
+                "requesty",
+                "REQUESTY_API_KEY",
+                "https://router.requesty.ai/v1",
+            ),
             ("groq", "GROQ_API_KEY", "https://api.groq.com/openai"),
             ("xai", "XAI_API_KEY", "https://api.x.ai"),
             ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com"),
@@ -159,6 +164,11 @@ pub(crate) async fn init_memory_system(
                 let mut e = moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(api_key);
                 if base != "https://api.openai.com" {
                     e = e.with_base_url(base);
+                }
+                // Requesty only accepts provider-prefixed model ids, so the
+                // bare default "text-embedding-3-small" is rejected there.
+                if *config_name == "requesty" {
+                    e = e.with_model("openai/text-embedding-3-small".into(), 1536);
                 }
                 embedding_providers.push((config_name.to_string(), Box::new(e)));
             }
