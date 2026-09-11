@@ -18,6 +18,7 @@ use {
 
 use {
     moltis_agents::{runner::RunnerEvent, tool_registry::ToolRegistry},
+    moltis_common::hooks::{ChannelBinding, HookAction, HookPayload, HookRegistry},
     moltis_sessions::{PersistedMessage, store::SessionStore},
 };
 
@@ -487,6 +488,8 @@ pub(crate) async fn run_explicit_shell_command(
     run_id: &str,
     terminal_runs: &Arc<RwLock<HashSet<String>>>,
     tool_registry: &Arc<RwLock<ToolRegistry>>,
+    hook_registry: Option<&Arc<HookRegistry>>,
+    hook_channel: Option<ChannelBinding>,
     session_store: Option<&Arc<SessionStore>>,
     session_key: &str,
     command: &str,
@@ -498,7 +501,38 @@ pub(crate) async fn run_explicit_shell_command(
 ) -> AssistantTurnOutput {
     let started = Instant::now();
     let tool_call_id = format!("sh_{}", uuid::Uuid::new_v4().simple());
-    let tool_args = serde_json::json!({ "command": command });
+    let mut tool_args = serde_json::json!({ "command": command });
+
+    let mut hook_block = None;
+    if let Some(hooks) = hook_registry {
+        let payload = HookPayload::BeforeToolCall {
+            session_key: session_key.to_string(),
+            turn_id: Some(run_id.to_string()),
+            tool_call_id: Some(tool_call_id.clone()),
+            tool_name: "exec".to_string(),
+            arguments: tool_args.clone(),
+            channel: hook_channel.clone(),
+        };
+        match hooks.dispatch(&payload).await {
+            Ok(HookAction::Continue) => {},
+            Ok(HookAction::ModifyPayload(value)) => {
+                if value.get("command").and_then(Value::as_str).is_some() {
+                    tool_args = value;
+                } else {
+                    hook_block = Some(
+                        "BeforeToolCall hook returned arguments without a string `command`"
+                            .to_string(),
+                    );
+                }
+            },
+            Ok(HookAction::Block(reason)) => {
+                hook_block = Some(format!("blocked by hook: {reason}"));
+            },
+            Err(error) => {
+                warn!(%error, "direct /sh BeforeToolCall hook failed; proceeding fail-open");
+            },
+        }
+    }
 
     send_tool_status_to_channels(state, run_id, session_key, "exec", &tool_args).await;
 
@@ -518,10 +552,8 @@ pub(crate) async fn run_explicit_shell_command(
     )
     .await;
 
-    let mut exec_params = serde_json::json!({
-        "command": command,
-        "_session_key": session_key,
-    });
+    let mut exec_params = tool_args.clone();
+    exec_params["_session_key"] = serde_json::json!(session_key);
     if let Some(lang) = accept_language.as_deref() {
         exec_params["_accept_language"] = serde_json::json!(lang);
     }
@@ -537,9 +569,11 @@ pub(crate) async fn run_explicit_shell_command(
         registry.get("exec")
     };
 
-    let exec_result = match exec_tool {
-        Some(tool) => tool.execute(exec_params).await,
-        None => Err(std::io::Error::new(
+    let should_dispatch_after = hook_block.is_none() && exec_tool.is_some();
+    let exec_result = match (hook_block, exec_tool) {
+        (Some(reason), _) => Err(anyhow::anyhow!(reason)),
+        (None, Some(tool)) => tool.execute(exec_params).await,
+        (None, None) => Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "exec tool is not registered",
         )
@@ -551,7 +585,28 @@ pub(crate) async fn run_explicit_shell_command(
 
     match exec_result {
         Ok(result) => {
+            if should_dispatch_after {
+                dispatch_direct_after_tool_call(
+                    hook_registry,
+                    session_key,
+                    run_id,
+                    &tool_call_id,
+                    &tool_args,
+                    true,
+                    Some(result.clone()),
+                    hook_channel.clone(),
+                )
+                .await;
+            }
             let capped = capped_tool_result_payload(&result, 10_000);
+            let persisted_result = apply_direct_tool_result_persist(
+                hook_registry,
+                session_key,
+                &tool_call_id,
+                capped.clone(),
+                hook_channel.clone(),
+            )
+            .await;
             let assistant_tool_call_msg = build_tool_call_assistant_message(
                 tool_call_id.clone(),
                 "exec",
@@ -566,9 +621,9 @@ pub(crate) async fn run_explicit_shell_command(
             let tool_result_msg = PersistedMessage::tool_result_with_run_id(
                 tool_call_id.clone(),
                 "exec",
-                Some(serde_json::json!({ "command": command })),
+                Some(tool_args.clone()),
                 true,
-                Some(capped.clone()),
+                Some(persisted_result),
                 None,
                 run_id,
             );
@@ -610,6 +665,32 @@ pub(crate) async fn run_explicit_shell_command(
         },
         Err(err) => {
             let error_text = err.to_string();
+            if should_dispatch_after {
+                dispatch_direct_after_tool_call(
+                    hook_registry,
+                    session_key,
+                    run_id,
+                    &tool_call_id,
+                    &tool_args,
+                    false,
+                    None,
+                    hook_channel.clone(),
+                )
+                .await;
+            }
+            let persisted_result = apply_direct_tool_result_persist(
+                hook_registry,
+                session_key,
+                &tool_call_id,
+                serde_json::json!({ "error": error_text }),
+                hook_channel,
+            )
+            .await;
+            let persisted_error = persisted_result
+                .get("error")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| persisted_result.to_string());
             let parsed_error = parse_chat_error(&error_text, None);
             let assistant_tool_call_msg = build_tool_call_assistant_message(
                 tool_call_id.clone(),
@@ -622,10 +703,10 @@ pub(crate) async fn run_explicit_shell_command(
             let tool_result_msg = PersistedMessage::tool_result_with_run_id(
                 tool_call_id.clone(),
                 "exec",
-                Some(serde_json::json!({ "command": command })),
+                Some(tool_args),
                 false,
                 None,
-                Some(error_text.clone()),
+                Some(persisted_error),
                 run_id,
             );
             if let Some(session_store) = session_store {
@@ -667,7 +748,7 @@ pub(crate) async fn run_explicit_shell_command(
     // before final delivery. This prevents a concurrent abort from emitting a
     // contradictory aborted terminal after the user already received output.
     commit_terminal_run(terminal_runs, run_id).await;
-    if !final_text.trim().is_empty() {
+    let channel_delivery_succeeded = if !final_text.trim().is_empty() {
         let streamed_target_keys = HashSet::new();
         deliver_channel_replies(
             state,
@@ -677,8 +758,10 @@ pub(crate) async fn run_explicit_shell_command(
             ReplyMedium::Text,
             &streamed_target_keys,
         )
-        .await;
-    }
+        .await
+    } else {
+        true
+    };
 
     let final_payload = build_chat_final_broadcast(
         run_id,
@@ -715,7 +798,66 @@ pub(crate) async fn run_explicit_shell_command(
         None,
     );
     output.final_broadcast = Some(payload);
+    output.channel_delivery_succeeded = channel_delivery_succeeded;
     output
+}
+
+async fn dispatch_direct_after_tool_call(
+    hook_registry: Option<&Arc<HookRegistry>>,
+    session_key: &str,
+    turn_id: &str,
+    tool_call_id: &str,
+    arguments: &Value,
+    success: bool,
+    result: Option<Value>,
+    channel: Option<ChannelBinding>,
+) {
+    let Some(hooks) = hook_registry else {
+        return;
+    };
+    let payload = HookPayload::AfterToolCall {
+        session_key: session_key.to_string(),
+        turn_id: Some(turn_id.to_string()),
+        tool_call_id: Some(tool_call_id.to_string()),
+        tool_name: "exec".to_string(),
+        arguments: Some(arguments.clone()),
+        success,
+        result,
+        channel,
+    };
+    if let Err(error) = hooks.dispatch(&payload).await {
+        warn!(%error, "direct /sh AfterToolCall hook failed");
+    }
+}
+
+async fn apply_direct_tool_result_persist(
+    hook_registry: Option<&Arc<HookRegistry>>,
+    session_key: &str,
+    tool_call_id: &str,
+    mut result: Value,
+    channel: Option<ChannelBinding>,
+) -> Value {
+    let Some(hooks) = hook_registry else {
+        return result;
+    };
+    let payload = HookPayload::ToolResultPersist {
+        session_key: session_key.to_string(),
+        tool_call_id: Some(tool_call_id.to_string()),
+        tool_name: "exec".to_string(),
+        result: result.clone(),
+        channel,
+    };
+    match hooks.dispatch(&payload).await {
+        Ok(HookAction::Continue) => {},
+        Ok(HookAction::ModifyPayload(value)) => result = value,
+        Ok(HookAction::Block(reason)) => {
+            result = serde_json::json!({ "error": format!("blocked by hook: {reason}") });
+        },
+        Err(error) => {
+            warn!(%error, "direct /sh ToolResultPersist hook failed; proceeding fail-open");
+        },
+    }
+    result
 }
 
 /// Resolve the effective tool mode for a provider.
@@ -774,6 +916,44 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
+
+    #[derive(Default)]
+    struct DirectToolLifecycleHook {
+        payloads: std::sync::Mutex<Vec<HookPayload>>,
+    }
+
+    #[async_trait]
+    impl moltis_common::hooks::HookHandler for DirectToolLifecycleHook {
+        fn name(&self) -> &str {
+            "direct-tool-lifecycle"
+        }
+
+        fn events(&self) -> &[moltis_common::hooks::HookEvent] {
+            static EVENTS: [moltis_common::hooks::HookEvent; 2] = [
+                moltis_common::hooks::HookEvent::AfterToolCall,
+                moltis_common::hooks::HookEvent::ToolResultPersist,
+            ];
+            &EVENTS
+        }
+
+        async fn handle(
+            &self,
+            event: moltis_common::hooks::HookEvent,
+            payload: &HookPayload,
+        ) -> moltis_common::Result<HookAction> {
+            self.payloads
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(payload.clone());
+            Ok(
+                if event == moltis_common::hooks::HookEvent::ToolResultPersist {
+                    HookAction::ModifyPayload(serde_json::json!({"redacted": true}))
+                } else {
+                    HookAction::Continue
+                },
+            )
+        }
+    }
 
     struct RecordingStreamOutbound {
         streams_final_replies: bool,
@@ -1116,5 +1296,58 @@ mod tests {
                 .load(Ordering::SeqCst)
         );
         assert_eq!(completed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn direct_shell_post_and_persist_hooks_share_tool_call_id() {
+        let hook = Arc::new(DirectToolLifecycleHook::default());
+        let mut registry = HookRegistry::new();
+        registry.register(hook.clone());
+        let registry = Arc::new(registry);
+
+        dispatch_direct_after_tool_call(
+            Some(&registry),
+            "session",
+            "turn",
+            "sh_call_1",
+            &serde_json::json!({"command": "pwd"}),
+            true,
+            Some(serde_json::json!({"exit_code": 0})),
+            None,
+        )
+        .await;
+        let persisted = apply_direct_tool_result_persist(
+            Some(&registry),
+            "session",
+            "sh_call_1",
+            serde_json::json!({"exit_code": 0}),
+            None,
+        )
+        .await;
+
+        assert_eq!(persisted, serde_json::json!({"redacted": true}));
+        let payloads = hook
+            .payloads
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        assert_eq!(payloads.len(), 2);
+        for payload in payloads.iter() {
+            match payload {
+                HookPayload::AfterToolCall {
+                    turn_id,
+                    tool_call_id,
+                    arguments,
+                    ..
+                } => {
+                    assert_eq!(turn_id.as_deref(), Some("turn"));
+                    assert_eq!(arguments, &Some(serde_json::json!({"command": "pwd"})));
+                    assert_eq!(tool_call_id.as_deref(), Some("sh_call_1"));
+                },
+                HookPayload::ToolResultPersist { tool_call_id, .. } => {
+                    assert_eq!(tool_call_id.as_deref(), Some("sh_call_1"));
+                },
+                other => panic!("unexpected payload: {other:?}"),
+            }
+        }
     }
 }

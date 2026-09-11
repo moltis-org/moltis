@@ -25,6 +25,8 @@ use {
     moltis_sessions::store::SessionStore,
 };
 
+use moltis_common::hooks::{HookRegistry, dispatch_agent_end};
+
 use crate::{
     agent_loop::{
         ChannelStreamDispatcher, clear_unsupported_model,
@@ -37,6 +39,7 @@ use crate::{
     chat_error::parse_chat_error,
     message::apply_voice_reply_suffix,
     models::DisabledModelsStore,
+    outbound_hooks::apply_message_sending_to_text,
     prompt::prompt_build_limits_from_config,
     runtime::ChatRuntime,
     service::ActiveAssistantDraft,
@@ -132,6 +135,7 @@ pub(crate) async fn run_streaming(
     project_context: Option<&str>,
     user_message_index: usize,
     _skills: &[moltis_skills::types::SkillMetadata],
+    hook_registry: Option<Arc<HookRegistry>>,
     runtime_context: Option<&PromptRuntimeContext>,
     sender_name: Option<String>,
     session_store: Option<&Arc<SessionStore>>,
@@ -396,6 +400,52 @@ pub(crate) async fn run_streaming(
                         return None;
                     }
 
+                    dispatch_agent_end(
+                        hook_registry.as_deref(),
+                        session_key,
+                        Some(run_id),
+                        &accumulated,
+                        1,
+                        0,
+                    )
+                    .await;
+                    accumulated = match apply_message_sending_to_text(
+                        hook_registry.as_deref(),
+                        session_key,
+                        &accumulated,
+                    )
+                    .await
+                    {
+                        Ok(content) => content,
+                        Err(reason) => {
+                            let message = format!("blocked by MessageSending hook: {reason}");
+                            state.set_run_error(run_id, message.clone()).await;
+                            let error_obj = parse_chat_error(&message, Some(provider_name));
+                            commit_terminal_and_finish_channel_stream(
+                                terminal_runs,
+                                run_id,
+                                channel_stream_dispatcher.as_mut(),
+                            )
+                            .await;
+                            deliver_channel_error(state, session_key, &error_obj).await;
+                            broadcast(
+                                state,
+                                "chat",
+                                serde_json::json!({
+                                    "runId": run_id,
+                                    "sessionKey": session_key,
+                                    "state": "error",
+                                    "error": error_obj,
+                                    "seq": client_seq,
+                                }),
+                                BroadcastOpts::default(),
+                            )
+                            .await;
+                            return None;
+                        },
+                    };
+                    let is_silent = accumulated.trim().is_empty();
+
                     let assistant_message_index = user_message_index + 1;
 
                     // Generate & persist TTS audio for voice-medium web UI replies.
@@ -464,34 +514,35 @@ pub(crate) async fn run_streaming(
                     )
                     .await;
 
+                    #[cfg(feature = "push-notifications")]
                     if !is_silent {
-                        #[cfg(feature = "push-notifications")]
-                        {
-                            tracing::info!("push: checking push notification");
-                            let push_state = Arc::clone(state);
-                            let push_session_key = session_key.to_string();
-                            let push_text = accumulated.clone();
-                            let push_order = crate::channel_push::next_push_notification_order();
-                            tokio::spawn(async move {
-                                send_chat_push_notification(
-                                    &push_state,
-                                    &push_session_key,
-                                    &push_text,
-                                    push_order,
-                                )
-                                .await;
-                            });
-                        }
-                        deliver_channel_replies(
-                            state,
-                            run_id,
-                            session_key,
-                            &accumulated,
-                            desired_reply_medium,
-                            &streamed_target_keys,
-                        )
-                        .await;
+                        tracing::info!("push: checking push notification");
+                        let push_state = Arc::clone(state);
+                        let push_session_key = session_key.to_string();
+                        let push_text = accumulated.clone();
+                        let push_order = crate::channel_push::next_push_notification_order();
+                        tokio::spawn(async move {
+                            send_chat_push_notification(
+                                &push_state,
+                                &push_session_key,
+                                &push_text,
+                                push_order,
+                            )
+                            .await;
+                        });
                     }
+                    // Always pass the terminal response through delivery. It
+                    // distinguishes a web-only turn from a channel-bound turn
+                    // whose MessageSending hook erased the response.
+                    let channel_delivery_succeeded = deliver_channel_replies(
+                        state,
+                        run_id,
+                        session_key,
+                        &accumulated,
+                        desired_reply_medium,
+                        &streamed_target_keys,
+                    )
+                    .await;
                     let llm_api_response =
                         (!raw_llm_responses.is_empty()).then_some(Value::Array(raw_llm_responses));
                     let mut output = build_assistant_turn_output(
@@ -503,6 +554,7 @@ pub(crate) async fn run_streaming(
                         llm_api_response,
                     );
                     output.final_broadcast = Some(payload_val);
+                    output.channel_delivery_succeeded = channel_delivery_succeeded;
                     return Some(output);
                 },
                 StreamEvent::Error(msg) => {

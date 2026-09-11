@@ -93,18 +93,49 @@ pub(crate) async fn commit_terminal_run(
     terminal_runs.write().await.insert(run_id.to_string());
 }
 
-pub(in crate::service) async fn commit_successful_turn<P, B>(
+pub(in crate::service) async fn commit_successful_turn<P, B, T>(
     terminal_runs: &Arc<RwLock<HashSet<String>>>,
     run_id: &str,
     persistence: P,
     final_broadcast: B,
-) where
-    P: Future<Output = ()>,
+) -> T
+where
+    P: Future<Output = T>,
     B: Future<Output = ()>,
 {
     commit_terminal_run(terminal_runs, run_id).await;
-    persistence.await;
+    let persistence_result = persistence.await;
     final_broadcast.await;
+    persistence_result
+}
+
+pub(in crate::service) async fn persist_successful_assistant(
+    state: &Arc<dyn ChatRuntime>,
+    session_store: &SessionStore,
+    session_key: &str,
+    run_id: &str,
+    assistant_msg: Option<PersistedMessage>,
+    ephemeral: bool,
+) -> bool {
+    let persisted = if let Some(assistant_msg) = assistant_msg {
+        match session_store
+            .append(session_key, &assistant_msg.to_value())
+            .await
+        {
+            Ok(()) => true,
+            Err(error) => {
+                warn!(%error, "failed to persist assistant message");
+                false
+            },
+        }
+    } else {
+        true
+    };
+    if persisted && !ephemeral {
+        crate::channel_feedback::record_web_reply_trace(state, session_key, run_id).await;
+    }
+    crate::channel_acks::note_turn_finished(state, run_id, true).await;
+    persisted
 }
 
 #[derive(Clone)]
@@ -1143,7 +1174,7 @@ mod tests {
         let terminal_at_persistence = Arc::clone(&terminal);
         let terminal_at_broadcast = Arc::clone(&terminal);
 
-        commit_successful_turn(
+        let persistence_succeeded = commit_successful_turn(
             &terminal,
             "run-1",
             async move {
@@ -1152,6 +1183,7 @@ mod tests {
                     .lock()
                     .unwrap_or_else(|error| error.into_inner())
                     .push("persist");
+                true
             },
             async move {
                 assert!(terminal_at_broadcast.read().await.contains("run-1"));
@@ -1163,6 +1195,7 @@ mod tests {
         )
         .await;
 
+        assert!(persistence_succeeded);
         assert_eq!(*events.lock().unwrap_or_else(|error| error.into_inner()), [
             "persist", "final"
         ]);
@@ -1412,6 +1445,7 @@ mod tests {
                 reasoning: Some("thinking".to_string()),
                 llm_api_response: None,
                 final_broadcast: None,
+                channel_delivery_succeeded: true,
             },
             Some("gpt-4.1".to_string()),
             Some("openai".to_string()),

@@ -6,6 +6,130 @@ use {
     std::sync::{Arc, Mutex},
 };
 
+struct PendingTargetRuntime {
+    targets: Mutex<Vec<ChannelReplyTarget>>,
+    tts: moltis_service_traits::NoopTtsService,
+    project: moltis_service_traits::NoopProjectService,
+    mcp: moltis_service_traits::NoopMcpService,
+}
+
+#[async_trait]
+impl ChatRuntime for PendingTargetRuntime {
+    async fn broadcast(&self, _topic: &str, _payload: Value) {}
+
+    async fn push_channel_reply(&self, _session_key: &str, target: ChannelReplyTarget) {
+        self.targets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(target);
+    }
+
+    async fn drain_channel_replies(&self, _session_key: &str) -> Vec<ChannelReplyTarget> {
+        std::mem::take(
+            &mut *self
+                .targets
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+        )
+    }
+
+    async fn peek_channel_replies(&self, _session_key: &str) -> Vec<ChannelReplyTarget> {
+        self.targets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    async fn push_channel_status_log(&self, _session_key: &str, _message: String) {}
+
+    async fn drain_channel_status_log(&self, _session_key: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    async fn set_run_error(&self, _run_id: &str, _error: String) {}
+
+    async fn active_session_key(&self, _conn_id: &str) -> Option<String> {
+        None
+    }
+
+    async fn active_project_id(&self, _conn_id: &str) -> Option<String> {
+        None
+    }
+
+    fn hostname(&self) -> &str {
+        "test"
+    }
+
+    fn sandbox_router(&self) -> Option<&Arc<moltis_tools::sandbox::SandboxRouter>> {
+        None
+    }
+
+    fn memory_manager(&self) -> Option<&moltis_memory::runtime::DynMemoryRuntime> {
+        None
+    }
+
+    async fn cached_location(&self) -> Option<moltis_config::GeoLocation> {
+        None
+    }
+
+    async fn tts_overrides(
+        &self,
+        _session_key: &str,
+        _channel_key: &str,
+    ) -> (
+        Option<crate::runtime::TtsOverride>,
+        Option<crate::runtime::TtsOverride>,
+    ) {
+        (None, None)
+    }
+
+    fn channel_outbound(&self) -> Option<Arc<dyn moltis_channels::ChannelOutbound>> {
+        None
+    }
+
+    fn channel_stream_outbound(&self) -> Option<Arc<dyn moltis_channels::ChannelStreamOutbound>> {
+        None
+    }
+
+    fn tts_service(&self) -> &dyn moltis_service_traits::TtsService {
+        &self.tts
+    }
+
+    fn project_service(&self) -> &dyn moltis_service_traits::ProjectService {
+        &self.project
+    }
+
+    fn mcp_service(&self) -> &dyn moltis_service_traits::McpService {
+        &self.mcp
+    }
+
+    async fn chat_service(&self) -> Arc<dyn moltis_service_traits::ChatService> {
+        Arc::new(moltis_service_traits::NoopChatService)
+    }
+
+    async fn last_run_error(&self, _run_id: &str) -> Option<String> {
+        None
+    }
+
+    async fn send_push_notification(
+        &self,
+        _title: &str,
+        _body: &str,
+        _url: Option<&str>,
+        _session_key: Option<&str>,
+    ) -> crate::error::Result<usize> {
+        Ok(0)
+    }
+
+    async fn ensure_local_model_cached(&self, _model_id: &str) -> crate::error::Result<bool> {
+        Ok(false)
+    }
+
+    async fn connected_nodes(&self) -> Vec<crate::runtime::ConnectedNodeSummary> {
+        Vec::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SentMedia {
     account_id: String,
@@ -86,6 +210,61 @@ fn telegram_target() -> ChannelReplyTarget {
         message_id: Some("42".into()),
         thread_id: Some("7".into()),
     }
+}
+
+#[tokio::test]
+async fn silent_terminal_response_with_pending_target_is_delivery_failure() {
+    for streamed in [false, true] {
+        for text in ["", "   "] {
+            let target = telegram_target();
+            let streamed_target_keys = if streamed {
+                HashSet::from([ChannelReplyTargetKey::from(&target)])
+            } else {
+                HashSet::new()
+            };
+            let state: Arc<dyn ChatRuntime> = Arc::new(PendingTargetRuntime {
+                targets: Mutex::new(vec![target]),
+                tts: moltis_service_traits::NoopTtsService,
+                project: moltis_service_traits::NoopProjectService,
+                mcp: moltis_service_traits::NoopMcpService,
+            });
+
+            assert!(
+                !deliver_channel_replies(
+                    &state,
+                    "run-1",
+                    "telegram:bot:123",
+                    text,
+                    ReplyMedium::Text,
+                    &streamed_target_keys,
+                )
+                .await,
+                "silent channel response {text:?} (streamed={streamed}) must not count as delivered"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn silent_web_only_response_remains_successful_without_a_channel_target() {
+    let state: Arc<dyn ChatRuntime> = Arc::new(PendingTargetRuntime {
+        targets: Mutex::new(Vec::new()),
+        tts: moltis_service_traits::NoopTtsService,
+        project: moltis_service_traits::NoopProjectService,
+        mcp: moltis_service_traits::NoopMcpService,
+    });
+
+    assert!(
+        deliver_channel_replies(
+            &state,
+            "run-1",
+            "chat:main",
+            "",
+            ReplyMedium::Text,
+            &HashSet::new(),
+        )
+        .await
+    );
 }
 
 #[tokio::test]

@@ -51,6 +51,7 @@ use crate::{
     memory_tools::{effective_tool_mode, install_agent_scoped_memory_tools},
     message::apply_voice_reply_suffix,
     models::DisabledModelsStore,
+    outbound_hooks::apply_message_sending_to_agent_result,
     prompt::{
         apply_runtime_tool_filters, build_policy_context, build_tool_context,
         prompt_build_limits_from_config,
@@ -1027,6 +1028,7 @@ pub(crate) async fn run_with_tools(
     }));
 
     let provider_ref = provider.clone();
+    let outbound_hook_registry = hook_registry.clone();
     let first_agent_future = run_agent_loop_streaming_with_limits(
         provider,
         &filtered_registry,
@@ -1192,6 +1194,12 @@ pub(crate) async fn run_with_tools(
         let trimmed = reasoning_text.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_string())
     };
+    let result = apply_message_sending_to_agent_result(
+        outbound_hook_registry.as_deref(),
+        session_key,
+        result,
+    )
+    .await;
     match result {
         Ok(result) => {
             clear_unsupported_model(state, model_store, model_id).await;
@@ -1326,34 +1334,34 @@ pub(crate) async fn run_with_tools(
                 commit_terminal_and_finish_channel_stream(terminal_runs, run_id, None).await
             };
 
+            #[cfg(feature = "push-notifications")]
             if !is_silent {
-                #[cfg(feature = "push-notifications")]
-                {
-                    tracing::info!("push: checking push notification (agent mode)");
-                    let push_state = Arc::clone(state);
-                    let push_session_key = session_key.to_string();
-                    let push_text = display_text.clone();
-                    let push_order = crate::channel_push::next_push_notification_order();
-                    tokio::spawn(async move {
-                        send_chat_push_notification(
-                            &push_state,
-                            &push_session_key,
-                            &push_text,
-                            push_order,
-                        )
-                        .await;
-                    });
-                }
-                deliver_channel_replies(
-                    state,
-                    run_id,
-                    session_key,
-                    &display_text,
-                    desired_reply_medium,
-                    &streamed_target_keys,
-                )
-                .await;
+                tracing::info!("push: checking push notification (agent mode)");
+                let push_state = Arc::clone(state);
+                let push_session_key = session_key.to_string();
+                let push_text = display_text.clone();
+                let push_order = crate::channel_push::next_push_notification_order();
+                tokio::spawn(async move {
+                    send_chat_push_notification(
+                        &push_state,
+                        &push_session_key,
+                        &push_text,
+                        push_order,
+                    )
+                    .await;
+                });
             }
+            // Delivery owns the distinction between no channel target and a
+            // channel-bound response erased by MessageSending.
+            let channel_delivery_succeeded = deliver_channel_replies(
+                state,
+                run_id,
+                session_key,
+                &display_text,
+                desired_reply_medium,
+                &streamed_target_keys,
+            )
+            .await;
             let mut output = build_assistant_turn_output(
                 display_text,
                 UsageSnapshot::new(usage, Some(request_usage)),
@@ -1363,6 +1371,7 @@ pub(crate) async fn run_with_tools(
                 llm_api_response,
             );
             output.final_broadcast = Some(payload_val);
+            output.channel_delivery_succeeded = channel_delivery_succeeded;
             Some(output)
         },
         Err(e) => {

@@ -174,6 +174,9 @@ pub(crate) struct AssistantTurnOutput {
     /// Prepared after abortable channel delivery and emitted by the run owner
     /// only after the assistant message has been persisted.
     pub final_broadcast: Option<Value>,
+    /// True when every known channel target accepted its terminal delivery.
+    /// Web-only turns have no channel target and therefore remain successful.
+    pub channel_delivery_succeeded: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -248,6 +251,7 @@ pub(crate) fn build_assistant_turn_output(
         reasoning,
         llm_api_response,
         final_broadcast: None,
+        channel_delivery_succeeded: true,
     }
 }
 

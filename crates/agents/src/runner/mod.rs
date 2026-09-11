@@ -40,7 +40,7 @@ pub type SteerInbox = std::sync::Arc<tokio::sync::Mutex<Vec<String>>>;
 pub(crate) use helpers::{
     AUTO_CONTINUE_NUDGE, MALFORMED_TOOL_RETRY_PROMPT, UsageAccumulator,
     apply_before_llm_call_modify_payload, apply_loop_detector_intervention,
-    channel_binding_from_tool_context, dispatch_after_llm_call_hook,
+    channel_binding_from_tool_context, dispatch_after_llm_call_hook, dispatch_agent_end_hook,
     dispatch_before_agent_start_hook, empty_tool_name_retry_prompt,
     enforce_tool_result_context_budget, explicit_shell_command_from_user_content,
     find_empty_tool_name_call, finish_agent_run, has_named_tool_call, is_substantive_answer_text,
