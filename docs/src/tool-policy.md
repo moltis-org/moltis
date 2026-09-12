@@ -116,9 +116,29 @@ allowed, and `exec`/`write_file` are explicitly denied. See
 Channel accounts can restrict tools by chat type (`private`, `group`,
 `channel`, etc.). By default, guest, shared-room, and unknown-topology turns
 have a deny-all ceiling, so this layer primarily narrows tools available to an
-operator in a proven direct chat. Channels that support `untrusted_audience`
-and `untrusted_tools` can explicitly lift that ceiling and hand the decision
-back to this layer.
+operator in a proven direct chat. Telegram and Slack accounts can explicitly
+lift that ceiling and hand the decision back to these policy layers:
+
+- `untrusted_audience = "public"` (default) limits tool eligibility to the public
+  audience; `"trusted"` makes MCP, WASM, and other trusted-audience tools eligible.
+- `untrusted_tools = "deny_all"` (default) denies all tool names; `"policy"`
+  removes that blanket denial and lets configured policy layers decide.
+
+MCP tools require **both** `untrusted_audience = "trusted"` and
+`untrusted_tools = "policy"`. An allow list or sender override alone cannot
+bypass either default. These opt-ins are account-wide for turns outside an
+operator direct chat, including guest DMs and shared or unknown chat kinds.
+Restrict group/channel access and DM access as well as tool policies before
+enabling them; without restrictive policies, every tool allowed by the remaining
+layers becomes available.
+
+For UI-managed accounts, set these fields through Advanced Config JSON in
+**Settings > Channels**. Channel settings are stored in `data_dir()/moltis.db`,
+not written back to `moltis.toml`. Database-backed `tools.groups` policies are
+not currently part of runtime policy resolution, so use a restrictive global
+or provider policy before lifting the ceiling. See
+[Telegram](telegram.md#tools-in-shared-chats) and
+[Slack](slack.md#tools-in-shared-channels) for account-specific guidance.
 
 ```toml
 [channels.telegram.my-bot.tools.groups.private]
@@ -148,7 +168,8 @@ However, because **deny always accumulates**, the `exec` and `browser` denials
 from the chat-type layer still apply. By default, the sender must also be a
 configured operator in a proven direct chat; a sender override alone never
 grants tools. A supported channel account can instead opt its untrusted turns
-into policy-based access with `untrusted_audience` and `untrusted_tools`.
+into trusted-audience, policy-based access with `untrusted_audience = "trusted"`
+and `untrusted_tools = "policy"`.
 
 ## Layer 6 — Sandbox
 
@@ -184,7 +205,8 @@ deny = ["exec", "browser*"]
 ```
 
 Operators in proven direct chats cannot use `exec` or any tool starting with
-`browser`. Guest and shared-room turns already receive no tools.
+`browser`. Guest and shared-room turns already receive no tools unless the
+account explicitly lifts the default ceiling.
 
 ### Narrow one operator in direct chats
 
@@ -197,8 +219,8 @@ allow = ["web_search"]
 ```
 
 Operator `123456` can only search in a proven direct chat. Other operators in
-direct chats can search and fetch. This configuration grants nothing to guests
-or shared-room participants.
+direct chats can search and fetch. With the default audience ceiling, this
+configuration grants nothing to guests or shared-room participants.
 
 ### Agent preset with limited tools
 
@@ -236,8 +258,8 @@ profile = "full"
 ```
 
 Operator `123456` gets `allow = ["*"]` from the `full` profile, replacing the
-chat-type allow list in a proven direct chat. The same sender still receives no
-tools as a guest or in a shared or unknown chat.
+chat-type allow list in a proven direct chat. With the default audience ceiling,
+the same sender still receives no tools as a guest or in a shared or unknown chat.
 
 ## Debugging
 

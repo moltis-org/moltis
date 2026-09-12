@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use {
     moltis_channels::{
-        config_view::ChannelConfigView,
+        config_view::{ChannelConfigView, UntrustedAudience, UntrustedTools},
         gating::{DmPolicy, GroupPolicy, MentionMode},
     },
     moltis_common::secret_serde,
@@ -69,6 +69,12 @@ pub struct TelegramAccountConfig {
     /// Empty grants nobody privileged access.
     #[serde(default)]
     pub operators: Vec<String>,
+
+    /// Tool audience ceiling for shared chats and guest DMs on this account.
+    pub untrusted_audience: UntrustedAudience,
+
+    /// Whether untrusted turns deny every tool or defer to configured policies.
+    pub untrusted_tools: UntrustedTools,
 
     /// Group/chat ID allowlist.
     pub group_allowlist: Vec<String>,
@@ -143,7 +149,7 @@ pub struct RedactedConfig<'a>(pub &'a TelegramAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 15; // always-present fields
+        let mut count = 17; // always-present fields
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
         count += c.agent_id.is_some() as usize;
@@ -156,6 +162,8 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("mention_mode", &c.mention_mode)?;
         s.serialize_field("allowlist", &c.allowlist)?;
         s.serialize_field("operators", &c.operators)?;
+        s.serialize_field("untrusted_audience", &c.untrusted_audience)?;
+        s.serialize_field("untrusted_tools", &c.untrusted_tools)?;
         s.serialize_field("group_allowlist", &c.group_allowlist)?;
         s.serialize_field("stream_mode", &c.stream_mode)?;
         s.serialize_field("edit_throttle_ms", &c.edit_throttle_ms)?;
@@ -191,6 +199,14 @@ impl ChannelConfigView for TelegramAccountConfig {
 
     fn operators(&self) -> &[String] {
         &self.operators
+    }
+
+    fn untrusted_audience(&self) -> UntrustedAudience {
+        self.untrusted_audience
+    }
+
+    fn untrusted_tools(&self) -> UntrustedTools {
+        self.untrusted_tools
     }
 
     fn group_allowlist(&self) -> &[String] {
@@ -263,6 +279,8 @@ impl Default for TelegramAccountConfig {
             mention_mode: MentionMode::default(),
             allowlist: Vec::new(),
             operators: Vec::new(),
+            untrusted_audience: UntrustedAudience::default(),
+            untrusted_tools: UntrustedTools::default(),
             group_allowlist: Vec::new(),
             stream_mode: StreamMode::default(),
             edit_throttle_ms: 2000,
@@ -329,6 +347,57 @@ mod tests {
         let cfg = TelegramAccountConfig::default();
         assert!(cfg.channel_overrides.is_empty());
         assert!(cfg.user_overrides.is_empty());
+    }
+
+    #[test]
+    fn untrusted_tool_ceiling_round_trips_and_redacts() {
+        for (audience, tools) in [
+            ("public", "deny_all"),
+            ("public", "policy"),
+            ("trusted", "deny_all"),
+            ("trusted", "policy"),
+        ] {
+            let cfg: TelegramAccountConfig = serde_json::from_value(serde_json::json!({
+                "token": "test-token",
+                "untrusted_audience": audience,
+                "untrusted_tools": tools,
+            }))
+            .unwrap();
+            let stored = serde_json::to_value(&cfg).unwrap();
+            let round_tripped: TelegramAccountConfig = serde_json::from_value(stored).unwrap();
+            let view: &dyn ChannelConfigView = &round_tripped;
+            assert_eq!(
+                serde_json::to_value(view.untrusted_audience()).unwrap(),
+                audience
+            );
+            assert_eq!(serde_json::to_value(view.untrusted_tools()).unwrap(), tools);
+
+            let redacted = serde_json::to_value(RedactedConfig(&round_tripped)).unwrap();
+            assert_eq!(redacted["untrusted_audience"], audience);
+            assert_eq!(redacted["untrusted_tools"], tools);
+            assert_eq!(redacted["token"], "[REDACTED]");
+        }
+    }
+
+    #[test]
+    fn untrusted_tool_ceiling_defaults_are_fail_closed() {
+        for cfg in [
+            TelegramAccountConfig::default(),
+            serde_json::from_value(serde_json::json!({})).unwrap(),
+        ] {
+            assert_eq!(cfg.untrusted_audience(), UntrustedAudience::Public);
+            assert_eq!(cfg.untrusted_tools(), UntrustedTools::DenyAll);
+        }
+    }
+
+    #[test]
+    fn invalid_untrusted_tool_ceiling_is_rejected() {
+        for invalid in [
+            serde_json::json!({ "untrusted_audience": "everyone" }),
+            serde_json::json!({ "untrusted_tools": "allow_all" }),
+        ] {
+            assert!(serde_json::from_value::<TelegramAccountConfig>(invalid).is_err());
+        }
     }
 
     #[test]

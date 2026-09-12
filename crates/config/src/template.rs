@@ -885,6 +885,18 @@ port = {port}                           # Port number (auto-generated for this i
 # [channels]
 # offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]
 
+# Example Telegram account.
+# [channels.telegram.my-bot]
+# token = "123456:..."
+# dm_policy = "allowlist"
+# allowlist = []
+# group_policy = "allowlist"
+# group_allowlist = []
+# untrusted_audience = "public" # "trusted" makes MCP and other trusted-audience tools eligible.
+# untrusted_tools = "deny_all"  # "policy" lets configured policy layers decide.
+# MCP needs both opt-ins; they apply account-wide, including guest DMs.
+# Restrict group/DM access and tool policies before enabling them.
+
 # Example WhatsApp account. Pair the account by scanning the QR code after startup.
 # [channels.whatsapp.my-bot]
 # push_name = "Moltis"        # Falls back to [identity] name, then "Moltis".

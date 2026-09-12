@@ -372,6 +372,65 @@ fn public_audience_tools_require_explicit_registration() {
     }
 }
 
+#[cfg(feature = "telegram")]
+#[test]
+fn telegram_config_controls_shared_turn_tool_ceiling() {
+    use moltis_channels::config_view::ChannelConfigView;
+
+    for (settings, audience_lifted, tools_lifted) in [
+        (serde_json::json!({}), false, false),
+        (
+            serde_json::json!({"untrusted_audience": "trusted"}),
+            true,
+            false,
+        ),
+        (
+            serde_json::json!({"untrusted_tools": "policy"}),
+            false,
+            true,
+        ),
+        (
+            serde_json::json!({"untrusted_audience": "trusted", "untrusted_tools": "policy"}),
+            true,
+            true,
+        ),
+    ] {
+        let config: moltis_telegram::config::TelegramAccountConfig =
+            serde_json::from_value(settings).unwrap();
+        let view: &dyn ChannelConfigView = &config;
+        for (chat_id, role) in [
+            ("-123", ChannelSenderRole::Operator),
+            ("-100123", ChannelSenderRole::Operator),
+            ("123", ChannelSenderRole::Guest),
+        ] {
+            let target = ChannelReplyTarget {
+                channel_type: ChannelType::Telegram,
+                account_id: "bot".into(),
+                chat_id: chat_id.into(),
+                message_id: None,
+                thread_id: None,
+                ack_message_id: None,
+            };
+            assert!(!is_trusted_channel_turn(role, &target));
+            assert!(!is_channel_command_authorized(
+                moltis_channels::commands::CommandPrivilege::OperatorDirect,
+                role,
+                &target,
+            ));
+
+            let mut params = serde_json::json!({"_private_context": true});
+            apply_untrusted_channel_context_with(
+                &mut params,
+                view.untrusted_audience(),
+                view.untrusted_tools(),
+            );
+            assert_eq!(params.get("_tool_audience").is_none(), audience_lifted);
+            assert_eq!(params.get("_tool_policy").is_none(), tools_lifted);
+            assert_eq!(params["_private_context"], false);
+        }
+    }
+}
+
 // ── unique_providers ───────────────────────────────────────────
 
 /// Regression test for GitHub issue #637: providers must be deduplicated

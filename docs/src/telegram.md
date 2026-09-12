@@ -75,6 +75,8 @@ offered = ["telegram"]
 | `mention_mode` | no | `"mention"` | When the bot responds in groups: `"always"`, `"mention"` (only when @mentioned), or `"none"` |
 | `allowlist` | no | `[]` | User IDs or usernames allowed to DM the bot (when `dm_policy = "allowlist"`) |
 | `group_allowlist` | no | `[]` | Group/chat IDs allowed to interact with the bot |
+| `untrusted_audience` | no | `"public"` | Tool audience ceiling for turns outside an operator direct chat: `"public"` or `"trusted"` |
+| `untrusted_tools` | no | `"deny_all"` | Tool name policy for those turns: `"deny_all"`, or `"policy"` to let configured policy layers decide |
 | `model` | no | — | Override the default model for this channel |
 | `model_provider` | no | — | Provider for the overridden model |
 | `agent_id` | no | — | Default agent ID for this bot's sessions |
@@ -115,6 +117,44 @@ otp_self_approval = true
 stream_mode = "edit_in_place"
 edit_throttle_ms = 2000
 ```
+
+### Tools in Shared Chats
+
+By default, Telegram group chats, guest DMs (messages from non-operators), and
+unknown chat kinds receive no tools. As with Slack, MCP tools require **both**
+account settings below:
+
+```toml
+[channels.telegram.my-bot]
+untrusted_audience = "trusted"
+untrusted_tools = "policy"
+```
+
+`untrusted_audience = "trusted"` makes MCP, WASM, and other trusted-audience
+tools eligible. `untrusted_tools = "policy"` removes the blanket name denial
+and lets the [tool policy layers](tool-policy.md) decide which tools are
+available. Neither setting alone enables MCP tools, and a policy allow list
+alone cannot bypass the default ceiling.
+
+```admonish warning title="Account-wide trust opt-in"
+These settings apply to every turn outside an operator direct chat for this
+bot account, including guest DMs, not just the group you intend to enable.
+Without restrictive policies, those turns can reach every tool allowed by the
+remaining policy layers. Set `group_policy = "allowlist"` with a narrow
+`group_allowlist`, restrict DM access with `dm_policy` and `allowlist` (or
+disable DMs), and review OTP approvals before lifting the ceiling. Mention
+mode is not an access-control boundary.
+```
+
+For TOML-managed accounts, restrict tools for each enabled chat type with
+`tools.groups.<chat_type>` policies, including `private` for guest DMs. For
+UI-managed accounts, database-backed `tools.groups` policies are not currently
+part of runtime policy resolution: configure a restrictive global or provider
+policy before lifting the ceiling. Denials in any policy layer still win.
+
+These settings do not grant `/sh`, privileged commands, or owner-private prompt
+context in shared chats. Those remain restricted to operators in proven direct
+chats.
 
 ### Per-User and Per-Channel Model and Agent Overrides
 
@@ -273,6 +313,22 @@ You can also configure Telegram through the web interface:
 5. Click **Connect**
 
 The same form is available during onboarding when Telegram is in `channels.offered`.
+
+In **Settings > Channels**, use the account's **Advanced Config** JSON editor
+for settings without dedicated form fields. To opt into trusted-audience tools
+and policy-based access, set:
+
+```json
+{
+  "untrusted_audience": "trusted",
+  "untrusted_tools": "policy"
+}
+```
+
+Read [Tools in Shared Chats](#tools-in-shared-chats) and configure restrictive
+access and tool policies first. Channel settings added or edited in the web UI
+are stored in `data_dir()/moltis.db`, not written back to `moltis.toml`. Use the
+TOML examples only for manually managed accounts.
 
 ## Troubleshooting
 
