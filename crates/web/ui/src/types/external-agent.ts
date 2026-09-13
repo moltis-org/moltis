@@ -5,4 +5,6 @@ export interface ExternalAgentInfo {
 	installed: boolean;
 	isAcp: boolean;
 	version?: string | null;
+	models?: string[];
+	efforts?: string[];
 }

@@ -796,6 +796,14 @@ port = {port}                           # Port number (auto-generated for this i
 # models = ["gpt-5.5", "gpt-5.4"]
 # efforts = ["medium", "high", "xhigh"]
 
+# Antigravity uses the official AGY CLI and its existing Google OAuth login.
+# Moltis reads AGY's stream-json output directly; no Gemini CLI, API key, or
+# third-party ACP bridge is involved.
+# [external_agents.agents.agy]
+# binary = "agy"
+# models = ["gemini-3.8-flash-high", "claude-sonnet-4-6"]
+# timeout_secs = 3600
+
 # Generic manual ACP server for advanced/custom CLIs not listed below.
 # If Moltis is missing a named default for an ACP agent, check the official
 # catalog for the agent's current launch command and configure it here:

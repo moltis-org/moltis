@@ -238,7 +238,7 @@ fn build_persisted_tool_call(
     }
 }
 
-pub(crate) fn build_tool_call_assistant_message(
+pub fn build_tool_call_assistant_message(
     tool_call_id: impl Into<String>,
     tool_name: impl Into<String>,
     arguments: Option<Value>,
@@ -304,14 +304,16 @@ pub(crate) fn build_persisted_assistant_message(
     }
 }
 
-pub(crate) async fn persist_tool_history_pair(
+/// Persist a tool call and its result in order, returning the number of
+/// messages that were durably appended.
+pub async fn persist_tool_history_pair(
     session_store: &Arc<SessionStore>,
     session_key: &str,
     assistant_tool_call_msg: PersistedMessage,
     tool_result_msg: PersistedMessage,
     assistant_warn_context: &str,
     tool_result_warn_context: &str,
-) {
+) -> usize {
     if let Err(e) = session_store
         .append(session_key, &assistant_tool_call_msg.to_value())
         .await
@@ -321,7 +323,7 @@ pub(crate) async fn persist_tool_history_pair(
             session = %session_key,
             "skipping tool result persistence to avoid orphaned tool history"
         );
-        return;
+        return 0;
     }
 
     if let Err(e) = session_store
@@ -329,7 +331,10 @@ pub(crate) async fn persist_tool_history_pair(
         .await
     {
         warn!("{tool_result_warn_context}: {e}");
+        return 1;
     }
+
+    2
 }
 
 pub struct LiveChatService {

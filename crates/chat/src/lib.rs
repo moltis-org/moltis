@@ -33,3 +33,5 @@ pub use {
         model_matches_allowlist_with_provider, normalize_model_key,
     },
 };
+
+pub use service::{build_tool_call_assistant_message, persist_tool_history_pair};

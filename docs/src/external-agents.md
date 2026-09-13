@@ -10,6 +10,7 @@ Supported agent kinds:
 |------|-----------------|-------|
 | `claude-code` | `claude -p --output-format json` | Print mode with `session_id` capture; later turns add `--resume <id>`. |
 | `codex` | `codex app-server` | Persistent app-server process; Moltis reuses the Codex `threadId` across turns. |
+| `agy` | `agy -p ... --output-format stream-json` | Direct Antigravity CLI integration using AGY's existing Google OAuth login; tool and subagent events stream live. |
 | `acp` | `acp` | Persistent ACP JSON-RPC stdio session configured by `[external_agents.agents.acp]`. |
 | `acp-copilot` | `copilot --acp` | Named ACP session shown as `ACP: Copilot` in the chat model selector. |
 | `acp-codex` | `codex-acp` | Codex via Zed's ACP adapter, shown as `ACP: Codex`. |
@@ -168,11 +169,20 @@ timeout_secs = 300
 
 [external_agents.agents.codex]
 binary = "codex"
+
+[external_agents.agents.agy]
+binary = "agy"
+models = ["gemini-3.8-flash-high", "claude-sonnet-4-6"]
+timeout_secs = 3600
 ```
 
-## Select an ACP agent for a session
+The `agy` integration launches the official CLI directly. It does not invoke Gemini CLI, require an API key, or use an ACP adapter. Moltis starts one print-mode process per turn, resumes later turns with AGY's conversation ID, and reads `stream-json` stdout as it arrives. Tool and subagent cards therefore appear before the process exits; the authoritative assistant text is taken from AGY's terminal result frame to avoid corrupting split UTF-8 deltas.
 
-The model selector below the chat text field includes installed ACP agents, labeled with the protocol and agent name, such as `ACP: Copilot`. Selecting an ACP entry binds that chat session to the external agent. Select any normal model in the same menu to unbind the ACP agent and return the session to the provider-backed Moltis agent.
+Headless AGY turns use `--dangerously-skip-permissions`, matching AGY's direct host integration requirements. AGY still loads and executes its own global and workspace hook files; the meaning of hook decisions remains owned by AGY. Moltis observes AGY's inner tool events but does not misrepresent those post-dispatch stream frames as Moltis-side pre-execution approval gates.
+
+## Select an external agent for a session
+
+The model selector below the chat text field includes installed selectable external agents. ACP entries retain labels such as `ACP: Copilot`; AGY appears as `Antigravity (AGY)` and expands into the models configured under `[external_agents.agents.agy]`. Selecting an entry binds that chat session to the external agent. Select any normal model in the same menu to unbind it and return the session to the provider-backed Moltis agent.
 
 Binding is per session. You can bind one chat session to `ACP: Copilot`, another to `ACP: Claude`, and leave other sessions on the normal Moltis agent.
 
@@ -194,4 +204,5 @@ Moltis advertises ACP file-system and terminal capabilities to agents. File read
 Current limitations:
 
 - Claude Code persistence uses print-mode `--resume`; it does not yet keep an interactive PTY alive.
+- AGY emits thinking-token counts but no thinking text. Moltis shows live tool and subagent progress, then the authoritative final response.
 - Live external processes are not restored automatically after a Moltis gateway restart.

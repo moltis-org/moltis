@@ -14,19 +14,19 @@ let externalAgentsLoaded = false;
 let modelsLoaded = false;
 let fetchModelsGeneration = 0;
 const switchingBackendSessions = new Set<string>();
-const acpAutoBindAttempted = new Set<string>();
-const acpAutoBindInFlight = new Set<string>();
-const acpAutoBindFailures = new Map<string, number>();
-const acpAutoBindRetryTimers = new Map<string, number>();
+const externalAgentAutoBindAttempted = new Set<string>();
+const externalAgentAutoBindInFlight = new Set<string>();
+const externalAgentAutoBindFailures = new Map<string, number>();
+const externalAgentAutoBindRetryTimers = new Map<string, number>();
 const ACP_AUTO_BIND_RETRY_BASE_MS = 1_000;
 const ACP_AUTO_BIND_RETRY_MAX_MS = 30_000;
 
-function installedAcpAgents(): ExternalAgentInfo[] {
-	return externalAgents.filter((agent) => agent.installed && agent.isAcp);
+function installedSelectableExternalAgents(): ExternalAgentInfo[] {
+	return externalAgents.filter((agent) => agent.installed && (agent.isAcp || agent.kind === "agy"));
 }
 
-function selectableAcpAgents(): ExternalAgentInfo[] {
-	return sessionStore.activeSessionKey.value.startsWith("cron:") ? [] : installedAcpAgents();
+function selectableExternalAgents(): ExternalAgentInfo[] {
+	return sessionStore.activeSessionKey.value.startsWith("cron:") ? [] : installedSelectableExternalAgents();
 }
 
 function activeExternalAgent(): ExternalAgentInfo | null {
@@ -46,9 +46,18 @@ export function updateModelComboAvailability(): void {
 		?.classList.toggle("hidden", Boolean(externalKind) || !modelStore.supportsReasoning.value);
 	(S.modelComboBtn as HTMLButtonElement).disabled = switchingBackend;
 	S.modelComboBtn.setAttribute("aria-disabled", switchingBackend ? "true" : "false");
-	S.modelComboBtn.title = switchingBackend ? "Switching chat backend" : "Select model or ACP agent";
+	S.modelComboBtn.title = switchingBackend ? "Switching chat backend" : "Select model or external agent";
 	if (externalKind) {
-		const label = externalAgent?.name || externalKind;
+		const sessionModel = sessionStore.activeSession.value?.model || "";
+		let modelSuffix = "";
+		if (sessionModel.startsWith("external-agent::")) {
+			const parts = sessionModel.split("::");
+			if (parts[2] && parts[2] !== "default") {
+				modelSuffix = parts[2];
+			}
+		}
+		const baseLabel = externalAgent?.name || externalKind;
+		const label = modelSuffix ? `${baseLabel}: ${modelSuffix}` : baseLabel;
 		const unavailable = externalAgent?.installed === false;
 		S.modelComboLabel.textContent = unavailable ? `${label} (unavailable)` : label;
 		S.modelComboLabel.title = unavailable ? `${label} is unavailable` : `Using ${label}`;
@@ -56,11 +65,11 @@ export function updateModelComboAvailability(): void {
 	}
 	const model = modelStore.selectedModel.value;
 	if (model) updateModelComboLabel(model);
-	else updateAcpOnlyModelComboLabel();
-	maybeAutoBindAcp();
+	else updateExternalAgentOnlyModelComboLabel();
+	maybeAutoBindExternalAgent();
 }
 
-function fetchAcpAgents(): Promise<ExternalAgentInfo[] | null> {
+function fetchExternalAgents(): Promise<ExternalAgentInfo[] | null> {
 	return sendRpc<ExternalAgentInfo[]>("external_agents.list", {})
 		.then((res) => {
 			if (!res?.ok) return null;
@@ -71,10 +80,10 @@ function fetchAcpAgents(): Promise<ExternalAgentInfo[] | null> {
 		});
 }
 
-function updateAcpOnlyModelComboLabel(): void {
-	if (!(S.modelComboLabel && modelStore.models.value.length === 0 && selectableAcpAgents().length > 0)) return;
-	S.modelComboLabel.textContent = "ACP agent";
-	S.modelComboLabel.title = "Select an ACP agent";
+function updateExternalAgentOnlyModelComboLabel(): void {
+	if (!(S.modelComboLabel && modelStore.models.value.length === 0 && selectableExternalAgents().length > 0)) return;
+	S.modelComboLabel.textContent = "External agent";
+	S.modelComboLabel.title = "Select an external agent";
 }
 
 function setExternalAgentKind(sessionKey: string, kind: string | null): void {
@@ -88,26 +97,26 @@ function refreshSessionMetadata(): void {
 	void import("./sessions").then(({ fetchSessions }) => fetchSessions());
 }
 
-function clearAcpAutoBindRetry(sessionKey: string): void {
-	const timer = acpAutoBindRetryTimers.get(sessionKey);
+function clearExternalAgentAutoBindRetry(sessionKey: string): void {
+	const timer = externalAgentAutoBindRetryTimers.get(sessionKey);
 	if (timer !== undefined) window.clearTimeout(timer);
-	acpAutoBindRetryTimers.delete(sessionKey);
-	acpAutoBindFailures.delete(sessionKey);
+	externalAgentAutoBindRetryTimers.delete(sessionKey);
+	externalAgentAutoBindFailures.delete(sessionKey);
 }
 
-function scheduleAcpAutoBindRetry(sessionKey: string): void {
-	if (acpAutoBindRetryTimers.has(sessionKey)) return;
-	const failures = (acpAutoBindFailures.get(sessionKey) || 0) + 1;
-	acpAutoBindFailures.set(sessionKey, failures);
+function scheduleExternalAgentAutoBindRetry(sessionKey: string): void {
+	if (externalAgentAutoBindRetryTimers.has(sessionKey)) return;
+	const failures = (externalAgentAutoBindFailures.get(sessionKey) || 0) + 1;
+	externalAgentAutoBindFailures.set(sessionKey, failures);
 	const delay = Math.min(ACP_AUTO_BIND_RETRY_BASE_MS * 2 ** Math.min(failures - 1, 5), ACP_AUTO_BIND_RETRY_MAX_MS);
 	const timer = window.setTimeout(() => {
-		acpAutoBindRetryTimers.delete(sessionKey);
+		externalAgentAutoBindRetryTimers.delete(sessionKey);
 		if (sessionStore.activeSessionKey.value === sessionKey) updateModelComboAvailability();
 	}, delay);
-	acpAutoBindRetryTimers.set(sessionKey, timer);
+	externalAgentAutoBindRetryTimers.set(sessionKey, timer);
 }
 
-function maybeAutoBindAcp(): void {
+function maybeAutoBindExternalAgent(): void {
 	const session = sessionStore.activeSession.value;
 	const sessionKey = sessionStore.activeSessionKey.value;
 	if (
@@ -117,49 +126,55 @@ function maybeAutoBindAcp(): void {
 		!externalAgentsLoaded ||
 		modelStore.models.value.length > 0 ||
 		session.external_agent_kind ||
-		acpAutoBindAttempted.has(sessionKey) ||
-		acpAutoBindInFlight.has(sessionKey)
+		externalAgentAutoBindAttempted.has(sessionKey) ||
+		externalAgentAutoBindInFlight.has(sessionKey)
 	) {
 		return;
 	}
-	const agent = installedAcpAgents()[0];
+	const agent = installedSelectableExternalAgents()[0];
 	if (!agent) return;
-	acpAutoBindInFlight.add(sessionKey);
-	void bindAcpAgent(agent, false)
+	externalAgentAutoBindInFlight.add(sessionKey);
+	void bindExternalAgent(agent, undefined, false)
 		.then((bound) => {
 			if (bound) {
-				acpAutoBindAttempted.add(sessionKey);
-				clearAcpAutoBindRetry(sessionKey);
+				externalAgentAutoBindAttempted.add(sessionKey);
+				clearExternalAgentAutoBindRetry(sessionKey);
 			}
 		})
 		.finally(() => {
-			acpAutoBindInFlight.delete(sessionKey);
-			if (!acpAutoBindAttempted.has(sessionKey)) scheduleAcpAutoBindRetry(sessionKey);
+			externalAgentAutoBindInFlight.delete(sessionKey);
+			if (!externalAgentAutoBindAttempted.has(sessionKey)) scheduleExternalAgentAutoBindRetry(sessionKey);
 		});
 }
 
-async function bindAcpAgent(agent: ExternalAgentInfo, notifyFailure = true): Promise<boolean> {
+async function bindExternalAgent(agent: ExternalAgentInfo, modelId?: string, notifyFailure = true): Promise<boolean> {
 	const sessionKey = sessionStore.activeSessionKey.value;
 	if (!sessionKey || sessionKey.startsWith("cron:")) return false;
 	if (switchingBackendSessions.has(sessionKey)) return false;
-	if (sessionStore.activeSession.value?.external_agent_kind === agent.kind) {
+	const activeSession = sessionStore.activeSession.value;
+	const currentModel = activeSession?.model || "";
+	const targetModelId = modelId ? `external-agent::${agent.kind}::${modelId}` : `external-agent::${agent.kind}`;
+	if (activeSession?.external_agent_kind === agent.kind && (!modelId || currentModel === targetModelId)) {
 		closeModelDropdown();
 		return true;
 	}
 	switchingBackendSessions.add(sessionKey);
 	updateModelComboAvailability();
 	try {
-		const res = await sendRpc("external_agents.bind", { sessionKey, kind: agent.kind });
+		const res = await sendRpc("external_agents.bind", { sessionKey, kind: agent.kind, model: modelId });
 		if (!res?.ok) {
-			if (notifyFailure) showToast(res?.error?.message || "Failed to select ACP agent", "error");
+			if (notifyFailure) showToast(res?.error?.message || "Failed to select external agent", "error");
 			return false;
 		}
 		setExternalAgentKind(sessionKey, agent.kind);
+		if (activeSession) {
+			activeSession.model = targetModelId;
+		}
 		refreshSessionMetadata();
 		closeModelDropdown();
 		return true;
 	} catch {
-		if (notifyFailure) showToast("Failed to select ACP agent", "error");
+		if (notifyFailure) showToast("Failed to select external agent", "error");
 		return false;
 	} finally {
 		switchingBackendSessions.delete(sessionKey);
@@ -196,7 +211,7 @@ function updateModelComboLabel(model: ModelInfo): void {
 
 export function fetchModels(): Promise<void> {
 	const generation = ++fetchModelsGeneration;
-	return Promise.all([modelStore.fetch(), fetchAcpAgents()]).then(([didLoadModels, agents]) => {
+	return Promise.all([modelStore.fetch(), fetchExternalAgents()]).then(([didLoadModels, agents]) => {
 		if (generation !== fetchModelsGeneration) return;
 		modelsLoaded = didLoadModels;
 		externalAgentsLoaded = agents !== null;
@@ -206,7 +221,7 @@ export function fetchModels(): Promise<void> {
 		S.setSelectedModelId(modelStore.selectedModelId.value);
 		const model = modelStore.selectedModel.value;
 		if (model) updateModelComboLabel(model);
-		else updateAcpOnlyModelComboLabel();
+		else updateExternalAgentOnlyModelComboLabel();
 		updateModelComboAvailability();
 
 		// If the dropdown is currently open, re-render to reflect updated flags
@@ -328,7 +343,7 @@ function buildModelItem(m: ModelInfo, currentId: string): HTMLDivElement {
 	return el;
 }
 
-function buildAcpItem(agent: ExternalAgentInfo, currentKind: string): HTMLDivElement {
+function buildExternalAgentItem(agent: ExternalAgentInfo, currentKind: string): HTMLDivElement {
 	const el = document.createElement("div");
 	el.className = "model-dropdown-item";
 	el.dataset.externalAgentKind = agent.kind;
@@ -345,10 +360,42 @@ function buildAcpItem(agent: ExternalAgentInfo, currentKind: string): HTMLDivEle
 	meta.className = "model-item-meta";
 	const provider = document.createElement("span");
 	provider.className = "model-item-provider";
-	provider.textContent = "ACP agent";
+	provider.textContent = agent.isAcp ? "ACP agent" : "External agent";
 	meta.appendChild(provider);
 	el.appendChild(meta);
-	el.addEventListener("click", () => void bindAcpAgent(agent));
+	el.addEventListener("click", () => void bindExternalAgent(agent));
+	return el;
+}
+
+function buildExternalAgentModelItem(
+	agent: ExternalAgentInfo,
+	model: string,
+	currentKind: string,
+	currentModel: string,
+): HTMLDivElement {
+	const el = document.createElement("div");
+	el.className = "model-dropdown-item";
+	el.dataset.externalAgentKind = agent.kind;
+	el.dataset.externalAgentModel = model;
+	const expectedModelId = `external-agent::${agent.kind}::${model}`;
+	const isSelected = agent.kind === currentKind && currentModel === expectedModelId;
+	if (isSelected) el.classList.add("selected");
+	el.title = `${agent.name}: ${model}`;
+
+	const label = document.createElement("span");
+	label.className = "model-item-label";
+	label.textContent = model;
+	label.title = el.title;
+	el.appendChild(label);
+
+	const meta = document.createElement("span");
+	meta.className = "model-item-meta";
+	const provider = document.createElement("span");
+	provider.className = "model-item-provider";
+	provider.textContent = `${agent.name} agent`;
+	meta.appendChild(provider);
+	el.appendChild(meta);
+	el.addEventListener("click", () => void bindExternalAgent(agent, model));
 	return el;
 }
 
@@ -363,9 +410,17 @@ export function renderModelList(query: string): void {
 	S.modelDropdownList.textContent = "";
 	const q = query.toLowerCase();
 	const allModels = modelStore.models.value;
-	const acpAgents = selectableAcpAgents().filter((agent) => {
+	const selectableAgents = selectableExternalAgents().filter((agent) => {
 		const name = agent.name.toLowerCase();
-		return !q || name.includes(q) || agent.kind.toLowerCase().includes(q) || "acp agent".includes(q);
+		const modelsMatch = (agent.models || []).some((m) => m.toLowerCase().includes(q));
+		return (
+			!q ||
+			name.includes(q) ||
+			agent.kind.toLowerCase().includes(q) ||
+			"external agent".includes(q) ||
+			(agent.isAcp && "acp agent".includes(q)) ||
+			modelsMatch
+		);
 	});
 	const filtered = allModels.filter((m) => {
 		// Hide @reasoning-* virtual variants — the reasoning toggle handles these.
@@ -374,7 +429,7 @@ export function renderModelList(query: string): void {
 		const provider = (m.provider || "").toLowerCase();
 		return !q || label.indexOf(q) !== -1 || provider.indexOf(q) !== -1 || m.id.toLowerCase().indexOf(q) !== -1;
 	});
-	if (filtered.length === 0 && acpAgents.length === 0) {
+	if (filtered.length === 0 && selectableAgents.length === 0) {
 		const empty = document.createElement("div");
 		empty.className = "model-dropdown-empty";
 		empty.textContent = t("common:labels.noMatchingModels");
@@ -382,10 +437,24 @@ export function renderModelList(query: string): void {
 		return;
 	}
 	const currentKind = sessionStore.activeSession.value?.external_agent_kind || "";
-	for (const agent of acpAgents) {
-		S.modelDropdownList.appendChild(buildAcpItem(agent, currentKind));
+	const currentModel = sessionStore.activeSession.value?.model || "";
+	for (const agent of selectableAgents) {
+		if (agent.models && agent.models.length > 0) {
+			const matchingModels = agent.models.filter(
+				(m) =>
+					!q ||
+					m.toLowerCase().includes(q) ||
+					agent.name.toLowerCase().includes(q) ||
+					agent.kind.toLowerCase().includes(q),
+			);
+			for (const model of matchingModels) {
+				S.modelDropdownList.appendChild(buildExternalAgentModelItem(agent, model, currentKind, currentModel));
+			}
+		} else {
+			S.modelDropdownList.appendChild(buildExternalAgentItem(agent, currentKind));
+		}
 	}
-	if (acpAgents.length > 0 && filtered.length > 0) appendDivider();
+	if (selectableAgents.length > 0 && filtered.length > 0) appendDivider();
 	const currentId = currentKind ? "" : modelStore.selectedModelId.value;
 	let lastPreferredIdx = -1;
 	for (let i = filtered.length - 1; i >= 0; i--) {

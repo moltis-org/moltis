@@ -120,6 +120,16 @@ fn external_agent_kind_parses_named_acp_variants() {
     }
 }
 
+#[test]
+fn external_agent_kind_parses_first_class_agy() {
+    let kind = "agy".parse::<ExternalAgentKind>();
+
+    assert_eq!(kind, Ok(ExternalAgentKind::Agy));
+    assert_eq!(ExternalAgentKind::Agy.as_str(), "agy");
+    assert_eq!(ExternalAgentKind::Agy.display_name(), "Antigravity (AGY)");
+    assert!(!ExternalAgentKind::Agy.is_acp());
+}
+
 async fn sqlite_pool() -> sqlx::SqlitePool {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
     // sessions table references projects, so create a stub projects table.

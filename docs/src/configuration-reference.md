@@ -719,7 +719,7 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `false` | Enable the external CLI agent bridge. |
-| `agents` | map | `{}` | Per-agent configuration keyed by agent kind, such as `claude-code` or `codex`. |
+| `agents` | map | `{}` | Per-agent configuration keyed by agent kind, such as `claude-code`, `codex`, or `agy`. |
 
 
 ### `external_agents.agents.<kind>`

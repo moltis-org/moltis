@@ -22,6 +22,7 @@ struct FakeAgentState {
     models: std::sync::Mutex<Vec<Option<String>>>,
     efforts: std::sync::Mutex<Vec<Option<String>>>,
     shutdowns: std::sync::atomic::AtomicUsize,
+    fail_history_path: std::sync::Mutex<Option<PathBuf>>,
 }
 
 struct FakeTransport {
@@ -95,6 +96,38 @@ impl ExternalAgentSession for FakeSession {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .push(prompt.to_string());
+        if prompt == "tool-events-write-failure" {
+            let history_path = self
+                .state
+                .fail_history_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("missing failure history path"))?;
+            let backup_path = history_path.with_extension("jsonl.before-write-failure");
+            std::fs::rename(&history_path, &backup_path)?;
+            std::fs::create_dir(&history_path)?;
+        }
+        if prompt == "tool-events" || prompt == "tool-events-write-failure" {
+            return Ok(Box::pin(stream::iter([
+                ExternalAgentEvent::SessionBound {
+                    external_session_id: "fake-stream-session".to_string(),
+                },
+                ExternalAgentEvent::ToolCallStart {
+                    id: "tool-1".to_string(),
+                    name: "run_command".to_string(),
+                    arguments: r#"{"CommandLine":"pwd"}"#.to_string(),
+                },
+                ExternalAgentEvent::ToolCallEnd {
+                    id: "tool-1".to_string(),
+                    name: "run_command".to_string(),
+                    success: true,
+                    result: Some("/tmp\n".to_string()),
+                },
+                ExternalAgentEvent::TextDelta("tool reply".to_string()),
+                ExternalAgentEvent::Done { usage: None },
+            ])));
+        }
         Ok(Box::pin(stream::iter([
             ExternalAgentEvent::TextDelta(format!("reply to {prompt}")),
             ExternalAgentEvent::Done {
@@ -349,6 +382,123 @@ async fn selected_external_agent_model_is_passed_to_runtime() {
 }
 
 #[tokio::test]
+async fn encoded_external_model_repairs_missing_binding_before_chat_send() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    let agent_state = Arc::new(FakeAgentState::default());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+    let chat = test_chat_service(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+    )
+    .await;
+    let model_id = external_agent_model_id("codex", Some("gpt-5.2-codex"), Some("xhigh"));
+
+    let response = chat
+        .send(serde_json::json!({
+            "sessionKey": "fresh",
+            "text": "hello",
+            "model": model_id,
+        }))
+        .await
+        .expect("encoded external model should route to the external agent");
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(agent_state.starts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        agent_state
+            .models
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_slice(),
+        &[Some("gpt-5.2-codex".to_string())]
+    );
+    assert_eq!(
+        metadata
+            .get("fresh")
+            .await
+            .and_then(|entry| entry.external_agent_kind),
+        Some(AgentTransportKind::Codex)
+    );
+}
+
+#[tokio::test]
+async fn persisted_external_model_repairs_missing_binding_without_request_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    metadata.upsert("existing", None).await.unwrap();
+    metadata
+        .set_model(
+            "existing",
+            Some(external_agent_model_id(
+                "codex",
+                Some("gpt-5.2-codex"),
+                None,
+            )),
+        )
+        .await;
+    let agent_state = Arc::new(FakeAgentState::default());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+    let chat = test_chat_service(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+    )
+    .await;
+
+    chat.send(serde_json::json!({
+        "sessionKey": "existing",
+        "text": "hello",
+    }))
+    .await
+    .expect("persisted external model should repair the missing binding");
+
+    assert_eq!(agent_state.starts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        metadata
+            .get("existing")
+            .await
+            .and_then(|entry| entry.external_agent_kind),
+        Some(AgentTransportKind::Codex)
+    );
+}
+
+#[tokio::test]
+async fn restricted_request_does_not_repair_encoded_external_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    let agent_state = Arc::new(FakeAgentState::default());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+    let chat = test_chat_service(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+    )
+    .await;
+
+    let error = chat
+        .send(serde_json::json!({
+            "sessionKey": "public",
+            "text": "hello",
+            "model": external_agent_model_id("codex", Some("gpt-5.2-codex"), None),
+            "_private_context": false,
+        }))
+        .await
+        .expect_err("public request must not auto-bind an external agent");
+
+    assert_eq!(
+        error.to_string(),
+        "external agents are unavailable for public or tool-restricted turns"
+    );
+    assert!(metadata.get("public").await.is_none());
+    assert_eq!(agent_state.starts.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn list_returns_empty_when_external_agents_disabled() {
     let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
     let agent_state = Arc::new(FakeAgentState::default());
@@ -504,6 +654,90 @@ async fn bound_chat_send_reuses_live_external_session() {
             .and_then(|entry| entry.external_session_id),
         Some("fake-session-1".to_string())
     );
+}
+
+#[tokio::test]
+async fn external_tool_events_are_persisted_with_the_terminal_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    let agent_state = Arc::new(FakeAgentState::default());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), agent_state);
+    external_agents
+        .bind(serde_json::json!({ "sessionKey": "main", "kind": "codex" }))
+        .await
+        .expect("bind external agent");
+    let chat = test_chat_service(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+    )
+    .await;
+
+    let result = chat
+        .send(serde_json::json!({ "sessionKey": "main", "text": "tool-events" }))
+        .await
+        .expect("send tool event turn");
+
+    assert_eq!(result["text"], "tool reply");
+    let history = session_store.read("main").await.expect("read history");
+    assert_eq!(history.len(), 4);
+    assert_eq!(history[1]["role"], "assistant");
+    assert_eq!(history[1]["tool_calls"][0]["id"], "tool-1");
+    assert_eq!(history[2]["role"], "tool_result");
+    assert_eq!(history[2]["tool_call_id"], "tool-1");
+    assert_eq!(history[2]["result"]["stdout"], "/tmp\n");
+    assert_eq!(history[3]["content"], "tool reply");
+    let entry = metadata.get("main").await.expect("session metadata");
+    assert_eq!(entry.message_count, 4);
+    assert_eq!(
+        entry.external_session_id.as_deref(),
+        Some("fake-stream-session")
+    );
+}
+
+#[tokio::test]
+async fn failed_external_tool_writes_do_not_inflate_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+    let history_path = session_store.history_path_for("main");
+    let backup_path = history_path.with_extension("jsonl.before-write-failure");
+    let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+    let agent_state = Arc::new(FakeAgentState::default());
+    *agent_state
+        .fail_history_path
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(history_path.clone());
+    let external_agents = fake_external_agents(Arc::clone(&metadata), agent_state);
+    external_agents
+        .bind(serde_json::json!({ "sessionKey": "main", "kind": "codex" }))
+        .await
+        .expect("bind external agent");
+    let chat = test_chat_service(
+        Arc::clone(&external_agents),
+        Arc::clone(&metadata),
+        Arc::clone(&session_store),
+    )
+    .await;
+
+    chat.send(serde_json::json!({
+        "sessionKey": "main",
+        "text": "tool-events-write-failure",
+    }))
+    .await
+    .expect_err("blocked history path should fail the terminal append");
+
+    std::fs::remove_dir(&history_path).expect("remove blocking directory");
+    std::fs::rename(&backup_path, &history_path).expect("restore history file");
+    assert_eq!(session_store.count("main").await.unwrap(), 1);
+    assert_eq!(metadata.get("main").await.unwrap().message_count, 1);
+}
+
+#[test]
+fn tool_result_index_requires_a_fully_persisted_pair() {
+    assert_eq!(persisted_tool_result_message_index(4, 2), Some(3));
+    assert_eq!(persisted_tool_result_message_index(3, 1), None);
+    assert_eq!(persisted_tool_result_message_index(2, 0), None);
 }
 
 #[tokio::test]
