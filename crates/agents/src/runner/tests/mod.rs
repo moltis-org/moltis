@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod agent_end;
 mod basic;
 mod basic_tool_names;
 mod basic_tool_results;

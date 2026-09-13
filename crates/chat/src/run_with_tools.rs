@@ -338,10 +338,14 @@ pub(crate) async fn run_with_tools(
     let provider_name_for_events = provider_name.to_string();
     let active_partial_for_events = active_partial_assistant.as_ref().map(Arc::clone);
     let (on_event, mut event_rx) = ordered_runner_event_callback();
-    let channel_stream_dispatcher =
+    let buffer_text = crate::message_lifecycle::buffers_text(hook_registry.as_deref());
+    let channel_stream_dispatcher = if buffer_text {
+        None
+    } else {
         ChannelStreamDispatcher::for_session(state, session_key, run_id)
             .await
-            .map(|dispatcher| Arc::new(Mutex::new(dispatcher)));
+            .map(|dispatcher| Arc::new(Mutex::new(dispatcher)))
+    };
     let channel_stream_for_events = channel_stream_dispatcher.as_ref().map(Arc::clone);
     let channel_tool_names: HashSet<String> = tool_registry
         .read()
@@ -788,6 +792,9 @@ pub(crate) async fn run_with_tools(
                 },
                 RunnerEvent::ThinkingText(text) => {
                     latest_reasoning = text.clone();
+                    if buffer_text {
+                        continue;
+                    }
                     if let Some(ref map) = active_thinking_text {
                         map.write().await.insert(sk.clone(), text.clone());
                     }
@@ -805,6 +812,9 @@ pub(crate) async fn run_with_tools(
                     })
                 },
                 RunnerEvent::TextDelta(text) => {
+                    if buffer_text {
+                        continue;
+                    }
                     if let Some(ref map) = active_partial_for_events
                         && let Some(draft) = map.write().await.get_mut(&sk)
                     {
@@ -1145,7 +1155,7 @@ pub(crate) async fn run_with_tools(
                         Some(&on_event),
                         retry_hist,
                         Some(tool_context),
-                        hook_registry,
+                        hook_registry.clone(),
                         sender_name,
                         Some(steer_inbox.clone()),
                         AgentLoopLimits {
@@ -1214,10 +1224,7 @@ pub(crate) async fn run_with_tools(
                 "agent run complete"
             );
 
-            // Detect provider failures: silent response with zero tokens
-            // produced means the LLM never processed the request (e.g.
-            // network_error finish_reason).  Surface as an error so the
-            // UI renders a visible error card instead of showing nothing.
+            // A zero-token empty response means the provider never processed the request.
             if is_silent && usage.output_tokens == 0 && tool_calls_made == 0 {
                 warn!(
                     run_id,
@@ -1252,8 +1259,17 @@ pub(crate) async fn run_with_tools(
                 return None;
             }
 
-            // Tool-using turns now persist both the assistant tool call frame
-            // and the tool result for each tool call before the final answer.
+            let display_text = crate::message_lifecycle::prepare(
+                hook_registry.as_deref(),
+                state,
+                session_key,
+                run_id,
+                display_text,
+                client_seq,
+                terminal_runs,
+            )
+            .await?;
+            let is_silent = display_text.trim().is_empty();
             let assistant_message_index = user_message_index + 1 + (tool_calls_made * 2);
 
             // Generate & persist TTS audio for voice-medium web UI replies.
@@ -1436,11 +1452,7 @@ where
     }
 }
 
-/// Format memory search results into a `<recalled_context>` XML block
-/// suitable for injection into the system prompt.
-///
-/// XML metacharacters in paths and text are escaped to prevent prompt
-/// injection via crafted memory content.
+/// Format recalled context, escaping XML metacharacters to prevent prompt injection.
 pub(crate) fn format_recalled_context(results: &[moltis_memory::search::SearchResult]) -> String {
     if results.is_empty() {
         return String::new();

@@ -10,6 +10,7 @@ mod compaction;
 mod compaction_run;
 mod memory_tools;
 mod message;
+mod message_lifecycle;
 mod models;
 pub mod params;
 mod prompt;
