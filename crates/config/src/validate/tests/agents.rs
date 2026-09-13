@@ -125,7 +125,15 @@ max_iterations = 0
 
 #[test]
 fn reasoning_effort_valid_values_no_error() {
-    for effort in &["minimal", "low", "medium", "high", "xhigh", "extra-high"] {
+    for effort in &[
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "extra-high",
+        "max",
+    ] {
         let toml = format!(
             r#"
             [agents.presets.thinker]

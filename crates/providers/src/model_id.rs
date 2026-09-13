@@ -27,6 +27,7 @@ pub(crate) const REASONING_SUFFIXES: &[(&str, moltis_agents::model::ReasoningEff
         "reasoning-xhigh",
         moltis_agents::model::ReasoningEffort::ExtraHigh,
     ),
+    ("reasoning-max", moltis_agents::model::ReasoningEffort::Max),
 ];
 
 #[must_use]
@@ -106,6 +107,10 @@ mod tests {
             split_reasoning_suffix("gpt-5@reasoning-xhigh"),
             ("gpt-5", Some(ReasoningEffort::ExtraHigh))
         );
+        assert_eq!(
+            split_reasoning_suffix("gpt-5.6-sol@reasoning-max"),
+            ("gpt-5.6-sol", Some(ReasoningEffort::Max))
+        );
         assert_eq!(split_reasoning_suffix("gpt-4o"), ("gpt-4o", None));
         assert_eq!(
             split_reasoning_suffix("model@unknown-suffix"),
@@ -132,6 +137,10 @@ mod tests {
             "claude-opus-4-5"
         );
         assert_eq!(raw_model_id("o3@reasoning-medium"), "o3");
+        assert_eq!(
+            raw_model_id("openai-codex::gpt-5.6-sol@reasoning-max"),
+            "gpt-5.6-sol"
+        );
         assert_eq!(raw_model_id("gpt-4o"), "gpt-4o");
     }
 }

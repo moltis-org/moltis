@@ -70,7 +70,7 @@ test.describe("reasoning effort toggle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("clicking toggle opens dropdown with Off/Low/Medium/High options", async ({ page }) => {
+	test("clicking toggle opens dropdown with all reasoning effort options", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
 		await setMockModels(
@@ -87,13 +87,14 @@ test.describe("reasoning effort toggle", () => {
 		await expect(dropdown).toBeVisible();
 
 		const items = page.locator("#reasoningDropdownList .model-dropdown-item");
-		await expect(items).toHaveCount(6);
+		await expect(items).toHaveCount(7);
 		await expect(items.nth(0)).toHaveText("Off");
 		await expect(items.nth(1)).toHaveText("Minimal");
 		await expect(items.nth(2)).toHaveText("Low");
 		await expect(items.nth(3)).toHaveText("Medium");
 		await expect(items.nth(4)).toHaveText("High");
 		await expect(items.nth(5)).toHaveText("Extra High");
+		await expect(items.nth(6)).toHaveText("Max");
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -147,12 +148,19 @@ test.describe("reasoning effort toggle", () => {
 			window.__chatWsSpyInstalled = true;
 		});
 
-		// Set up a reasoning model and select high effort
+		// Set up a reasoning model and select maximum effort
 		await setMockModels(
 			page,
-			[{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true }],
-			"claude-opus-4-5",
-			"high",
+			[
+				{
+					id: "openai-codex::gpt-5.6-sol",
+					displayName: "GPT-5.6 Sol",
+					provider: "openai-codex",
+					supportsReasoning: true,
+				},
+			],
+			"openai-codex::gpt-5.6-sol",
+			"max",
 		);
 
 		const chatInput = page.locator("#chatInput");
@@ -161,7 +169,7 @@ test.describe("reasoning effort toggle", () => {
 
 		const payloads = await page.evaluate(() => window.__chatSendPayloads);
 		expect(payloads.length).toBeGreaterThan(0);
-		expect(payloads[0].model).toBe("claude-opus-4-5@reasoning-high");
+		expect(payloads[0].model).toBe("openai-codex::gpt-5.6-sol@reasoning-max");
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -328,12 +336,17 @@ test.describe("configured reasoning default", () => {
 		});
 	}
 
-	test("pending history restoration blocks effort choices until the stale snapshot is applied", async ({ page }) => {
+	test("pending history restoration blocks effort and queued model choices until the snapshot is applied", async ({
+		page,
+	}) => {
 		const errors = watchPageErrors(page);
 		await setMockModels(page, models, "reasoning-model");
 		const button = page.locator("#reasoningCombo").getByRole("button");
 		await button.click();
 		await expect(page.locator("#reasoningDropdown")).toBeVisible();
+		const modelButton = page.locator("#modelCombo").getByRole("button");
+		await modelButton.click();
+		await expect(page.locator("#modelDropdown")).toBeVisible();
 
 		let releaseHistory;
 		const historyGate = new Promise((resolve) => {
@@ -356,15 +369,22 @@ test.describe("configured reasoning default", () => {
 			});
 			await historyStarted;
 			await expect(button).toBeDisabled();
+			await expect(modelButton).toBeDisabled();
+			await expect(page.locator("#modelDropdown")).toBeHidden();
 			await expect(page.locator("#reasoningDropdown")).toBeHidden();
 			// Even an already queued option click must not save an override while loading.
 			await page.locator("#reasoningDropdownList").getByText("Off", { exact: true }).dispatchEvent("click");
+			await page.locator("#modelDropdownList").getByText("Plain Model", { exact: true }).dispatchEvent("click");
+			expect(await page.evaluate(() => window.__moltis_stores.modelStore.selectedModelId.value)).toBe(
+				"reasoning-model",
+			);
 			await expect(button).toHaveText("High");
 		} finally {
 			releaseHistory();
 		}
 		await waitForChatSessionReady(page);
 		await expect(button).toBeEnabled();
+		await expect(modelButton).toBeEnabled();
 		await button.click();
 		await page.locator("#reasoningDropdownList").getByText("Off", { exact: true }).click();
 		await expect(button).toHaveText("Off");
@@ -384,6 +404,68 @@ test.describe("configured reasoning default", () => {
 		await expect.poll(() => page.evaluate(() => window.__reasoningSendModel)).toBe("reasoning-model");
 		expect(errors).toEqual([]);
 	});
+
+	for (const change of ["none", "newer choice", "authoritative refresh"]) {
+		test(`failed model save rolls back only its own cache write: ${change}`, async ({ page }) => {
+			const errors = watchPageErrors(page);
+			await setMockModels(page, models, "reasoning-model");
+			await page.evaluate(() => {
+				const session = window.__moltis_stores.sessionStore.activeSession.value;
+				session.update({ ...session.toMeta(), model: "reasoning-model@reasoning-high" });
+				window.__modelPatches = [];
+				const originalSend = WebSocket.prototype.send;
+				WebSocket.prototype.send = function (data) {
+					const frame = JSON.parse(data);
+					if (frame.method === "sessions.patch" && frame.params.model !== undefined) {
+						window.__modelPatches.push({ socket: this, frame });
+						return;
+					}
+					return originalSend.call(this, data);
+				};
+			});
+			const button = page.locator("#reasoningCombo").getByRole("button");
+			await button.click();
+			await page.locator("#reasoningDropdownList").getByText("Off", { exact: true }).click();
+			const cachedModel = () => page.evaluate(() => window.__moltis_stores.sessionStore.activeSession.value.model);
+			await expect.poll(cachedModel).toBe("reasoning-model");
+			if (change === "newer choice") {
+				await button.click();
+				await page.locator("#reasoningDropdownList").getByText("Max", { exact: true }).click();
+			} else if (change === "authoritative refresh") {
+				// Even a refresh with the same model value must supersede the optimistic write.
+				await page.evaluate(() => {
+					const session = window.__moltis_stores.sessionStore.activeSession.value;
+					session.update({ ...session.toMeta(), label: "Refreshed session" });
+				});
+			}
+			await page.evaluate(() => {
+				const [{ socket, frame }] = window.__modelPatches;
+				socket.dispatchEvent(
+					new MessageEvent("message", {
+						data: JSON.stringify({
+							type: "res",
+							id: frame.id,
+							ok: false,
+							error: { code: "TEST", message: "Model save rejected" },
+						}),
+					}),
+				);
+			});
+			expect(
+				await page.evaluate(() => window.__moltis_modules.state.pending[window.__modelPatches[0].frame.id]),
+			).toBeUndefined();
+			await expect
+				.poll(cachedModel)
+				.toBe(
+					change === "none"
+						? "reasoning-model@reasoning-high"
+						: change === "newer choice"
+							? "reasoning-model@reasoning-max"
+							: "reasoning-model",
+				);
+			expect(errors).toEqual([]);
+		});
+	}
 
 	test("unsupported models omit the suffix without erasing the default", async ({ page }) => {
 		const errors = watchPageErrors(page);

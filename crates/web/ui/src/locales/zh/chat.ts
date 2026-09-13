@@ -52,6 +52,7 @@ export default {
 	reasoningMedium: "中",
 	reasoningHigh: "高",
 	reasoningExtraHigh: "极高",
+	reasoningMax: "最高（Max）",
 
 	// ── Debug panel ──────────────────────────────────────────
 	debugTooltip: "显示上下文调试信息",

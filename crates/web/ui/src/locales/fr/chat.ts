@@ -52,6 +52,7 @@ export default {
 	reasoningMedium: "Moyen",
 	reasoningHigh: "Élevé",
 	reasoningExtraHigh: "Très élevé",
+	reasoningMax: "Maximum",
 
 	// ── Debug panel ──────────────────────────────────────────
 	debugTooltip: "Show context debug info",

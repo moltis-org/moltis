@@ -39,14 +39,21 @@ export function updateModelComboAvailability(): void {
 	if (!(S.modelComboBtn && S.modelComboLabel)) return;
 	const sessionKey = sessionStore.activeSessionKey.value;
 	const switchingBackend = switchingBackendSessions.has(sessionKey);
+	const restoring = sessionStore.refreshInProgressKey.value === sessionKey;
+	const disabled = switchingBackend || restoring;
 	const externalKind = sessionStore.activeSession.value?.external_agent_kind || "";
 	const externalAgent = activeExternalAgent();
 	document
 		.getElementById("reasoningCombo")
 		?.classList.toggle("hidden", Boolean(externalKind) || !modelStore.supportsReasoning.value);
-	(S.modelComboBtn as HTMLButtonElement).disabled = switchingBackend;
-	S.modelComboBtn.setAttribute("aria-disabled", switchingBackend ? "true" : "false");
-	S.modelComboBtn.title = switchingBackend ? "Switching chat backend" : "Select model or ACP agent";
+	(S.modelComboBtn as HTMLButtonElement).disabled = disabled;
+	S.modelComboBtn.setAttribute("aria-disabled", disabled ? "true" : "false");
+	S.modelComboBtn.title = restoring
+		? "Restoring session"
+		: switchingBackend
+			? "Switching chat backend"
+			: "Select model or ACP agent";
+	if (disabled) closeModelDropdown();
 	if (externalKind) {
 		const label = externalAgent?.name || externalKind;
 		const unavailable = externalAgent?.installed === false;
@@ -140,6 +147,7 @@ function maybeAutoBindAcp(): void {
 
 async function bindAcpAgent(agent: ExternalAgentInfo, notifyFailure = true): Promise<boolean> {
 	const sessionKey = sessionStore.activeSessionKey.value;
+	if (sessionStore.refreshInProgressKey.value === sessionKey) return false;
 	if (!sessionKey || sessionKey.startsWith("cron:")) return false;
 	if (switchingBackendSessions.has(sessionKey)) return false;
 	if (sessionStore.activeSession.value?.external_agent_kind === agent.kind) {
@@ -169,12 +177,21 @@ async function bindAcpAgent(agent: ExternalAgentInfo, notifyFailure = true): Pro
 
 export function setSessionModel(sessionKey: string, modelId: string): void {
 	const session = sessionStore.getByKey(sessionKey);
+	const previousModel = session?.model;
 	if (session) session.update({ ...session.toMeta(), model: modelId });
+	const optimisticVersion = session?.dataVersion.value;
+	const rollback = (message: string): void => {
+		// A newer choice or authoritative metadata refresh owns the cache now.
+		if (session && sessionStore.getByKey(sessionKey) === session && session.dataVersion.value === optimisticVersion) {
+			session.update({ ...session.toMeta(), model: previousModel });
+		}
+		showToast(message, "error");
+	};
 	void sendRpc("sessions.patch", { key: sessionKey, model: modelId })
 		.then((res) => {
-			if (!res?.ok) showToast(res?.error?.message || "Failed to save session model", "error");
+			if (!res?.ok) rollback(res?.error?.message || "Failed to save session model");
 		})
-		.catch(() => showToast("Failed to save session model", "error"));
+		.catch(() => rollback("Failed to save session model"));
 }
 
 export interface ModelLabelInfo {
@@ -235,6 +252,7 @@ function commitModelSelection(m: ModelInfo, sessionKey = S.activeSessionKey): vo
 }
 
 export function selectModel(m: ModelInfo): void {
+	if (sessionStore.refreshInProgressKey.value === sessionStore.activeSessionKey.value) return;
 	const externalKind = sessionStore.activeSession.value?.external_agent_kind || "";
 	if (!externalKind) {
 		commitModelSelection(m);

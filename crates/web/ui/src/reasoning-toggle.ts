@@ -1,10 +1,9 @@
 // ── Reasoning effort toggle ──────────────────────────────────
 //
 // Adds a "brain" combo next to the model selector that lets users
-// pick Low / Medium / High reasoning effort for models that support
-// extended thinking.  The selected effort is appended as a
-// `@reasoning-*` suffix on the model ID sent to the backend -- no
-// backend changes required.
+// pick a supported reasoning effort for models that expose extended
+// thinking.  The selected effort is appended as a
+// `@reasoning-*` suffix on the model ID sent to the backend.
 
 import { effect } from "@preact/signals";
 import * as gon from "./gon";
@@ -13,7 +12,7 @@ import { setSessionModel } from "./models";
 import { modelStore } from "./stores/model-store";
 import { sessionStore } from "./stores/session-store";
 
-const EFFORT_VALUES: string[] = ["", "minimal", "low", "medium", "high", "xhigh"];
+const EFFORT_VALUES: string[] = ["", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 let reasoningCombo: HTMLElement | null = null;
 let reasoningComboBtn: HTMLButtonElement | null = null;
@@ -30,6 +29,7 @@ function effortLabel(effort: string): string {
 		medium: t("chat:reasoningMedium"),
 		high: t("chat:reasoningHigh"),
 		xhigh: t("chat:reasoningExtraHigh"),
+		max: t("chat:reasoningMax"),
 	};
 	return map[effort] ?? t("chat:reasoningOff");
 }

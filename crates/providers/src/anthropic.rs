@@ -111,7 +111,7 @@ impl AnthropicProvider {
             ReasoningEffort::Low => 4096,
             ReasoningEffort::Medium => 10240,
             ReasoningEffort::High => 32768,
-            ReasoningEffort::ExtraHigh => 65536,
+            ReasoningEffort::ExtraHigh | ReasoningEffort::Max => 65536,
         };
         body["thinking"] = serde_json::json!({
             "type": "enabled",

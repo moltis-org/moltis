@@ -24,6 +24,7 @@ fn chat_reasoning_default_deserialize_and_roundtrip() {
         ("high", ReasoningEffort::High),
         ("xhigh", ReasoningEffort::ExtraHigh),
         ("extra-high", ReasoningEffort::ExtraHigh),
+        ("max", ReasoningEffort::Max),
     ] {
         let config: MoltisConfig =
             toml::from_str(&format!("[chat]\nreasoning_default = {value:?}")).unwrap();
@@ -44,7 +45,7 @@ fn chat_reasoning_default_deserialize_and_roundtrip() {
 
 #[test]
 fn chat_reasoning_default_rejects_invalid_values() {
-    for value in ["max", "off", "extreme", "", "HIGH"] {
+    for value in ["off", "extreme", "", "HIGH"] {
         assert!(ReasoningEffort::try_from(value).is_err());
         assert!(serde_json::from_str::<ReasoningEffort>(&format!("{value:?}")).is_err());
         assert!(

@@ -209,6 +209,12 @@ fn write_default_config_writes_template_to_requested_path() {
         raw.contains("# push_name = \"Moltis\""),
         "generated template should document the WhatsApp push name override"
     );
+    assert!(
+        raw.contains(
+            "# reasoning_effort = \"high\"        # minimal | low | medium | high | xhigh | max"
+        ),
+        "generated template should document every reasoning effort value"
+    );
 
     let parsed: MoltisConfig = parse_config(&raw, &path).expect("parse generated config");
     assert_eq!(

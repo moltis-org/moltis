@@ -327,7 +327,7 @@ User profile collected during onboarding.
 | `system_prompt_suffix` | optional string | `null` | Extra instructions appended to the sub-agent system prompt. |
 | `max_iterations` | optional integer | `null` | Maximum iterations for matching direct agent sessions and spawned sub-agents. Falls back to `tools.agent_max_iterations`. |
 | `timeout_secs` | optional integer | `null` | Timeout in seconds for matching direct agent sessions and spawned sub-agents (`0` = no timeout). Direct sessions fall back to `tools.agent_timeout_secs`; spawned sub-agents preserve no-timeout behavior unless the preset sets `timeout_secs`. |
-| `reasoning_effort` | optional enum: `low`, `medium`, `high` | `null` | Reasoning/thinking effort level for models that support extended thinking (e.g. Claude Opus, OpenAI o-series). |
+| `reasoning_effort` | optional enum: `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | `null` | Reasoning/thinking effort level for models that support extended thinking. Providers clamp unsupported levels to their nearest supported equivalent. |
 | `sessions` | optional `SessionAccessPolicyConfig` | `null` | Session access policy for inter-agent communication. |
 | `memory` | optional `PresetMemoryConfig` | `null` | Persistent per-agent memory configuration. |
 

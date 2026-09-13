@@ -278,8 +278,8 @@ port = {port}                           # Port number (auto-generated for this i
 # ══════════════════════════════════════════════════════════════════════════════
 
 # [chat]
-# reasoning_default = "high"         # Optional: minimal, low, medium, high, xhigh (alias: extra-high).
-                                    #   Omit for Off (current behavior); max is not supported.
+# reasoning_default = "high"         # Optional: minimal, low, medium, high, xhigh (alias: extra-high), max.
+                                    #   Omit for Off (current behavior); max is distinct from xhigh.
                                     #   Applies to model-less and new main sessions.
                                     #   An explicit session Off or level always wins.
 # auto_title = true                   # Auto-generate session title after first exchange
@@ -354,6 +354,7 @@ port = {port}                           # Port number (auto-generated for this i
 # identity.theme = "thorough, skeptical, and evidence-oriented"
 # system_prompt_suffix = "..."
 # max_iterations = 16
+# reasoning_effort = "high"        # minimal | low | medium | high | xhigh | max
 # # Optional drift-resistant per-turn controls for spawned/preset agents:
 # # [agents.presets.research.tool_controls]
 # # active_tools = ["classify_destination"]
@@ -798,7 +799,7 @@ port = {port}                           # Port number (auto-generated for this i
 # binary = "codex"
 # args = ["app-server"]
 # models = ["gpt-5.5", "gpt-5.4"]
-# efforts = ["medium", "high", "xhigh"]
+# efforts = ["medium", "high", "xhigh", "max"]
 
 # Generic manual ACP server for advanced/custom CLIs not listed below.
 # If Moltis is missing a named default for an ACP agent, check the official

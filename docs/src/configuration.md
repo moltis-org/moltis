@@ -249,9 +249,9 @@ Set a default reasoning/thinking effort for model-less and new main sessions:
 reasoning_default = "high"
 ```
 
-Accepted values are `minimal`, `low`, `medium`, `high`, and `xhigh`.
+Accepted values are `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 `extra-high` is also accepted and is saved as the canonical `xhigh` value.
-`max` is not supported and is not an alias for `xhigh`.
+`max` is a distinct level above Extra High, not an alias for `xhigh`.
 
 Omit `chat.reasoning_default` to keep Off (the existing behavior); `off` is
 not a config value. An explicit session choice, either Off or a reasoning

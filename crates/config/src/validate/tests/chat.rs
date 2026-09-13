@@ -2,7 +2,15 @@ use super::*;
 
 #[test]
 fn chat_reasoning_default_valid_values_are_recognized() {
-    for value in ["minimal", "low", "medium", "high", "xhigh", "extra-high"] {
+    for value in [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "extra-high",
+        "max",
+    ] {
         let result = validate_toml_str(&format!("[chat]\nreasoning_default = {value:?}"));
         assert!(
             !result
@@ -17,16 +25,7 @@ fn chat_reasoning_default_valid_values_are_recognized() {
 
 #[test]
 fn chat_reasoning_default_invalid_values_report_type_error() {
-    for value in [
-        "\"max\"",
-        "\"off\"",
-        "\"extreme\"",
-        "\"\"",
-        "42",
-        "true",
-        "[]",
-        "{}",
-    ] {
+    for value in ["\"off\"", "\"extreme\"", "\"\"", "42", "true", "[]", "{}"] {
         let result = validate_toml_str(&format!("[chat]\nreasoning_default = {value}"));
         assert!(
             result
