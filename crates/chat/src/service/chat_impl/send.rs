@@ -509,19 +509,12 @@ impl LiveChatService {
 
         let provider_result: Result<Arc<dyn moltis_agents::model::LlmProvider>, String> = {
             let reg = self.providers.read().await;
-            let primary_result = if let Some(id) = model_id {
-                reg.get(id).ok_or_else(|| {
-                    let available: Vec<_> =
-                        reg.list_models().iter().map(|m| m.id.clone()).collect();
-                    format!("model '{}' not found. available: {:?}", id, available)
-                })
-            } else if !stream_only {
-                reg.first_with_tools()
-                    .ok_or_else(|| "no LLM providers configured".to_string())
-            } else {
-                reg.first()
-                    .ok_or_else(|| "no LLM providers configured".to_string())
-            };
+            let primary_result = model_selection::resolve_primary(
+                &reg,
+                model_id,
+                stream_only,
+                self.config.chat.reasoning_default,
+            );
 
             match primary_result {
                 Err(error) => Err(error),

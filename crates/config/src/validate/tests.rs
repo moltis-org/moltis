@@ -9,6 +9,8 @@ use super::{
 mod agents;
 #[path = "tests/channels.rs"]
 mod channels;
+#[path = "tests/chat.rs"]
+mod chat;
 #[path = "tests/common.rs"]
 mod common;
 #[path = "tests/defaults.rs"]

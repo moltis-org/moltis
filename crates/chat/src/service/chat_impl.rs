@@ -1,6 +1,7 @@
 //! `ChatService` trait implementation for `LiveChatService`.
 
 mod channel_security;
+mod model_selection;
 mod public_context;
 mod queue_drain;
 mod send;

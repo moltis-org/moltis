@@ -18,6 +18,7 @@ use {
 
 use {
     moltis_agents::{runner::RunnerEvent, tool_registry::ToolRegistry},
+    moltis_providers::model_id::split_reasoning_suffix,
     moltis_sessions::{PersistedMessage, store::SessionStore},
 };
 
@@ -51,6 +52,7 @@ pub(crate) async fn mark_unsupported_model(
         .and_then(|v| v.as_str())
         .unwrap_or(provider_name);
 
+    let model_id = split_reasoning_suffix(model_id).0;
     let mut store = model_store.write().await;
     if store.mark_unsupported(model_id, detail, Some(provider)) {
         let unsupported = store.unsupported_info(model_id).cloned();
@@ -93,6 +95,7 @@ pub(crate) async fn clear_unsupported_model(
     model_store: &Arc<RwLock<DisabledModelsStore>>,
     model_id: &str,
 ) {
+    let model_id = split_reasoning_suffix(model_id).0;
     let mut store = model_store.write().await;
     if store.clear_unsupported(model_id) {
         if let Err(err) = store.save() {

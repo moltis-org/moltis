@@ -240,6 +240,24 @@ tasks (5+ tool calls), tricky error fixes, or non-obvious workflows. The
 `patch_skill` tool allows surgical find/replace updates without rewriting the
 entire skill body.
 
+## Default Reasoning
+
+Set a default reasoning/thinking effort for model-less and new main sessions:
+
+```toml
+[chat]
+reasoning_default = "high"
+```
+
+Accepted values are `minimal`, `low`, `medium`, `high`, and `xhigh`.
+`extra-high` is also accepted and is saved as the canonical `xhigh` value.
+`max` is not supported and is not an alias for `xhigh`.
+
+Omit `chat.reasoning_default` to keep Off (the existing behavior); `off` is
+not a config value. An explicit session choice, either Off or a reasoning
+level, always takes precedence over this default. Support for reasoning and
+individual levels depends on the selected model and provider.
+
 ## Chat Message Queue
 
 When a new message arrives while an agent run is already active, Moltis can either

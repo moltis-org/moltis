@@ -396,6 +396,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
         (
             "chat",
             Struct(HashMap::from([
+                ("reasoning_default", Leaf),
                 ("auto_title", Leaf),
                 ("message_queue_mode", Leaf),
                 ("prompt_memory_mode", Leaf),

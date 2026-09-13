@@ -120,6 +120,7 @@ Verify releases with `gh attestation verify <artifact> -R moltis-org/moltis` or 
 
 ## Features
 
+- **Reasoning Defaults** - Configurable default thinking effort for model-less and new main sessions, with explicit per-session Off or level overrides
 - **AI Gateway** — Multi-provider LLM support (OpenAI Codex, GitHub Copilot, Local), streaming responses, agent loop with sub-agent delegation, session modes, parallel tool execution
 - **Communication** — Web UI with command-palette agent prompts and Markdown copy/export, Telegram, Signal, Microsoft Teams, Discord, Slack with native live tool cards, Nostr DMs + NIP-29 group chat (incl. Block's Buzz channels), API access, voice I/O (8 TTS + 7 STT providers), mobile PWA with push notifications
 - **Memory & Recall** — Per-agent memory workspaces, embeddings-powered long-term memory, hybrid vector + full-text search, session persistence with auto-compaction, cross-session recall, Cursor-compatible project context, context-file safety scanning

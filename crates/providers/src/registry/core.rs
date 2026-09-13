@@ -128,7 +128,11 @@ impl LlmProvider for RegistryModelProvider {
     ) -> Option<Arc<dyn LlmProvider>> {
         let new_inner = Arc::clone(&self.inner).with_reasoning_effort(effort)?;
         Some(Arc::new(RegistryModelProvider {
-            model_id: self.model_id.clone(),
+            model_id: format!(
+                "{}@reasoning-{}",
+                split_reasoning_suffix(&self.model_id).0,
+                effort.as_str()
+            ),
             inner: new_inner,
         }))
     }

@@ -278,6 +278,10 @@ port = {port}                           # Port number (auto-generated for this i
 # ══════════════════════════════════════════════════════════════════════════════
 
 # [chat]
+# reasoning_default = "high"         # Optional: minimal, low, medium, high, xhigh (alias: extra-high).
+                                    #   Omit for Off (current behavior); max is not supported.
+                                    #   Applies to model-less and new main sessions.
+                                    #   An explicit session Off or level always wins.
 # auto_title = true                   # Auto-generate session title after first exchange
 # message_queue_mode = "followup"   # How to handle messages during an active agent run:
                                     #   "followup" - Queue messages, replay one-by-one after run

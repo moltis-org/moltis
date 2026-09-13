@@ -1,9 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+use super::ReasoningEffort;
+
 /// Chat configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChatConfig {
+    /// Default reasoning effort for model-less and new main sessions.
+    /// Omission preserves Off; an explicit session Off or level takes precedence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_default: Option<ReasoningEffort>,
     /// Automatically generate a session title after the first exchange.
     #[serde(default = "default_auto_title")]
     pub auto_title: bool,
@@ -53,6 +59,7 @@ fn default_workspace_file_max_chars() -> usize {
 impl Default for ChatConfig {
     fn default() -> Self {
         Self {
+            reasoning_default: None,
             auto_title: default_auto_title(),
             message_queue_mode: default_message_queue_mode(),
             prompt_memory_mode: default_prompt_memory_mode(),

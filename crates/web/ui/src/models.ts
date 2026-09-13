@@ -167,11 +167,15 @@ async function bindAcpAgent(agent: ExternalAgentInfo, notifyFailure = true): Pro
 	}
 }
 
-function setSessionModel(sessionKey: string, modelId: string): void {
-	sendRpc("sessions.patch", { key: sessionKey, model: modelId });
+export function setSessionModel(sessionKey: string, modelId: string): void {
+	const session = sessionStore.getByKey(sessionKey);
+	if (session) session.update({ ...session.toMeta(), model: modelId });
+	void sendRpc("sessions.patch", { key: sessionKey, model: modelId })
+		.then((res) => {
+			if (!res?.ok) showToast(res?.error?.message || "Failed to save session model", "error");
+		})
+		.catch(() => showToast("Failed to save session model", "error"));
 }
-
-export { setSessionModel };
 
 export interface ModelLabelInfo {
 	id: string;
@@ -224,7 +228,7 @@ function commitModelSelection(m: ModelInfo, sessionKey = S.activeSessionKey): vo
 	S.setSelectedModelId(m.id);
 	updateModelComboLabel(m);
 	localStorage.setItem("moltis-model", m.id);
-	setSessionModel(sessionKey, m.id);
+	setSessionModel(sessionKey, modelStore.effectiveModelId.value);
 	closeModelDropdown();
 	// Show notice if model doesn't support tools
 	showModelNotice(m);

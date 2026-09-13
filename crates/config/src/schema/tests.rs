@@ -3,6 +3,64 @@ use secrecy::{ExposeSecret, Secret};
 use super::*;
 
 #[test]
+fn chat_reasoning_default_omitted_is_none() {
+    assert_eq!(ChatConfig::default().reasoning_default, None);
+    for source in ["", "[chat]"] {
+        let config: MoltisConfig = toml::from_str(source).unwrap();
+        assert_eq!(config.chat.reasoning_default, None);
+        let serialized = toml::to_string(&config).unwrap();
+        assert!(!serialized.contains("reasoning_default"));
+        let restored: MoltisConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(restored.chat.reasoning_default, None);
+    }
+}
+
+#[test]
+fn chat_reasoning_default_deserialize_and_roundtrip() {
+    for (value, expected) in [
+        ("minimal", ReasoningEffort::Minimal),
+        ("low", ReasoningEffort::Low),
+        ("medium", ReasoningEffort::Medium),
+        ("high", ReasoningEffort::High),
+        ("xhigh", ReasoningEffort::ExtraHigh),
+        ("extra-high", ReasoningEffort::ExtraHigh),
+    ] {
+        let config: MoltisConfig =
+            toml::from_str(&format!("[chat]\nreasoning_default = {value:?}")).unwrap();
+        assert_eq!(config.chat.reasoning_default, Some(expected));
+        assert_eq!(ReasoningEffort::try_from(value), Ok(expected));
+        let serialized = toml::to_string(&config).unwrap();
+        assert!(serialized.contains(&format!("reasoning_default = {:?}", expected.as_str())));
+        let restored: MoltisConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(restored.chat.reasoning_default, Some(expected));
+        let json = serde_json::to_string(&expected).unwrap();
+        assert_eq!(json, format!("{:?}", expected.as_str()));
+        assert_eq!(
+            serde_json::from_str::<ReasoningEffort>(&format!("{value:?}")).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn chat_reasoning_default_rejects_invalid_values() {
+    for value in ["max", "off", "extreme", "", "HIGH"] {
+        assert!(ReasoningEffort::try_from(value).is_err());
+        assert!(serde_json::from_str::<ReasoningEffort>(&format!("{value:?}")).is_err());
+        assert!(
+            toml::from_str::<MoltisConfig>(&format!("[chat]\nreasoning_default = {value:?}"))
+                .is_err()
+        );
+    }
+    for value in ["true", "42", "[]", "{}"] {
+        assert!(
+            toml::from_str::<MoltisConfig>(&format!("[chat]\nreasoning_default = {value}"))
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn geolocation_display_with_place() {
     let loc = GeoLocation {
         latitude: 37.759,

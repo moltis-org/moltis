@@ -105,8 +105,8 @@ export function restoreSessionState(entry: SessionMeta, projectId?: string): voi
 	S.setActiveProjectId(effectiveProjectId);
 	localStorage.setItem("moltis-project", effectiveProjectId);
 	updateSessionProjectSelect(effectiveProjectId);
+	const baseModelId = restoreReasoningFromModelId(entry.model || "");
 	if (entry.model) {
-		const baseModelId = restoreReasoningFromModelId(entry.model);
 		modelStore.select(baseModelId);
 		S.setSelectedModelId(baseModelId);
 		localStorage.setItem("moltis-model", baseModelId);

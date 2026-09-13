@@ -4,6 +4,7 @@
 // (auto-subscribe) and imperative code (read .value) can use this.
 
 import { computed, signal } from "@preact/signals";
+import * as gon from "../gon";
 import { sendRpc } from "../helpers";
 import type { ModelInfo, ReasoningSuffix, RpcResponse } from "../types";
 
@@ -12,7 +13,9 @@ export const REASONING_SEP = "@reasoning-";
 // ── Signals ──────────────────────────────────────────────────
 export const models = signal<ModelInfo[]>([]);
 export const selectedModelId = signal<string>(localStorage.getItem("moltis-model") || "");
-export const reasoningEffort = signal<string>(localStorage.getItem("moltis-reasoning-effort") || "");
+export const reasoningEffort = signal<string>(
+	gon.get("reasoning_default") ?? (localStorage.getItem("moltis-reasoning-effort") || ""),
+);
 let modelListGeneration = 0;
 
 export const selectedModel = computed<ModelInfo | null>(() => {
@@ -73,7 +76,7 @@ export function fetch(): Promise<boolean> {
 		const parsed = parseReasoningSuffix(saved);
 		if (parsed.effort) {
 			saved = parsed.baseId;
-			setReasoningEffort(parsed.effort);
+			if (!gon.get("reasoning_default")) setReasoningEffort(parsed.effort);
 			localStorage.setItem("moltis-model", saved);
 		}
 		const found = models.value.find((m) => m.id === saved);

@@ -7,14 +7,16 @@
 // backend changes required.
 
 import { effect } from "@preact/signals";
+import * as gon from "./gon";
 import { t } from "./i18n";
+import { setSessionModel } from "./models";
 import { modelStore } from "./stores/model-store";
 import { sessionStore } from "./stores/session-store";
 
 const EFFORT_VALUES: string[] = ["", "minimal", "low", "medium", "high", "xhigh"];
 
 let reasoningCombo: HTMLElement | null = null;
-let reasoningComboBtn: HTMLElement | null = null;
+let reasoningComboBtn: HTMLButtonElement | null = null;
 let reasoningComboLabel: HTMLElement | null = null;
 let reasoningDropdown: HTMLElement | null = null;
 let reasoningDropdownList: HTMLElement | null = null;
@@ -50,7 +52,11 @@ function renderOptions(): void {
 }
 
 function selectEffort(effort: string): void {
+	if (reasoningComboBtn?.disabled) return;
 	modelStore.setReasoningEffort(effort);
+	const key = sessionStore.activeSessionKey.value;
+	const model = modelStore.effectiveModelId.value;
+	if (key && model) setSessionModel(key, model);
 	if (reasoningComboLabel) reasoningComboLabel.textContent = effortLabel(effort);
 	closeDropdown();
 }
@@ -74,7 +80,7 @@ function handleOutsideClick(e: MouseEvent): void {
 
 export function bindReasoningToggle(): void {
 	reasoningCombo = document.getElementById("reasoningCombo");
-	reasoningComboBtn = document.getElementById("reasoningComboBtn");
+	reasoningComboBtn = document.querySelector<HTMLButtonElement>("#reasoningComboBtn");
 	reasoningComboLabel = document.getElementById("reasoningComboLabel");
 	reasoningDropdown = document.getElementById("reasoningDropdown");
 	reasoningDropdownList = document.getElementById("reasoningDropdownList");
@@ -99,8 +105,20 @@ export function bindReasoningToggle(): void {
 		const supportsReasoning = modelStore.supportsReasoning.value;
 		const show = supportsReasoning && !sessionState?.externalAgentKind;
 		reasoningCombo?.classList.toggle("hidden", !show);
-		// Reset effort when switching to a non-reasoning model
-		if (!supportsReasoning && modelStore.reasoningEffort.value) {
+		// Restoration applies a metadata snapshot after history loads. Do not
+		// accept an effort override that this pending snapshot would overwrite.
+		const restoring = sessionStore.refreshInProgressKey.value === sessionStore.activeSessionKey.value;
+		if (reasoningComboBtn) reasoningComboBtn.disabled = restoring;
+		if (restoring) closeDropdown();
+		// Unknown capabilities must not erase restored effort during bootstrap.
+		// Configured defaults remain dormant on unsupported models; effectiveModelId
+		// only includes a suffix when the selected model supports reasoning.
+		if (
+			!gon.get("reasoning_default") &&
+			modelStore.selectedModel.value &&
+			!supportsReasoning &&
+			modelStore.reasoningEffort.value
+		) {
 			modelStore.setReasoningEffort("");
 		}
 		if (reasoningComboLabel) {
@@ -112,7 +130,8 @@ export function bindReasoningToggle(): void {
 /** Restore reasoning toggle state from a session's stored model ID. */
 export function restoreReasoningFromModelId(modelId: string): string {
 	const parsed = modelStore.parseReasoningSuffix(modelId);
-	modelStore.setReasoningEffort(parsed.effort);
+	if (modelId) modelStore.setReasoningEffort(parsed.effort);
+	else if (gon.get("reasoning_default")) modelStore.setReasoningEffort(gon.get("reasoning_default") || "");
 	if (reasoningComboLabel) {
 		reasoningComboLabel.textContent = effortLabel(modelStore.reasoningEffort.value);
 	}

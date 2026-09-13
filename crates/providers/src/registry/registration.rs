@@ -1395,7 +1395,9 @@ impl ProviderRegistry {
         let mut ranked: Vec<(u8, usize, usize, Arc<dyn LlmProvider>)> = Vec::new();
 
         for (idx, info) in self.models.iter().enumerate() {
-            if info.id == primary_model_id && info.provider == primary_provider_name {
+            if info.id == split_reasoning_suffix(primary_model_id).0
+                && info.provider == primary_provider_name
+            {
                 continue; // skip the primary itself
             }
             let Some(p) = self.providers.get(&info.id).cloned() else {

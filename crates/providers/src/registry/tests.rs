@@ -17,6 +17,55 @@ use {
 const FIREWORKS_KIMI_ROUTER: &str = "accounts/fireworks/routers/kimi-k2p5-turbo";
 
 #[test]
+fn reasoning_provider_id_round_trips_and_replaces_suffix() -> anyhow::Result<()> {
+    use {moltis_agents::model::ReasoningEffort, std::sync::Arc};
+
+    let mut registry = ProviderRegistry::empty();
+    registry.register(
+        crate::ModelInfo {
+            id: "o3".into(),
+            provider: "openai".into(),
+            display_name: "o3".into(),
+            created_at: None,
+            recommended: false,
+            capabilities: crate::ModelCapabilities::infer("o3"),
+        },
+        Arc::new(crate::openai::OpenAiProvider::new(
+            Secret::new("test-key".into()),
+            "o3".into(),
+            "https://api.openai.com/v1".into(),
+        )),
+    );
+    let base = registry.get("openai::o3").context("base provider")?;
+    for &effort in ReasoningEffort::ALL {
+        let id = format!("openai::o3@reasoning-{}", effort.as_str());
+        let explicit = registry.get(&id).context("explicit reasoning")?;
+        let default = Arc::clone(&base)
+            .with_reasoning_effort(effort)
+            .context("default reasoning")?;
+        for provider in [explicit, default] {
+            assert_eq!(provider.id(), id);
+            let restored = registry.get(provider.id()).context("persisted provider")?;
+            assert_eq!(restored.reasoning_effort(), Some(effort));
+            assert_eq!(restored.id(), id);
+            assert!(
+                registry
+                    .fallback_providers_for(provider.id(), provider.name())
+                    .is_empty()
+            );
+            let changed = provider
+                .with_reasoning_effort(ReasoningEffort::Low)
+                .context("change effort")?;
+            assert_eq!(changed.id(), "openai::o3@reasoning-low");
+            assert_eq!(changed.reasoning_effort(), Some(ReasoningEffort::Low));
+        }
+    }
+    assert_eq!(base.id(), "openai::o3");
+    assert_eq!(base.reasoning_effort(), None);
+    Ok(())
+}
+
+#[test]
 fn openai_default_base_url_enables_responses_websocket() {
     let capabilities = openai_builtin_capabilities("https://api.openai.com/v1");
     assert_eq!(

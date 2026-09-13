@@ -1,5 +1,12 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
+const {
+	createSession,
+	navigateAndWait,
+	sendRpcFromPage,
+	waitForChatSessionReady,
+	waitForWsConnected,
+	watchPageErrors,
+} = require("../helpers");
 
 /** Set mock models in the browser and freeze the store so bootstrap/WS cannot overwrite. */
 async function setMockModels(page, models, selectedId, effort) {
@@ -22,8 +29,7 @@ async function setMockModels(page, models, selectedId, effort) {
 			// immediately without a brief "model not found" gap.
 			store.select(selectedId);
 			store.setAll(models);
-			// Set effort AFTER models so supportsReasoning is true; the effect
-			// in reasoning-toggle resets effort to "" when supportsReasoning=false.
+			// Set an explicit effort only when the test requests one.
 			if (effort) store.setReasoningEffort(effort);
 		},
 		[models, selectedId, effort],
@@ -251,5 +257,141 @@ test.describe("reasoning effort toggle", () => {
 		expect(effort).toBe("");
 
 		expect(pageErrors).toEqual([]);
+	});
+});
+
+test.describe("configured reasoning default", () => {
+	const models = [
+		{ id: "reasoning-model", displayName: "Reasoning Model", provider: "openai", supportsReasoning: true },
+		{ id: "plain-model", displayName: "Plain Model", provider: "openai", supportsReasoning: false },
+	];
+
+	test.beforeEach(async ({ page }) => {
+		await page.addInitScript(() => {
+			let data;
+			Object.defineProperty(window, "__MOLTIS__", {
+				get: () => data,
+				set: (value) => {
+					data = { ...value, reasoning_default: "high" };
+				},
+				configurable: true,
+			});
+			localStorage.setItem("moltis-reasoning-effort", "low");
+		});
+		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+		await waitForChatSessionReady(page);
+		// The gateway is shared across tests. Remove the previous main session's
+		// model override so bootstrap really exercises the configured default.
+		const reset = await sendRpcFromPage(page, "sessions.patch", { key: "main", model: "" });
+		expect(reset.ok).toBe(true);
+		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+		await waitForChatSessionReady(page);
+	});
+
+	test("main session default survives bootstrap and delayed model capabilities", async ({ page }) => {
+		const errors = watchPageErrors(page);
+		await setMockModels(page, models, "reasoning-model");
+		await expect(page.locator("#reasoningCombo").getByRole("button")).toHaveText("High");
+		await page.evaluate(() => {
+			const store = window.__moltis_stores.modelStore;
+			const models = store.models.value;
+			store.models.value = [];
+			store.models.value = models;
+		});
+		await expect(page.locator("#reasoningCombo").getByRole("button")).toHaveText("High");
+		expect(errors).toEqual([]);
+	});
+
+	for (const [label, suffix] of [
+		["Off", ""],
+		["Extra High", "@reasoning-xhigh"],
+	]) {
+		test(`${label} is saved before sending and restored independently of new sessions`, async ({ page }) => {
+			const errors = watchPageErrors(page);
+			await setMockModels(page, models, "reasoning-model");
+			await createSession(page);
+			const key = await page.evaluate(() => window.__moltis_stores.sessionStore.activeSessionKey.value);
+			await expect(page.locator("#reasoningCombo").getByRole("button")).toHaveText("High");
+			await page.locator("#reasoningCombo").getByRole("button").click();
+			await page.locator("#reasoningDropdownList").getByText(label, { exact: true }).click();
+			await createSession(page);
+			await expect(page.locator("#reasoningCombo").getByRole("button")).toHaveText("High");
+			const saved = await sendRpcFromPage(page, "sessions.switch", { key, include_history: false });
+			expect(saved.ok).toBe(true);
+			expect(saved.payload.entry.model).toBe(`reasoning-model${suffix}`);
+			await page.evaluate((key) => window.__moltis_modules.sessions.switchSession(key), key);
+			await waitForChatSessionReady(page);
+			await expect(page.locator("#reasoningCombo").getByRole("button")).toHaveText(label);
+			expect(errors).toEqual([]);
+		});
+	}
+
+	test("pending history restoration blocks effort choices until the stale snapshot is applied", async ({ page }) => {
+		const errors = watchPageErrors(page);
+		await setMockModels(page, models, "reasoning-model");
+		const button = page.locator("#reasoningCombo").getByRole("button");
+		await button.click();
+		await expect(page.locator("#reasoningDropdown")).toBeVisible();
+
+		let releaseHistory;
+		const historyGate = new Promise((resolve) => {
+			releaseHistory = resolve;
+		});
+		let historyRequested;
+		const historyStarted = new Promise((resolve) => {
+			historyRequested = resolve;
+		});
+		await page.route("**/api/sessions/main/history*", async (route) => {
+			const response = await route.fetch();
+			historyRequested();
+			await historyGate;
+			await route.fulfill({ response });
+		});
+		try {
+			await page.evaluate(() => {
+				window.__moltis_modules["stores/session-history-cache"].clearSessionHistory("main");
+				window.__moltis_modules.sessions.switchSession("main");
+			});
+			await historyStarted;
+			await expect(button).toBeDisabled();
+			await expect(page.locator("#reasoningDropdown")).toBeHidden();
+			// Even an already queued option click must not save an override while loading.
+			await page.locator("#reasoningDropdownList").getByText("Off", { exact: true }).dispatchEvent("click");
+			await expect(button).toHaveText("High");
+		} finally {
+			releaseHistory();
+		}
+		await waitForChatSessionReady(page);
+		await expect(button).toBeEnabled();
+		await button.click();
+		await page.locator("#reasoningDropdownList").getByText("Off", { exact: true }).click();
+		await expect(button).toHaveText("Off");
+		const saved = await sendRpcFromPage(page, "sessions.switch", { key: "main", include_history: false });
+		expect(saved.ok).toBe(true);
+		expect(saved.payload.entry.model).toBe("reasoning-model");
+		await page.evaluate(() => {
+			const originalSend = WebSocket.prototype.send;
+			WebSocket.prototype.send = function (data) {
+				const frame = JSON.parse(data);
+				if (frame.method === "chat.send") window.__reasoningSendModel = frame.params.model;
+				return originalSend.call(this, data);
+			};
+		});
+		await page.locator("#chatInput").fill("hello");
+		await page.locator("#chatInput").press("Enter");
+		await expect.poll(() => page.evaluate(() => window.__reasoningSendModel)).toBe("reasoning-model");
+		expect(errors).toEqual([]);
+	});
+
+	test("unsupported models omit the suffix without erasing the default", async ({ page }) => {
+		const errors = watchPageErrors(page);
+		await setMockModels(page, models, "plain-model");
+		await expect(page.locator("#reasoningCombo")).toBeHidden();
+		expect(await page.evaluate(() => window.__moltis_stores.modelStore.effectiveModelId.value)).toBe("plain-model");
+		await page.evaluate(() => window.__moltis_stores.modelStore.select("reasoning-model"));
+		await expect(page.locator("#reasoningCombo").getByRole("button")).toHaveText("High");
+		expect(errors).toEqual([]);
 	});
 });

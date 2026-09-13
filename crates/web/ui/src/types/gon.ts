@@ -235,6 +235,7 @@ export interface GonData {
 	connectors_enabled: boolean;
 	terminal_enabled: boolean;
 	rpc_timeout_ms: number;
+	reasoning_default: "minimal" | "low" | "medium" | "high" | "xhigh" | null;
 	git_branch?: string;
 	mem: MemSnapshot;
 	deploy_platform?: string;

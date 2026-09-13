@@ -18,7 +18,10 @@ use {
 };
 
 use {
-    moltis_providers::{ProviderRegistry, model_id::raw_model_id},
+    moltis_providers::{
+        ProviderRegistry,
+        model_id::{raw_model_id, split_reasoning_suffix},
+    },
     moltis_service_traits::{ModelService, ServiceError, ServiceResult},
 };
 
@@ -348,6 +351,8 @@ impl DisabledModelsStore {
         detail: &str,
         provider: Option<&str>,
     ) -> bool {
+        // Account/provider support applies to the base model, not a reasoning level.
+        let model_id = split_reasoning_suffix(model_id).0;
         let next = UnsupportedModelInfo {
             detail: detail.to_string(),
             provider: provider.map(ToString::to_string),
@@ -369,12 +374,14 @@ impl DisabledModelsStore {
 
     /// Clear unsupported status when a model succeeds again.
     pub fn clear_unsupported(&mut self, model_id: &str) -> bool {
-        self.unsupported.remove(model_id).is_some()
+        self.unsupported
+            .remove(split_reasoning_suffix(model_id).0)
+            .is_some()
     }
 
     /// Get unsupported metadata for a model.
     pub fn unsupported_info(&self, model_id: &str) -> Option<&UnsupportedModelInfo> {
-        self.unsupported.get(model_id)
+        self.unsupported.get(split_reasoning_suffix(model_id).0)
     }
 }
 
@@ -1171,5 +1178,45 @@ impl ModelService for LiveModelService {
                 Err(detail.into())
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod unsupported_tests {
+    use super::DisabledModelsStore;
+
+    #[test]
+    fn reasoning_variant_unsupported_tracks_and_clears_namespaced_base() -> anyhow::Result<()> {
+        let mut store = DisabledModelsStore::default();
+        let base = "openai::o3";
+        let high = "openai::o3@reasoning-high";
+        let low = "openai::o3@reasoning-low";
+        let other = "other-provider::o3";
+        assert!(store.mark_unsupported(high, "not available", Some("openai")));
+        assert!(store.unsupported.contains_key(base));
+        assert!(!store.unsupported.contains_key(high));
+        for id in [base, high, low] {
+            let info = store
+                .unsupported_info(id)
+                .ok_or_else(|| anyhow::anyhow!("missing flag for {id}"))?;
+            assert_eq!(info.detail, "not available");
+            assert_eq!(info.provider.as_deref(), Some("openai"));
+        }
+        assert!(store.unsupported_info(other).is_none());
+        assert!(!store.mark_unsupported(low, "not available", Some("openai")));
+
+        // Persist only the base key; a success at any reasoning level clears it.
+        let mut restored: DisabledModelsStore =
+            serde_json::from_str(&serde_json::to_string(&store)?)?;
+        assert!(restored.mark_unsupported(other, "unrelated", Some("other-provider")));
+        assert!(restored.clear_unsupported(low));
+        for id in [base, high, low] {
+            assert!(restored.unsupported_info(id).is_none());
+        }
+        assert!(restored.unsupported_info(other).is_some());
+        assert!(!restored.clear_unsupported(high));
+        assert!(restored.mark_unsupported(high, "not available", Some("openai")));
+        assert!(restored.clear_unsupported(base));
+        Ok(())
     }
 }
