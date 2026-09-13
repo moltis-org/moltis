@@ -158,9 +158,28 @@ allowed, and <code>exec</code>/<code>write_file</code> are explicitly denied. Se
 <p>Channel accounts can restrict tools by chat type (<code>private</code>, <code>group</code>,
 <code>channel</code>, etc.). By default, guest, shared-room, and unknown-topology turns
 have a deny-all ceiling, so this layer primarily narrows tools available to an
-operator in a proven direct chat. Channels that support <code>untrusted_audience</code>
-and <code>untrusted_tools</code> can explicitly lift that ceiling and hand the decision
-back to this layer.</p>
+operator in a proven direct chat. Telegram and Slack accounts can explicitly
+lift that ceiling and hand the decision back to these policy layers:</p>
+<ul>
+<li><code>untrusted_audience = "public"</code> (default) limits tool eligibility to the public
+audience; <code>"trusted"</code> makes MCP, WASM, and other trusted-audience tools eligible.</li>
+<li><code>untrusted_tools = "deny_all"</code> (default) denies all tool names; <code>"policy"</code>
+removes that blanket denial and lets configured policy layers decide.</li>
+</ul>
+<p>MCP tools require <strong>both</strong> <code>untrusted_audience = "trusted"</code> and
+<code>untrusted_tools = "policy"</code>. An allow list or sender override alone cannot
+bypass either default. These opt-ins are account-wide for turns outside an
+operator direct chat, including guest DMs and shared or unknown chat kinds.
+Restrict group/channel access and DM access as well as tool policies before
+enabling them; without restrictive policies, every tool allowed by the remaining
+layers becomes available.</p>
+<p>For UI-managed accounts, set these fields through Advanced Config JSON in
+<strong>Settings > Channels</strong>. Channel settings are stored in <code>data_dir()/moltis.db</code>,
+not written back to <code>moltis.toml</code>. Database-backed <code>tools.groups</code> policies are
+not currently part of runtime policy resolution, so use a restrictive global
+or provider policy before lifting the ceiling. See
+<a href="/telegram.html#tools-in-shared-chats">Telegram</a> and
+<a href="/slack.html#tools-in-shared-channels">Slack</a> for account-specific guidance.</p>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels.telegram.my-bot.tools.groups.private]
 deny = [&#x22;exec&#x22;, &#x22;browser&#x22;]"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channels</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">telegram</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">my-bot</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">groups</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">private</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">deny </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"exec"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "browser"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span></code></pre>
@@ -185,7 +204,8 @@ However, because <strong>deny always accumulates</strong>, the <code>exec</code>
 from the chat-type layer still apply. By default, the sender must also be a
 configured operator in a proven direct chat; a sender override alone never
 grants tools. A supported channel account can instead opt its untrusted turns
-into policy-based access with <code>untrusted_audience</code> and <code>untrusted_tools</code>.</p>
+into trusted-audience, policy-based access with <code>untrusted_audience = "trusted"</code>
+and <code>untrusted_tools = "policy"</code>.</p>
 <h2 id="layer-6--sandbox">Layer 6 — Sandbox</h2>
 <p>When a session runs inside a sandbox container, this layer applies on top of
 all other layers. It lets you restrict tools for sandboxed execution without
@@ -208,7 +228,8 @@ providers retain their normal tool access.</p>
 deny = [&#x22;exec&#x22;, &#x22;browser*&#x22;]"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channels</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">telegram</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">my-bot</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">groups</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">private</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">deny </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"exec"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "browser*"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span></code></pre>
 <p>Operators in proven direct chats cannot use <code>exec</code> or any tool starting with
-<code>browser</code>. Guest and shared-room turns already receive no tools.</p>
+<code>browser</code>. Guest and shared-room turns already receive no tools unless the
+account explicitly lifts the default ceiling.</p>
 <h3 id="narrow-one-operator-in-direct-chats">Narrow one operator in direct chats</h3>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels.telegram.my-bot.tools.groups.private]
 allow = [&#x22;web_search&#x22;, &#x22;web_fetch&#x22;]
@@ -220,8 +241,8 @@ allow = [&#x22;web_search&#x22;]"><code><span class="line"><span style="color:#2
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channels</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">telegram</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">my-bot</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">groups</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">private</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">by_sender</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">"123456"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">allow </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"web_search"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span></code></pre>
 <p>Operator <code>123456</code> can only search in a proven direct chat. Other operators in
-direct chats can search and fetch. This configuration grants nothing to guests
-or shared-room participants.</p>
+direct chats can search and fetch. With the default audience ceiling, this
+configuration grants nothing to guests or shared-room participants.</p>
 <h3 id="agent-preset-with-limited-tools">Agent preset with limited tools</h3>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[agents.presets.researcher]
 tools.allow = [&#x22;read_file&#x22;, &#x22;glob&#x22;, &#x22;grep&#x22;]
@@ -252,8 +273,8 @@ profile = &#x22;full&#x22;"><code><span class="line"><span style="color:#24292EF
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channels</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">telegram</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">my-bot</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">tools</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">groups</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">private</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">by_sender</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">"123456"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">profile </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "full"</span></span></code></pre>
 <p>Operator <code>123456</code> gets <code>allow = ["*"]</code> from the <code>full</code> profile, replacing the
-chat-type allow list in a proven direct chat. The same sender still receives no
-tools as a guest or in a shared or unknown chat.</p>
+chat-type allow list in a proven direct chat. With the default audience ceiling,
+the same sender still receives no tools as a guest or in a shared or unknown chat.</p>
 <h2 id="debugging">Debugging</h2>
 <p>Enable <code>debug</code> logging to see which layers are applied at runtime:</p>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext" data-code="policy: applied global profile &#x27;coding&#x27;

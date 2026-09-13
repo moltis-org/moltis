@@ -183,7 +183,19 @@ offered = [&#x22;telegram&#x22;]"><code><span class="line"><span style="color:#2
 
 
 
-<table><thead><tr><th>Field</th><th>Required</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>token</code></td><td><strong>yes</strong></td><td>—</td><td>Bot token from @BotFather</td></tr><tr><td><code>dm_policy</code></td><td>no</td><td><code>"allowlist"</code></td><td>Who can DM the bot: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>group_policy</code></td><td>no</td><td><code>"open"</code></td><td>Who can talk to the bot in groups: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>mention_mode</code></td><td>no</td><td><code>"mention"</code></td><td>When the bot responds in groups: <code>"always"</code>, <code>"mention"</code> (only when @mentioned), or <code>"none"</code></td></tr><tr><td><code>allowlist</code></td><td>no</td><td><code>[]</code></td><td>User IDs or usernames allowed to DM the bot (when <code>dm_policy = "allowlist"</code>)</td></tr><tr><td><code>group_allowlist</code></td><td>no</td><td><code>[]</code></td><td>Group/chat IDs allowed to interact with the bot</td></tr><tr><td><code>model</code></td><td>no</td><td>—</td><td>Override the default model for this channel</td></tr><tr><td><code>model_provider</code></td><td>no</td><td>—</td><td>Provider for the overridden model</td></tr><tr><td><code>agent_id</code></td><td>no</td><td>—</td><td>Default agent ID for this bot’s sessions</td></tr><tr><td><code>reply_to_message</code></td><td>no</td><td><code>false</code></td><td>Send bot responses as Telegram replies to the user’s message</td></tr><tr><td><code>otp_self_approval</code></td><td>no</td><td><code>true</code></td><td>Enable OTP self-approval for non-allowlisted DM users</td></tr><tr><td><code>otp_cooldown_secs</code></td><td>no</td><td><code>300</code></td><td>Cooldown in seconds after 3 failed OTP attempts</td></tr><tr><td><code>stream_mode</code></td><td>no</td><td><code>"edit_in_place"</code></td><td>Streaming mode: <code>"edit_in_place"</code> or <code>"off"</code></td></tr><tr><td><code>edit_throttle_ms</code></td><td>no</td><td><code>2000</code></td><td>Minimum milliseconds between streaming edit updates</td></tr><tr><td><code>stream_notify_on_complete</code></td><td>no</td><td><code>false</code></td><td>Send the final answer as a notifying message instead of silently reusing the progress message</td></tr><tr><td><code>stream_min_initial_chars</code></td><td>no</td><td><code>30</code></td><td>Minimum characters before sending the first temporary progress message</td></tr><tr><td><code>stream_progress_max_chars</code></td><td>no</td><td><code>3500</code></td><td>Maximum recent progress characters kept visible in the temporary streamed message</td></tr></tbody></table>
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Field</th><th>Required</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>token</code></td><td><strong>yes</strong></td><td>—</td><td>Bot token from @BotFather</td></tr><tr><td><code>dm_policy</code></td><td>no</td><td><code>"allowlist"</code></td><td>Who can DM the bot: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>group_policy</code></td><td>no</td><td><code>"open"</code></td><td>Who can talk to the bot in groups: <code>"open"</code>, <code>"allowlist"</code>, or <code>"disabled"</code></td></tr><tr><td><code>mention_mode</code></td><td>no</td><td><code>"mention"</code></td><td>When the bot responds in groups: <code>"always"</code>, <code>"mention"</code> (only when @mentioned), or <code>"none"</code></td></tr><tr><td><code>allowlist</code></td><td>no</td><td><code>[]</code></td><td>User IDs or usernames allowed to DM the bot (when <code>dm_policy = "allowlist"</code>)</td></tr><tr><td><code>group_allowlist</code></td><td>no</td><td><code>[]</code></td><td>Group/chat IDs allowed to interact with the bot</td></tr><tr><td><code>untrusted_audience</code></td><td>no</td><td><code>"public"</code></td><td>Tool audience ceiling for turns outside an operator direct chat: <code>"public"</code> or <code>"trusted"</code></td></tr><tr><td><code>untrusted_tools</code></td><td>no</td><td><code>"deny_all"</code></td><td>Tool name policy for those turns: <code>"deny_all"</code>, or <code>"policy"</code> to let configured policy layers decide</td></tr><tr><td><code>model</code></td><td>no</td><td>—</td><td>Override the default model for this channel</td></tr><tr><td><code>model_provider</code></td><td>no</td><td>—</td><td>Provider for the overridden model</td></tr><tr><td><code>agent_id</code></td><td>no</td><td>—</td><td>Default agent ID for this bot’s sessions</td></tr><tr><td><code>reply_to_message</code></td><td>no</td><td><code>false</code></td><td>Send bot responses as Telegram replies to the user’s message</td></tr><tr><td><code>otp_self_approval</code></td><td>no</td><td><code>true</code></td><td>Enable OTP self-approval for non-allowlisted DM users</td></tr><tr><td><code>otp_cooldown_secs</code></td><td>no</td><td><code>300</code></td><td>Cooldown in seconds after 3 failed OTP attempts</td></tr><tr><td><code>stream_mode</code></td><td>no</td><td><code>"edit_in_place"</code></td><td>Streaming mode: <code>"edit_in_place"</code> or <code>"off"</code></td></tr><tr><td><code>edit_throttle_ms</code></td><td>no</td><td><code>2000</code></td><td>Minimum milliseconds between streaming edit updates</td></tr><tr><td><code>stream_notify_on_complete</code></td><td>no</td><td><code>false</code></td><td>Send the final answer as a notifying message instead of silently reusing the progress message</td></tr><tr><td><code>stream_min_initial_chars</code></td><td>no</td><td><code>30</code></td><td>Minimum characters before sending the first temporary progress message</td></tr><tr><td><code>stream_progress_max_chars</code></td><td>no</td><td><code>3500</code></td><td>Maximum recent progress characters kept visible in the temporary streamed message</td></tr></tbody></table>
 <aside class="admonition admonition-important"><div class="admonition-title">Allowlist values are strings</div><div class="admonition-body"><p>All allowlist entries must be <strong>strings</strong>, even for numeric Telegram user IDs.<br>Write <code>allowlist = ["123456789"]</code>, not <code>allowlist = [123456789]</code>.<br>Both numeric user IDs and usernames are supported — the bot checks both when<br>evaluating access.</p></div></aside>
 <h3 id="full-example">Full Example</h3>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels]
@@ -219,6 +231,29 @@ edit_throttle_ms = 2000"><code><span class="line"><span style="color:#24292EFF;-
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">otp_self_approval </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">stream_mode </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "edit_in_place"</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">edit_throttle_ms </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> 2000</span></span></code></pre>
+<h3 id="tools-in-shared-chats">Tools in Shared Chats</h3>
+<p>By default, Telegram group chats, guest DMs (messages from non-operators), and
+unknown chat kinds receive no tools. As with Slack, MCP tools require <strong>both</strong>
+account settings below:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels.telegram.my-bot]
+untrusted_audience = &#x22;trusted&#x22;
+untrusted_tools = &#x22;policy&#x22;"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">channels</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">telegram</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">my-bot</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">untrusted_audience </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "trusted"</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">untrusted_tools </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "policy"</span></span></code></pre>
+<p><code>untrusted_audience = "trusted"</code> makes MCP, WASM, and other trusted-audience
+tools eligible. <code>untrusted_tools = "policy"</code> removes the blanket name denial
+and lets the <a href="/tool-policy.html">tool policy layers</a> decide which tools are
+available. Neither setting alone enables MCP tools, and a policy allow list
+alone cannot bypass the default ceiling.</p>
+<aside class="admonition admonition-warning"><div class="admonition-title">Account-wide trust opt-in</div><div class="admonition-body"><p>These settings apply to every turn outside an operator direct chat for this<br>bot account, including guest DMs, not just the group you intend to enable.<br>Without restrictive policies, those turns can reach every tool allowed by the<br>remaining policy layers. Set <code>group_policy = "allowlist"</code> with a narrow<br><code>group_allowlist</code>, restrict DM access with <code>dm_policy</code> and <code>allowlist</code> (or<br>disable DMs), and review OTP approvals before lifting the ceiling. Mention<br>mode is not an access-control boundary.</p></div></aside>
+<p>For TOML-managed accounts, restrict tools for each enabled chat type with
+<code>tools.groups.&#x3C;chat_type></code> policies, including <code>private</code> for guest DMs. For
+UI-managed accounts, database-backed <code>tools.groups</code> policies are not currently
+part of runtime policy resolution: configure a restrictive global or provider
+policy before lifting the ceiling. Denials in any policy layer still win.</p>
+<p>These settings do not grant <code>/sh</code>, privileged commands, or owner-private prompt
+context in shared chats. Those remain restricted to operators in proven direct
+chats.</p>
 <h3 id="per-user-and-per-channel-model-and-agent-overrides">Per-User and Per-Channel Model and Agent Overrides</h3>
 <p>You can override the model or agent for specific users or group chats:</p>
 <pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="toml" data-code="[channels.telegram.my-bot]
@@ -435,6 +470,20 @@ on the user’s device (since silent edits don’t always trigger notifications)
 <li>Click <strong>Connect</strong></li>
 </ol>
 <p>The same form is available during onboarding when Telegram is in <code>channels.offered</code>.</p>
+<p>In <strong>Settings > Channels</strong>, use the account’s <strong>Advanced Config</strong> JSON editor
+for settings without dedicated form fields. To opt into trusted-audience tools
+and policy-based access, set:</p>
+<pre class="astro-code astro-code-themes min-light github-dark" style="background-color:#ffffff;--shiki-dark-bg:#24292e;color:#24292eff;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="json" data-code="{
+  &#x22;untrusted_audience&#x22;: &#x22;trusted&#x22;,
+  &#x22;untrusted_tools&#x22;: &#x22;policy&#x22;
+}"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">{</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "untrusted_audience"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "trusted"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#D32F2F;--shiki-dark:#79B8FF">  "untrusted_tools"</span><span style="color:#212121;--shiki-dark:#E1E4E8">:</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "policy"</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+<p>Read <a href="#tools-in-shared-chats">Tools in Shared Chats</a> and configure restrictive
+access and tool policies first. Channel settings added or edited in the web UI
+are stored in <code>data_dir()/moltis.db</code>, not written back to <code>moltis.toml</code>. Use the
+TOML examples only for manually managed accounts.</p>
 <h2 id="troubleshooting">Troubleshooting</h2>
 <h3 id="bot-doesnt-respond">Bot doesn’t respond</h3>
 <ul>
