@@ -1,5 +1,6 @@
 //! CLI subcommand modules.
 
+pub mod chat;
 pub mod config;
 pub mod health;
 pub mod mcp;
