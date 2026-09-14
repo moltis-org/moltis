@@ -137,7 +137,7 @@ port = {port}                           # Port number (auto-generated for this i
 # show_legacy_models = true         # Show models older than 1 year in the chat model selector (they always appear in Settings)
 # All available providers (canonical list in schema/providers.rs):
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepinfra",
-#   "deepseek", "fireworks", "mistral", "openrouter", "cerebras", "minimax",
+#   "deepseek", "fireworks", "mistral", "openrouter", "requesty", "cerebras", "minimax",
 #   "moonshot", "zai", "zai-code", "venice", "nearai", "alibaba-coding",
 #   "ollama", "lmstudio", "local-llm", "openai-codex",
 #   "github-copilot", "kimi-code"
@@ -233,6 +233,13 @@ port = {port}                           # Port number (auto-generated for this i
 # api_key = "..."                             # Or set OPENROUTER_API_KEY env var
 # models = ["anthropic/claude-3.5-sonnet"]    # Any model IDs on OpenRouter
 # base_url = "https://openrouter.ai/api/v1"
+
+# ── Requesty (multi-provider router) ──────────────────────────
+# [providers.requesty]
+# enabled = true
+# api_key = "..."                             # Or set REQUESTY_API_KEY env var
+# models = ["anthropic/claude-sonnet-4-5"]    # Any model IDs on Requesty
+# base_url = "https://router.requesty.ai/v1"
 
 # ── Moonshot (Kimi) ─────────────────────────────────────────
 # [providers.moonshot]
