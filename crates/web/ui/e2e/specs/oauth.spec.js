@@ -119,7 +119,7 @@ test.describe("OAuth provider connection", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("OAuth PKCE flow completes successfully", async ({ page, context }) => {
+	test("OAuth PKCE flow completes successfully", async ({ page }) => {
 		var pageErrors = watchPageErrors(page);
 		await openProvidersSettingsPage(page);
 
@@ -130,24 +130,14 @@ test.describe("OAuth provider connection", () => {
 		await codexCard.click();
 		await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
 
-		// Listen for the popup that opens the OAuth auth URL.
-		var popupPromise = context.waitForEvent("page", { timeout: 10_000 });
-
 		// Click "Connect" to start the OAuth flow
 		await page.getByRole("button", { name: "Connect", exact: true }).click();
 
 		// The popup navigates to the mock server /authorize, which redirects
 		// back to the gateway's /auth/callback with code + state. The gateway
 		// exchanges the code and stores tokens.
-		var popup = await popupPromise;
-		// Callback success page may auto-close very quickly.
-		if (!popup.isClosed()) {
-			await popup.waitForEvent("close", { timeout: 10_000 }).catch(() => {
-				// Continue: main-page polling and mock call assertions below verify success.
-			});
-		}
-
-		// Back in the main page, wait for the polling to detect the authenticated state.
+		// The callback immediately closes the popup, potentially before Playwright
+		// reports its page event. Wait for durable authentication state instead.
 		// The UI should either show "connected" or transition to a model selector.
 		await waitForOAuthConnectionComplete(page);
 
@@ -225,7 +215,7 @@ test.describe("OAuth provider connection", () => {
 		// pageErrors may be empty since the error page is a simple HTML page
 	});
 
-	test("disconnect removes provider tokens", async ({ page, context }) => {
+	test("disconnect removes provider tokens", async ({ page }) => {
 		var pageErrors = watchPageErrors(page);
 		await openProvidersSettingsPage(page);
 
@@ -234,16 +224,9 @@ test.describe("OAuth provider connection", () => {
 		await codexCard.click();
 		await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
 
-		var popupPromise = context.waitForEvent("page", { timeout: 10_000 });
 		await page.getByRole("button", { name: "Connect", exact: true }).click();
-		var popup = await popupPromise;
-		if (!popup.isClosed()) {
-			await popup.waitForEvent("close", { timeout: 10_000 }).catch(() => {
-				// Continue: main-page polling and follow-up assertions verify success.
-			});
-		}
 
-		// Wait for connection to complete.
+		// Observe connection state, not the short-lived success popup.
 		await waitForOAuthConnectionComplete(page);
 
 		// Close the modal if a model picker is still open.
