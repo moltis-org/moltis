@@ -47,21 +47,59 @@ RUN apt-get update -qq && \
     rm -rf /var/lib/apt/lists/*
 
 # Build all web assets (Vite JS + Tailwind CSS + service worker)
-RUN ARCH=$(uname -m) && \
+# npm's own cache is mounted; node_modules deliberately is not.
+# build-web-assets.sh skips `npm ci` when node_modules already exists, so a
+# cached one would silently be used against a newer package-lock.json. A warm
+# ~/.npm makes the honest `npm ci` fast enough.
+RUN --mount=type=cache,id=moltis-npm,target=/root/.npm,sharing=locked \
+    ARCH=$(uname -m) && \
     case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac && \
     curl -sLO "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/$TW" && \
     chmod +x "$TW" && \
     TAILWINDCSS="./$TW" ./scripts/build-web-assets.sh
 
 # Install WASM target and build WASM components (embedded via include_bytes!)
-RUN rustup target add wasm32-wasip2 && \
-    cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+#
+# From here on cargo builds into cache mounts, so that a rebuild recompiles only
+# what changed instead of the whole dependency tree. A cache mount is not part of
+# any layer, which has one consequence that has to be honoured: after the RUN
+# ends, target/ is empty again as far as the image is concerned. Everything the
+# runtime stage needs is therefore copied to /out inside the same RUN.
+#
+# `sharing=locked` because two concurrent builds over one cargo target directory
+# is corruption rather than concurrency.
+RUN --mount=type=cache,id=moltis-cargo-target,target=/build/target,sharing=locked \
+    --mount=type=cache,id=moltis-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=moltis-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    rustup target add wasm32-wasip2 && \
+    cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release && \
+    mkdir -p /out/wasm && \
+    cp target/wasm32-wasip2/release/moltis_wasm_calc.wasm \
+       target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm \
+       target/wasm32-wasip2/release/moltis_wasm_web_search.wasm \
+       /out/wasm/
 
 # Build release binary with the same portable production feature set used by
 # release/package builds.
 ARG MOLTIS_VERSION
 ENV MOLTIS_VERSION=${MOLTIS_VERSION}
-RUN ./scripts/cargo-build-moltis.sh --release
+#
+# The zvec runtime is found rather than globbed, for two reasons that both come
+# from the target cache: a persistent target/ accumulates `zvec-rust-sys-*` build
+# directories from earlier builds, so the newest match is the only correct one -
+# a glob could pick a stale sibling. And zvec is a feature of `full`, so a
+# smaller feature set produces no such library at all; copying into a directory
+# that exists even when empty keeps that case a no-op instead of a failed COPY.
+RUN --mount=type=cache,id=moltis-cargo-target,target=/build/target,sharing=locked \
+    --mount=type=cache,id=moltis-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=moltis-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    ./scripts/cargo-build-moltis.sh --release && \
+    mkdir -p /out/lib && \
+    cp target/release/moltis /out/moltis && \
+    so="$(find target/release/build \
+            -path '*zvec-rust-sys-*/out/zvec-prebuilt/libzvec_c_api.so' \
+            -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1 | cut -d' ' -f2-)" && \
+    if [ -n "$so" ]; then cp "$so" /out/lib/; else echo "no zvec runtime in this feature set"; fi
 
 # Runtime stage
 FROM debian:trixie-slim
@@ -111,12 +149,15 @@ RUN groupadd -f docker && \
     echo "moltis ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/moltis
 
 # Copy binary and its zvec shared library from builder.
-COPY --from=builder /build/target/release/moltis /usr/local/bin/moltis
-COPY --from=builder /build/target/release/build/zvec-rust-sys-*/out/zvec-prebuilt/libzvec_c_api.so /usr/local/lib/
+#
+# Three of the four come out of /out, because target/ was a cache mount in the
+# builder and is therefore not in its layers. The web assets are copied from the
+# source tree, where build-web-assets.sh wrote them. The trailing slash on
+# /out/lib/ is what makes an absent zvec library a no-op rather than a failure.
+COPY --from=builder /out/moltis /usr/local/bin/moltis
+COPY --from=builder /out/lib/ /usr/local/lib/
 COPY --from=builder /build/crates/web/src/assets /usr/share/moltis/web
-COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_calc.wasm /usr/share/moltis/wasm/
-COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm /usr/share/moltis/wasm/
-COPY --from=builder /build/target/wasm32-wasip2/release/moltis_wasm_web_search.wasm /usr/share/moltis/wasm/
+COPY --from=builder /out/wasm/ /usr/share/moltis/wasm/
 RUN ldconfig && moltis --version
 
 # Create config and data directories.
