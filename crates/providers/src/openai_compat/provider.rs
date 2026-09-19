@@ -1216,3 +1216,27 @@ pub fn parse_responses_completion(resp: &serde_json::Value) -> CompletionRespons
         usage,
     }
 }
+
+#[cfg(test)]
+mod groq_debug_tests {
+    use super::to_openai_tools;
+
+    #[test]
+    fn empty_properties_schema_has_no_required() {
+        // Groq rejects `required` (even empty) alongside empty `properties`.
+        let tools = vec![serde_json::json!({
+            "name": "mcp_list",
+            "description": "List MCP servers",
+            "parameters": {"type": "object", "properties": {}}
+        })];
+        let strict_out = to_openai_tools(&tools, true);
+        let params = &strict_out[0]["function"]["parameters"];
+        assert!(
+            params.get("required").is_none(),
+            "strict mode must not emit `required` for zero-property schemas: {params}"
+        );
+        let non_strict_out = to_openai_tools(&tools, false);
+        let params = &non_strict_out[0]["function"]["parameters"];
+        assert!(params.get("required").is_none());
+    }
+}
