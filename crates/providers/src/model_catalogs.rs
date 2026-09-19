@@ -33,6 +33,17 @@ pub(crate) const MISTRAL_MODELS: &[(&str, &str)] = &[
 pub(crate) const CEREBRAS_MODELS: &[(&str, &str)] =
     &[("llama-4-scout-17b-16e-instruct", "Llama 4 Scout (Cerebras)")];
 
+/// Known Groq models.
+/// See: <https://console.groq.com/docs/models>
+pub(crate) const GROQ_MODELS: &[(&str, &str)] = &[
+    ("openai/gpt-oss-120b", "GPT-OSS 120B (Groq)"),
+    ("openai/gpt-oss-20b", "GPT-OSS 20B (Groq)"),
+    ("qwen/qwen3.8-27b", "Qwen 3.8 27B (Groq)"),
+    ("groq/compound", "Compound (Groq)"),
+    ("groq/compound-mini", "Compound Mini (Groq)"),
+    ("allam-2-7b", "ALLaM 2 7B (Groq)"),
+];
+
 /// Known MiniMax models.
 /// See: <https://platform.minimax.io/docs/api-reference/text-anthropic-api>
 pub(crate) const MINIMAX_MODELS: &[(&str, &str)] = &[
@@ -213,6 +224,14 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
+        config_name: "groq",
+        env_key: "GROQ_API_KEY",
+        env_base_url_key: "GROQ_BASE_URL",
+        default_base_url: "https://api.groq.com/openai/v1",
+        models: GROQ_MODELS,
+        ..OpenAiCompatDef::DEFAULT
+    },
+    OpenAiCompatDef {
         config_name: "minimax",
         env_key: "MINIMAX_API_KEY",
         env_base_url_key: "MINIMAX_BASE_URL",
@@ -378,6 +397,7 @@ mod tests {
         assert!(!crate::openai::default_model_catalog().is_empty());
         assert!(!MISTRAL_MODELS.is_empty());
         assert!(!CEREBRAS_MODELS.is_empty());
+        assert!(!GROQ_MODELS.is_empty());
         assert!(!MINIMAX_MODELS.is_empty());
         assert!(!ZAI_MODELS.is_empty());
         assert!(!FIREWORKS_MODELS.is_empty());
