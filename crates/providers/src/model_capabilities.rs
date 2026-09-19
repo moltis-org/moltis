@@ -175,6 +175,9 @@ pub fn is_chat_capable_model(model_id: &str) -> bool {
         "cogview",
         "vidu",
         "autoglm-phone",
+        // Groq-hosted non-chat models (text-to-speech, prompt classifiers)
+        "orpheus-",
+        "llama-prompt-guard",
     ];
     for prefix in NON_CHAT_PREFIXES {
         if id.starts_with(prefix) {
@@ -211,6 +214,10 @@ pub fn supports_tools_for_model(model_id: &str) -> bool {
     }
     // Legacy completions-only models — no tool support
     if id.starts_with("babbage") || id.starts_with("davinci") {
+        return false;
+    }
+    // Groq Compound runs its own built-in tools and rejects API tool calling
+    if id == "compound" || id.starts_with("compound-") {
         return false;
     }
     // Non-chat model families — never support tools
@@ -647,6 +654,15 @@ mod tests {
         assert!(!supports_tools_for_model("chatgpt-image-latest"));
         assert!(!supports_tools_for_model("gpt-4o-audio-preview"));
         assert!(!supports_tools_for_model("gemini-3.1-flash-live-preview"));
+        assert!(!supports_tools_for_model("groq::groq/compound"));
+        assert!(!supports_tools_for_model("groq/compound-mini"));
+        assert!(supports_tools_for_model("groq::openai/gpt-oss-120b"));
+        assert!(!is_chat_capable_model(
+            "groq::canopylabs/orpheus-v1-english"
+        ));
+        assert!(!is_chat_capable_model(
+            "meta-llama/llama-prompt-guard-2-86m"
+        ));
         assert!(!supports_tools_for_model("gemini-3.1-flash-image-preview"));
         assert!(!supports_tools_for_model("text-embedding-3-large"));
         assert!(!supports_tools_for_model("claude-embeddings-v1"));
