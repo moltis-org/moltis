@@ -8,6 +8,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preac
 import { onEvent } from "../events";
 import * as gon from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
+import { updateSandboxUI } from "../sandbox";
 import {
 	channelBindingLabel,
 	clearActiveSession,
@@ -21,6 +22,7 @@ import {
 	switchSession,
 } from "../sessions";
 import { saveSessionAsMarkdown } from "../sessions/session-markdown";
+import * as S from "../state";
 import { sessionStore } from "../stores/session-store";
 import { ComboSelect, confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui";
 
@@ -31,6 +33,12 @@ interface NodeInfo {
 	displayName?: string;
 	platform?: string;
 	[key: string]: unknown;
+}
+
+/** What `agents.set_session` replies, straight under `payload`. */
+interface AgentSwitchResult {
+	agent_id?: string;
+	sandbox_forced?: boolean;
 }
 
 interface AgentOption {
@@ -443,7 +451,7 @@ export function SessionHeader({
 				return;
 			}
 			setSwitchingAgent(true);
-			sendRpc("agents.set_session", {
+			sendRpc<AgentSwitchResult>("agents.set_session", {
 				session_key: currentKey,
 				agent_id: nextAgentId,
 			})
@@ -452,11 +460,24 @@ export function SessionHeader({
 						showToast((res?.error as { message?: string })?.message || "Failed to switch agent", "error");
 						return;
 					}
+					// Whether the sandbox toggle is a control belongs to the agent, not
+					// to the session, so a switch has to repaint it: taking it away for
+					// an agent that forces its sandbox, and giving it back for one that
+					// does not. Nothing else on this path does that - `fetchSessions`
+					// refreshes the store, and the toggle reads module state.
+					const forced = res.payload?.sandbox_forced === true;
 					const currentSession = sessionStore.getByKey(currentKey);
 					if (currentSession) {
 						currentSession.agent_id = nextAgentId;
+						currentSession.sandbox_forced = forced;
 						currentSession.dataVersion.value++;
 					}
+					S.setSessionSandboxForced(forced);
+					// The session's own stored flag, not `S.sessionSandboxEnabled`:
+					// `updateSandboxUI` writes the *effective* state back there, so
+					// after a forced agent that global reads true for every agent
+					// after it.
+					updateSandboxUI(currentSession ? currentSession.sandbox_enabled !== false : forced);
 					fetchSessions();
 				})
 				.finally(() => {

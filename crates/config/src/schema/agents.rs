@@ -1,7 +1,10 @@
 use {
     super::*,
     serde::{Deserialize, Deserializer, Serialize},
-    std::collections::HashMap,
+    std::{
+        collections::{HashMap, HashSet},
+        path::{Path, PathBuf},
+    },
 };
 
 const DEFAULT_AGENT_PRESET: &str = "research";
@@ -99,6 +102,19 @@ impl AgentsConfig {
     /// Return a preset by name.
     pub fn get_preset(&self, name: &str) -> Option<&AgentPreset> {
         self.presets.get(name)
+    }
+
+    /// Does this agent's preset force its sandbox on?
+    ///
+    /// `None` means "whatever the default preset is", the same fallback the
+    /// run path takes. The single seat for the question, so every layer that
+    /// has to show or enforce it gives the same answer.
+    #[must_use]
+    pub fn sandbox_forced(&self, agent_id: Option<&str>) -> bool {
+        agent_id
+            .or(self.default_preset.as_deref())
+            .and_then(|id| self.get_preset(id))
+            .is_some_and(|preset| preset.sandbox.forces_sandbox())
     }
 }
 
@@ -506,6 +522,549 @@ impl TryFrom<&str> for PresetSandboxMode {
     }
 }
 
+/// Access mode for a per-agent sandbox mount.
+///
+/// Deliberately a real enum rather than a string: an unrecognised value is a
+/// deserialization error, unlike `tools.exec.sandbox.mode`, which maps any
+/// unknown string to `off` and so fails open.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SandboxMountAccess {
+    /// Read-only bind mount. The default.
+    #[default]
+    Ro,
+    /// Read-write bind mount.
+    Rw,
+}
+
+impl SandboxMountAccess {
+    /// The wire spelling, as used in the `source:target:access` triple.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ro => "ro",
+            Self::Rw => "rw",
+        }
+    }
+
+    /// Returns `true` when this mount grants write access to the host path.
+    #[must_use]
+    pub fn is_writable(self) -> bool {
+        matches!(self, Self::Rw)
+    }
+}
+
+impl TryFrom<&str> for SandboxMountAccess {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "ro" => Ok(Self::Ro),
+            "rw" => Ok(Self::Rw),
+            other => Err(format!(
+                "unknown sandbox mount access: {other} (expected \"ro\" or \"rw\")"
+            )),
+        }
+    }
+}
+
+/// One extra host path bound into an agent's sandbox container.
+///
+/// ```toml
+/// [[agents.presets.walter.sandbox.mounts]]
+/// source = "/home/me/vault"
+/// target = "/home/me/vault"
+/// access = "rw"
+/// ```
+///
+/// `source` and `target` are required: a missing one is a deserialization
+/// error rather than an empty string, because an empty source is exactly the
+/// value Docker turns into a silent named volume.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxMountConfig {
+    /// Absolute host path to bind into the sandbox.
+    pub source: String,
+    /// Absolute path inside the sandbox to bind it at.
+    pub target: String,
+    /// Access mode; defaults to read-only.
+    #[serde(default)]
+    pub access: SandboxMountAccess,
+}
+
+impl SandboxMountConfig {
+    /// Parse one `source:target:access` triple.
+    ///
+    /// This is the single wire spelling: RPC arrays and markdown frontmatter
+    /// both use it, so a value written through one surface reads back through
+    /// the other. A wrong field count is an error, never a partial mount.
+    pub fn parse_triple(value: &str) -> Result<Self, String> {
+        let parts = value.split(':').collect::<Vec<_>>();
+        if parts.len() != 3 {
+            return Err(format!(
+                "sandbox mount must be \"source:target:access\", got {value:?}"
+            ));
+        }
+        let source = parts[0].trim();
+        let target = parts[1].trim();
+        if source.is_empty() {
+            return Err(format!("sandbox mount {value:?} has an empty source"));
+        }
+        if target.is_empty() {
+            return Err(format!("sandbox mount {value:?} has an empty target"));
+        }
+        Ok(Self {
+            source: source.to_string(),
+            target: target.to_string(),
+            access: SandboxMountAccess::try_from(parts[2].trim())?,
+        })
+    }
+
+    /// Render this mount back into its `source:target:access` triple.
+    #[must_use]
+    pub fn to_triple(&self) -> String {
+        format!("{}:{}:{}", self.source, self.target, self.access.as_str())
+    }
+}
+
+/// Validate a whole set of configured sandbox mounts.
+///
+/// One entry point so every layer that can see the config shape enforces the
+/// same rules. It runs the per-mount shape rules and then the one rule a
+/// per-mount check structurally cannot see: two mounts sharing a target.
+///
+/// Only rules that need no runtime knowledge live here. Collisions with
+/// moltis-owned container paths need `moltis-tools` constants and are checked
+/// there instead.
+///
+/// Returns every problem found rather than the first, so `moltis config check`
+/// reports them all in one pass.
+///
+/// # Errors
+///
+/// Returns the list of human-readable problems when the set is not usable.
+pub fn check_mount_set(mounts: &[SandboxMountConfig]) -> Result<(), Vec<String>> {
+    let mut errors = Vec::new();
+    for mount in mounts {
+        check_mount_path("source", &mount.source, &mut errors);
+        check_mount_path("target", &mount.target, &mut errors);
+        check_mount_source(&mount.source, &mut errors);
+    }
+
+    // Normalized, so `/srv/a` and `/srv/a/` are the one target they are to the
+    // container runtime rather than two that silently shadow each other.
+    let mut seen = HashSet::new();
+    for mount in mounts {
+        if !seen.insert(normalize_mount_path(&mount.target)) {
+            errors.push(format!(
+                "two sandbox mounts share the target {:?}",
+                mount.target
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+/// Normalize an absolute mount path for comparison.
+///
+/// Purely lexical - these are paths inside a container that does not exist
+/// yet, so there is nothing to canonicalize against - but that is enough for
+/// the rules below, because it is exactly the resolution the container runtime
+/// does before it sees the path. Comparing the raw string instead lets `/.`,
+/// `//` and a trailing slash walk straight through a rule that rejects `/` or
+/// `/home/sandbox`.
+#[must_use]
+pub fn normalize_mount_path(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len() + 1);
+    normalized.push('/');
+    for segment in value.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if normalized.len() > 1 {
+            normalized.push('/');
+        }
+        normalized.push_str(segment);
+    }
+    normalized
+}
+
+/// Is `ancestor` a proper prefix directory of `path`? Both must be normalized.
+#[must_use]
+pub fn is_mount_path_ancestor(ancestor: &str, path: &str) -> bool {
+    ancestor != path
+        && path.starts_with(ancestor)
+        && (ancestor == "/" || path.as_bytes().get(ancestor.len()) == Some(&b'/'))
+}
+
+/// A host path a sandbox mount source may not name.
+struct DeniedSource {
+    /// Normalized absolute path.
+    path: String,
+    /// What it is, for the error message.
+    what: &'static str,
+}
+
+/// File names that are a container-runtime socket wherever they sit.
+///
+/// Matched on the name as well as on the paths below, because the socket is
+/// wherever `DOCKER_HOST` or `CONTAINER_HOST` says it is. A container that can
+/// talk to one can start a sibling container with any mount at all, which is
+/// root on the host by a slightly longer route - and for podman it also walks
+/// straight past the `allow_nested_podman` gate, which only decides whether
+/// *moltis* passes the socket in.
+const DENIED_SOCKET_FILE_NAMES: &[&str] = &["docker.sock", "podman.sock"];
+
+/// The host device tree, denied as a whole but with named exceptions.
+const DEV_DIR: &str = "/dev";
+
+/// Device nodes the `/dev` rule makes an exception for.
+///
+/// Denying the whole subtree left no way to pass a device through and no
+/// escape hatch to ask for one, which is not a security property - it just
+/// pushes the operator onto a global `[tools.exec.sandbox]` setting or off the
+/// sandbox entirely. These four are the ordinary passthroughs: a GPU, a sound
+/// card, KVM, and a tun device. Everything else under `/dev` - `/dev/mem`,
+/// `/dev/kmem`, the raw block devices - stays denied, because those are the
+/// host, not a peripheral.
+const ALLOWED_DEVICE_MOUNT_SOURCES: &[&str] = &["/dev/dri", "/dev/snd", "/dev/kvm", "/dev/net/tun"];
+
+/// The fixed half of the mount-source denylist: the same on every host.
+///
+/// These are the entries that need no host knowledge to be right, because the
+/// path is the same inside a container and outside one.
+const DENIED_MOUNT_SOURCES: &[(&str, &str)] = &[
+    ("/proc", "the host process table"),
+    ("/sys", "the host kernel interface"),
+    (DEV_DIR, "the host device tree"),
+    // The conventional socket paths, so a source *under* one is refused too.
+    // Their parent directories need no entry of their own: a source that is an
+    // ancestor of a denied path is refused as well, so `/run/podman` and
+    // `/var/run` are covered.
+    ("/var/run/docker.sock", "the docker socket"),
+    ("/run/docker.sock", "the docker socket"),
+    ("/run/podman/podman.sock", "the podman socket"),
+    ("/var/run/podman/podman.sock", "the podman socket"),
+];
+
+/// The host-specific inputs to the mount-source denylist.
+///
+/// One struct rather than a row of `Option<&Path>` arguments, so adding an
+/// entry cannot silently reorder a call site.
+#[derive(Debug, Default, Clone, Copy)]
+struct DenyDirs<'a> {
+    /// The moltis data directory as *this* process sees it.
+    data_dir: Option<&'a Path>,
+    /// The same directory as the *host* spells it, when that is known.
+    ///
+    /// A mount source is a host path the container runtime resolves, so when
+    /// moltis itself runs in a container the two spellings are different and
+    /// only this one can ever match. See [`denied_mount_sources`] for where it
+    /// comes from and when it is absent.
+    host_data_dir: Option<&'a Path>,
+    /// This process's home directory; `.ssh` under it is denied.
+    home_dir: Option<&'a Path>,
+    /// `$XDG_RUNTIME_DIR`, where a rootless podman puts its socket.
+    runtime_dir: Option<&'a Path>,
+}
+
+/// Append one derived entry, skipping a relative path and a duplicate.
+fn push_denied(
+    denied: &mut Vec<DeniedSource>,
+    dir: Option<&Path>,
+    suffix: Option<&str>,
+    what: &'static str,
+) {
+    let Some(dir) = dir.filter(|dir| dir.is_absolute()) else {
+        return;
+    };
+    let path = suffix.map_or_else(|| dir.to_path_buf(), |suffix| dir.join(suffix));
+    let path = normalize_mount_path(&path.to_string_lossy());
+    if denied.iter().any(|entry| entry.path == path) {
+        return;
+    }
+    denied.push(DeniedSource { path, what });
+}
+
+/// Build the denylist from paths already resolved by the caller.
+///
+/// Takes the host-specific directories rather than reading them, so the rule
+/// is a pure function of its inputs and can be tested without the
+/// process-global data-directory override the loader tests move around.
+fn denied_mount_sources_for(dirs: DenyDirs<'_>) -> Vec<DeniedSource> {
+    let mut denied: Vec<DeniedSource> = DENIED_MOUNT_SOURCES
+        .iter()
+        .map(|(path, what)| DeniedSource {
+            path: (*path).to_string(),
+            what,
+        })
+        .collect();
+    // The data directory holds the credential store, and the credential store
+    // holds every API key and provider secret moltis knows.
+    push_denied(
+        &mut denied,
+        dirs.data_dir,
+        None,
+        "the moltis data directory",
+    );
+    push_denied(
+        &mut denied,
+        dirs.host_data_dir,
+        None,
+        "the moltis data directory as the host sees it",
+    );
+    push_denied(
+        &mut denied,
+        dirs.home_dir,
+        Some(".ssh"),
+        "the user's ssh directory",
+    );
+    push_denied(
+        &mut denied,
+        dirs.runtime_dir,
+        Some("podman/podman.sock"),
+        "the rootless podman socket",
+    );
+    denied
+}
+
+/// Host paths a sandbox mount source may never be, live under, or contain.
+///
+/// Defence in depth, sitting behind the scope fix that stops a sandboxed agent
+/// writing its own preset in the first place. It is the second half of the
+/// same answer: the first half stops the agent asking for such a mount over
+/// RPC, this one refuses the mount even when the ask arrives from somewhere
+/// else - a hand-edited TOML, a markdown sidecar, a future write path nobody
+/// has thought of yet.
+///
+/// # What is and is not enforceable from inside a container
+///
+/// A mount source is a **host** path: the container runtime resolves it on the
+/// host, not in moltis's own mount namespace. The fixed entries above are the
+/// same path on both sides, so they hold either way. The derived ones are not,
+/// and when moltis itself runs in a container they need a host spelling:
+///
+/// * The data directory is covered on the host whenever the host spelling is
+///   known - `[tools.exec.sandbox] host_data_dir` when it is configured, and
+///   otherwise whatever the runtime-mount detection worked out, registered
+///   through [`crate::set_host_data_dir_hint`]. With neither, only the
+///   container-side path is on the list and the host-side one is **not
+///   enforced**; `host_data_dir` is the supported way to close that.
+/// * `~/.ssh` is derived from this process's own `$HOME`, which inside a
+///   container is the container's home. There is nothing to map it onto: the
+///   host user is not knowable from in here. So the ssh entry protects a
+///   moltis running directly on the host, and is inert in a containerized
+///   deployment. It is kept rather than dropped because the host install is
+///   the common one, and it is documented as a caveat rather than left to read
+///   like protection it cannot give.
+/// * `$XDG_RUNTIME_DIR` is read the same way and carries the same caveat. The
+///   fixed `/run/podman/...` entries and the socket file-name rule do not, so
+///   a rootless socket bound at its conventional path is still refused.
+fn denied_mount_sources() -> Vec<DeniedSource> {
+    let data_dir = crate::data_dir();
+    let host_data_dir = crate::host_data_dir_hint();
+    let home_dir = crate::home_dir();
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+    denied_mount_sources_for(DenyDirs {
+        data_dir: Some(&data_dir),
+        host_data_dir: host_data_dir.as_deref(),
+        home_dir: home_dir.as_deref(),
+        runtime_dir: runtime_dir.as_deref(),
+    })
+}
+
+/// Refuse mount sources that hand the container the host.
+///
+/// Sources only. A *target* of `/proc` is the container's own `/proc` and is
+/// the container runtime's problem, not a host escape.
+fn check_mount_source(value: &str, errors: &mut Vec<String>) {
+    check_mount_source_in(value, &denied_mount_sources(), errors);
+}
+
+/// Run the denylist over one source, lexically and then through a symlink.
+///
+/// # Symlinks
+///
+/// The lexical pass is what the container runtime itself does to the string,
+/// and it is the only pass that always runs. It cannot see through a link:
+/// `/srv/link -> /run/docker.sock` is not `/run/docker.sock` as a string, and
+/// the daemon resolves the link when it mounts.
+///
+/// So the source is also canonicalized and re-checked - but only where this
+/// process can see the path. A moltis running directly on the host sees it and
+/// the link is caught. A moltis in a container usually does **not**: the host
+/// path is not in its mount namespace, `canonicalize` fails, and the check
+/// stays purely lexical. That is the honest limit of this rule, and it is why
+/// the mount denylist is defence in depth behind the read-only sandbox API key
+/// rather than the boundary itself.
+fn check_mount_source_in(value: &str, denied: &[DeniedSource], errors: &mut Vec<String>) {
+    let source = normalize_mount_path(value);
+    if check_denied_source(value, &source, denied, errors) {
+        return;
+    }
+    let Ok(resolved) = std::fs::canonicalize(&source) else {
+        return;
+    };
+    let resolved = normalize_mount_path(&resolved.to_string_lossy());
+    if resolved != source {
+        check_denied_source(value, &resolved, denied, errors);
+    }
+}
+
+/// The denylist itself, over one already-normalized path. `true` if refused.
+fn check_denied_source(
+    value: &str,
+    source: &str,
+    denied: &[DeniedSource],
+    errors: &mut Vec<String>,
+) -> bool {
+    let before = errors.len();
+    if DENIED_SOCKET_FILE_NAMES.contains(&source.rsplit('/').next().unwrap_or_default()) {
+        errors.push(format!(
+            "sandbox mount source {value:?} is a container runtime socket ({source:?}); a \
+             container that can reach one can start another container with any mount it likes"
+        ));
+        return true;
+    }
+    for entry in denied {
+        if entry.path == DEV_DIR && is_allowed_device_source(source) {
+            continue;
+        }
+        // Three ways to hit, not one. Equality and "the source is under the
+        // denied path" are the obvious pair; "the denied path is under the
+        // source" is the one that used to be missing, and it is the one that
+        // matters most - a source of `/var/run` or `/home/<user>` is not on
+        // the list by name and hands over the socket or the ssh keys anyway.
+        let hit = source == entry.path
+            || is_mount_path_ancestor(source, &entry.path)
+            || is_mount_path_ancestor(&entry.path, source);
+        if hit {
+            errors.push(format!(
+                "sandbox mount source {value:?} is or contains {} ({:?}); binding it into a \
+                 sandbox gives the sandbox the host",
+                entry.what, entry.path
+            ));
+        }
+    }
+    errors.len() != before
+}
+
+/// Is this source one of the device nodes the `/dev` rule excepts?
+fn is_allowed_device_source(source: &str) -> bool {
+    ALLOWED_DEVICE_MOUNT_SOURCES
+        .iter()
+        .any(|allowed| source == *allowed || is_mount_path_ancestor(allowed, source))
+}
+
+fn check_mount_path(field: &str, value: &str, errors: &mut Vec<String>) {
+    if value.is_empty() {
+        errors.push(format!("sandbox mount {field} must not be empty"));
+        return;
+    }
+    if !value.starts_with('/') {
+        errors.push(format!(
+            "sandbox mount {field} {value:?} must be an absolute path; a relative source makes \
+             Docker create a named volume instead of a bind mount"
+        ));
+    }
+    if value.split('/').any(|segment| segment == "..") {
+        errors.push(format!(
+            "sandbox mount {field} {value:?} must not contain \"..\""
+        ));
+    }
+    // Normalized, not compared verbatim: `/`, `//` and `/.` are the same
+    // directory to Docker, and only the first of the three used to be refused.
+    if normalize_mount_path(value) == "/" {
+        errors.push(format!(
+            "sandbox mount {field} {value:?} must not resolve to \"/\""
+        ));
+    }
+    // Neither separator of the wire shape may appear in a path. Every surface
+    // but the structured TOML form spells a mount as `source:target:access`,
+    // and the markdown sidecar comma separates the list on top of that -
+    // neither is escapable, so a path containing one validates here, renders,
+    // and then re-parses as something else entirely. Refused at the one seat
+    // every write path shares, rather than encoded around: an encoding would
+    // have to be got right in two places and would still not survive being
+    // read by a human editing the sidecar.
+    for (separator, what) in [(',', "a comma"), (':', "a colon")] {
+        if value.contains(separator) {
+            errors.push(format!(
+                "sandbox mount {field} {value:?} must not contain {what}; the \
+                 \"source:target:access\" wire shape and the comma-separated markdown agent \
+                 definition cannot express one"
+            ));
+        }
+    }
+}
+
+/// Parse and validate a `run_as` value into its `(uid, gid)` pair.
+///
+/// The shape is exactly `uid:gid`: two non-negative integers separated by one
+/// colon, neither part empty, and neither the uid nor the gid is `0`.
+///
+/// This fails closed on purpose and there is no fallback anywhere above it. A
+/// `run_as` that silently meant root would be worse than no field at all: it
+/// would hand a writable host mount to a root container while the config says
+/// the opposite.
+///
+/// # Errors
+///
+/// Returns a human-readable problem when the value is not a usable `uid:gid`.
+pub fn parse_run_as(value: &str) -> Result<(u32, u32), String> {
+    let parts = value.split(':').collect::<Vec<_>>();
+    if parts.len() != 2 {
+        return Err(format!("sandbox run_as must be \"uid:gid\", got {value:?}"));
+    }
+    let uid = parse_run_as_id("uid", parts[0], value)?;
+    let gid = parse_run_as_id("gid", parts[1], value)?;
+    if uid == 0 {
+        return Err(format!(
+            "sandbox run_as {value:?} has uid 0; running the sandbox as root is refused, because a \
+             run_as that silently meant root would be worse than not setting it"
+        ));
+    }
+    if gid == 0 {
+        return Err(format!(
+            "sandbox run_as {value:?} has gid 0; the root group is refused for the same reason the \
+             root user is - it hands group-writable host paths to the container"
+        ));
+    }
+    Ok((uid, gid))
+}
+
+fn parse_run_as_id(field: &str, raw: &str, value: &str) -> Result<u32, String> {
+    if raw.is_empty() {
+        return Err(format!("sandbox run_as {value:?} has an empty {field}"));
+    }
+    // Parsed by hand rather than through `u32::from_str`, which accepts a
+    // leading `+`. Only plain digits are a uid.
+    if !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(format!(
+            "sandbox run_as {value:?} has a non-numeric {field} {raw:?}"
+        ));
+    }
+    raw.parse::<u32>()
+        .map_err(|error| format!("sandbox run_as {value:?} has an out-of-range {field}: {error}"))
+}
+
+/// Validate a configured `run_as` value.
+///
+/// The sibling of [`check_mount_set`], and the single implementation every
+/// layer calls, so the RPC write path, the config file path and the runtime
+/// mirror cannot disagree about what a valid `run_as` is.
+///
+/// # Errors
+///
+/// Returns a human-readable problem when the value is not a usable `uid:gid`.
+pub fn check_run_as(value: &str) -> Result<(), String> {
+    parse_run_as(value).map(|_| ())
+}
+
 /// Per-agent sandbox policy override.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -513,13 +1072,42 @@ pub struct PresetSandboxPolicy {
     /// Sandbox mode override: "off", "all", "non-main".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<PresetSandboxMode>,
+    /// This agent may never run outside a sandbox.
+    ///
+    /// The one field that forces the sandbox on. It outranks the per-session
+    /// toggle, and the gateway refuses a `sessions.patch` that tries to switch
+    /// it off. The sibling fields below are deliberately not part of this:
+    /// they live here because they *configure* the sandbox, which is a
+    /// different statement from requiring one.
+    #[serde(default, skip_serializing_if = "crate::schema::is_false")]
+    pub force: bool,
+    /// Extra host paths bound into this agent's sandbox container.
+    ///
+    /// Per-agent only: there is deliberately no global list, because the
+    /// runtime `SandboxConfig` is cloned into the backend once at router
+    /// construction, so anything living there would be every-agent-always.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<SandboxMountConfig>,
+    /// Run this agent's sandbox container as `uid:gid`.
+    ///
+    /// Unset means the container keeps whatever user its image declares, which
+    /// for the sandbox images is root. There is deliberately no way to spell
+    /// "root" here: uid `0` is refused at every layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_as: Option<String>,
 }
 
 impl PresetSandboxPolicy {
     /// Returns `true` when no overrides are configured.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.mode.is_none()
+        self.mode.is_none() && !self.force && self.mounts.is_empty() && self.run_as.is_none()
+    }
+
+    /// Returns `true` when this agent must always run sandboxed.
+    #[must_use]
+    pub fn forces_sandbox(&self) -> bool {
+        self.force
     }
 }
 
@@ -655,6 +1243,206 @@ mod tests {
         let controls = AgentToolControls::from_tool_context(Some(&context));
         assert_eq!(controls.tool_choice, Some(ToolChoice::Any));
         assert!(controls.active_tools.is_none());
+    }
+
+    fn mount(source: &str) -> SandboxMountConfig {
+        SandboxMountConfig {
+            source: source.to_string(),
+            target: "/mnt/x".to_string(),
+            access: SandboxMountAccess::Ro,
+        }
+    }
+
+    fn mount_errors(source: &str) -> Vec<String> {
+        check_mount_set(&[mount(source)]).err().unwrap_or_default()
+    }
+
+    #[test]
+    fn denied_mount_sources_are_refused() {
+        for source in [
+            "/proc",
+            "/proc/self",
+            "/sys",
+            "/sys/fs/cgroup",
+            "/dev",
+            "/dev/mem",
+            "/var/run/docker.sock",
+            "/run/docker.sock",
+            "/home/someone/.docker/run/docker.sock",
+        ] {
+            assert!(
+                !mount_errors(source).is_empty(),
+                "expected {source:?} to be refused as a mount source"
+            );
+        }
+    }
+
+    #[test]
+    fn denied_mount_sources_are_matched_after_normalization() {
+        // The whole point of going through `normalize_mount_path` rather than
+        // comparing strings: these are all `/proc` to the container runtime.
+        for source in ["/proc/", "//proc", "/./proc", "/proc/./self"] {
+            assert!(
+                !mount_errors(source).is_empty(),
+                "expected {source:?} to normalize onto the denylist"
+            );
+        }
+    }
+
+    /// The denylist every host-directory test shares, from fixed inputs.
+    ///
+    /// Fixed rather than read from `crate::data_dir()`, because the loader
+    /// tests move the process-global data-directory override around while this
+    /// runs, and a rule that reads it mid-assertion races them.
+    fn test_deny_dirs() -> DenyDirs<'static> {
+        DenyDirs {
+            data_dir: Some(Path::new("/var/lib/moltis")),
+            host_data_dir: Some(Path::new("/srv/host/moltis-data")),
+            home_dir: Some(Path::new("/home/tester")),
+            runtime_dir: Some(Path::new("/run/user/1000")),
+        }
+    }
+
+    /// Errors for one source against a denylist built from fixed directories.
+    fn host_dir_mount_errors(source: &str) -> Vec<String> {
+        let denied = denied_mount_sources_for(test_deny_dirs());
+        let mut errors = Vec::new();
+        check_mount_source_in(source, &denied, &mut errors);
+        errors
+    }
+
+    #[test]
+    fn the_data_directory_and_ssh_directory_are_refused() {
+        for source in [
+            "/var/lib/moltis",
+            "/var/lib/moltis/auth.db",
+            "/home/tester/.ssh",
+            "/home/tester/.ssh/id_ed25519",
+        ] {
+            assert!(
+                !host_dir_mount_errors(source).is_empty(),
+                "expected {source:?} to be refused: the data directory holds the credential \
+                 store and the ssh directory holds host keys"
+            );
+        }
+        // A sibling under the home directory is not under `.ssh`.
+        assert!(host_dir_mount_errors("/home/tester/media").is_empty());
+        // And a relative data directory contributes no rule rather than a
+        // rule that matches everything.
+        assert!(
+            denied_mount_sources_for(DenyDirs {
+                data_dir: Some(Path::new(".moltis")),
+                ..DenyDirs::default()
+            })
+            .len()
+                == DENIED_MOUNT_SOURCES.len()
+        );
+    }
+
+    #[test]
+    fn the_host_side_data_directory_is_refused() {
+        // The entry that makes the data-directory rule mean anything when
+        // moltis itself runs in a container: a mount source is a host path, so
+        // the container-side `/var/lib/moltis` above can never be written by
+        // an operator configuring a sibling container.
+        for source in ["/srv/host/moltis-data", "/srv/host/moltis-data/auth.db"] {
+            assert!(
+                !host_dir_mount_errors(source).is_empty(),
+                "expected {source:?} to be refused: it is the data directory as the host \
+                 spells it"
+            );
+        }
+    }
+
+    #[test]
+    fn podman_sockets_are_refused() {
+        // Podman is the preferred auto-detected backend, and its socket
+        // bypasses `allow_nested_podman` exactly the way the docker one
+        // bypasses everything.
+        for source in [
+            "/run/podman/podman.sock",
+            "/var/run/podman/podman.sock",
+            "/run/user/1000/podman/podman.sock",
+            "/home/tester/.local/share/containers/podman.sock",
+        ] {
+            assert!(
+                !host_dir_mount_errors(source).is_empty(),
+                "expected {source:?} to be refused as a podman socket"
+            );
+        }
+    }
+
+    #[test]
+    fn a_source_that_contains_a_denied_path_is_refused() {
+        // The direction that used to be missing. None of these is on the list
+        // by name, and each hands over what is under it.
+        for source in [
+            "/var/run",
+            "/run",
+            "/run/podman",
+            "/home/tester",
+            "/var/lib",
+            "/srv/host",
+        ] {
+            assert!(
+                !host_dir_mount_errors(source).is_empty(),
+                "expected {source:?} to be refused: it contains a denied path"
+            );
+        }
+    }
+
+    #[test]
+    fn device_nodes_stay_mountable_while_dev_does_not() {
+        for source in [
+            "/dev/dri",
+            "/dev/dri/card0",
+            "/dev/snd",
+            "/dev/kvm",
+            "/dev/net/tun",
+        ] {
+            assert!(
+                host_dir_mount_errors(source).is_empty(),
+                "expected {source:?} to stay mountable: it is a device passthrough, got {:?}",
+                host_dir_mount_errors(source)
+            );
+        }
+        for source in ["/dev", "/dev/mem", "/dev/sda"] {
+            assert!(
+                !host_dir_mount_errors(source).is_empty(),
+                "expected {source:?} to stay refused: it is the host, not a peripheral"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_source_is_refused_where_the_link_is_visible() {
+        // The lexical pass cannot see this: the string is not `/proc`, and the
+        // container runtime resolves the link when it mounts.
+        let Ok(dir) = tempfile::tempdir() else {
+            return;
+        };
+        let link = dir.path().join("link");
+        assert!(std::os::unix::fs::symlink("/proc", &link).is_ok());
+        let source = link.to_string_lossy().to_string();
+        assert!(
+            !host_dir_mount_errors(&source).is_empty(),
+            "expected the symlink {source:?} to be refused through its target"
+        );
+    }
+
+    #[test]
+    fn ordinary_mount_sources_still_pass() {
+        for source in ["/srv/media", "/mnt/data", "/opt/shared"] {
+            assert!(
+                mount_errors(source).is_empty(),
+                "expected {source:?} to stay usable, got {:?}",
+                mount_errors(source)
+            );
+        }
+        // Neighbours of a denied prefix are not under it.
+        assert!(mount_errors("/system").is_empty());
+        assert!(mount_errors("/development").is_empty());
     }
 
     #[test]

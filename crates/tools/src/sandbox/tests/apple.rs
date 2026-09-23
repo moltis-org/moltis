@@ -370,8 +370,62 @@ fn test_apple_container_policy_fingerprint_includes_resource_limits() {
     });
 
     assert_ne!(
-        first.container_policy_fingerprint(),
-        second.container_policy_fingerprint()
+        first.container_policy_fingerprint(&[], None),
+        second.container_policy_fingerprint(&[], None)
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn test_apple_container_policy_fingerprint_tracks_extra_mounts_and_run_as() {
+    // Without this fold a changed mount list or uid would do nothing on this
+    // backend until somebody removed the container by hand - the same trap the
+    // docker sibling closes.
+    let sandbox = AppleContainerSandbox::new(SandboxConfig::default());
+    let vault_ro = SandboxMount::try_from_configs(&[SandboxMountConfig {
+        source: "/srv/vault".into(),
+        target: "/home/sandbox/vault".into(),
+        access: SandboxMountAccess::Ro,
+    }])
+    .unwrap();
+    let vault_rw = SandboxMount::try_from_configs(&[SandboxMountConfig {
+        source: "/srv/vault".into(),
+        target: "/home/sandbox/vault".into(),
+        access: SandboxMountAccess::Rw,
+    }])
+    .unwrap();
+    let user = SandboxUser::try_from("1000:1000").unwrap();
+
+    let base = sandbox.container_policy_fingerprint(&[], None);
+    assert_ne!(base, sandbox.container_policy_fingerprint(&vault_ro, None));
+    assert_ne!(
+        sandbox.container_policy_fingerprint(&vault_ro, None),
+        sandbox.container_policy_fingerprint(&vault_rw, None)
+    );
+    assert_ne!(base, sandbox.container_policy_fingerprint(&[], Some(&user)));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn test_apple_container_policy_fingerprint_of_an_empty_policy_is_unchanged_by_this_patch() {
+    // The upgrade-recreates-nothing property, asserted against a value measured
+    // on the tree before mounts and run_as existed rather than against another
+    // call to the same function - which is what the sibling above did, so it
+    // could not have caught an unconditionally appended empty component. The
+    // docker sibling has the same shape in tests/run_as.rs. The config pins
+    // both inputs so the expected value does not depend on this machine.
+    let sandbox = AppleContainerSandbox::new(SandboxConfig {
+        managed_files_mount: ManagedFilesMount::Ro,
+        resource_limits: ResourceLimits::default(),
+        ..Default::default()
+    });
+
+    assert_eq!(
+        sandbox.container_policy_fingerprint(&[], None),
+        // The pre-patch input verbatim: the two config fields, NUL separated.
+        "Ro\0ResourceLimits { memory_limit: None, cpu_quota: None, pids_max: None }",
+        "an install with neither mounts nor run_as must keep the fingerprint it \
+         already has, or every container in the fleet is recreated on upgrade"
     );
 }
 
@@ -391,7 +445,7 @@ fn test_apple_container_managed_files_mount_coexists_with_home_persistence() {
         key: "apple-volumes".into(),
     };
 
-    assert_eq!(sandbox.volumes(&id).unwrap(), vec![
+    assert_eq!(sandbox.volumes(&id, &[]).unwrap(), vec![
         format!(
             "{}:/home/sandbox",
             host_data_dir

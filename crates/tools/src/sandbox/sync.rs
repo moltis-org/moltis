@@ -182,9 +182,15 @@ pub async fn sync_out(
 /// For isolated backends, always returns a path — even when home persistence
 /// is disabled — because workspace sync is essential for remote backends to
 /// function. Falls back to a dedicated sync directory under `data_dir()`.
+/// The one caller is `SandboxRouter::sync_workspace_for`, which owns the
+/// `run_as` lookup. Keep it that way: both call sites hold a session key and
+/// no agent policy, so a `run_as` parameter they filled in themselves would be
+/// `None` by path of least resistance - and a wrong `None` here silently syncs
+/// the wrong home directory.
 pub fn resolve_sync_workspace(
     config: &super::types::SandboxConfig,
     id: &SandboxId,
+    run_as: Option<&super::types::SandboxUser>,
 ) -> Option<PathBuf> {
     use super::{
         paths::{detected_container_cli, sandbox_home_persistence_host_dir},
@@ -193,7 +199,7 @@ pub fn resolve_sync_workspace(
 
     let cli = detected_container_cli(config);
     // If home persistence is configured, use that directory.
-    if let Some(path) = sandbox_home_persistence_host_dir(config, cli, id) {
+    if let Some(path) = sandbox_home_persistence_host_dir(config, cli, id, run_as) {
         return Some(path);
     }
     // Fallback: dedicated sync directory for isolated backends.

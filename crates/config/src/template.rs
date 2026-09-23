@@ -373,6 +373,15 @@ port = {port}                           # Port number (auto-generated for this i
 # allow_servers = []                # No MCP tools at all
 # [agents.presets.kids.sandbox]
 # mode = "all"                      # Always sandbox this agent
+# force = true                      # This agent may never run outside a sandbox
+# run_as = "1000:1000"              # Run the container as this uid:gid; uid 0 is refused
+# # Extra host paths bound into this agent's sandbox. Per-agent only: there is
+# # no global list, because a global one cannot say "this agent and no other".
+# # Every `rw` mount is a privilege grant and `moltis config check` warns about it.
+# [[agents.presets.kids.sandbox.mounts]]
+# source = "/srv/homework"          # Absolute host path
+# target = "/srv/homework"          # Absolute path inside the sandbox
+# access = "ro"                     # "ro" (default) or "rw"
 # [agents.presets.kids.skills]
 # deny = ["gaming", "social-media"] # Block specific skill categories
 #

@@ -37,6 +37,7 @@ export default {
 	sandboxDisabledHint:
 		"在没有容器运行时的云部署中，沙盒功能已禁用。请在装有 Docker 或 Apple Container 的虚拟机上安装以启用此功能。",
 	sandboxToggleTooltip: "切换沙盒模式",
+	sandboxForcedHint: "此智能体的预设已设置 sandbox.force，因此无法关闭其沙盒。",
 	sandboxImageTooltip: "沙盒镜像",
 	mcpEnabled: "MCP",
 	mcpEnabledTooltip: "MCP 工具已启用 \u2014 点击为此会话禁用",

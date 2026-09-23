@@ -52,7 +52,7 @@ async fn test_apple_container_home_read_uses_mounted_host_path() {
         key: "apple-home-read".into(),
     };
     let guest_file = PathBuf::from(SANDBOX_HOME_DIR).join("history.txt");
-    let host_file = sandbox_home_persistence_host_dir(&config, Some("container"), &id)
+    let host_file = sandbox_home_persistence_host_dir(&config, Some("container"), &id, None)
         .unwrap()
         .join("history.txt");
     std::fs::create_dir_all(host_file.parent().unwrap()).unwrap();
@@ -84,7 +84,7 @@ async fn test_apple_container_home_write_uses_mounted_host_path() {
         key: "apple-home-write".into(),
     };
     let guest_file = PathBuf::from(SANDBOX_HOME_DIR).join("history.txt");
-    let host_file = sandbox_home_persistence_host_dir(&config, Some("container"), &id)
+    let host_file = sandbox_home_persistence_host_dir(&config, Some("container"), &id, None)
         .unwrap()
         .join("history.txt");
     std::fs::create_dir_all(host_file.parent().unwrap()).unwrap();
@@ -120,7 +120,7 @@ async fn test_apple_container_home_list_remaps_mounted_host_paths() {
         key: "apple-home-list".into(),
     };
     let guest_root = PathBuf::from(SANDBOX_HOME_DIR).join("notes");
-    let host_root = sandbox_home_persistence_host_dir(&config, Some("container"), &id)
+    let host_root = sandbox_home_persistence_host_dir(&config, Some("container"), &id, None)
         .unwrap()
         .join("notes");
     std::fs::create_dir_all(host_root.join("nested")).unwrap();
@@ -289,7 +289,7 @@ fn test_container_name_conflict_detection() {
 
 /// Helper: build a `SandboxRouter` with a deterministic backend so tests
 /// don't depend on the host having Docker / Apple Container installed.
-fn router_with_real_backend(config: SandboxConfig) -> SandboxRouter {
+pub(super) fn router_with_real_backend(config: SandboxConfig) -> SandboxRouter {
     let backend: Arc<dyn Sandbox> = Arc::new(TestSandbox::new("docker", None, None));
     SandboxRouter::with_backend(config, backend)
 }
@@ -383,6 +383,27 @@ async fn test_sandbox_router_explicit_override_overrides_agent_override() {
 
     router.remove_agent_override("cron:test").await;
     assert!(!router.is_sandboxed("cron:test").await);
+}
+
+#[tokio::test]
+async fn test_sandbox_router_mode_only_agent_policy_still_loses_to_the_session() {
+    // The contract that predates the mount forcing and must survive it: an
+    // agent preset that only sets `mode` is a default, and the session wins.
+    let config = SandboxConfig {
+        mode: SandboxMode::NonMain,
+        ..Default::default()
+    };
+    let router = router_with_real_backend(config);
+    router.set_agent_override("session:abc", true).await;
+    router
+        .set_agent_sandbox("session:abc", AgentSandboxPolicy::default())
+        .await;
+
+    router.set_override("session:abc", false).await;
+    assert!(
+        !router.is_sandboxed("session:abc").await,
+        "an agent policy with no mounts and no run_as must not force the sandbox"
+    );
 }
 
 #[tokio::test]
@@ -542,8 +563,8 @@ fn test_sandbox_router_session_keys_cannot_collide() {
         apple_container_name("moltis-test-sandbox", &attacker.key, 0)
     );
 
-    let victim_home = sandbox_home_persistence_host_dir(&config, None, &victim).unwrap();
-    let attacker_home = sandbox_home_persistence_host_dir(&config, None, &attacker).unwrap();
+    let victim_home = sandbox_home_persistence_host_dir(&config, None, &victim, None).unwrap();
+    let attacker_home = sandbox_home_persistence_host_dir(&config, None, &attacker, None).unwrap();
     assert_ne!(victim_home, attacker_home);
     assert_eq!(
         victim_home.parent(),

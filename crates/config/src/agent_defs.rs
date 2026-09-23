@@ -20,8 +20,8 @@ use std::{collections::HashMap, path::Path};
 use tracing::{debug, warn};
 
 use crate::schema::{
-    AgentIdentity, AgentPreset, McpServerId, PresetMcpPolicy, PresetSandboxMode, PresetToolPolicy,
-    is_default_agent_preset,
+    AgentIdentity, AgentPreset, McpServerId, PresetMcpPolicy, PresetSandboxMode,
+    PresetSandboxPolicy, PresetToolPolicy, SandboxMountConfig, is_default_agent_preset,
 };
 
 /// Frontmatter fields parsed from the YAML block.
@@ -42,6 +42,9 @@ struct AgentFrontmatter {
     mcp_allow_servers: Option<String>,
     mcp_deny_servers: Option<String>,
     sandbox_mode: Option<String>,
+    sandbox_force: bool,
+    sandbox_mounts: Option<String>,
+    run_as: Option<String>,
     skills_allow: Option<String>,
     skills_deny: Option<String>,
 }
@@ -75,6 +78,12 @@ struct AgentFrontmatterOut {
     mcp_deny_servers: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sandbox_mode: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    sandbox_force: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sandbox_mounts: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_as: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     skills_allow: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -121,12 +130,15 @@ pub fn parse_agent_md(content: &str) -> anyhow::Result<(String, AgentPreset)> {
             .map(|value| value.try_into().map_err(anyhow::Error::msg))
             .transpose()?,
         mcp: parse_mcp_policy(fm.mcp_allow_servers, fm.mcp_deny_servers)?,
-        sandbox: crate::schema::PresetSandboxPolicy {
+        sandbox: PresetSandboxPolicy {
             mode: fm
                 .sandbox_mode
                 .as_deref()
                 .map(|value| value.try_into().map_err(anyhow::Error::msg))
                 .transpose()?,
+            force: fm.sandbox_force,
+            mounts: parse_sandbox_mounts(fm.sandbox_mounts)?,
+            run_as: parse_run_as_field(fm.run_as)?,
         },
         skills: crate::schema::PresetSkillPolicy {
             allow: fm.skills_allow.map(csv_list),
@@ -167,6 +179,9 @@ pub fn render_agent_md(name: &str, preset: &AgentPreset) -> anyhow::Result<Strin
             PresetSandboxMode::All => "all".to_string(),
             PresetSandboxMode::NonMain => "non-main".to_string(),
         }),
+        sandbox_force: preset.sandbox.force,
+        sandbox_mounts: render_sandbox_mounts(&preset.sandbox.mounts),
+        run_as: preset.sandbox.run_as.clone(),
         skills_allow: preset.skills.allow.as_ref().map(|values| values.join(", ")),
         skills_deny: preset
             .skills
@@ -210,6 +225,67 @@ fn csv_list(value: String) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .collect()
+}
+
+/// Parse the flat `sandbox_mounts` frontmatter string into mount configs.
+///
+/// The markdown sidecar has to be flat, so the array of `source:target:access`
+/// triples every other surface uses is comma separated here. A comma in a path
+/// would therefore not survive the round trip, which is why [`check_mount_set`]
+/// refuses one.
+///
+/// A wrong field count is an error rather than a dropped mount: a mount that
+/// silently vanishes is the same class of bug as the named-volume trap. The
+/// whole set then goes through `check_mount_set`, the same call the RPC write
+/// path makes, because a hand-edited sidecar reaches the runtime without ever
+/// passing through that path.
+///
+/// [`check_mount_set`]: crate::schema::check_mount_set
+fn parse_sandbox_mounts(value: Option<String>) -> anyhow::Result<Vec<SandboxMountConfig>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let mounts = csv_list(value)
+        .iter()
+        .map(|triple| SandboxMountConfig::parse_triple(triple).map_err(anyhow::Error::msg))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    crate::schema::check_mount_set(&mounts).map_err(|errors| anyhow::anyhow!(errors.join("; ")))?;
+    Ok(mounts)
+}
+
+/// Render mount configs back into the flat frontmatter string.
+///
+/// The inverse of [`parse_sandbox_mounts`]; a write path with no matching
+/// parse would be silent data loss, so the two are tested together.
+fn render_sandbox_mounts(mounts: &[SandboxMountConfig]) -> Option<String> {
+    if mounts.is_empty() {
+        return None;
+    }
+    Some(
+        mounts
+            .iter()
+            .map(SandboxMountConfig::to_triple)
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+/// Validate the flat `run_as` frontmatter value.
+///
+/// Already a flat string, so there is no encoding to undo - but it still has to
+/// be checked here, because a markdown sidecar reaches the runtime without ever
+/// passing through the RPC write path. A malformed value is an error, never a
+/// dropped field: dropping it would run the container as root.
+fn parse_run_as_field(value: Option<String>) -> anyhow::Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    crate::schema::check_run_as(&value).map_err(anyhow::Error::msg)?;
+    Ok(Some(value))
 }
 
 fn non_empty_join(values: &[String]) -> Option<String> {
@@ -304,6 +380,41 @@ pub fn merge_agent_defs(
     }
 }
 
+/// The preset an agent gets when its definition file cannot be used.
+///
+/// Skipping the file outright left the agent with no preset at all, and the
+/// no-preset branch falls back to the global `tools.exec.sandbox.mode` - which
+/// can be `off`. So a definition that asked for a sandbox with three mounts
+/// degraded, on a single unreadable character, to no sandbox. This fails the
+/// other way: the agent still exists, and it is sandboxed.
+///
+/// Used for a file that does not parse **and** for a file that cannot be read
+/// at all. The two are the same situation from here: an `.md` sitting in the
+/// agent-definitions directory is an agent someone configured, and a
+/// permission error or a mid-write truncation says nothing about what it asked
+/// for. Warning and moving on would have been the `off` path again, reached by
+/// a different error type.
+///
+/// `force` is set as well as `mode`, and it is the half that actually holds.
+/// `mode` loses to a per-session override by design - that precedence is the
+/// long-standing contract - so a session that had already been toggled to
+/// `sandboxEnabled: false` went straight back to the host the moment the
+/// definition broke, which is the exact path this function exists to close.
+/// Only `force` outranks that override. The cost is that the toggle is refused
+/// while the file is broken; fixing the file restores the agent's real policy,
+/// and an agent whose declared policy is currently unknown is not one to hand
+/// an off switch for.
+fn fail_closed_preset() -> AgentPreset {
+    AgentPreset {
+        sandbox: PresetSandboxPolicy {
+            mode: Some(PresetSandboxMode::All),
+            force: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
 fn load_defs_from_dir(dir: &Path, defs: &mut HashMap<String, AgentPreset>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -321,10 +432,16 @@ fn load_defs_from_dir(dir: &Path, defs: &mut HashMap<String, AgentPreset>) {
                     },
                     Err(e) => {
                         warn!(path = %path.display(), error = %e, "failed to parse agent definition");
+                        if let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) {
+                            defs.insert(name.to_string(), fail_closed_preset());
+                        }
                     },
                 },
                 Err(e) => {
                     warn!(path = %path.display(), error = %e, "failed to read agent definition");
+                    if let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) {
+                        defs.insert(name.to_string(), fail_closed_preset());
+                    }
                 },
             }
         }
@@ -596,6 +713,8 @@ Search thoroughly.
             mcp: PresetMcpPolicy::Allow(vec![McpServerId::new("github"), McpServerId::new("jira")]),
             sandbox: PresetSandboxPolicy {
                 mode: Some(PresetSandboxMode::All),
+                force: true,
+                ..Default::default()
             },
             skills: PresetSkillPolicy {
                 allow: Some(vec!["code-review".into(), "testing".into()]),
@@ -615,6 +734,15 @@ Search thoroughly.
             assert_eq!(servers[1].as_str(), "jira");
         }
         assert_eq!(parsed.sandbox.mode, Some(PresetSandboxMode::All));
+        assert!(
+            parsed.sandbox.force,
+            "sandbox_force must survive the sidecar round trip, or a forced \
+             agent quietly stops being forced the next time the UI saves it"
+        );
+        assert!(
+            rendered.contains("sandbox_force: true"),
+            "the flat spelling is sandbox_force, got: {rendered}"
+        );
         assert_eq!(
             parsed.skills.allow.as_deref(),
             Some(["code-review".to_string(), "testing".to_string()].as_slice())
@@ -648,6 +776,276 @@ Search thoroughly.
     }
 
     #[test]
+    fn test_render_round_trips_sandbox_mounts() {
+        use crate::schema::{
+            PresetSandboxMode, PresetSandboxPolicy, SandboxMountAccess, SandboxMountConfig,
+        };
+
+        let preset = AgentPreset {
+            identity: AgentIdentity {
+                name: Some("Walter".into()),
+                ..Default::default()
+            },
+            sandbox: PresetSandboxPolicy {
+                mode: Some(PresetSandboxMode::All),
+                mounts: vec![
+                    SandboxMountConfig {
+                        source: "/srv/vault".into(),
+                        target: "/srv/vault".into(),
+                        access: SandboxMountAccess::Rw,
+                    },
+                    SandboxMountConfig {
+                        source: "/srv/notes".into(),
+                        target: "/srv/notes".into(),
+                        access: SandboxMountAccess::Ro,
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let rendered = render_agent_md("walter", &preset).unwrap();
+        assert!(
+            rendered.contains("sandbox_mounts:"),
+            "rendered frontmatter must carry the mounts: {rendered}"
+        );
+
+        let (_, parsed) = parse_agent_md(&rendered).unwrap();
+        assert_eq!(
+            parsed.sandbox.mounts, preset.sandbox.mounts,
+            "mounts must round trip losslessly through frontmatter"
+        );
+    }
+
+    #[test]
+    fn test_render_omits_sandbox_mounts_when_empty() {
+        let preset = AgentPreset {
+            identity: AgentIdentity {
+                name: Some("Plain".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let rendered = render_agent_md("plain", &preset).unwrap();
+        assert!(
+            !rendered.contains("sandbox_mounts"),
+            "an agent with no mounts must not gain the key: {rendered}"
+        );
+
+        let (_, parsed) = parse_agent_md(&rendered).unwrap();
+        assert!(parsed.sandbox.mounts.is_empty());
+    }
+
+    #[test]
+    fn test_sandbox_mounts_frontmatter_runs_the_whole_set_check() {
+        // The markdown sidecar reaches the runtime without ever passing through
+        // the RPC write path, so without this a hand-edited file with a
+        // relative source or two mounts on one target loaded clean and failed
+        // at container start instead.
+        for mounts in [
+            "vault:/srv/vault:rw",
+            "/srv/a:/srv/shared:rw, /srv/b:/srv/shared:ro",
+            "/srv/../etc:/srv/vault:rw",
+            "/:/srv/root:ro",
+        ] {
+            let content = format!("---\nname: walter\nsandbox_mounts: \"{mounts}\"\n---\nbody\n");
+            assert!(
+                parse_agent_md(&content).is_err(),
+                "sandbox_mounts {mounts:?} must not load"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sandbox_mount_paths_may_not_contain_a_wire_separator() {
+        // The frontmatter carries the whole list as one comma-separated string
+        // of `source:target:access` triples, so a comma or a colon in a path
+        // validates, renders, and then re-parses as something else - which used
+        // to drop the entire agent.
+        for source in ["/srv/my,vault", "/srv/my:vault"] {
+            let preset = AgentPreset {
+                sandbox: PresetSandboxPolicy {
+                    mounts: vec![SandboxMountConfig {
+                        source: source.into(),
+                        target: "/srv/vault".into(),
+                        access: crate::schema::SandboxMountAccess::Rw,
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let rendered = render_agent_md("walter", &preset).unwrap();
+
+            assert!(
+                crate::schema::check_mount_set(&preset.sandbox.mounts).is_err(),
+                "{source:?} must be refused where it is written"
+            );
+            assert!(
+                parse_agent_md(&rendered).is_err(),
+                "and the rendered form of {source:?} must not load either"
+            );
+        }
+    }
+
+    #[test]
+    fn test_a_definition_that_does_not_parse_still_yields_a_sandboxed_preset() {
+        // Skipping the file left the agent with no preset at all, and the
+        // no-preset branch in run_with_tools falls back to the global
+        // `tools.exec.sandbox.mode` - which can be `off`. One unreadable
+        // character in an agent that asked for a sandbox therefore turned the
+        // sandbox off.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("walter.md"),
+            "---\nname: walter\nsandbox_mounts: \"vault:/srv/vault:rw\"\n---\nbody\n",
+        )
+        .unwrap();
+
+        let mut defs = HashMap::new();
+        load_defs_from_dir(dir.path(), &mut defs);
+
+        let preset = defs
+            .get("walter")
+            .expect("a definition that does not parse must still leave the agent present");
+        assert_eq!(
+            preset.sandbox.mode,
+            Some(PresetSandboxMode::All),
+            "and it must fail closed, not inherit whatever the global mode is"
+        );
+        assert!(
+            preset.sandbox.forces_sandbox(),
+            "`mode` alone loses to a per-session override, so a session already \
+             toggled off would reach the host anyway - only `force` holds"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_a_definition_that_cannot_be_read_still_yields_a_sandboxed_preset() {
+        // The io::Error half of the same failure. A parse error failed closed
+        // while an unreadable file only warned, so a chmod, a mid-write
+        // truncation or a bad mount reached the very `off` path the parse
+        // branch exists to avoid - by a different error type.
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("walter.md");
+        std::fs::write(&path, "---\nname: walter\n---\nbody\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_to_string(&path).is_ok() {
+            // Running as root, where the mode is advisory. Nothing to assert.
+            return;
+        }
+
+        let mut defs = HashMap::new();
+        load_defs_from_dir(dir.path(), &mut defs);
+
+        let preset = defs
+            .get("walter")
+            .expect("a definition that cannot be read must still leave the agent present");
+        assert_eq!(
+            preset.sandbox.mode,
+            Some(PresetSandboxMode::All),
+            "and it must fail closed, the same way a parse error does"
+        );
+        assert!(
+            preset.sandbox.forces_sandbox(),
+            "and it must pin the sandbox on, the same way a parse error does"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_mounts_wrong_field_count_errors() {
+        let content = "---\nname: walter\nsandbox_mounts: \"/srv/vault:/srv/vault\"\n---\nbody\n";
+        let error = parse_agent_md(content).expect_err("a two-field mount must not parse");
+        assert!(
+            error.to_string().contains("source:target:access"),
+            "error should name the expected shape, got: {error}"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_mounts_bad_access_errors() {
+        let content =
+            "---\nname: walter\nsandbox_mounts: \"/srv/vault:/srv/vault:readwrite\"\n---\nbody\n";
+        let error = parse_agent_md(content).expect_err("an unknown access value must not parse");
+        assert!(
+            error.to_string().contains("readwrite"),
+            "error should name the bad value, got: {error}"
+        );
+    }
+
+    #[test]
+    fn test_render_round_trips_sandbox_run_as() {
+        use crate::schema::PresetSandboxPolicy;
+
+        let preset = AgentPreset {
+            identity: AgentIdentity {
+                name: Some("Walter".into()),
+                ..Default::default()
+            },
+            sandbox: PresetSandboxPolicy {
+                run_as: Some("1000:1000".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let rendered = render_agent_md("walter", &preset).unwrap();
+        assert!(
+            rendered.contains("run_as: 1000:1000"),
+            "rendered frontmatter must carry run_as: {rendered}"
+        );
+
+        let (_, parsed) = parse_agent_md(&rendered).unwrap();
+        assert_eq!(parsed.sandbox.run_as.as_deref(), Some("1000:1000"));
+    }
+
+    #[test]
+    fn test_render_omits_run_as_when_unset() {
+        let preset = AgentPreset {
+            identity: AgentIdentity {
+                name: Some("Plain".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let rendered = render_agent_md("plain", &preset).unwrap();
+        assert!(
+            !rendered.contains("run_as"),
+            "an agent with no run_as must not gain the key: {rendered}"
+        );
+        let (_, parsed) = parse_agent_md(&rendered).unwrap();
+        assert!(parsed.sandbox.run_as.is_none());
+    }
+
+    #[test]
+    fn test_sandbox_run_as_malformed_errors() {
+        // A markdown sidecar reaches the runtime without passing the RPC write
+        // path, so the shape rule has to hold here too. Dropping the field
+        // instead would run the container as root.
+        let content = "---\nname: walter\nrun_as: \"1000\"\n---\nbody\n";
+        let error = parse_agent_md(content).expect_err("a one-part run_as must not parse");
+        assert!(
+            error.to_string().contains("uid:gid"),
+            "error should name the expected shape, got: {error}"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_run_as_root_uid_errors() {
+        let content = "---\nname: walter\nrun_as: \"0:0\"\n---\nbody\n";
+        let error = parse_agent_md(content).expect_err("a run_as of 0:0 must not parse");
+        assert!(
+            error.to_string().contains("uid 0"),
+            "error should name the rule, got: {error}"
+        );
+    }
+
+    #[test]
     fn test_render_round_trips_sandbox_non_main() {
         use crate::schema::{PresetSandboxMode, PresetSandboxPolicy};
 
@@ -658,6 +1056,7 @@ Search thoroughly.
             },
             sandbox: PresetSandboxPolicy {
                 mode: Some(PresetSandboxMode::NonMain),
+                ..Default::default()
             },
             ..Default::default()
         };

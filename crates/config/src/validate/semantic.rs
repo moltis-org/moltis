@@ -373,6 +373,67 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
                 message: "agents.presets.<name>.max_iterations must be at least 1".into(),
             });
         }
+        // Sandbox mounts: the shape rules live once in the schema crate so the
+        // RPC write path (L1) and this file path (L4) cannot drift apart.
+        if let Err(problems) = crate::schema::check_mount_set(&preset.sandbox.mounts) {
+            for problem in problems {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    category: "invalid-value",
+                    path: format!("agents.presets.{name}.sandbox.mounts"),
+                    message: problem,
+                });
+            }
+        }
+        // Same seat, same reason: the `run_as` shape rules live once in the
+        // schema crate, so L1 and L4 cannot drift apart. A bad value is an
+        // error and never degrades to "run as root".
+        if let Some(run_as) = preset.sandbox.run_as.as_deref()
+            && let Err(problem) = crate::schema::check_run_as(run_as)
+        {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "invalid-value",
+                path: format!("agents.presets.{name}.sandbox.run_as"),
+                message: problem,
+            });
+        }
+        // `mode = "off"` next to `force = true` is a contradiction, not a
+        // preference: one says never sandbox this agent, the other says never
+        // run it outside a sandbox. Caught here rather than at runtime, where
+        // the router resolves it by forcing the sandbox on and the author never
+        // learns their `mode` was overruled.
+        //
+        // Mounts or a `run_as` without `force` are deliberately not flagged:
+        // they configure the sandbox for the turns that run in one, which is a
+        // legitimate thing to want.
+        if preset.sandbox.mode == Some(crate::schema::PresetSandboxMode::Off)
+            && preset.sandbox.force
+        {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "invalid-value",
+                path: format!("agents.presets.{name}.sandbox.mode"),
+                message: format!(
+                    "agent \"{name}\" sets sandbox.mode = \"off\" but also sandbox.force = \
+                     true; one of the two has to go"
+                ),
+            });
+        }
+        for mount in &preset.sandbox.mounts {
+            if mount.access.is_writable() {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    category: "security",
+                    path: format!("agents.presets.{name}.sandbox.mounts"),
+                    message: format!(
+                        "agent \"{name}\" has write access to the host path \"{}\"; a writable \
+                         host path handed to a model is a privilege grant",
+                        mount.source
+                    ),
+                });
+            }
+        }
         if let Some(ToolChoice::Tool { name: tool_name }) = &preset.tool_controls.tool_choice {
             if tool_name.trim().is_empty() {
                 diagnostics.push(Diagnostic {

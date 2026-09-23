@@ -410,6 +410,12 @@ pub struct GatewayState {
     /// Hostname for HelloOk.
     pub hostname: String,
     /// Loaded configuration snapshot for read-mostly request helpers.
+    ///
+    /// Taken once at construction and never replaced - nothing in the process
+    /// writes it. Anything that has to reflect a config file edited after
+    /// startup (agent presets, above all) reads through
+    /// [`crate::sandbox_policy::live_agents_config`] or its own loader
+    /// instead.
     pub config: moltis_config::schema::MoltisConfig,
     /// Auth configuration.
     pub auth: ResolvedAuth,

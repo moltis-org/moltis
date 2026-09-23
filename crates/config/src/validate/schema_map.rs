@@ -353,7 +353,22 @@ pub(super) fn build_schema_map() -> KnownKeys {
                     ("deny_servers", Leaf),
                 ])),
             ),
-            ("sandbox", Struct(HashMap::from([("mode", Leaf)]))),
+            (
+                "sandbox",
+                Struct(HashMap::from([
+                    ("mode", Leaf),
+                    ("force", Leaf),
+                    ("run_as", Leaf),
+                    (
+                        "mounts",
+                        Array(Box::new(Struct(HashMap::from([
+                            ("source", Leaf),
+                            ("target", Leaf),
+                            ("access", Leaf),
+                        ])))),
+                    ),
+                ])),
+            ),
             (
                 "skills",
                 Struct(HashMap::from([("allow", Leaf), ("deny", Leaf)])),

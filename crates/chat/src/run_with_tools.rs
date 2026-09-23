@@ -320,10 +320,23 @@ pub(crate) async fn run_with_tools(
                 },
                 _ => router.remove_agent_override(session_key).await,
             }
+            // The force flag and the container arguments ride along with the
+            // mode. The mounts are stored in their config shape and converted
+            // where a container is about to start, so a set that does not
+            // validate fails that call loudly instead of quietly contributing
+            // no mounts here.
+            router
+                .set_agent_sandbox(session_key, moltis_tools::sandbox::AgentSandboxPolicy {
+                    force: preset.sandbox.force,
+                    mounts: preset.sandbox.mounts.clone(),
+                    run_as: preset.sandbox.run_as.clone(),
+                })
+                .await;
         } else {
             // No preset for this agent — clear only stale agent policy. Explicit
             // session/cron overrides still control this session.
             router.remove_agent_override(session_key).await;
+            router.remove_agent_sandbox(session_key).await;
         }
         router.is_sandboxed(session_key).await
     } else {

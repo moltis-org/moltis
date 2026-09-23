@@ -214,6 +214,9 @@ async fn build_recent_sessions_snapshot(gw: &GatewayState, limit: usize) -> Vec<
         return Vec::new();
     };
 
+    // One load for the whole snapshot: the presets on disk, not the config
+    // this process read at startup.
+    let agents = moltis_gateway::sandbox_policy::live_agents_config();
     let mut recent = Vec::new();
     for entry in metadata.list().await.into_iter().take(limit) {
         let active_channel = if let Some(ref binding_json) = entry.channel_binding {
@@ -242,6 +245,9 @@ async fn build_recent_sessions_snapshot(gw: &GatewayState, limit: usize) -> Vec<
             .map(|text| truncate_preview(text, SESSION_PREVIEW_MAX_CHARS));
         let agent_id = entry.agent_id.clone().unwrap_or_else(|| "main".to_owned());
         let agent_id_camel = agent_id.clone();
+        // Same flag `sessions.list` stamps: the sandbox toggle is not a control
+        // for an agent whose preset sets `sandbox.force`.
+        let sandbox_forced = agents.sandbox_forced(Some(agent_id.as_str()));
 
         recent.push(serde_json::json!({
             "id": entry.id,
@@ -254,6 +260,7 @@ async fn build_recent_sessions_snapshot(gw: &GatewayState, limit: usize) -> Vec<
             "lastSeenMessageCount": entry.last_seen_message_count,
             "projectId": entry.project_id,
             "sandbox_enabled": entry.sandbox_enabled,
+            "sandbox_forced": sandbox_forced,
             "sandbox_image": entry.sandbox_image,
             "worktree_branch": entry.worktree_branch,
             "channelBinding": entry.channel_binding,

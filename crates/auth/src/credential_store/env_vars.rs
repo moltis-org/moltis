@@ -31,31 +31,36 @@ impl CredentialStore {
             .collect())
     }
 
+    /// Encrypt a value for storage under `key`, when the vault is available.
+    ///
+    /// Returns the value as it goes into the row plus the `encrypted` flag that
+    /// describes it. Shared by every write path so that a value's encryption
+    /// does not depend on which one stored it.
+    async fn encode_env_value(&self, key: &str, value: &str) -> Result<(String, i64)> {
+        #[cfg(not(feature = "vault"))]
+        let _ = key;
+
+        #[cfg(feature = "vault")]
+        if self.is_vault_encryption_enabled()
+            && let Some(ref vault) = self.vault
+            && vault.is_unsealed().await
+        {
+            let aad = format!("env:{key}");
+            let enc = vault
+                .encrypt_string(value, &aad)
+                .await
+                .map_err(|e| Error::Crypto(e.to_string()))?;
+            return Ok((enc, 1_i64));
+        }
+
+        Ok((value.to_owned(), 0_i64))
+    }
+
     /// Set (upsert) an environment variable.
     ///
     /// When the vault feature is enabled and the vault is unsealed, the value is encrypted before storage.
     pub async fn set_env_var(&self, key: &str, value: &str) -> Result<i64> {
-        #[cfg(feature = "vault")]
-        let (store_value, encrypted) = {
-            if self.is_vault_encryption_enabled() {
-                if let Some(ref vault) = self.vault
-                    && vault.is_unsealed().await
-                {
-                    let aad = format!("env:{key}");
-                    let enc = vault
-                        .encrypt_string(value, &aad)
-                        .await
-                        .map_err(|e| Error::Crypto(e.to_string()))?;
-                    (enc, 1_i64)
-                } else {
-                    (value.to_owned(), 0_i64)
-                }
-            } else {
-                (value.to_owned(), 0_i64)
-            }
-        };
-        #[cfg(not(feature = "vault"))]
-        let (store_value, encrypted) = (value.to_owned(), 0_i64);
+        let (store_value, encrypted) = self.encode_env_value(key, value).await?;
 
         let result = sqlx::query(
             "INSERT INTO env_variables (key, value, encrypted) VALUES (?, ?, ?)
@@ -67,6 +72,34 @@ impl CredentialStore {
         .execute(&self.pool)
         .await?;
         Ok(result.last_insert_rowid())
+    }
+
+    /// Store an environment variable only if `key` is not already set.
+    ///
+    /// Returns `true` when this call is the one that created the row, and
+    /// `false` when somebody else got there first - in which case nothing is
+    /// written and the existing value stands untouched.
+    ///
+    /// The point is the return value, not the write. `key` is UNIQUE, so the
+    /// insert-or-nothing is decided inside sqlite under the row lock, which
+    /// makes this a compare-and-swap that two processes sharing one database
+    /// can both call with exactly one winner. A read-then-`set_env_var` cannot
+    /// do that: both readers miss, both write, and the loser's value silently
+    /// replaces the winner's.
+    pub async fn set_env_var_if_absent(&self, key: &str, value: &str) -> Result<bool> {
+        let (store_value, encrypted) = self.encode_env_value(key, value).await?;
+
+        let result = sqlx::query(
+            "INSERT INTO env_variables (key, value, encrypted) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO NOTHING",
+        )
+        .bind(key)
+        .bind(&store_value)
+        .bind(encrypted)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() == 1)
     }
 
     /// Delete an environment variable by id. Returns the key name if found.

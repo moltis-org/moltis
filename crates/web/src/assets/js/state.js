@@ -45,6 +45,8 @@ export let streamEl = state().streamEl;
 export let streamText = state().streamText;
 export let voicePending = state().voicePending;
 export let sandboxInfo = state().sandboxInfo;
+export let sessionSandboxEnabled = state().sessionSandboxEnabled;
+export let sessionSandboxForced = state().sessionSandboxForced;
 export let cachedChannels = state().cachedChannels;
 export let selectedModelId = state().selectedModelId;
 export let nodeCombo = state().nodeCombo;
@@ -79,6 +81,8 @@ function _sync() {
 	streamText = S.streamText;
 	voicePending = S.voicePending;
 	sandboxInfo = S.sandboxInfo;
+	sessionSandboxEnabled = S.sessionSandboxEnabled;
+	sessionSandboxForced = S.sessionSandboxForced;
 	cachedChannels = S.cachedChannels;
 	selectedModelId = S.selectedModelId;
 	nodeCombo = S.nodeCombo;
@@ -115,6 +119,8 @@ export function setSessionExecPromptSymbol(v) { state().setSessionExecPromptSymb
 export function setCommandModeEnabled(v) { state().setCommandModeEnabled?.(v); commandModeEnabled = v; }
 export function setSelectedModelId(v) { state().setSelectedModelId?.(v); selectedModelId = v; }
 export function setSandboxInfo(v) { state().setSandboxInfo?.(v); sandboxInfo = v; }
+export function setSessionSandboxEnabled(v) { state().setSessionSandboxEnabled?.(v); sessionSandboxEnabled = v; }
+export function setSessionSandboxForced(v) { state().setSessionSandboxForced?.(v); sessionSandboxForced = v; }
 export function setCachedChannels(v) { state().setCachedChannels?.(v); cachedChannels = v; }
 export function setLastHistoryIndex(v) { state().setLastHistoryIndex?.(v); }
 export function setSessionSwitchInProgress(v) { state().setSessionSwitchInProgress?.(v); }

@@ -614,6 +614,20 @@ impl SessionService for LiveSessionService {
             info!(session = key, "cleared channel binding");
         }
         if let Some(sandbox_enabled_opt) = p.sandbox_enabled {
+            // An agent whose preset sets `sandbox.force` may never run outside
+            // a sandbox, so "off" is not a preference this session can express.
+            // Refused rather than accepted and then overruled by the router:
+            // the old path also told the model, in a system message, that exec
+            // now ran on the host - which was simply untrue.
+            if sandbox_enabled_opt == Some(false) {
+                let agent_id = self.resolve_agent_id_for_entry(&entry, false).await;
+                if crate::sandbox_policy::agent_sandbox_forced(Some(&agent_id)) {
+                    return Err(ServiceError::message(format!(
+                        "session '{key}' runs agent '{agent_id}', whose preset sets \
+                         sandbox.force = true; its sandbox cannot be disabled"
+                    )));
+                }
+            }
             let old_sandbox = entry.sandbox_enabled;
             self.metadata
                 .set_sandbox_enabled(key, sandbox_enabled_opt)

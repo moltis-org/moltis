@@ -62,6 +62,8 @@ export let projectDropdownList: HTMLElement | null = null;
 export let sandboxToggleBtn: HTMLButtonElement | null = null;
 export let sandboxLabel: HTMLElement | null = null;
 export let sessionSandboxEnabled = true;
+/** The active session's agent preset sets `sandbox.force`. */
+export let sessionSandboxForced = false;
 export let sessionSandboxImage: string | null = null;
 export let sessionSandboxBackend: string | null = null;
 export let sandboxImageBtn: HTMLButtonElement | null = null;
@@ -248,6 +250,9 @@ export function setSandboxLabel(v: HTMLElement | null): void {
 }
 export function setSessionSandboxEnabled(v: boolean): void {
 	sessionSandboxEnabled = v;
+}
+export function setSessionSandboxForced(v: boolean): void {
+	sessionSandboxForced = v;
 }
 export function setSessionSandboxImage(v: string | null): void {
 	sessionSandboxImage = v;

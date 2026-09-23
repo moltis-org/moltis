@@ -56,6 +56,7 @@ pub mod project_aware_tools;
 pub mod provider_setup;
 #[cfg(feature = "push-notifications")]
 pub mod push;
+pub mod sandbox_policy;
 pub mod server;
 pub mod services;
 pub mod session;

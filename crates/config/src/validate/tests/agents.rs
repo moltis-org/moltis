@@ -1,6 +1,6 @@
 use {
     super::*,
-    crate::{AgentRuntimeLimitSource, AgentRuntimeLimits},
+    crate::{AgentRuntimeLimitSource, AgentRuntimeLimits, schema::SandboxMountAccess},
 };
 
 #[test]
@@ -458,5 +458,369 @@ binary = "claude"
         warning.message.contains("Did you mean \"claude-code\"?"),
         "expected typo suggestion in warning, got: {:?}",
         warning
+    );
+}
+
+fn mount_diagnostics(toml: &str) -> Vec<Diagnostic> {
+    validate_toml_str(toml).diagnostics
+}
+
+fn errors_mentioning(diagnostics: &[Diagnostic], needle: &str) -> Vec<String> {
+    diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .filter(|d| d.message.contains(needle) || d.path.contains(needle))
+        .map(|d| format!("{}: {}", d.path, d.message))
+        .collect()
+}
+
+#[test]
+fn preset_sandbox_mounts_parse_clean() {
+    let toml = r#"
+[[agents.presets.walter.sandbox.mounts]]
+source = "/srv/vault"
+target = "/srv/vault"
+access = "rw"
+
+[[agents.presets.walter.sandbox.mounts]]
+source = "/srv/notes"
+target = "/srv/notes"
+"#;
+    let config: MoltisConfig = toml::from_str(toml).unwrap();
+    let mounts = &config.agents.presets["walter"].sandbox.mounts;
+    assert_eq!(mounts.len(), 2);
+    assert_eq!(mounts[0].source, "/srv/vault");
+    assert_eq!(mounts[0].access, SandboxMountAccess::Rw);
+    // access defaults to read-only when absent
+    assert_eq!(mounts[1].access, SandboxMountAccess::Ro);
+
+    let diagnostics = mount_diagnostics(toml);
+    let errors = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect::<Vec<_>>();
+    assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+    let unknown = diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path.contains("mounts"));
+    assert!(
+        unknown.is_none(),
+        "mounts must be a known key, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn preset_sandbox_mount_unknown_key_is_an_error() {
+    let toml = r#"
+[[agents.presets.walter.sandbox.mounts]]
+source = "/srv/vault"
+target = "/srv/vault"
+acces = "rw"
+"#;
+    let diagnostics = mount_diagnostics(toml);
+    let found = diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error && d.path.contains("acces"));
+    assert!(
+        found,
+        "unknown key inside a mount table must be an error, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn preset_sandbox_mount_bad_access_is_an_error() {
+    let toml = r#"
+[[agents.presets.walter.sandbox.mounts]]
+source = "/srv/vault"
+target = "/srv/vault"
+access = "readwrite"
+"#;
+    let diagnostics = mount_diagnostics(toml);
+    let found = diagnostics.iter().any(|d| {
+        d.severity == Severity::Error
+            && d.category != "unknown-field"
+            && d.message.contains("readwrite")
+    });
+    assert!(
+        found,
+        "an unrecognised access value must be an error naming the value, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn preset_sandbox_mount_relative_source_is_an_error() {
+    let toml = r#"
+[[agents.presets.walter.sandbox.mounts]]
+source = "vault"
+target = "/srv/vault"
+access = "rw"
+"#;
+    let diagnostics = mount_diagnostics(toml);
+    let errors = errors_mentioning(&diagnostics, "absolute");
+    assert!(
+        !errors.is_empty(),
+        "a relative source must be an error, got: {diagnostics:?}"
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("walter")),
+        "the diagnostic must name the preset, got: {errors:?}"
+    );
+}
+
+#[test]
+fn preset_sandbox_mounts_sharing_a_target_are_an_error() {
+    let toml = r#"
+[[agents.presets.walter.sandbox.mounts]]
+source = "/srv/vault"
+target = "/srv/shared"
+access = "rw"
+
+[[agents.presets.walter.sandbox.mounts]]
+source = "/srv/notes"
+target = "/srv/shared"
+access = "ro"
+"#;
+    let diagnostics = mount_diagnostics(toml);
+    let errors = errors_mentioning(&diagnostics, "share the target");
+    assert!(
+        !errors.is_empty(),
+        "two mounts sharing a target must be an error, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn preset_sandbox_force_is_the_only_thing_that_forces_the_sandbox() {
+    // The whole semantics in one place: `force` decides, and the container
+    // arguments next to it do not. `sandbox_forced` is the single seat every
+    // layer asks, so this pins what the UI, the write path and the router all
+    // get told.
+    let forced = r#"
+[agents.presets.walter.sandbox]
+force = true
+"#;
+    let config: MoltisConfig = toml::from_str(forced).unwrap();
+    assert!(
+        config.agents.sandbox_forced(Some("walter")),
+        "force = true must force the sandbox"
+    );
+
+    let configured = r#"
+[agents.presets.walter.sandbox]
+run_as = "1000:1000"
+
+[[agents.presets.walter.sandbox.mounts]]
+source = "/srv/vault"
+target = "/srv/vault"
+access = "ro"
+"#;
+    let config: MoltisConfig = toml::from_str(configured).unwrap();
+    assert!(
+        !config.agents.presets["walter"].sandbox.mounts.is_empty(),
+        "the mounts must still be read"
+    );
+    assert!(
+        !config.agents.sandbox_forced(Some("walter")),
+        "mounts and a run_as configure the sandbox, they must not force it on"
+    );
+
+    let diagnostics = mount_diagnostics(forced);
+    let unknown = diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path.contains("force"));
+    assert!(
+        unknown.is_none(),
+        "force must be a known key, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn preset_sandbox_mode_off_with_force_is_an_error() {
+    // mode = "off" plus force = true is a contradiction: one says never
+    // sandbox this agent, the other says never run it outside a sandbox. The
+    // runtime resolves it by forcing the sandbox on, so `moltis config check`
+    // has to say so before that happens.
+    let toml = r#"
+[agents.presets.walter.sandbox]
+mode = "off"
+force = true
+"#;
+    let diagnostics = mount_diagnostics(toml);
+    let errors = errors_mentioning(&diagnostics, "sandbox.force");
+    assert!(
+        !errors.is_empty(),
+        "mode off next to force must be an error, got: {diagnostics:?}"
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("walter")),
+        "the diagnostic must name the preset, got: {errors:?}"
+    );
+}
+
+#[test]
+fn preset_sandbox_mode_off_with_mounts_stays_clean() {
+    // The inverse of the old rule, and the new semantics in one test: mounts
+    // and a run_as configure the sandbox, they never demand one, so they do
+    // not contradict `mode = "off"` - they are simply inert there.
+    let toml = r#"
+[agents.presets.walter.sandbox]
+mode = "off"
+run_as = "1000:1000"
+
+[[agents.presets.walter.sandbox.mounts]]
+source = "/srv/vault"
+target = "/srv/vault"
+access = "ro"
+"#;
+    let errors = errors_mentioning(&mount_diagnostics(toml), "sandbox.force");
+    assert!(
+        errors.is_empty(),
+        "mounts and run_as without force must not contradict mode off, got: {errors:?}"
+    );
+}
+
+#[test]
+fn preset_sandbox_mode_off_alone_stays_clean() {
+    // Nothing to contradict: an agent may still ask for no sandbox at all.
+    let toml = r#"
+[agents.presets.walter.sandbox]
+mode = "off"
+"#;
+    let errors = errors_mentioning(&mount_diagnostics(toml), "sandbox.force");
+    assert!(
+        errors.is_empty(),
+        "mode off on its own must stay clean, got: {errors:?}"
+    );
+}
+
+#[test]
+fn preset_sandbox_rw_mount_warns_naming_agent_and_path() {
+    let toml = r#"
+[[agents.presets.walter.sandbox.mounts]]
+source = "/srv/vault"
+target = "/srv/vault"
+access = "rw"
+"#;
+    let diagnostics = mount_diagnostics(toml);
+    let warnings = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Warning)
+        .filter(|d| {
+            (d.message.contains("walter") || d.path.contains("walter"))
+                && d.message.contains("/srv/vault")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        warnings.len(),
+        1,
+        "expected exactly one rw warning naming walter and the path, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn preset_sandbox_ro_mount_produces_no_rw_warning() {
+    let toml = r#"
+[[agents.presets.walter.sandbox.mounts]]
+source = "/srv/vault"
+target = "/srv/vault"
+access = "ro"
+"#;
+    let diagnostics = mount_diagnostics(toml);
+    let warnings = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Warning)
+        .filter(|d| {
+            (d.message.contains("walter") || d.path.contains("walter"))
+                && d.message.contains("/srv/vault")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        warnings.is_empty(),
+        "a read-only mount must not warn, got: {warnings:?}"
+    );
+}
+
+#[test]
+fn config_template_documents_the_preset_mount_example() {
+    let template = crate::template::default_config_template(18789);
+    let header = "# [[agents.presets.kids.sandbox.mounts]]";
+    let start = template
+        .find(header)
+        .unwrap_or_else(|| panic!("template must carry the mount example: {template}"));
+    for field in ["source = ", "target = ", "access = "] {
+        let line = template[start..]
+            .lines()
+            .skip(1)
+            .take_while(|line| line.starts_with('#'))
+            .find(|line| line.contains(field));
+        assert!(
+            line.is_some(),
+            "mount example must document {field:?} right after the header"
+        );
+    }
+}
+
+#[test]
+fn preset_sandbox_run_as_parses_and_validates_clean() {
+    let toml = r#"
+[agents.presets.walter.sandbox]
+run_as = "1000:1000"
+"#;
+    let config: MoltisConfig = toml::from_str(toml).unwrap();
+    assert_eq!(
+        config.agents.presets["walter"].sandbox.run_as.as_deref(),
+        Some("1000:1000")
+    );
+
+    let diagnostics = mount_diagnostics(toml);
+    let errors = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect::<Vec<_>>();
+    assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+    let unknown = diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path.contains("run_as"));
+    assert!(
+        unknown.is_none(),
+        "run_as must be a known key, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn preset_sandbox_run_as_malformed_is_an_error() {
+    // Every shape that is not exactly two non-empty numeric parts. None of
+    // them may degrade to "no run_as", which would mean root.
+    for value in ["1000", "1000:1000:1000", "1000:", ":1000", "walter:walter"] {
+        let toml = format!(
+            r#"
+[agents.presets.walter.sandbox]
+run_as = "{value}"
+"#
+        );
+        let diagnostics = mount_diagnostics(&toml);
+        let errors = errors_mentioning(&diagnostics, "run_as");
+        assert!(
+            !errors.is_empty(),
+            "run_as {value:?} must be an error, got: {diagnostics:?}"
+        );
+        assert!(
+            errors.iter().any(|e| e.contains("walter")),
+            "the diagnostic must name the preset, got: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn preset_sandbox_run_as_root_uid_is_an_error() {
+    // A run_as that silently meant root would be worse than no field at all.
+    let toml = r#"
+[agents.presets.walter.sandbox]
+run_as = "0:0"
+"#;
+    let diagnostics = mount_diagnostics(toml);
+    let errors = errors_mentioning(&diagnostics, "uid 0");
+    assert!(
+        !errors.is_empty(),
+        "a run_as of 0:0 must be an error, got: {diagnostics:?}"
     );
 }

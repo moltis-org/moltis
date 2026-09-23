@@ -34,9 +34,9 @@ use super::paths::{
 };
 #[cfg(target_os = "macos")]
 use super::types::{
-    BuildImageResult, DEFAULT_SANDBOX_IMAGE, ManagedFilesMount, NetworkPolicy, ResourceLimits,
-    SANDBOX_FILES_DIR, SANDBOX_HOME_DIR, Sandbox, SandboxConfig, SandboxId,
-    truncate_output_for_display,
+    BuildImageResult, DEFAULT_SANDBOX_IMAGE, EnsureReadyOpts, ManagedFilesMount, NetworkPolicy,
+    ResourceLimits, SANDBOX_FILES_DIR, SANDBOX_HOME_DIR, Sandbox, SandboxConfig, SandboxId,
+    SandboxMount, SandboxUser, truncate_output_for_display,
 };
 #[cfg(target_os = "macos")]
 use crate::error::{Error, Result};
@@ -128,11 +128,33 @@ impl AppleContainerSandbox {
             .unwrap_or("moltis-sandbox")
     }
 
-    pub(crate) fn container_policy_fingerprint(&self) -> String {
-        format!(
+    /// Everything about a running container that, when it changes, means the
+    /// container is the wrong one and has to be recreated.
+    ///
+    /// The mounts and `run_as` are appended only when there is something to
+    /// append, so a container started before this existed keeps its old
+    /// fingerprint and an upgrade recreates nothing. Folding them in is not
+    /// optional: without it a changed mount list or uid would silently do
+    /// nothing until somebody removed the container by hand, which is the same
+    /// trap this backend's docker sibling closes.
+    pub(crate) fn container_policy_fingerprint(
+        &self,
+        extra_mounts: &[SandboxMount],
+        run_as: Option<&SandboxUser>,
+    ) -> String {
+        let mut fingerprint = format!(
             "{:?}\0{:?}",
             self.config.managed_files_mount, self.config.resource_limits
-        )
+        );
+        for mount in extra_mounts {
+            fingerprint.push('\0');
+            fingerprint.push_str(&mount.to_arg());
+        }
+        if let Some(user) = run_as {
+            fingerprint.push('\0');
+            fingerprint.push_str(&user.to_arg());
+        }
+        fingerprint
     }
 
     fn container_name_for_generation(&self, id: &SandboxId, generation: u32) -> String {
@@ -172,15 +194,24 @@ impl AppleContainerSandbox {
     }
 
     fn home_persistence_volume(&self, id: &SandboxId) -> Result<Option<String>> {
+        // `None` for run_as throughout this backend: `supports_run_as()` is
+        // false, so `check_ensure_ready_opts` has already refused any session
+        // that asked for one and no apple container ever runs as a configured
+        // uid. If that capability is ever turned on, every `None` in this file
+        // has to become the session's real value.
         let Some(host_dir) =
-            ensure_sandbox_home_persistence_host_dir(&self.config, Some("container"), id)?
+            ensure_sandbox_home_persistence_host_dir(&self.config, Some("container"), id, None)?
         else {
             return Ok(None);
         };
         Ok(Some(format!("{}:{SANDBOX_HOME_DIR}", host_dir.display())))
     }
 
-    pub(crate) fn volumes(&self, id: &SandboxId) -> Result<Vec<String>> {
+    pub(crate) fn volumes(
+        &self,
+        id: &SandboxId,
+        extra_mounts: &[SandboxMount],
+    ) -> Result<Vec<String>> {
         let mut volumes = self
             .home_persistence_volume(id)?
             .into_iter()
@@ -197,6 +228,17 @@ impl AppleContainerSandbox {
             },
         };
         volumes.push(managed_volume);
+        // The rules run again here, right before the container starts. The
+        // docker backend does this in `extra_mount_args`; without it this
+        // backend simply emitted whatever it was handed, so the layer that is
+        // supposed to be the last line of defence did not exist on macOS.
+        let configs = extra_mounts
+            .iter()
+            .map(SandboxMount::to_config)
+            .collect::<Vec<_>>();
+        for mount in SandboxMount::try_from_configs(&configs)? {
+            volumes.push(mount.to_arg());
+        }
         Ok(volumes)
     }
 
@@ -208,6 +250,7 @@ impl AppleContainerSandbox {
                     &self.config,
                     Some("container"),
                     id,
+                    None,
                     guest_path,
                 )
             },
@@ -787,7 +830,33 @@ impl Sandbox for AppleContainerSandbox {
         self.config.managed_files_mount != ManagedFilesMount::None
     }
 
+    /// Apple Container binds host paths the same way docker does.
+    fn supports_extra_mounts(&self) -> bool {
+        true
+    }
+
+    /// Left at the fail-safe default: whether Apple Container's CLI accepts
+    /// `--user` could not be verified, and there was no Apple host available to
+    /// try it on. A turn configured for `run_as` therefore errors on this
+    /// backend rather than silently running as root - see
+    /// `check_ensure_ready_opts`.
+    fn supports_run_as(&self) -> bool {
+        false
+    }
+
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+        self.ensure_ready_with(id, EnsureReadyOpts {
+            image_override,
+            ..Default::default()
+        })
+        .await
+    }
+
+    async fn ensure_ready_with(&self, id: &SandboxId, opts: EnsureReadyOpts<'_>) -> Result<()> {
+        // First, because this override skips the trait default that would
+        // otherwise do it, and a dropped unsupported option is the failure this
+        // whole path exists to prevent.
+        self.check_ensure_ready_opts(&opts)?;
         validate_apple_container_resource_limits(&self.config.resource_limits)?;
 
         let mut name = self.container_name(id).await;
@@ -795,7 +864,7 @@ impl Sandbox for AppleContainerSandbox {
         // no atomic create-or-inspect primitive, so releasing it after policy
         // validation would let a concurrent caller remove the fresh winner.
         let mut fingerprints = self.container_policy_fingerprints.lock().await;
-        let desired_fingerprint = self.container_policy_fingerprint();
+        let desired_fingerprint = self.container_policy_fingerprint(opts.extra_mounts, opts.run_as);
         if fingerprints.get(&name) != Some(&desired_fingerprint)
             && Self::container_exists(&name).await?
         {
@@ -810,10 +879,10 @@ impl Sandbox for AppleContainerSandbox {
                 )));
             }
         }
-        let requested_image = image_override.unwrap_or_else(|| self.image());
+        let requested_image = opts.image_override.unwrap_or_else(|| self.image());
         let image = self.resolve_local_image(requested_image).await?;
         let tz = self.config.timezone.as_deref();
-        let volumes = self.volumes(id)?;
+        let volumes = self.volumes(id, opts.extra_mounts)?;
 
         const MAX_ATTEMPTS: usize = 3;
         let mut daemon_restarted = false;

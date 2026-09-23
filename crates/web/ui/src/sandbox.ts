@@ -30,8 +30,15 @@ interface CachedImage {
 interface SessionPatchResult {
 	result?: {
 		sandbox_enabled?: boolean;
+		sandbox_forced?: boolean;
 		sandbox_image?: string;
 	};
+}
+
+/** The session entry `sessions.patch` returns, straight under `payload`. */
+interface SessionPatchEntry {
+	sandbox_enabled?: boolean | null;
+	sandbox_forced?: boolean;
 }
 
 const SANDBOX_DISABLED_HINT = (): string => t("chat:sandboxDisabledHint");
@@ -104,7 +111,15 @@ function applySandboxControlAvailability(): boolean {
 
 	const toggleBtn = S.sandboxToggleBtn;
 	if (toggleBtn) {
-		applyButtonAvailability(toggleBtn, available, t("chat:sandboxToggleTooltip"), hint);
+		// A forced sandbox is not a missing runtime: the button keeps its normal
+		// label and styling, it just stops being a control and says why.
+		const forced = available && S.sessionSandboxForced;
+		applyButtonAvailability(
+			toggleBtn,
+			available && !forced,
+			t("chat:sandboxToggleTooltip"),
+			forced ? t("chat:sandboxForcedHint") : hint,
+		);
 	}
 
 	const imageBtn = S.sandboxImageBtn;
@@ -123,8 +138,12 @@ function applySandboxControlAvailability(): boolean {
 // ── Sandbox enabled/disabled toggle ─────────────────────────
 
 export function updateSandboxUI(enabled: boolean): void {
-	S.setSessionSandboxEnabled(!!enabled);
-	const effectiveSandboxRoute = !!enabled && sandboxRuntimeAvailable();
+	// A forced sandbox runs sandboxed whatever the stored session flag says, so
+	// the label, the exec mode and the prompt symbol follow the effective state
+	// rather than an override the gateway now ignores.
+	const effective = !!enabled || S.sessionSandboxForced;
+	S.setSessionSandboxEnabled(effective);
+	const effectiveSandboxRoute = effective && sandboxRuntimeAvailable();
 	S.setSessionExecMode(effectiveSandboxRoute ? "sandbox" : "host");
 	S.setSessionExecPromptSymbol(effectiveSandboxRoute || S.hostExecIsRoot ? "#" : "$");
 	updateCommandInputUI();
@@ -155,15 +174,28 @@ export function bindSandboxToggleEvents(): void {
 	if (!toggleBtn) return;
 	toggleBtn.addEventListener("click", () => {
 		if (!sandboxRuntimeAvailable()) return;
+		// Belt and braces next to the `disabled` attribute: this session's agent
+		// preset sets `sandbox.force`, so the gateway refuses to switch the
+		// sandbox off and there is nothing to toggle. Sibling mounts and
+		// `run_as` do not get here - they configure the sandbox rather than
+		// require one.
+		if (S.sessionSandboxForced) return;
 		const newVal = !S.sessionSandboxEnabled;
-		sendRpc<SessionPatchResult>("sessions.patch", {
+		sendRpc<SessionPatchEntry>("sessions.patch", {
 			key: S.activeSessionKey,
 			sandboxEnabled: newVal,
 		}).then((res) => {
-			if (res?.payload?.result) {
-				updateSandboxUI(res.payload.result.sandbox_enabled as boolean);
+			// The patched entry is the payload itself - there is no `result`
+			// wrapper, so the old read never matched and the flag never got
+			// refreshed here.
+			const patched = res?.ok ? res.payload : null;
+			if (patched) {
+				S.setSessionSandboxForced(patched.sandbox_forced === true);
+				updateSandboxUI(patched.sandbox_enabled === true);
 			} else {
-				updateSandboxUI(newVal);
+				// Refused - the gateway will not disable a forced agent's sandbox.
+				// Repaint the state we have rather than the value it rejected.
+				updateSandboxUI(S.sessionSandboxEnabled);
 			}
 		});
 	});

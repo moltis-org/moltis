@@ -22,15 +22,10 @@ use {
             sandbox_image_tag,
         },
         host::provision_packages,
-        paths::{
-            ManagedFilesPath, ensure_managed_files_host_dir,
-            ensure_sandbox_home_persistence_host_dir, host_visible_data_dir,
-            host_visible_managed_files_dir, resolve_home_persistence_guest_path_on_host,
-            resolve_managed_files_guest_path_on_host, resolve_workspace_guest_path_on_host,
-        },
+        paths::{ManagedFilesPath, host_visible_managed_files_dir},
         types::{
-            BuildImageResult, DEFAULT_SANDBOX_IMAGE, ManagedFilesMount, NetworkPolicy,
-            SANDBOX_FILES_DIR, SANDBOX_HOME_DIR, Sandbox, SandboxConfig, SandboxId, WorkspaceMount,
+            BuildImageResult, DEFAULT_SANDBOX_IMAGE, EnsureReadyOpts, ManagedFilesMount,
+            NetworkPolicy, Sandbox, SandboxConfig, SandboxId, SandboxMount, SandboxUser,
             canonical_sandbox_packages, tail_lines, truncate_output_for_display,
         },
     },
@@ -67,7 +62,7 @@ pub(crate) enum BackendKind {
 pub struct DockerSandbox {
     pub config: SandboxConfig,
     pub(crate) kind: BackendKind,
-    cli: &'static str,
+    pub(crate) cli: &'static str,
     backend_label: &'static str,
     /// Container names that have already been provisioned in this process.
     /// Prevents repeated `apt-get install` runs on the same container.
@@ -75,6 +70,16 @@ pub struct DockerSandbox {
     /// Per-container startup gates. Parallel exec calls for the same session
     /// must not race through inspect-then-run with the same OCI container name.
     startup_gates: Mutex<HashMap<String, Arc<Semaphore>>>,
+    /// The `run_as` each container was started with, keyed by container name.
+    ///
+    /// `read_file`, `write_file` and `list_files` resolve `/home/sandbox/...`
+    /// straight to the bind source on the host, and with `run_as` set that
+    /// source is a per-uid directory. The trait gives those methods only a
+    /// `SandboxId`, so the value is recorded where `ensure_ready_with` decides
+    /// it - which is also the honest answer, since it describes the container
+    /// that is actually running. A sync mutex: the critical section is a map
+    /// lookup with no await in it.
+    pub(crate) run_as_by_container: std::sync::Mutex<HashMap<String, SandboxUser>>,
 }
 
 impl DockerSandbox {
@@ -86,6 +91,7 @@ impl DockerSandbox {
             backend_label: "docker",
             provisioned: Mutex::new(HashSet::new()),
             startup_gates: Mutex::new(HashMap::new()),
+            run_as_by_container: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -97,6 +103,7 @@ impl DockerSandbox {
             backend_label: "podman",
             provisioned: Mutex::new(HashSet::new()),
             startup_gates: Mutex::new(HashMap::new()),
+            run_as_by_container: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -109,6 +116,7 @@ impl DockerSandbox {
             backend_label: "docker",
             provisioned: Mutex::new(HashSet::new()),
             startup_gates: Mutex::new(HashMap::new()),
+            run_as_by_container: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -121,6 +129,7 @@ impl DockerSandbox {
             backend_label: "podman",
             provisioned: Mutex::new(HashSet::new()),
             startup_gates: Mutex::new(HashMap::new()),
+            run_as_by_container: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -257,7 +266,12 @@ impl DockerSandbox {
         )))
     }
 
-    async fn managed_files_policy_matches(&self, name: &str) -> bool {
+    async fn managed_files_policy_matches(
+        &self,
+        name: &str,
+        extra_mounts: &[SandboxMount],
+        run_as: Option<&SandboxUser>,
+    ) -> bool {
         let format = format!("{{{{ index .Config.Labels \"{MANAGED_FILES_POLICY_LABEL}\" }}}}");
         let Ok(output) = tokio::process::Command::new(self.cli)
             .args(["inspect", "--format", &format, name])
@@ -268,11 +282,17 @@ impl DockerSandbox {
         };
         output.status.success()
             && String::from_utf8_lossy(&output.stdout).trim()
-                == self.managed_files_policy_fingerprint()
+                == self.container_policy_fingerprint(extra_mounts, run_as)
     }
 
-    async fn container_configuration_matches(&self, name: &str, podman_mode: &str) -> bool {
-        let managed_files_matches = self.managed_files_policy_matches(name);
+    async fn container_configuration_matches(
+        &self,
+        name: &str,
+        podman_mode: &str,
+        extra_mounts: &[SandboxMount],
+        run_as: Option<&SandboxUser>,
+    ) -> bool {
+        let managed_files_matches = self.managed_files_policy_matches(name, extra_mounts, run_as);
         if self.kind != BackendKind::Podman {
             return managed_files_matches.await;
         }
@@ -283,37 +303,33 @@ impl DockerSandbox {
             && Self::podman_mode_matches(actual_podman_mode.as_deref(), podman_mode)
     }
 
-    pub(crate) fn managed_files_policy_fingerprint(&self) -> String {
+    /// The container policy label: everything about a running container that,
+    /// when it changes, means the container is the wrong one and has to be
+    /// recreated.
+    ///
+    /// The mounts are appended only when there are any, so a container started
+    /// before this existed keeps its old hash and an upgrade recreates nothing.
+    pub(crate) fn container_policy_fingerprint(
+        &self,
+        extra_mounts: &[SandboxMount],
+        run_as: Option<&SandboxUser>,
+    ) -> String {
         let source = host_visible_managed_files_dir(&self.config, Some(self.cli));
-        let input = format!(
+        let mut input = format!(
             "{}\0{}\0{}",
             self.config.managed_files_mount,
             self.config.workspace_mount,
             source.display()
         );
+        for mount in extra_mounts {
+            input.push('\0');
+            input.push_str(&mount.to_arg());
+        }
+        if let Some(user) = run_as {
+            input.push('\0');
+            input.push_str(&user.to_arg());
+        }
         format!("{:x}", Sha256::digest(input.as_bytes()))
-    }
-
-    fn mounted_host_path(&self, id: &SandboxId, guest_path: &str) -> Option<PathBuf> {
-        let guest_path = Path::new(guest_path);
-        resolve_workspace_guest_path_on_host(&self.config, Some(self.cli), guest_path).or_else(
-            || {
-                resolve_home_persistence_guest_path_on_host(
-                    &self.config,
-                    Some(self.cli),
-                    id,
-                    guest_path,
-                )
-            },
-        )
-    }
-
-    fn managed_files_path(&self, guest_path: &str) -> ManagedFilesPath {
-        resolve_managed_files_guest_path_on_host(
-            &self.config,
-            Some(self.cli),
-            Path::new(guest_path),
-        )
     }
 
     pub(crate) fn resource_args(&self) -> Vec<String> {
@@ -538,99 +554,6 @@ impl DockerSandbox {
         Ok(socket_path)
     }
 
-    /// Mount the host `moltis-ctl` binary into the sandbox at `/usr/local/bin/moltis-ctl`.
-    ///
-    /// Locates the binary next to the current executable (same directory as `moltis`),
-    /// and if found, bind-mounts it read-only. This allows skills to call `moltis-ctl`
-    /// inside sandboxes to communicate with the gateway.
-    fn moltis_ctl_mount_args() -> Vec<String> {
-        let Ok(current_exe) = std::env::current_exe() else {
-            return Vec::new();
-        };
-        let Some(exe_dir) = current_exe.parent() else {
-            return Vec::new();
-        };
-        let ctl_binary = exe_dir.join("moltis-ctl");
-        if !ctl_binary.is_file() {
-            tracing::debug!(
-                path = %ctl_binary.display(),
-                "moltis-ctl binary not found next to server, skipping sandbox mount"
-            );
-            return Vec::new();
-        }
-        vec![
-            "-v".to_string(),
-            format!("{}:/usr/local/bin/moltis-ctl:ro", ctl_binary.display()),
-        ]
-    }
-
-    pub(crate) fn workspace_args(&self) -> Vec<String> {
-        let guest_workspace_dir = moltis_config::data_dir();
-        let host_workspace_dir = host_visible_data_dir(&self.config, Some(self.cli));
-        let guest_workspace_dir_str = guest_workspace_dir.display().to_string();
-        let host_workspace_dir_str = host_workspace_dir.display().to_string();
-        match self.config.workspace_mount {
-            WorkspaceMount::Ro => vec![
-                "-v".to_string(),
-                format!("{host_workspace_dir_str}:{guest_workspace_dir_str}:ro"),
-            ],
-            WorkspaceMount::Rw => vec![
-                "-v".to_string(),
-                format!("{host_workspace_dir_str}:{guest_workspace_dir_str}:rw"),
-            ],
-            WorkspaceMount::None => Vec::new(),
-        }
-    }
-
-    pub(crate) fn home_persistence_args(&self, id: &SandboxId) -> Result<Vec<String>> {
-        let Some(host_dir) =
-            ensure_sandbox_home_persistence_host_dir(&self.config, Some(self.cli), id)?
-        else {
-            return Ok(Vec::new());
-        };
-        let volume = format!("{}:{SANDBOX_HOME_DIR}:rw", host_dir.display());
-        Ok(vec!["-v".to_string(), volume])
-    }
-
-    pub(crate) fn managed_files_args(&self) -> Result<Vec<String>> {
-        let legacy_guest_dir = moltis_config::managed_files_dir();
-        if self.config.managed_files_mount == ManagedFilesMount::None {
-            let _host_dir = ensure_managed_files_host_dir(&self.config, Some(self.cli))?;
-            let mut args = vec![
-                "--tmpfs".to_string(),
-                format!("{SANDBOX_FILES_DIR}:ro,nosuid,nodev,noexec,size=64k"),
-            ];
-            if self.config.workspace_mount != WorkspaceMount::None {
-                args.extend([
-                    "--tmpfs".to_string(),
-                    format!(
-                        "{}:ro,nosuid,nodev,noexec,size=64k",
-                        legacy_guest_dir.display()
-                    ),
-                ]);
-            }
-            return Ok(args);
-        }
-
-        let host_dir = ensure_managed_files_host_dir(&self.config, Some(self.cli))?;
-        let mode = self.config.managed_files_mount.to_string();
-        let mut args = vec![
-            "-v".to_string(),
-            format!("{}:{SANDBOX_FILES_DIR}:{mode}", host_dir.display()),
-        ];
-        if self.config.workspace_mount != WorkspaceMount::None {
-            args.extend([
-                "-v".to_string(),
-                format!(
-                    "{}:{}:{mode}",
-                    host_dir.display(),
-                    legacy_guest_dir.display()
-                ),
-            ]);
-        }
-        Ok(args)
-    }
-
     async fn resolve_local_image(&self, requested_image: &str) -> Result<String> {
         if sandbox_image_exists(self.cli, requested_image).await {
             debug!(image = requested_image, "sandbox image found locally");
@@ -743,10 +666,33 @@ impl DockerSandbox {
         Ok(())
     }
 
+    /// Forget everything this process recorded about a container it is
+    /// removing.
+    ///
+    /// One method rather than the same removals written out in each recreate
+    /// branch. They had drifted: the name-conflict branch dropped
+    /// `provisioned` and kept `run_as_by_container`, so after a `run_as` ->
+    /// no-`run_as` transition `recorded_run_as` still pointed
+    /// `read_file`/`write_file` at `<home>/user/<uid>` while the replacement
+    /// container wrote the shared home.
+    ///
+    /// Called on the way out rather than on the way in, so a start that never
+    /// got as far as removing the container leaves the running container's
+    /// records alone.
+    pub(crate) async fn forget_container_records(&self, name: &str) {
+        self.provisioned.lock().await.remove(name);
+        self.run_as_by_container
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(name);
+    }
+
     async fn ensure_ready_locked(
         &self,
         id: &SandboxId,
         image_override: Option<&str>,
+        extra_mounts: &[SandboxMount],
+        run_as: Option<&SandboxUser>,
     ) -> Result<()> {
         let name = self.container_name(id);
         let podman_socket_path = self.podman_socket_path().await?;
@@ -754,7 +700,7 @@ impl DockerSandbox {
 
         if self.is_container_running(&name).await {
             if self
-                .container_configuration_matches(&name, &podman_mode)
+                .container_configuration_matches(&name, &podman_mode, extra_mounts, run_as)
                 .await
             {
                 debug!(container = %name, "sandbox container already running");
@@ -763,7 +709,7 @@ impl DockerSandbox {
 
             info!(container = %name, "recreating sandbox after container configuration changed");
             self.remove_container_checked(&name).await?;
-            self.provisioned.lock().await.remove(&name);
+            self.forget_container_records(&name).await;
         }
 
         // Resolve image first so we know whether it's prebuilt (affects hardening).
@@ -782,7 +728,7 @@ impl DockerSandbox {
             "--label".to_string(),
             format!(
                 "{MANAGED_FILES_POLICY_LABEL}={}",
-                self.managed_files_policy_fingerprint()
+                self.container_policy_fingerprint(extra_mounts, run_as)
             ),
         ];
 
@@ -798,8 +744,9 @@ impl DockerSandbox {
             self.kind,
             self.config.allow_nested_podman,
         ));
+        args.extend(Self::run_as_args(run_as)?);
         args.extend(self.workspace_args());
-        args.extend(self.home_persistence_args(id)?);
+        args.extend(self.home_persistence_args(id, run_as)?);
         args.extend(self.managed_files_args()?);
         if self.kind == BackendKind::Podman {
             args.extend(Self::podman_mode_label_args(&podman_mode));
@@ -808,6 +755,7 @@ impl DockerSandbox {
             args.extend(Self::podman_socket_run_args_for_path(Some(socket_path))?);
         }
         args.extend(Self::moltis_ctl_mount_args());
+        args.extend(Self::extra_mount_args(extra_mounts)?);
 
         args.push(image);
         args.extend(["sleep".to_string(), "infinity".to_string()]);
@@ -822,7 +770,7 @@ impl DockerSandbox {
             if is_container_name_conflict(&stderr) {
                 if self.is_container_running(&name).await
                     && self
-                        .container_configuration_matches(&name, &podman_mode)
+                        .container_configuration_matches(&name, &podman_mode, extra_mounts, run_as)
                         .await
                 {
                     debug!(
@@ -838,7 +786,7 @@ impl DockerSandbox {
                     "{} run reported a name conflict for a stale or incompatible container, recreating",
                     self.cli
                 );
-                self.provisioned.lock().await.remove(&name);
+                self.forget_container_records(&name).await;
                 self.remove_container_checked(&name).await?;
 
                 let retry_output = tokio::process::Command::new(self.cli)
@@ -910,18 +858,63 @@ impl Sandbox for DockerSandbox {
         self.config.managed_files_mount != ManagedFilesMount::None
     }
 
+    /// Docker and podman both bind arbitrary host paths, so both opt in.
+    fn supports_extra_mounts(&self) -> bool {
+        true
+    }
+
+    /// Docker and podman both take `--user uid:gid`.
+    fn supports_run_as(&self) -> bool {
+        true
+    }
+
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+        self.ensure_ready_with(id, EnsureReadyOpts {
+            image_override,
+            ..Default::default()
+        })
+        .await
+    }
+
+    async fn ensure_ready_with(&self, id: &SandboxId, opts: EnsureReadyOpts<'_>) -> Result<()> {
+        self.check_ensure_ready_opts(&opts)?;
         let name = self.container_name(id);
         let gate = self.startup_gate_for_inner(&name).await;
         let _permit = gate
             .acquire()
             .await
             .map_err(|_| Error::message("sandbox startup gate closed"))?;
-        let result = self.ensure_ready_locked(id, image_override).await;
-        if result.is_err() {
-            self.remove_startup_gate_if_unshared(&name, &gate).await;
+        let result = self
+            .ensure_ready_locked(id, opts.image_override, opts.extra_mounts, opts.run_as)
+            .await;
+        match result {
+            Ok(()) => {
+                // Recorded here and nowhere else: only a start that returned
+                // Ok says a container with this `run_as` is running, and the
+                // host-path fast paths in read_file/write_file/list_files
+                // resolve a real bind source from it. Recording on the way in
+                // left a stale entry behind every failed start.
+                //
+                // A `None` never removes. `ensure_ready(id, None)` is the
+                // option-less trait method, not a statement that this agent
+                // has no `run_as`, so treating it as one would point the fast
+                // paths at `home/shared` while the container still writes to
+                // its per-uid home. The entry is dropped where the container
+                // it describes actually goes away: `ensure_ready_locked`'s
+                // recreate branch, and `cleanup`.
+                if let Some(user) = opts.run_as {
+                    self.run_as_by_container
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .insert(name.clone(), *user);
+                }
+                Ok(())
+            },
+            Err(error) => {
+                self.remove_startup_gate_if_unshared(&name, &gate).await;
+                Err(error)
+            },
         }
-        result
     }
 
     async fn build_image(
@@ -1207,7 +1200,7 @@ impl Sandbox for DockerSandbox {
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
         let name = self.container_name(id);
-        self.provisioned.lock().await.remove(&name);
+        self.forget_container_records(&name).await;
         self.startup_gates.lock().await.remove(&name);
         let _ = tokio::process::Command::new(self.cli)
             .args(["rm", "-f", &name])

@@ -636,16 +636,16 @@ fn test_docker_managed_files_policy_changes_with_source_or_mode() {
     });
 
     assert_ne!(
-        first.managed_files_policy_fingerprint(),
-        changed_source.managed_files_policy_fingerprint()
+        first.container_policy_fingerprint(&[], None),
+        changed_source.container_policy_fingerprint(&[], None)
     );
     assert_ne!(
-        first.managed_files_policy_fingerprint(),
-        changed_mode.managed_files_policy_fingerprint()
+        first.container_policy_fingerprint(&[], None),
+        changed_mode.container_policy_fingerprint(&[], None)
     );
     assert_ne!(
-        first.managed_files_policy_fingerprint(),
-        changed_workspace_mount.managed_files_policy_fingerprint()
+        first.container_policy_fingerprint(&[], None),
+        changed_workspace_mount.container_policy_fingerprint(&[], None)
     );
     assert!(first.exposes_managed_files());
     assert!(
@@ -698,7 +698,7 @@ fn test_docker_home_persistence_args_off() {
         scope: SandboxScope::Session,
         key: "sess-1".into(),
     };
-    assert!(docker.home_persistence_args(&id).unwrap().is_empty());
+    assert!(docker.home_persistence_args(&id, None).unwrap().is_empty());
 }
 
 #[test]
@@ -709,7 +709,7 @@ fn test_docker_home_persistence_args_default_shared() {
         scope: SandboxScope::Session,
         key: "sess-1".into(),
     };
-    let args = docker.home_persistence_args(&id).unwrap();
+    let args = docker.home_persistence_args(&id, None).unwrap();
     assert_eq!(args.len(), 2);
     assert_eq!(args[0], "-v");
     let expected_host_dir = moltis_config::data_dir()
@@ -728,8 +728,8 @@ fn test_sandbox_home_persistence_is_separate_from_memory_workspace() {
         key: "sess-1".into(),
     };
 
-    let home_dir =
-        guest_visible_sandbox_home_persistence_host_dir(&config, &id).expect("shared home path");
+    let home_dir = guest_visible_sandbox_home_persistence_host_dir(&config, &id, None)
+        .expect("shared home path");
     let data_dir = moltis_config::data_dir();
 
     assert_eq!(
@@ -756,7 +756,7 @@ fn test_docker_home_persistence_args_default_shared_uses_host_data_dir_override(
         scope: SandboxScope::Session,
         key: "sess-1".into(),
     };
-    let args = docker.home_persistence_args(&id).unwrap();
+    let args = docker.home_persistence_args(&id, None).unwrap();
     assert_eq!(args.len(), 2);
     assert_eq!(args[0], "-v");
     let expected_volume = format!(
@@ -777,7 +777,7 @@ fn test_docker_home_persistence_args_custom_shared_absolute_path() {
         scope: SandboxScope::Session,
         key: "sess-1".into(),
     };
-    let args = docker.home_persistence_args(&id).unwrap();
+    let args = docker.home_persistence_args(&id, None).unwrap();
     assert_eq!(args.len(), 2);
     assert_eq!(args[0], "-v");
     let expected_volume = "/tmp/moltis-shared-home:/home/sandbox:rw".to_string();
@@ -795,7 +795,7 @@ fn test_docker_home_persistence_args_custom_shared_relative_path() {
         scope: SandboxScope::Session,
         key: "sess-1".into(),
     };
-    let args = docker.home_persistence_args(&id).unwrap();
+    let args = docker.home_persistence_args(&id, None).unwrap();
     assert_eq!(args.len(), 2);
     assert_eq!(args[0], "-v");
     let expected_host_dir = moltis_config::data_dir().join("sandbox/custom-shared");
@@ -817,7 +817,7 @@ fn test_docker_home_persistence_args_custom_shared_guest_absolute_path_uses_host
         scope: SandboxScope::Session,
         key: "sess-1".into(),
     };
-    let args = docker.home_persistence_args(&id).unwrap();
+    let args = docker.home_persistence_args(&id, None).unwrap();
     assert_eq!(args.len(), 2);
     assert_eq!(args[0], "-v");
     let expected_volume = format!(
@@ -838,7 +838,7 @@ fn test_docker_home_persistence_args_session() {
         scope: SandboxScope::Session,
         key: "sess:/weird key".into(),
     };
-    let args = docker.home_persistence_args(&id).unwrap();
+    let args = docker.home_persistence_args(&id, None).unwrap();
     assert_eq!(args.len(), 2);
     assert_eq!(args[0], "-v");
     let expected_host_dir = moltis_config::data_dir()
@@ -864,7 +864,7 @@ fn test_docker_home_persistence_args_session_uses_host_data_dir_override() {
         scope: SandboxScope::Session,
         key: "sess:/weird key".into(),
     };
-    let args = docker.home_persistence_args(&id).unwrap();
+    let args = docker.home_persistence_args(&id, None).unwrap();
     assert_eq!(args.len(), 2);
     assert_eq!(args[0], "-v");
     let expected_volume = format!(
@@ -973,9 +973,14 @@ fn test_resolve_home_persistence_guest_path_on_host_uses_session_mount() {
     };
     let guest_file = PathBuf::from("/home/sandbox/history.txt");
 
-    let resolved =
-        resolve_home_persistence_guest_path_on_host(&config, Some("docker"), &id, &guest_file)
-            .unwrap();
+    let resolved = resolve_home_persistence_guest_path_on_host(
+        &config,
+        Some("docker"),
+        &id,
+        None,
+        &guest_file,
+    )
+    .unwrap();
 
     assert_eq!(
         resolved,
@@ -1000,6 +1005,7 @@ fn test_resolve_home_persistence_guest_path_on_host_uses_shared_mount() {
         &config,
         Some("docker"),
         &id,
+        None,
         &PathBuf::from("/home/sandbox/history.txt"),
     )
     .unwrap();

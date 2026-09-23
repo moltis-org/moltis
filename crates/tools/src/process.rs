@@ -136,7 +136,15 @@ impl ProcessTool {
                 let image = router
                     .resolve_image_for_backend_nowait(session_key, None, backend.backend_name())
                     .await;
-                backend.ensure_ready(&id, Some(&image)).await?;
+                let extra_mounts = router.resolve_agent_mounts(session_key).await?;
+                let run_as = router.resolve_agent_run_as(session_key).await?;
+                backend
+                    .ensure_ready_with(&id, crate::sandbox::EnsureReadyOpts {
+                        image_override: Some(&image),
+                        extra_mounts: &extra_mounts,
+                        run_as: run_as.as_ref(),
+                    })
+                    .await?;
                 return Ok(backend.exec(&id, &command, &opts).await?);
             }
         }

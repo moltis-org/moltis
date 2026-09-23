@@ -27,8 +27,8 @@ use {
         file_system::{SandboxGrepOptions, SandboxListFilesResult, SandboxReadResult},
         platform::RestrictedHostSandbox,
         types::{
-            BuildImageResult, DEFAULT_SANDBOX_IMAGE, Sandbox, SandboxConfig, SandboxId,
-            SandboxMode, SandboxRuntimeInfo,
+            AgentSandboxPolicy, BuildImageResult, DEFAULT_SANDBOX_IMAGE, EnsureReadyOpts, Sandbox,
+            SandboxConfig, SandboxId, SandboxMode, SandboxMount, SandboxRuntimeInfo, SandboxUser,
         },
     },
     crate::{
@@ -48,6 +48,42 @@ pub struct FailoverSandbox {
     primary_name: &'static str,
     fallback_name: &'static str,
     use_fallback: RwLock<bool>,
+    /// The last option set each sandbox id was made ready with, keyed by the
+    /// id's display form.
+    ///
+    /// `exec` has no `EnsureReadyOpts` parameter, so without this the recovery
+    /// path could only call `ensure_ready(id, None)` - which drops the agent's
+    /// mounts and `run_as` and starts the fallback as root without them, the
+    /// one thing `check_ensure_ready_opts` exists to prevent. Owned rather than
+    /// borrowed, because the values have to outlive the call that supplied
+    /// them.
+    last_opts: RwLock<HashMap<String, OwnedEnsureReadyOpts>>,
+}
+
+/// An [`EnsureReadyOpts`] that owns its contents, so it can be stored.
+#[derive(Debug, Clone, Default)]
+struct OwnedEnsureReadyOpts {
+    image_override: Option<String>,
+    extra_mounts: Vec<SandboxMount>,
+    run_as: Option<SandboxUser>,
+}
+
+impl OwnedEnsureReadyOpts {
+    fn from_opts(opts: &EnsureReadyOpts<'_>) -> Self {
+        Self {
+            image_override: opts.image_override.map(ToOwned::to_owned),
+            extra_mounts: opts.extra_mounts.to_vec(),
+            run_as: opts.run_as.copied(),
+        }
+    }
+
+    fn as_opts(&self) -> EnsureReadyOpts<'_> {
+        EnsureReadyOpts {
+            image_override: self.image_override.as_deref(),
+            extra_mounts: &self.extra_mounts,
+            run_as: self.run_as.as_ref(),
+        }
+    }
 }
 
 impl FailoverSandbox {
@@ -60,7 +96,53 @@ impl FailoverSandbox {
             primary_name,
             fallback_name,
             use_fallback: RwLock::new(false),
+            last_opts: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Remember the option set this id was made ready with, for `exec` to
+    /// replay if the primary fails mid-session.
+    async fn remember_opts(&self, id: &SandboxId, opts: &EnsureReadyOpts<'_>) {
+        self.last_opts
+            .write()
+            .await
+            .insert(id.to_string(), OwnedEnsureReadyOpts::from_opts(opts));
+    }
+
+    /// The option set to hand the fallback when `exec` has to recover.
+    ///
+    /// An id that asked for mounts or a `run_as` gets them back - and with
+    /// them `check_ensure_ready_opts`, so a fallback that cannot honour them
+    /// errors instead of quietly starting a root container without the agent's
+    /// paths.
+    ///
+    /// An id with **nothing** recorded is refused rather than defaulted. The
+    /// default is the permissive one - no mounts, no `run_as` - so falling back
+    /// to it reopens exactly what recording the options closed: the recovered
+    /// container comes up as root without the agent's paths, and
+    /// `check_ensure_ready_opts` passes trivially because there is nothing left
+    /// to check. Nothing recorded does not mean nothing was asked for; it means
+    /// this process has not seen the ask. `exec` reaching an id that was made
+    /// ready before a gateway restart, with the container still up, is the
+    /// ordinary way to get here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when this process has no recorded option set for `id`.
+    async fn recovery_opts(&self, id: &SandboxId) -> Result<OwnedEnsureReadyOpts> {
+        self.last_opts
+            .read()
+            .await
+            .get(&id.to_string())
+            .cloned()
+            .ok_or_else(|| {
+                Error::message(format!(
+                    "sandbox '{id}' has no option set recorded in this process, so there is \
+                     nothing to restart the fallback backend with; refusing rather than starting \
+                     it with no mounts and no run_as, which is what this sandbox would get by \
+                     default and not what it may have been configured for"
+                ))
+            })
     }
 
     async fn fallback_enabled(&self) -> bool {
@@ -184,12 +266,57 @@ impl Sandbox for FailoverSandbox {
         }
     }
 
+    fn supports_extra_mounts(&self) -> bool {
+        // Answer for the backend that would actually run the container, not
+        // for the primary: reporting the primary's answer while the fallback
+        // is active either drops mounts or refuses a turn the running backend
+        // could have served. On lock contention, assume fallback.
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(true)
+        {
+            self.fallback.supports_extra_mounts()
+        } else {
+            self.primary.supports_extra_mounts()
+        }
+    }
+
+    fn supports_run_as(&self) -> bool {
+        // Same argument as `supports_extra_mounts`, and the same conservative
+        // assumption on lock contention: answer for the backend that would
+        // actually run the container.
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(true)
+        {
+            self.fallback.supports_run_as()
+        } else {
+            self.primary.supports_run_as()
+        }
+    }
+
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+        self.ensure_ready_with(id, EnsureReadyOpts {
+            image_override,
+            ..Default::default()
+        })
+        .await
+    }
+
+    async fn ensure_ready_with(&self, id: &SandboxId, opts: EnsureReadyOpts<'_>) -> Result<()> {
+        // Forward the whole option set on delegation. Dropping it here is the
+        // failure mode this override exists to prevent: the wrapped backend
+        // would start a container with none of the agent's mounts.
+        self.remember_opts(id, &opts).await;
         if self.fallback_enabled().await {
-            return self.fallback.ensure_ready(id, image_override).await;
+            return self.fallback.ensure_ready_with(id, opts).await;
         }
 
-        match self.primary.ensure_ready(id, image_override).await {
+        match self.primary.ensure_ready_with(id, opts).await {
             Ok(()) => Ok(()),
             Err(primary_error) => {
                 if !self.should_failover(&primary_error) {
@@ -199,7 +326,7 @@ impl Sandbox for FailoverSandbox {
                 self.switch_to_fallback(&primary_error).await;
                 let primary_message = format!("{primary_error:#}");
                 self.fallback
-                    .ensure_ready(id, image_override)
+                    .ensure_ready_with(id, opts)
                     .await
                     .map_err(|fallback_error| {
                         Error::message(format!(
@@ -228,8 +355,21 @@ impl Sandbox for FailoverSandbox {
 
                 self.switch_to_fallback(&primary_error).await;
                 let primary_message = format!("{primary_error:#}");
+                // Replay the option set this id was made ready with, never
+                // `None`. `None` here dropped the agent's mounts and `run_as`
+                // on the way to the fallback, so the recovered container came
+                // up as root without the paths the agent was told it has - and
+                // it bypassed `check_ensure_ready_opts`, so a fallback that
+                // cannot honour them said nothing.
+                let recovery = self.recovery_opts(id).await.map_err(|error| {
+                    Error::message(format!(
+                        "primary sandbox backend ({}) failed during exec: {primary_message}; \
+                         {error}",
+                        self.primary_name
+                    ))
+                })?;
                 self.fallback
-                    .ensure_ready(id, None)
+                    .ensure_ready_with(id, recovery.as_opts())
                     .await
                     .map_err(|fallback_error| {
                         Error::message(format!(
@@ -246,6 +386,12 @@ impl Sandbox for FailoverSandbox {
     }
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
+        // Dropped here, the way `DockerSandbox::cleanup` drops its own
+        // per-container records. The sandbox this described is gone, so the
+        // entry is both stale and unbounded - one per id, kept for the life of
+        // the process.
+        self.last_opts.write().await.remove(&id.to_string());
+
         if self.fallback_enabled().await {
             let result = self.fallback.cleanup(id).await;
             if let Err(error) = self.primary.cleanup(id).await {
@@ -702,6 +848,8 @@ pub struct SandboxRouter {
     overrides: RwLock<HashMap<String, bool>>,
     /// Agent preset overrides. Explicit per-session overrides take precedence.
     agent_overrides: RwLock<HashMap<String, bool>>,
+    /// Per-session sandbox policy taken from the agent's preset.
+    agent_sandbox: RwLock<HashMap<String, AgentSandboxPolicy>>,
     /// Per-session backend override: session_key -> backend_name.
     backend_overrides: RwLock<HashMap<String, String>>,
     /// Per-session image overrides.
@@ -747,6 +895,7 @@ impl SandboxRouter {
             backends,
             overrides: RwLock::new(HashMap::new()),
             agent_overrides: RwLock::new(HashMap::new()),
+            agent_sandbox: RwLock::new(HashMap::new()),
             backend_overrides: RwLock::new(HashMap::new()),
             image_overrides: RwLock::new(HashMap::new()),
             backend_image_overrides: RwLock::new(HashMap::new()),
@@ -771,6 +920,7 @@ impl SandboxRouter {
             backends,
             overrides: RwLock::new(HashMap::new()),
             agent_overrides: RwLock::new(HashMap::new()),
+            agent_sandbox: RwLock::new(HashMap::new()),
             backend_overrides: RwLock::new(HashMap::new()),
             image_overrides: RwLock::new(HashMap::new()),
             backend_image_overrides: RwLock::new(HashMap::new()),
@@ -862,12 +1012,29 @@ impl SandboxRouter {
 
     /// Check whether a session should run sandboxed.
     /// Returns `false` when the session's resolved backend is not real, regardless
-    /// of config mode or per-session overrides. Otherwise, per-session override
-    /// takes priority, then falls back to global mode.
+    /// of config mode or per-session overrides. Otherwise an agent policy that
+    /// sets `force` pins the sandbox on, then the per-session override takes
+    /// priority, then it falls back to global mode.
     pub async fn is_sandboxed(&self, session_key: &str) -> bool {
         let backend = self.resolve_backend(session_key).await;
         if !backend.is_real() {
             return false;
+        }
+        // `force` is the agent saying it may never run outside a sandbox, so it
+        // outranks the session override. Mounts and a `run_as` do not: they sit
+        // in the same block because they configure the container this agent
+        // gets, which is a different statement from requiring one.
+        //
+        // `mode` alone is deliberately not forced either: "session beats agent
+        // preset for mode" is the long-standing contract and stays untouched.
+        if self
+            .agent_sandbox
+            .read()
+            .await
+            .get(session_key)
+            .is_some_and(AgentSandboxPolicy::forces_sandbox)
+        {
+            return true;
         }
         if let Some(&override_val) = self.overrides.read().await.get(session_key) {
             return override_val;
@@ -908,6 +1075,94 @@ impl SandboxRouter {
         self.agent_overrides.write().await.remove(session_key);
     }
 
+    /// Record the sandbox policy this session's agent preset asks for.
+    ///
+    /// Deliberately no `clear_runtime_state` call, unlike the image setters: a
+    /// changed image means the running container is the wrong image and has to
+    /// go, while a changed mount set is caught by the container policy
+    /// fingerprint, which exists for exactly this. Doing both would tear the
+    /// container down twice for one reason.
+    pub async fn set_agent_sandbox(&self, session_key: &str, policy: AgentSandboxPolicy) {
+        self.agent_sandbox
+            .write()
+            .await
+            .insert(session_key.to_string(), policy);
+    }
+
+    /// Drop the agent sandbox policy for a session.
+    pub async fn remove_agent_sandbox(&self, session_key: &str) {
+        self.agent_sandbox.write().await.remove(session_key);
+    }
+
+    /// The sandbox policy recorded for this session, if any.
+    pub async fn resolve_agent_sandbox(&self, session_key: &str) -> Option<AgentSandboxPolicy> {
+        self.agent_sandbox.read().await.get(session_key).cloned()
+    }
+
+    /// The extra mounts this session's agent is configured for.
+    ///
+    /// The single seat where the stored config shape becomes runtime mounts,
+    /// so every `ensure_ready_with` caller gets the same rules applied and a
+    /// bad set fails the call instead of silently contributing nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the recorded mount set does not validate.
+    pub async fn resolve_agent_mounts(&self, session_key: &str) -> Result<Vec<SandboxMount>> {
+        let Some(policy) = self.resolve_agent_sandbox(session_key).await else {
+            return Ok(Vec::new());
+        };
+        SandboxMount::try_from_configs(&policy.mounts)
+    }
+
+    /// The `uid:gid` this session's agent is configured to run as.
+    ///
+    /// The mounts' sibling seat, and the only place the stored string becomes a
+    /// [`SandboxUser`]. A malformed value fails the call; it never resolves to
+    /// `None`, which would start the container as root.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the recorded `run_as` does not validate.
+    pub async fn resolve_agent_run_as(&self, session_key: &str) -> Result<Option<SandboxUser>> {
+        let Some(policy) = self.resolve_agent_sandbox(session_key).await else {
+            return Ok(None);
+        };
+        policy
+            .run_as
+            .as_deref()
+            .map(SandboxUser::try_from)
+            .transpose()
+    }
+
+    /// The host workspace path sync uses for a session.
+    ///
+    /// The router owns the `run_as` lookup rather than passing an `Option` down
+    /// to the two call sites: both hold a session key and no agent policy, so a
+    /// parameter they filled in themselves would be `None` by path of least
+    /// resistance - and a wrong `None` resolves every read and write against
+    /// the root session's home instead of this agent's.
+    ///
+    /// A `run_as` that does not validate yields `None` rather than the base
+    /// path: no container of this session ever started, so there is nothing to
+    /// sync, and syncing the wrong directory is worse than syncing none.
+    pub async fn sync_workspace_for(&self, session_key: &str) -> Option<std::path::PathBuf> {
+        let run_as = match self.resolve_agent_run_as(session_key).await {
+            Ok(run_as) => run_as,
+            Err(error) => {
+                warn!(
+                    session = session_key,
+                    %error,
+                    "agent run_as does not validate; skipping workspace sync rather than syncing \
+                     the wrong home directory"
+                );
+                return None;
+            },
+        };
+        let id = self.sandbox_id_for(session_key);
+        super::sync::resolve_sync_workspace(&self.config, &id, run_as.as_ref())
+    }
+
     /// Derive a collision-resistant SandboxId for a given session key.
     pub fn sandbox_id_for(&self, session_key: &str) -> SandboxId {
         let scope: &[u8] = match &self.config.scope {
@@ -936,7 +1191,7 @@ impl SandboxRouter {
 
         // Sync workspace changes back to host for isolated backends.
         if backend.is_isolated()
-            && let Some(host_workspace) = super::sync::resolve_sync_workspace(&self.config, &id)
+            && let Some(host_workspace) = self.sync_workspace_for(session_key).await
         {
             let sandbox_workspace = backend.workspace_dir_for(&id).await;
             if let Err(e) =
@@ -954,6 +1209,7 @@ impl SandboxRouter {
         backend.cleanup(&id).await?;
         self.remove_override(session_key).await;
         self.remove_agent_override(session_key).await;
+        self.remove_agent_sandbox(session_key).await;
         self.remove_backend_override(session_key).await;
         self.remove_image_override(session_key).await;
         self.clear_prepared_session(session_key).await;

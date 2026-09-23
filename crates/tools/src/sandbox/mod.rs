@@ -8,6 +8,7 @@ pub(crate) mod container_name;
 pub(crate) mod containers;
 pub(crate) mod daytona;
 pub(crate) mod docker;
+pub(crate) mod docker_mounts;
 pub(crate) mod file_system;
 #[cfg(target_os = "linux")]
 pub(crate) mod firecracker;
@@ -55,8 +56,9 @@ pub use {
     platform::{RestrictedHostSandbox, is_wasm_sandbox_available},
     router::{FailoverSandbox, SandboxEvent, SandboxRouter, auto_detect_backend, create_sandbox},
     types::{
-        BuildImageResult, DEFAULT_SANDBOX_IMAGE, HomePersistence, ManagedFilesMount, NetworkPolicy,
-        ResourceLimits, SANDBOX_FILES_DIR, Sandbox, SandboxBackendId, SandboxConfig, SandboxId,
-        SandboxMode, SandboxRuntimeInfo, SandboxScope, WorkspaceMount,
+        AgentSandboxPolicy, BuildImageResult, DEFAULT_SANDBOX_IMAGE, EnsureReadyOpts,
+        HomePersistence, MOLTIS_CTL_GUEST_PATH, ManagedFilesMount, NetworkPolicy, ResourceLimits,
+        SANDBOX_FILES_DIR, Sandbox, SandboxBackendId, SandboxConfig, SandboxId, SandboxMode,
+        SandboxMount, SandboxRuntimeInfo, SandboxScope, SandboxUser, WorkspaceMount,
     },
 };

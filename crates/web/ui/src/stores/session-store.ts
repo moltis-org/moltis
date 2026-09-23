@@ -23,6 +23,7 @@ export class Session {
 	createdAt: number;
 	worktree_branch: string;
 	sandbox_enabled: boolean | undefined;
+	sandbox_forced: boolean;
 	sandbox_image: string | null;
 	channelBinding: ChannelBinding | null;
 	parentSessionKey: string;
@@ -66,6 +67,7 @@ export class Session {
 		this.createdAt = serverData.createdAt || 0;
 		this.worktree_branch = serverData.worktree_branch || "";
 		this.sandbox_enabled = serverData.sandbox_enabled;
+		this.sandbox_forced = serverData.sandbox_forced === true;
 		this.sandbox_image = serverData.sandbox_image || null;
 		this.channelBinding = serverData.channelBinding || null;
 		this.parentSessionKey = serverData.parentSessionKey || "";
@@ -126,6 +128,7 @@ export class Session {
 		this.createdAt = serverData.createdAt || 0;
 		this.worktree_branch = serverData.worktree_branch || "";
 		this.sandbox_enabled = serverData.sandbox_enabled;
+		this.sandbox_forced = serverData.sandbox_forced === true;
 		this.sandbox_image = serverData.sandbox_image || null;
 		this.channelBinding = serverData.channelBinding || null;
 		this.parentSessionKey = serverData.parentSessionKey || "";
@@ -181,6 +184,7 @@ export class Session {
 			lastSeenMessageCount: this.lastSeenMessageCount,
 			projectId: this.projectId,
 			sandbox_enabled: this.sandbox_enabled,
+			sandbox_forced: this.sandbox_forced,
 			sandbox_image: this.sandbox_image,
 			worktree_branch: this.worktree_branch,
 			channelBinding: this.channelBinding,

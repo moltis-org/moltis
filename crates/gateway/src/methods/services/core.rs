@@ -1033,6 +1033,15 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .get("cached_message_count")
                     .and_then(|v| v.as_u64());
                 let mut result = result;
+                // The entry the UI restores its session state from on a cold
+                // load. Unstamped it overwrote the flag the rendered snapshot
+                // had already got right, and the toggle went live again.
+                if let Some(entry) = result.get_mut("entry") {
+                    crate::sandbox_policy::stamp_sandbox_forced(
+                        &crate::sandbox_policy::live_agents_config(),
+                        entry,
+                    );
+                }
                 if !include_history && let Some(obj) = result.as_object_mut() {
                     obj.insert("history".to_string(), serde_json::Value::Array(Vec::new()));
                     obj.insert("historyOmitted".to_string(), serde_json::Value::Bool(true));

@@ -13,10 +13,10 @@ use {
         containers::{is_cli_available, is_docker_daemon_available, should_use_docker_backend},
         types::{
             HomePersistence, ManagedFilesMount, SANDBOX_FILES_DIR, SANDBOX_HOME_DIR, SandboxConfig,
-            SandboxId, WorkspaceMount, sanitize_path_component,
+            SandboxId, SandboxUser, WorkspaceMount, sanitize_path_component,
         },
     },
-    crate::error::Result,
+    crate::error::{Error, Result},
 };
 
 pub(crate) static HOST_DATA_DIR_CACHE: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
@@ -95,11 +95,19 @@ pub(crate) fn detected_container_cli(config: &SandboxConfig) -> Option<&'static 
 pub(crate) fn host_visible_data_dir(config: &SandboxConfig, cli: Option<&str>) -> PathBuf {
     let guest_data_dir = moltis_config::data_dir();
     if let Some(configured) = configured_host_data_dir(config) {
+        moltis_config::set_host_data_dir_hint(configured.clone());
         return configured;
     }
     if let Some(cli) = cli
         && let Some(detected) = detect_host_data_dir(cli, &guest_data_dir)
     {
+        // Publish the detected spelling, so the mount-source denylist in
+        // `moltis-config` compares a source against the data directory as the
+        // *host* names it rather than against this container's own path. The
+        // config loader publishes the configured spelling; this is the other
+        // half, and it is why the denylist covers an install that never set
+        // `host_data_dir` - from the first container start onwards.
+        moltis_config::set_host_data_dir_hint(detected.clone());
         return detected;
     }
     guest_data_dir
@@ -244,18 +252,57 @@ pub fn shared_home_dir_path(config: &SandboxConfig) -> PathBuf {
     resolve_shared_home_dir(config, detected_container_cli(config))
 }
 
+/// Does the operator's config pin an explicit shared home directory?
+fn has_operator_shared_home(config: &SandboxConfig) -> bool {
+    config
+        .shared_home_dir
+        .as_ref()
+        .is_some_and(|path| !path.as_os_str().is_empty())
+}
+
+/// Give a home directory its per-uid leaf when the session runs as a user.
+///
+/// A `run_as` session never shares a HOME with a root session. Every root
+/// session writes into the plain directory and keeps creating root-owned
+/// children there, so a `run_as` session pointed at the same path would fail
+/// or silently degrade later - and only containers of this uid ever write into
+/// the per-uid leaf, so no ownership walk is needed.
+fn with_run_as_leaf(path: PathBuf, run_as: Option<&SandboxUser>) -> PathBuf {
+    match run_as {
+        Some(user) => path.join("user").join(user.uid().to_string()),
+        None => path,
+    }
+}
+
 pub(crate) fn sandbox_home_persistence_host_dir(
     config: &SandboxConfig,
     cli: Option<&str>,
     id: &SandboxId,
+    run_as: Option<&SandboxUser>,
 ) -> Option<PathBuf> {
     let base = sandbox_home_persistence_base_dir(config, cli);
     match config.home_persistence {
         HomePersistence::Off => None,
-        HomePersistence::Shared => Some(resolve_shared_home_dir(config, cli)),
-        HomePersistence::Session => {
-            Some(base.join("session").join(sanitize_path_component(&id.key)))
+        HomePersistence::Shared => {
+            // With an operator-pinned shared home the per-uid dir hangs under
+            // it, because honouring that setting is the point - silently
+            // overriding it is exactly the objection that ruled out pinning
+            // `home_persistence = "session"`. With no operator setting it is a
+            // sibling of `shared` rather than a child, so nothing a root
+            // session already wrote there is inherited.
+            let root = if has_operator_shared_home(config) {
+                resolve_shared_home_dir(config, cli)
+            } else if run_as.is_some() {
+                base
+            } else {
+                base.join("shared")
+            };
+            Some(with_run_as_leaf(root, run_as))
         },
+        HomePersistence::Session => Some(with_run_as_leaf(
+            base.join("session").join(sanitize_path_component(&id.key)),
+            run_as,
+        )),
     }
 }
 
@@ -263,11 +310,12 @@ pub(crate) fn resolve_home_persistence_guest_path_on_host(
     config: &SandboxConfig,
     cli: Option<&str>,
     id: &SandboxId,
+    run_as: Option<&SandboxUser>,
     guest_path: &FsPath,
 ) -> Option<PathBuf> {
     let guest_home_dir = FsPath::new(SANDBOX_HOME_DIR);
     let relative_path = guest_path.strip_prefix(guest_home_dir).ok()?;
-    let host_home_dir = sandbox_home_persistence_host_dir(config, cli, id)?;
+    let host_home_dir = sandbox_home_persistence_host_dir(config, cli, id, run_as)?;
     Some(if relative_path.as_os_str().is_empty() {
         host_home_dir
     } else {
@@ -278,12 +326,13 @@ pub(crate) fn resolve_home_persistence_guest_path_on_host(
 pub(crate) fn guest_visible_sandbox_home_persistence_host_dir(
     config: &SandboxConfig,
     id: &SandboxId,
+    run_as: Option<&SandboxUser>,
 ) -> Option<PathBuf> {
     let base = moltis_config::data_dir().join("sandbox").join("home");
     match config.home_persistence {
         HomePersistence::Off => None,
-        HomePersistence::Shared => Some(
-            config
+        HomePersistence::Shared => {
+            let root = config
                 .shared_home_dir
                 .as_ref()
                 .filter(|path| !path.as_os_str().is_empty())
@@ -294,23 +343,90 @@ pub(crate) fn guest_visible_sandbox_home_persistence_host_dir(
                         moltis_config::data_dir().join(path)
                     }
                 })
-                .unwrap_or_else(|| base.join("shared")),
-        ),
-        HomePersistence::Session => {
-            Some(base.join("session").join(sanitize_path_component(&id.key)))
+                .unwrap_or_else(|| {
+                    if run_as.is_some() {
+                        base.clone()
+                    } else {
+                        base.join("shared")
+                    }
+                });
+            Some(with_run_as_leaf(root, run_as))
         },
+        HomePersistence::Session => Some(with_run_as_leaf(
+            base.join("session").join(sanitize_path_component(&id.key)),
+            run_as,
+        )),
     }
+}
+
+/// Is `path` writable by the uid the container will run as?
+///
+/// Checked from the gateway's own process, which is not that uid, so this reads
+/// the mode bits POSIX would apply rather than trying the write: owner bits
+/// when the owner matches, group bits when the group matches, other bits
+/// otherwise - and never both, which is how POSIX resolves it.
+#[cfg(unix)]
+fn check_writable_by(path: &FsPath, user: &SandboxUser) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::metadata(path)?;
+    let mode = metadata.mode();
+    let writable = if metadata.uid() == user.uid() {
+        mode & 0o200 != 0
+    } else if metadata.gid() == user.gid() {
+        mode & 0o020 != 0
+    } else {
+        mode & 0o002 != 0
+    };
+    if !writable {
+        return Err(Error::message(format!(
+            "sandbox home directory {} is not writable by run_as {user} (owner {}:{}, mode {:o}); \
+             refusing to start a container that could not write its own HOME",
+            path.display(),
+            metadata.uid(),
+            metadata.gid(),
+            mode & 0o7777
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn check_writable_by(path: &FsPath, _user: &SandboxUser) -> Result<()> {
+    let metadata = std::fs::metadata(path)?;
+    if metadata.permissions().readonly() {
+        return Err(Error::message(format!(
+            "sandbox home directory {} is read-only; refusing to start a container that could \
+             not write its own HOME",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) fn ensure_sandbox_home_persistence_host_dir(
     config: &SandboxConfig,
     cli: Option<&str>,
     id: &SandboxId,
+    run_as: Option<&SandboxUser>,
 ) -> Result<Option<PathBuf>> {
-    let Some(path) = sandbox_home_persistence_host_dir(config, cli, id) else {
+    let Some(path) = sandbox_home_persistence_host_dir(config, cli, id, run_as) else {
         return Ok(None);
     };
-    let guest_visible_path = guest_visible_sandbox_home_persistence_host_dir(config, id);
+    let guest_visible_path = guest_visible_sandbox_home_persistence_host_dir(config, id, run_as);
+
+    // The guest-visible path is the bind source the container runtime is handed.
+    // Creating it here is the whole point: a bind source first created by the
+    // docker daemon lands root:root inside a data dir the gateway owns, which
+    // is exactly how this deployment's sandbox tree became 0:0. A missing
+    // directory is never "unavailable" - it is created.
+    if let Some(ref guest_visible) = guest_visible_path {
+        std::fs::create_dir_all(guest_visible)?;
+        if let Some(user) = run_as {
+            check_writable_by(guest_visible, user)?;
+        }
+    }
+
     if let Err(error) = std::fs::create_dir_all(&path) {
         if guest_visible_path.as_ref() == Some(&path) {
             return Err(error.into());

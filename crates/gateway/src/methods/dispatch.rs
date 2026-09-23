@@ -90,6 +90,9 @@ const READ_METHODS: &[&str] = &[
     "cron.status",
     "cron.runs",
     "webhooks.list",
+    // Returns one redacted webhook and writes nothing; the plural listing next
+    // to it was always a read.
+    "webhooks.get",
     "webhooks.profiles",
     "webhooks.deliveries",
     "webhooks.delivery.get",
@@ -215,6 +218,10 @@ const WRITE_METHODS: &[&str] = &[
     "providers.save_key",
     "providers.save_model",
     "providers.save_models",
+    // Checked alongside `webhooks.get` and deliberately left here. It persists
+    // nothing, but it takes a caller-supplied API key and base URL and makes
+    // the gateway issue an outbound request with them, which is an effect on
+    // the world and not a read of local state.
     "providers.validate_key",
     "providers.remove_key",
     "providers.add_custom",
@@ -265,7 +272,6 @@ const WRITE_METHODS: &[&str] = &[
     "cron.update",
     "cron.remove",
     "cron.run",
-    "webhooks.get",
     "webhooks.create",
     "webhooks.update",
     "webhooks.delete",
@@ -503,6 +509,56 @@ mod tests {
     fn assert_error_code(result: Option<ErrorShape>, expected_code: &str) {
         let err = result.expect("expected an error");
         assert_eq!(err.code, expected_code, "wrong error code: {}", err.message);
+    }
+
+    /// The scopes actually minted for the sandbox's API key, read from the
+    /// mint rather than copied. A test against a literal would keep passing
+    /// the day somebody widens the mint, which is the only failure that
+    /// matters here.
+    fn sandbox_key_scopes() -> Vec<String> {
+        crate::auth::SANDBOX_API_KEY_SCOPES
+            .iter()
+            .map(|scope| (*scope).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn the_sandbox_api_key_cannot_rewrite_agent_presets() {
+        // This key rides into every sandboxed exec as MOLTIS_API_KEY, next to
+        // a MOLTIS_GATEWAY_URL that reaches the gateway back through
+        // host.docker.internal. agents.preset.* is the surface that would let
+        // a prompt-injected agent put `/:/host:rw` on its own preset and
+        // collect the mount when the fingerprint change recreates its
+        // container. mcp.add is the same shape by a different route.
+        for method in [
+            "agents.preset.create",
+            "agents.preset.update",
+            "agents.preset.save",
+            "agents.preset.delete",
+            "mcp.add",
+        ] {
+            assert_error_code(
+                authorize_method(method, "operator", &sandbox_key_scopes()),
+                "UNAUTHORIZED",
+            );
+        }
+        // The reads moltis-ctl is actually there for still work.
+        assert!(authorize_method("health", "operator", &sandbox_key_scopes()).is_none());
+        assert!(authorize_method("logs.tail", "operator", &sandbox_key_scopes()).is_none());
+    }
+
+    #[test]
+    fn webhooks_get_is_a_read() {
+        // It returns one redacted webhook and writes nothing; listing them all
+        // was already a read. Sitting in WRITE_METHODS was an oversight, and
+        // it is the first thing a read-only key trips over.
+        assert!(
+            authorize_method("webhooks.get", "operator", &scopes(&["operator.read"])).is_none()
+        );
+        assert_error_code(
+            authorize_method("webhooks.create", "operator", &scopes(&["operator.read"])),
+            "UNAUTHORIZED",
+        );
     }
 
     #[test]

@@ -707,6 +707,8 @@ impl AgentTool for ExecTool {
                 let image = router
                     .resolve_image_for_backend_nowait(sk, None, backend.backend_name())
                     .await;
+                let extra_mounts = router.resolve_agent_mounts(sk).await?;
+                let run_as = router.resolve_agent_run_as(sk).await?;
                 info!(session = sk, sandbox_id = %id, backend = backend.backend_name(), image, "sandbox ensure_ready");
                 let announce_prepare = router.mark_preparing_once(sk).await;
                 if announce_prepare {
@@ -717,7 +719,14 @@ impl AgentTool for ExecTool {
                     });
                 }
 
-                if let Err(error) = backend.ensure_ready(&id, Some(&image)).await {
+                if let Err(error) = backend
+                    .ensure_ready_with(&id, crate::sandbox::EnsureReadyOpts {
+                        image_override: Some(&image),
+                        extra_mounts: &extra_mounts,
+                        run_as: run_as.as_ref(),
+                    })
+                    .await
+                {
                     if announce_prepare {
                         router.clear_prepared_session(sk).await;
                         if backend.is_isolated() {
@@ -755,38 +764,37 @@ impl AgentTool for ExecTool {
 
                     // Sync workspace and provision packages for isolated backends on first run.
                     if backend.is_isolated() {
-                        let sync_ok = if let Some(host_workspace) =
-                            crate::sandbox::sync::resolve_sync_workspace(router.config(), &id)
-                        {
-                            let sandbox_workspace = backend.workspace_dir_for(&id).await;
-                            match crate::sandbox::sync::sync_in(
-                                &*backend,
-                                &id,
-                                &host_workspace,
-                                &sandbox_workspace,
-                            )
-                            .await
-                            {
-                                Ok(()) => true,
-                                Err(e) => {
-                                    let error = e.to_string();
-                                    warn!(
-                                        session = sk,
-                                        sandbox_id = %id,
-                                        error = %error,
-                                        "workspace sync-in failed"
-                                    );
-                                    router.clear_prepared_session(sk).await;
-                                    router.mark_sync_failed(sk, error.clone()).await;
-                                    return Err(Error::message(format!(
-                                        "workspace sync-in failed: {error}"
-                                    ))
-                                    .into());
-                                },
-                            }
-                        } else {
-                            true
-                        };
+                        let sync_ok =
+                            if let Some(host_workspace) = router.sync_workspace_for(sk).await {
+                                let sandbox_workspace = backend.workspace_dir_for(&id).await;
+                                match crate::sandbox::sync::sync_in(
+                                    &*backend,
+                                    &id,
+                                    &host_workspace,
+                                    &sandbox_workspace,
+                                )
+                                .await
+                                {
+                                    Ok(()) => true,
+                                    Err(e) => {
+                                        let error = e.to_string();
+                                        warn!(
+                                            session = sk,
+                                            sandbox_id = %id,
+                                            error = %error,
+                                            "workspace sync-in failed"
+                                        );
+                                        router.clear_prepared_session(sk).await;
+                                        router.mark_sync_failed(sk, error.clone()).await;
+                                        return Err(Error::message(format!(
+                                            "workspace sync-in failed: {error}"
+                                        ))
+                                        .into());
+                                    },
+                                }
+                            } else {
+                                true
+                            };
 
                         // Provision packages only if sync succeeded (no point
                         // provisioning if we couldn't even connect to the sandbox)
@@ -854,7 +862,13 @@ impl AgentTool for ExecTool {
                             "failed to clean up stale sandbox before retry, continuing"
                         );
                     }
-                    backend.ensure_ready(&id, Some(&image)).await?;
+                    backend
+                        .ensure_ready_with(&id, crate::sandbox::EnsureReadyOpts {
+                            image_override: Some(&image),
+                            extra_mounts: &extra_mounts,
+                            run_as: run_as.as_ref(),
+                        })
+                        .await?;
                     sandbox_result = backend.exec(&id, command, &opts).await?;
                 }
                 sandbox_result
@@ -868,6 +882,9 @@ impl AgentTool for ExecTool {
             }
         } else if let Some(ref id) = self.sandbox_id {
             debug!(sandbox_id = %id, command_bytes = command.len(), "static sandbox running command");
+            // Static sandbox path: reached only when there is no router, so
+            // there is no session, no agent and no preset - nothing to drop by
+            // calling the plain ensure_ready here.
             self.sandbox.ensure_ready(id, None).await?;
             let mut sandbox_result = self.sandbox.exec(id, command, &opts).await?;
             for retry_idx in 1..=MAX_SANDBOX_RECOVERY_RETRIES {
@@ -891,6 +908,7 @@ impl AgentTool for ExecTool {
                         "failed to clean up stale sandbox before retry, continuing"
                     );
                 }
+                // Static sandbox path again: no router, so no agent mounts.
                 self.sandbox.ensure_ready(id, None).await?;
                 sandbox_result = self.sandbox.exec(id, command, &opts).await?;
             }

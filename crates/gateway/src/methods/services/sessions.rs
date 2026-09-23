@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests;
+
 pub(super) fn register(reg: &mut MethodRegistry) {
     // Sessions
     reg.register(
@@ -17,6 +21,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 // Inject replying state so the frontend can restore the
                 // thinking indicator after a full page reload.
                 let active_keys = ctx.state.chat().active_session_keys().await;
+                crate::sandbox_policy::stamp_sandbox_forced_list(&mut result);
                 if let Some(arr) = result.as_array_mut() {
                     for entry in arr {
                         let key_str = entry.get("key").and_then(|v| v.as_str()).map(String::from);
@@ -62,13 +67,19 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "sessions.resolve",
         Box::new(|ctx| {
             Box::pin(async move {
-                let result = ctx
+                let mut result = ctx
                     .state
                     .services
                     .session
                     .resolve(ctx.params.clone())
                     .await
                     .map_err(ErrorShape::from)?;
+                if let Some(entry) = result.get_mut("entry") {
+                    crate::sandbox_policy::stamp_sandbox_forced(
+                        &crate::sandbox_policy::live_agents_config(),
+                        entry,
+                    );
+                }
 
                 // Newly created sessions have an empty history array.
                 let is_new = result
@@ -110,13 +121,17 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .unwrap_or("")
                     .to_string();
                 let sandbox_toggled = ctx.params.get("sandboxEnabled").is_some();
-                let result = ctx
+                let mut result = ctx
                     .state
                     .services
                     .session
                     .patch(ctx.params.clone())
                     .await
                     .map_err(ErrorShape::from)?;
+                crate::sandbox_policy::stamp_sandbox_forced(
+                    &crate::sandbox_policy::live_agents_config(),
+                    &mut result,
+                );
                 let version = result.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
                 broadcast(
                     &ctx.state,

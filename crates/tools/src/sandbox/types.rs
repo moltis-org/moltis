@@ -9,7 +9,7 @@ use {
 };
 
 use crate::{
-    error::Result,
+    error::{Error, Result},
     exec::{ExecOpts, ExecResult},
     sandbox::file_system::{
         SandboxGrepOptions, SandboxListFilesResult, SandboxReadResult, command_grep,
@@ -43,6 +43,8 @@ pub(crate) fn tail_lines(text: &str, n: usize) -> String {
 pub const DEFAULT_SANDBOX_IMAGE: &str = "ubuntu:25.10";
 /// Canonical managed Files path inside local sandboxes.
 pub const SANDBOX_FILES_DIR: &str = "/home/sandbox/files";
+/// Canonical path of the `moltis-ctl` helper inside local sandboxes.
+pub const MOLTIS_CTL_GUEST_PATH: &str = "/usr/local/bin/moltis-ctl";
 
 /// Sandbox mode controlling when sandboxing is applied.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -433,6 +435,278 @@ pub struct SandboxRuntimeInfo {
     pub runtime_name: Option<String>,
 }
 
+pub use moltis_config::schema::{SandboxMountAccess, SandboxMountConfig};
+
+/// One extra host path bound into an agent's sandbox container.
+///
+/// The runtime mirror of [`SandboxMountConfig`], with private fields: the only
+/// way to get one is [`SandboxMount::try_from_configs`], so a `SandboxMount`
+/// in hand is a mount whose paths are normalized and whose rules have run.
+/// That is a claim about construction only - the backends re-assert anyway,
+/// because a value that travelled through a `Vec` and a struct is not evidence
+/// about the process that is about to be spawned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxMount {
+    /// Absolute, normalized host path to bind into the sandbox.
+    source: String,
+    /// Absolute, normalized path inside the sandbox to bind it at.
+    target: String,
+    /// Access mode for the bind.
+    access: SandboxMountAccess,
+}
+
+/// Container paths moltis owns and no configured mount may shadow.
+///
+/// Shadowing one of these does not look like a bad config from inside the
+/// container - it looks like a broken sandbox - so the collision is rejected
+/// where the mount set is built.
+fn reserved_mount_targets() -> Vec<String> {
+    [
+        SANDBOX_HOME_DIR.to_string(),
+        SANDBOX_FILES_DIR.to_string(),
+        MOLTIS_CTL_GUEST_PATH.to_string(),
+        moltis_config::data_dir().display().to_string(),
+    ]
+    .iter()
+    .map(|path| moltis_config::schema::normalize_mount_path(path))
+    .collect()
+}
+
+impl SandboxMount {
+    /// Build a mount with none of the rules run, for tests only.
+    ///
+    /// The private fields make `try_from_configs` the only way to get a
+    /// `SandboxMount` in production code, which is the point - but it also
+    /// means no test could construct the bad value the backends are supposed
+    /// to refuse, and an unreachable re-assert is an untested one. Compiled
+    /// out of release builds, so it cannot become a way around the rules.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn from_parts_unchecked(
+        source: &str,
+        target: &str,
+        access: SandboxMountAccess,
+    ) -> Self {
+        Self {
+            source: source.to_string(),
+            target: target.to_string(),
+            access,
+        }
+    }
+
+    /// The absolute, normalized host path bound into the sandbox.
+    #[must_use]
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// The absolute, normalized path inside the sandbox the source is bound at.
+    #[must_use]
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    /// The access mode of the bind.
+    #[must_use]
+    pub fn access(&self) -> SandboxMountAccess {
+        self.access
+    }
+
+    /// Render this mount as the `source:target:access` argument both container
+    /// CLIs take after `-v`.
+    ///
+    /// The wire shape cannot express a path containing a colon, which is why
+    /// the rules refuse one rather than quoting around it.
+    #[must_use]
+    pub fn to_arg(&self) -> String {
+        format!("{}:{}:{}", self.source, self.target, self.access.as_str())
+    }
+
+    /// Render this mount back into its config shape.
+    #[must_use]
+    pub fn to_config(&self) -> SandboxMountConfig {
+        SandboxMountConfig {
+            source: self.source.clone(),
+            target: self.target.clone(),
+            access: self.access,
+        }
+    }
+
+    /// Convert a configured mount set into runtime mounts.
+    ///
+    /// The only supported way to build a `Vec<SandboxMount>`: a per-mount
+    /// `TryFrom` structurally cannot see its siblings, so duplicate targets
+    /// and collisions with moltis-owned paths are checked here, once, for
+    /// every caller. Mapping the per-mount `TryFrom` yourself skips both.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a mount is malformed, two mounts share a target,
+    /// or a target collides with a path moltis owns.
+    pub fn try_from_configs(configs: &[SandboxMountConfig]) -> Result<Vec<Self>> {
+        let mounts = configs
+            .iter()
+            .map(Self::try_from)
+            .collect::<Result<Vec<Self>>>()?;
+
+        // Duplicate targets, through the same implementation the config layer
+        // uses, so the two can never disagree about what a duplicate is.
+        moltis_config::schema::check_mount_set(configs)
+            .map_err(|errors| Error::message(errors.join("; ")))?;
+
+        // Ancestors count, not just exact matches: binding `/home` shadows
+        // `/home/sandbox` just as thoroughly as binding `/home/sandbox` does,
+        // and from inside the container both look like a broken sandbox rather
+        // than a bad config.
+        let reserved = reserved_mount_targets();
+        for mount in &mounts {
+            if let Some(path) = reserved.iter().find(|path| {
+                *path == &mount.target
+                    || moltis_config::schema::is_mount_path_ancestor(&mount.target, path)
+            }) {
+                return Err(Error::message(format!(
+                    "sandbox mount target {:?} shadows {path:?}, which is reserved by moltis",
+                    mount.target
+                )));
+            }
+        }
+
+        Ok(mounts)
+    }
+}
+
+impl TryFrom<&SandboxMountConfig> for SandboxMount {
+    type Error = Error;
+
+    fn try_from(config: &SandboxMountConfig) -> Result<Self> {
+        moltis_config::schema::check_mount_set(std::slice::from_ref(config))
+            .map_err(|errors| Error::message(errors.join("; ")))?;
+        // Stored normalized, so every later comparison - reserved targets,
+        // duplicate targets, the fingerprint - sees the path the container
+        // runtime will see rather than the spelling the operator typed.
+        Ok(Self {
+            source: moltis_config::schema::normalize_mount_path(&config.source),
+            target: moltis_config::schema::normalize_mount_path(&config.target),
+            access: config.access,
+        })
+    }
+}
+
+/// The uid and gid a sandbox container runs as.
+///
+/// The runtime mirror of `PresetSandboxPolicy::run_as`, with private fields:
+/// the only way to get one is [`TryFrom<&str>`], which runs the same shape
+/// rules the config layer runs, so a `SandboxUser` in hand cannot be spelling
+/// uid 0 or gid 0. That is a claim about construction only - the backend
+/// re-asserts before it emits `--user`, because the difference between a
+/// non-root container and a root one is not something to take on trust from a
+/// value that has been moved around.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SandboxUser {
+    /// Numeric user id. Never `0`.
+    uid: u32,
+    /// Numeric group id. Never `0`.
+    gid: u32,
+}
+
+impl SandboxUser {
+    /// Build a user with none of the rules run, for tests only.
+    ///
+    /// The counterpart of [`SandboxMount::from_parts_unchecked`], and there for
+    /// the same reason: the checked constructor is the only one production code
+    /// has, so without this nothing could ever exercise the backend's own
+    /// re-assert. Compiled out of release builds.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn from_parts_unchecked(uid: u32, gid: u32) -> Self {
+        Self { uid, gid }
+    }
+
+    /// The numeric user id. Never `0`.
+    #[must_use]
+    pub fn uid(self) -> u32 {
+        self.uid
+    }
+
+    /// The numeric group id. Never `0`.
+    #[must_use]
+    pub fn gid(self) -> u32 {
+        self.gid
+    }
+
+    /// Render as the `uid:gid` argument both container CLIs take after
+    /// `--user`.
+    #[must_use]
+    pub fn to_arg(self) -> String {
+        format!("{}:{}", self.uid, self.gid)
+    }
+}
+
+impl std::fmt::Display for SandboxUser {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.uid, self.gid)
+    }
+}
+
+impl TryFrom<&str> for SandboxUser {
+    type Error = Error;
+
+    /// Fails closed, with no fallback of any kind: a malformed value, a uid of
+    /// `0` or a gid of `0` is an error here, never a container that quietly
+    /// runs as root or in the root group.
+    fn try_from(value: &str) -> Result<Self> {
+        let (uid, gid) = moltis_config::schema::parse_run_as(value).map_err(Error::message)?;
+        Ok(Self { uid, gid })
+    }
+}
+
+/// The sandbox policy a session inherits from its agent preset.
+///
+/// One entry rather than one map per field, so the values describing a single
+/// agent's container cannot drift apart for a session. The mounts are kept in
+/// their config shape and converted where a container is about to start, so a
+/// bad set fails that call loudly instead of being dropped on the way in.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AgentSandboxPolicy {
+    /// This agent may never run outside a sandbox.
+    ///
+    /// Mirrors `sandbox.force` on the preset. The mounts and the `run_as`
+    /// below configure the container this agent gets; only this field says it
+    /// must have one.
+    pub force: bool,
+    /// Extra host paths this agent wants bound into its container.
+    pub mounts: Vec<SandboxMountConfig>,
+    /// The `uid:gid` this agent's container should run as, still in its config
+    /// spelling. Kept as the raw string for the same reason the mounts are
+    /// kept as configs: the seat that records it cannot report an error, so
+    /// the conversion happens where a container is about to start and a bad
+    /// value fails that call loudly instead of silently meaning root.
+    pub run_as: Option<String>,
+}
+
+impl AgentSandboxPolicy {
+    /// Returns `true` when this agent must always run sandboxed.
+    #[must_use]
+    pub fn forces_sandbox(&self) -> bool {
+        self.force
+    }
+}
+
+/// Everything `ensure_ready` needs beyond the sandbox id.
+///
+/// A struct rather than more positional parameters: `Sandbox` has twenty-one
+/// implementations, and every future knob would otherwise be an edit to all of
+/// them.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EnsureReadyOpts<'a> {
+    /// Image to use instead of the configured default.
+    pub image_override: Option<&'a str>,
+    /// Extra host paths to bind into the container.
+    pub extra_mounts: &'a [SandboxMount],
+    /// The uid:gid to run the container as, when the agent configured one.
+    pub run_as: Option<&'a SandboxUser>,
+}
+
 /// Trait for sandbox implementations (Docker, cgroups, Apple Container, etc.).
 #[async_trait]
 pub trait Sandbox: Send + Sync {
@@ -455,6 +729,77 @@ pub trait Sandbox: Send + Sync {
     /// Ensure the sandbox environment is ready (e.g., container started).
     /// If `image_override` is provided, use that image instead of the configured default.
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()>;
+
+    /// Ensure the sandbox is ready, with the per-session options a router can
+    /// resolve but `ensure_ready` has no room for.
+    ///
+    /// Defaulted, so backends with no bind-mount concept need no edit. The
+    /// default refuses rather than drops: a turn that asked for extra mounts
+    /// on a backend that cannot honour them must fail loudly, because the
+    /// alternative is a container quietly missing the paths its agent was told
+    /// it has.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the backend cannot honour the requested options,
+    /// or when the underlying `ensure_ready` fails.
+    async fn ensure_ready_with(&self, id: &SandboxId, opts: EnsureReadyOpts<'_>) -> Result<()> {
+        self.check_ensure_ready_opts(&opts)?;
+        self.ensure_ready(id, opts.image_override).await
+    }
+
+    /// Refuse an option set this backend cannot honour.
+    ///
+    /// Its own method rather than inline in `ensure_ready_with`, because a
+    /// backend that overrides `ensure_ready_with` would otherwise skip the
+    /// refusal and silently drop whatever it does not support. Every override
+    /// calls this first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the requested options need a capability this
+    /// backend does not have.
+    fn check_ensure_ready_opts(&self, opts: &EnsureReadyOpts<'_>) -> Result<()> {
+        if !opts.extra_mounts.is_empty() && !self.supports_extra_mounts() {
+            return Err(Error::message(format!(
+                "sandbox backend '{}' cannot bind extra mounts; refusing to start a container \
+                 without the {} mount(s) this agent is configured for",
+                self.backend_name(),
+                opts.extra_mounts.len()
+            )));
+        }
+        if let Some(user) = opts.run_as
+            && !self.supports_run_as()
+        {
+            return Err(Error::message(format!(
+                "sandbox backend '{}' cannot run a container as a configured user; refusing to \
+                 start one as root when this agent is configured for {user}",
+                self.backend_name()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Whether this backend can bind extra host paths into the sandbox.
+    ///
+    /// Defaults to `false` (fail-safe), the same idiom as
+    /// `provides_fs_isolation`: a backend opts in rather than silently
+    /// accepting mounts it would ignore.
+    fn supports_extra_mounts(&self) -> bool {
+        false
+    }
+
+    /// Whether this backend can run the container as a configured `uid:gid`.
+    ///
+    /// A sibling of `supports_extra_mounts` rather than one method covering
+    /// both: they are independent capabilities and a backend can honour one
+    /// without the other. Same fail-safe `false` default, and the same
+    /// consequence - a turn asking for `run_as` on a backend that returns
+    /// `false` errors, because dropping it would hand a writable host mount to
+    /// a root container.
+    fn supports_run_as(&self) -> bool {
+        false
+    }
 
     /// Execute a command inside the sandbox.
     async fn exec(&self, id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult>;

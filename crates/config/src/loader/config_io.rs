@@ -198,6 +198,23 @@ fn discover_and_load_readonly_with_options(
         )
     };
 
+    // Publish the host-side data directory before anything validates a mount
+    // source against it - the agent-definition merge below is one such
+    // validation. A mount source is a host path, so the container-side
+    // `data_dir()` on the denylist matches nothing an operator could write
+    // when moltis itself runs in a container; this is the configured half of
+    // the answer, and `moltis-tools` registers the detected half.
+    if let Some(host_data_dir) = cfg
+        .tools
+        .exec
+        .sandbox
+        .host_data_dir
+        .as_ref()
+        .filter(|path| !path.is_empty())
+    {
+        set_host_data_dir_hint(PathBuf::from(host_data_dir));
+    }
+
     // Merge markdown agent definitions (TOML presets take precedence).
     if include_agent_defs {
         let agent_defs = crate::agent_defs::discover_agent_defs();

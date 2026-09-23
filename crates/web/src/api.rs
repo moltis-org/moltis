@@ -525,6 +525,14 @@ async fn api_bootstrap_with_query(
         onboarding_completed(gw),
     );
 
+    // `/api/bootstrap` calls the session service directly instead of going
+    // through the `sessions.list` RPC, so the flag the UI restores the sandbox
+    // toggle from has to be stamped here as well.
+    let sessions = sessions.map(|mut value| {
+        moltis_gateway::sandbox_policy::stamp_sandbox_forced_list(&mut value);
+        value
+    });
+
     let sandbox = if let Some(ref router) = gw.sandbox_router {
         let default_image = router.resolve_default_image_nowait().await;
         serde_json::json!({

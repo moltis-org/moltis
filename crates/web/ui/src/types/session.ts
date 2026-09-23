@@ -25,6 +25,8 @@ export interface SessionMeta {
 	lastSeenMessageCount?: number;
 	projectId?: string;
 	sandbox_enabled?: boolean;
+	/** The session's agent forces the sandbox on, so the toggle is not a control. */
+	sandbox_forced?: boolean;
 	sandbox_image?: string | null;
 	sandbox_backend?: string | null;
 	worktree_branch?: string;

@@ -381,7 +381,19 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     meta.set_agent_id(session_key, Some(&agent_id))
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
-                    Ok(serde_json::json!({ "ok": true, "agent_id": agent_id }))
+                    // The new agent may force its sandbox where the old one did
+                    // not, or the other way round. The caller is holding a
+                    // toggle whose enabled-ness is the old agent's answer, and
+                    // this reply is the only one it gets for the switch, so it
+                    // carries the new answer rather than making the caller
+                    // guess or re-list.
+                    let sandbox_forced =
+                        crate::sandbox_policy::agent_sandbox_forced(Some(&agent_id));
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "agent_id": agent_id,
+                        "sandbox_forced": sandbox_forced,
+                    }))
                 })
             }),
         );
@@ -647,9 +659,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         serde_json::json!({
                             "model": p.model,
                             "mcp": mcp,
-                            "sandbox": {
-                                "mode": p.sandbox.mode,
-                            },
+                            "sandbox": preset_sandbox_fields(&p.sandbox),
                             "skills": {
                                 "allow": p.skills.allow,
                                 "deny": p.skills.deny,
@@ -957,6 +967,24 @@ fn preset_from_rpc_params(
     if let Some(mode) = optional_string(params, "sandbox_mode") {
         preset.sandbox.mode = Some(mode.as_str().try_into().map_err(parse_preset_param_error)?);
     }
+    // The flat spelling of `[sandbox] force`, matching `sandbox_mode` and
+    // `sandbox_mounts`. A present-but-not-boolean value is a typo, not a
+    // request to force the sandbox, and a silent `false` would be the one
+    // direction this field must never fail in.
+    if let Some(force) = params.get("sandbox_force") {
+        preset.sandbox.force = match force {
+            serde_json::Value::Null => false,
+            value => value.as_bool().ok_or_else(|| {
+                parse_preset_param_error("sandbox_force must be a boolean or null".to_string())
+            })?,
+        };
+    }
+    if params.get("sandbox_mounts").is_some() {
+        preset.sandbox.mounts = parse_sandbox_mounts_param(params)?;
+    }
+    if params.get("run_as").is_some() {
+        preset.sandbox.run_as = parse_run_as_param(params)?;
+    }
     if params.get("skills_allow").is_some() {
         preset.skills.allow = Some(string_list_param(params, "skills_allow"));
     }
@@ -969,6 +997,92 @@ fn preset_from_rpc_params(
         };
     }
     Ok(preset)
+}
+
+/// The `sandbox` block of an `agents.preset.get` response.
+///
+/// Mounts come back in the same array-of-triples spelling the write surface
+/// accepts, so `get` after `update` reads back what was written.
+#[cfg(feature = "agent")]
+fn preset_sandbox_fields(
+    sandbox: &moltis_config::schema::PresetSandboxPolicy,
+) -> serde_json::Value {
+    serde_json::json!({
+        "mode": sandbox.mode,
+        "force": sandbox.force,
+        "run_as": sandbox.run_as,
+        "mounts": sandbox
+            .mounts
+            .iter()
+            .map(moltis_config::schema::SandboxMountConfig::to_triple)
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// Read `run_as` with its own parse rather than [`optional_string`].
+///
+/// `optional_string` drops an empty or non-string value silently, and a dropped
+/// `run_as` means the container runs as root - the exact outcome this field
+/// exists to prevent. So anything present that is not a well-formed `uid:gid`
+/// is a hard error here, with two deliberate exceptions that both mean the
+/// same thing: an explicit empty string and an explicit JSON `null` clear the
+/// field, the way an empty `sandbox_mounts` array clears the mounts. Both are
+/// an operator removing the setting, not a silent fallback - and `null` is
+/// what a client that models the field as an optional string sends, so
+/// rejecting it while accepting `""` was a shape rule, not a safety one.
+#[cfg(feature = "agent")]
+fn parse_run_as_param(params: &serde_json::Value) -> Result<Option<String>, ErrorShape> {
+    if params.get("run_as").is_none_or(serde_json::Value::is_null) {
+        return Ok(None);
+    }
+    let Some(raw) = params.get("run_as").and_then(serde_json::Value::as_str) else {
+        return Err(parse_preset_param_error(
+            "run_as must be a \"uid:gid\" string or null".to_string(),
+        ));
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    moltis_config::schema::check_run_as(raw).map_err(parse_preset_param_error)?;
+    Ok(Some(raw.to_string()))
+}
+
+/// Read `sandbox_mounts` with its own parse rather than [`string_list_param`].
+///
+/// `string_list_param` does `.as_array()` followed by `unwrap_or_default()`, so
+/// a bare JSON string yields an empty `Vec` while the key is still present: the
+/// preset would be written with zero mounts and the call would report success.
+/// Present-and-non-empty must never parse to empty, so anything that is not an
+/// array of well-formed triples is a hard error here, and the parsed set then
+/// goes through the same `check_mount_set` the config file path uses.
+#[cfg(feature = "agent")]
+fn parse_sandbox_mounts_param(
+    params: &serde_json::Value,
+) -> Result<Vec<moltis_config::schema::SandboxMountConfig>, ErrorShape> {
+    let Some(items) = params
+        .get("sandbox_mounts")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Err(parse_preset_param_error(
+            "sandbox_mounts must be an array of \"source:target:access\" strings".to_string(),
+        ));
+    };
+    let mounts = items
+        .iter()
+        .map(|item| {
+            let triple = item.as_str().ok_or_else(|| {
+                parse_preset_param_error(
+                    "sandbox_mounts entries must be \"source:target:access\" strings".to_string(),
+                )
+            })?;
+            moltis_config::schema::SandboxMountConfig::parse_triple(triple.trim())
+                .map_err(parse_preset_param_error)
+        })
+        .collect::<Result<Vec<_>, ErrorShape>>()?;
+    moltis_config::schema::check_mount_set(&mounts)
+        .map_err(|problems| parse_preset_param_error(problems.join("; ")))?;
+    Ok(mounts)
 }
 
 #[cfg(feature = "agent")]
@@ -1050,5 +1164,254 @@ async fn refresh_agents_config(ctx: &MethodContext) {
         let fresh = moltis_config::discover_and_load();
         let mut guard = agents_config.write().await;
         *guard = fresh.agents;
+    }
+}
+
+#[cfg(all(test, feature = "agent"))]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preset_from_rpc_params_accepts_an_array_of_mount_triples() {
+        let preset = preset_from_rpc_params(
+            "walter",
+            &serde_json::json!({
+                "id": "walter",
+                "sandbox_mounts": ["/srv/vault:/srv/vault:rw", "/srv/notes:/srv/notes:ro"],
+            }),
+            None,
+        )
+        .expect("a well-formed array must parse");
+
+        let mounts = &preset.sandbox.mounts;
+        assert_eq!(mounts.len(), 2);
+        assert_eq!(mounts[0].source, "/srv/vault");
+        assert_eq!(mounts[0].target, "/srv/vault");
+        assert!(mounts[0].access.is_writable());
+        assert!(!mounts[1].access.is_writable());
+    }
+
+    #[test]
+    fn preset_from_rpc_params_rejects_a_bare_string_for_sandbox_mounts() {
+        // `string_list_param` does `.as_array()` then `unwrap_or_default()`, so a
+        // bare string would write a preset with zero mounts and report success.
+        // Present-and-non-empty must never parse to empty.
+        let error = preset_from_rpc_params(
+            "walter",
+            &serde_json::json!({
+                "id": "walter",
+                "sandbox_mounts": "/srv/vault:/srv/vault:rw",
+            }),
+            None,
+        )
+        .expect_err("a present-but-not-an-array value must be a hard error");
+        assert!(
+            error.message.contains("array"),
+            "the error should say an array is expected, got: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn preset_from_rpc_params_rejects_a_malformed_mount_triple() {
+        let error = preset_from_rpc_params(
+            "walter",
+            &serde_json::json!({
+                "id": "walter",
+                "sandbox_mounts": ["/srv/vault:/srv/vault"],
+            }),
+            None,
+        )
+        .expect_err("a two-field triple must be a hard error");
+        assert!(
+            error.message.contains("source:target:access"),
+            "the error should name the expected shape, got: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn preset_from_rpc_params_rejects_a_relative_mount_source() {
+        let error = preset_from_rpc_params(
+            "walter",
+            &serde_json::json!({
+                "id": "walter",
+                "sandbox_mounts": ["vault:/srv/vault:rw"],
+            }),
+            None,
+        )
+        .expect_err("a relative source must be a hard error");
+        assert!(
+            error.message.contains("absolute"),
+            "the error should name the rule, got: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn preset_from_rpc_params_rejects_a_mount_source_that_resolves_to_root() {
+        // `value == "/"` was the whole rule, and Docker resolves `/.` and `//`
+        // to `/` before it sees them - so either spelling bound the entire host
+        // filesystem into the container and passed validation.
+        for source in ["/", "//", "/."] {
+            let error = preset_from_rpc_params(
+                "walter",
+                &serde_json::json!({
+                    "id": "walter",
+                    "sandbox_mounts": [format!("{source}:/srv/root:ro")],
+                }),
+                None,
+            )
+            .expect_err("a source that resolves to / must be a hard error");
+            assert!(
+                error.message.contains("must not resolve to"),
+                "source {source:?} must be refused, got: {}",
+                error.message
+            );
+        }
+    }
+
+    #[test]
+    fn preset_from_rpc_params_rejects_two_mounts_sharing_a_target() {
+        let error = preset_from_rpc_params(
+            "walter",
+            &serde_json::json!({
+                "id": "walter",
+                "sandbox_mounts": ["/srv/a:/srv/shared:rw", "/srv/b:/srv/shared:ro"],
+            }),
+            None,
+        )
+        .expect_err("a duplicate target must be a hard error");
+        assert!(
+            error.message.contains("share the target"),
+            "the error should name the rule, got: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn preset_from_rpc_params_mounts_read_back_through_preset_get_fields() {
+        let preset = preset_from_rpc_params(
+            "walter",
+            &serde_json::json!({
+                "id": "walter",
+                "sandbox_mounts": ["/srv/vault:/srv/vault:rw"],
+            }),
+            None,
+        )
+        .expect("a well-formed array must parse");
+
+        let fields = preset_sandbox_fields(&preset.sandbox);
+        assert_eq!(
+            fields["mounts"],
+            serde_json::json!(["/srv/vault:/srv/vault:rw"]),
+            "agents.preset.get must read the stored mounts back"
+        );
+    }
+
+    #[test]
+    fn preset_from_rpc_params_accepts_a_well_formed_run_as() {
+        let preset = preset_from_rpc_params(
+            "walter",
+            &serde_json::json!({ "id": "walter", "run_as": "1000:1000" }),
+            None,
+        )
+        .expect("a well-formed uid:gid must parse");
+
+        assert_eq!(preset.sandbox.run_as.as_deref(), Some("1000:1000"));
+        assert_eq!(
+            preset_sandbox_fields(&preset.sandbox)["run_as"],
+            serde_json::json!("1000:1000"),
+            "agents.preset.get must read the stored run_as back"
+        );
+    }
+
+    #[test]
+    fn preset_from_rpc_params_rejects_a_malformed_run_as() {
+        for value in ["1000", "1000:1000:1000", "1000:", ":1000", "walter:walter"] {
+            let result = preset_from_rpc_params(
+                "walter",
+                &serde_json::json!({ "id": "walter", "run_as": value }),
+                None,
+            );
+            let error = match result {
+                Ok(preset) => panic!(
+                    "run_as {value:?} must be rejected, parsed as {:?}",
+                    preset.sandbox.run_as
+                ),
+                Err(error) => error,
+            };
+            assert!(
+                error.message.contains("run_as"),
+                "the error should name the field, got: {}",
+                error.message
+            );
+        }
+    }
+
+    #[test]
+    fn preset_from_rpc_params_rejects_a_root_run_as() {
+        let error = preset_from_rpc_params(
+            "walter",
+            &serde_json::json!({ "id": "walter", "run_as": "0:0" }),
+            None,
+        )
+        .expect_err("uid 0 must be a hard error");
+        assert!(
+            error.message.contains("uid 0"),
+            "the error should name the rule, got: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn preset_from_rpc_params_rejects_a_root_gid() {
+        // The uid was the only half refused, so `1000:0` wrote cleanly and put
+        // the container in the root group - group-write on every root-owned
+        // path the agent's mounts expose.
+        let error = preset_from_rpc_params(
+            "walter",
+            &serde_json::json!({ "id": "walter", "run_as": "1000:0" }),
+            None,
+        )
+        .expect_err("gid 0 must be a hard error");
+        assert!(
+            error.message.contains("gid 0"),
+            "the error should name the rule, got: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn preset_from_rpc_params_rejects_a_non_string_run_as() {
+        // `optional_string` would drop this silently, and a dropped run_as
+        // means the container runs as root.
+        let error = preset_from_rpc_params(
+            "walter",
+            &serde_json::json!({ "id": "walter", "run_as": 1000 }),
+            None,
+        )
+        .expect_err("a non-string run_as must be a hard error");
+        assert!(
+            error.message.contains("uid:gid"),
+            "the error should name the expected shape, got: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn preset_from_rpc_params_treats_a_null_run_as_as_a_clear() {
+        // `""` cleared the field and `null` was a hard error, which is a shape
+        // rule rather than a safety one: a client that models an optional
+        // string as `null` was told its request was malformed with no way to
+        // remove the setting.
+        let preset = preset_from_rpc_params(
+            "walter",
+            &serde_json::json!({ "id": "walter", "run_as": serde_json::Value::Null }),
+            None,
+        )
+        .expect("an explicit null must clear run_as, not fail");
+        assert_eq!(preset.sandbox.run_as, None);
     }
 }

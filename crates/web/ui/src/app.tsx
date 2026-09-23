@@ -27,6 +27,7 @@ import { initPWA } from "./pwa";
 import { initInstallBanner } from "./pwa-install";
 import { mount, navigate, registerPage, sessionPath } from "./router";
 import { routes } from "./routes";
+import * as _sandbox from "./sandbox";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox";
 import * as _sessions from "./sessions";
 import {
@@ -60,6 +61,7 @@ window.__moltis_modules = {
 	helpers: _helpers,
 	events: _events,
 	"chat-ui": _chatUi,
+	sandbox: _sandbox,
 	sessions: _sessions,
 	gon,
 	"code-highlight": _codeHighlight,
@@ -647,6 +649,12 @@ function fetchBootstrap(): void {
 				}
 			}
 			S.setSandboxInfo(boot.sandbox || null);
+			// The forced flag rides every session entry, but nothing applied it on a
+			// cold load: the toggle stayed clickable for a forced agent until the
+			// first session switch. Apply the active session's flag, then re-apply
+			// the sandbox UI so the button picks up its disabled state.
+			const activeEntry = sessionStore.getByKey(sessionStore.activeSessionKey.value || S.activeSessionKey);
+			if (activeEntry) S.setSessionSandboxForced(activeEntry.sandbox_forced === true);
 			// Re-apply sandbox UI now that we know the backend status.
 			// This fixes the race where the chat page renders before bootstrap completes.
 			updateSandboxUI(S.sessionSandboxEnabled);

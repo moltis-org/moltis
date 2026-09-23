@@ -47,6 +47,7 @@
   - [`chat.compaction`](#chatcompaction)
   - [`agents`](#agents)
   - [`agents.presets.<name>`](#agentspresetsname)
+  - [`agents.presets.<name>.sandbox`](#agentspresetsnamesandbox)
   - [`modes`](#modes)
   - [`modes.presets.<name>`](#modespresetsname)
   - [`skills`](#skills)
@@ -330,6 +331,60 @@ User profile collected during onboarding.
 | `reasoning_effort` | optional enum: `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | `null` | Reasoning/thinking effort level for models that support extended thinking. Providers clamp unsupported levels to their nearest supported equivalent. |
 | `sessions` | optional `SessionAccessPolicyConfig` | `null` | Session access policy for inter-agent communication. |
 | `memory` | optional `PresetMemoryConfig` | `null` | Persistent per-agent memory configuration. |
+
+### `agents.presets.<name>.sandbox` (`PresetSandboxPolicy`)
+
+Per-agent sandbox overrides. `mode` is the only field with a global
+counterpart: when it is set it overrides `[tools.exec.sandbox] mode`, and when
+it is unset the global value applies. `mounts` and `run_as` have no global form
+at all - they are per-agent or nothing, which is the point of them - so there
+is nothing for them to inherit or override.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `mode` | optional enum: `off`, `all`, `non-main` | `null` | Sandbox mode override for this agent. |
+| `mounts` | array of `SandboxMountConfig` | `[]` | Extra host paths bound into this agent's sandbox container. Per-agent only; there is no global list. |
+| `run_as` | optional string `"uid:gid"` | `null` | Run this agent's sandbox container as this user. Two non-negative integers separated by one colon; a uid or gid of `0` is refused, and a malformed value is an error at every layer rather than a fallback to root. In practice the only usable value is the uid the gateway itself runs as - see the note below. |
+
+#### `agents.presets.<name>.sandbox.mounts[]` (`SandboxMountConfig`)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `source` | string (required) | — | Absolute host path to bind into the sandbox. Must not be relative, contain `..`, resolve to `/`, or contain a colon or a comma. A relative source would make Docker create a silent named volume instead of a bind mount. It also may not be, live under, or contain a denied path: `/proc`, `/sys`, `/dev` (except `/dev/dri`, `/dev/snd`, `/dev/kvm`, `/dev/net/tun`), any `docker.sock` or `podman.sock`, the moltis data directory, or `~/.ssh`. See [Denied mount sources](agent-presets.md#denied-mount-sources) for the full list and for what it cannot enforce from inside a container. |
+| `target` | string (required) | — | Absolute path inside the sandbox. Same rules as `source`, and two mounts may not share a target (compared after normalization). |
+| `access` | enum: `ro`, `rw` | `"ro"` | Access mode. An unrecognised value is a deserialization error, not a silent fallback. |
+
+```toml
+[[agents.presets.walter.sandbox.mounts]]
+source = "/srv/vault"
+target = "/srv/vault"
+access = "rw"
+```
+
+Every `rw` mount produces a `moltis config check` warning naming the agent and
+the host path.
+
+Mount paths may not contain a colon or a comma. The wire shape both the RPC
+array and the markdown frontmatter use is `source:target:access`, with the list
+itself comma separated in frontmatter, and neither separator can be escaped -
+so a path containing one is refused where it is written rather than silently
+mangled on the way back in.
+
+```toml
+[agents.presets.walter.sandbox]
+run_as = "1000:1000"
+```
+
+With `run_as` set, the agent's sandbox home is a per-uid directory so a root
+session can never share it, and a backend that cannot honour `run_as` errors
+the turn instead of starting the container as root.
+
+The gateway creates that per-uid home itself, owned by the uid the *gateway*
+runs as and mode `0755`, and then refuses to start the container unless the
+`run_as` uid could write it. So in practice `run_as` is restricted to the
+gateway's own uid: any other uid hard-errors at container start with "sandbox
+home directory ... is not writable by run_as", unless an operator pre-creates
+the directory and grants that uid write access out of band.
 
 ### `agents.presets.<name>.identity` (`AgentIdentity`)
 

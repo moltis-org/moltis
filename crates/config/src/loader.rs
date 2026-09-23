@@ -28,6 +28,45 @@ static DATA_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// Override for the share directory, set via `set_share_dir()`.
 static SHARE_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
+/// The moltis data directory as the *host* spells it, when it is known.
+///
+/// Not an override: `data_dir()` never reads it. It exists for the rules that
+/// have to compare against a **host** path while running inside a container -
+/// today the sandbox mount-source denylist, which would otherwise be matching
+/// the container's own `/root/.moltis` against a source the operator can only
+/// write as the host path.
+///
+/// Filled from `[tools.exec.sandbox] host_data_dir` when the config is loaded,
+/// and from the runtime-mount detection in `moltis-tools` once it has worked
+/// the path out. Stays `None` on a host install, where `data_dir()` already is
+/// the host path.
+static HOST_DATA_DIR_HINT: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Record the host-side spelling of the data directory.
+///
+/// Last writer wins, and a relative path is ignored: a relative entry would
+/// normalize to a rule that matches far more than it should.
+pub fn set_host_data_dir_hint(path: PathBuf) {
+    if !path.is_absolute() {
+        return;
+    }
+    *HOST_DATA_DIR_HINT.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
+}
+
+/// Forget the host-side spelling of the data directory.
+pub fn clear_host_data_dir_hint() {
+    *HOST_DATA_DIR_HINT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// The host-side spelling of the data directory, when something has set it.
+#[must_use]
+pub fn host_data_dir_hint() -> Option<PathBuf> {
+    HOST_DATA_DIR_HINT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 /// Set a custom config directory. When set, config discovery only looks in
 /// this directory (project-local and user-global paths are skipped).
 /// Can be called multiple times (e.g. in tests) - each call replaces the
