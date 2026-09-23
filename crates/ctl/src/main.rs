@@ -49,6 +49,23 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Send a message through the Moltis agent loop and wait for completion.
+    Chat {
+        /// Message to send to the agent.
+        text: String,
+
+        /// Session key used to isolate this conversation.
+        #[arg(long, default_value = "terminal-bench")]
+        session_key: String,
+    },
+
+    /// Fetch persisted messages for a chat session.
+    ChatHistory {
+        /// Session key whose history should be returned.
+        #[arg(long, default_value = "terminal-bench")]
+        session_key: String,
+    },
+
     /// Check gateway health.
     Health,
     /// Show gateway status.
@@ -90,6 +107,12 @@ async fn main() {
     };
 
     let result = match cli.command {
+        Command::Chat { text, session_key } => {
+            commands::chat::send(&mut client, &text, &session_key).await
+        },
+        Command::ChatHistory { session_key } => {
+            commands::chat::history(&mut client, &session_key).await
+        },
         Command::Health => commands::health::health(&mut client).await,
         Command::Status => commands::health::status(&mut client).await,
         Command::Mcp(cmd) => commands::mcp::run(&mut client, cmd).await,
