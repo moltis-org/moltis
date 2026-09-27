@@ -302,9 +302,12 @@ pub fn supports_reasoning_for_model(model_id: &str) -> bool {
         return true;
     }
     // DeepSeek reasoning models and V4 thinking mode.
+    // `deepseek-flash` is the current API id for DeepSeek-V4.1-Flash; the
+    // legacy alias `deepseek-v4-flash` still resolves to the same model.
     if id.contains("deepseek-r1")
         || id.contains("deepseek-reasoner")
         || id.starts_with("deepseek-v4")
+        || id.starts_with("deepseek-flash")
     {
         return true;
     }
@@ -673,6 +676,8 @@ mod tests {
         assert!(supports_reasoning_for_model("deepseek-reasoner"));
         assert!(supports_reasoning_for_model("deepseek-v4-flash"));
         assert!(supports_reasoning_for_model("deepseek-v4-pro"));
+        // Current API id for DeepSeek-V4.1-Flash (see GET /models).
+        assert!(supports_reasoning_for_model("deepseek-flash"));
         assert!(supports_reasoning_for_model("gpt-5.4"));
         assert!(supports_reasoning_for_model("gpt-5.4-mini"));
         assert!(supports_reasoning_for_model("gpt-5"));
