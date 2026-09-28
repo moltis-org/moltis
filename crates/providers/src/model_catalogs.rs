@@ -180,6 +180,22 @@ impl OpenAiCompatDef {
 
 pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
     OpenAiCompatDef {
+        config_name: "tsubasa",
+        env_key: "TSUBASA_API_KEY",
+        env_base_url_key: "TSUBASA_BASE_URL",
+        default_base_url: "https://api.tsubasa.sh/v1",
+        models: &[
+            ("tsubasa-fast", "Tsubasa Fast"),
+            ("tsubasa-pro", "Tsubasa Pro"),
+        ],
+        capabilities: OpenAiProviderCapabilities {
+            supports_user_name: false,
+            reasoning_effort_policy: ReasoningEffortPolicy::Unsupported,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
+        ..OpenAiCompatDef::DEFAULT
+    },
+    OpenAiCompatDef {
         config_name: "mistral",
         env_key: "MISTRAL_API_KEY",
         env_base_url_key: "MISTRAL_BASE_URL",

@@ -80,6 +80,8 @@ impl ContextWindowFallback {
 }
 
 const GENERIC_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
+    ContextWindowFallback::Exact("tsubasa-fast", 32_768),
+    ContextWindowFallback::Exact("tsubasa-pro", 32_768),
     ContextWindowFallback::Exact("gpt-5.6", 1_050_000),
     ContextWindowFallback::Exact("gpt-5.6-luna", 1_050_000),
     ContextWindowFallback::Exact("gpt-5.6-sol", 1_050_000),
@@ -206,6 +208,9 @@ pub fn is_chat_capable_model(model_id: &str) -> bool {
 /// exposing mixed catalogs report accurate tool support.
 pub fn supports_tools_for_model(model_id: &str) -> bool {
     let id = capability_model_id(model_id);
+    if matches!(id, "tsubasa-fast" | "tsubasa-pro") {
+        return false;
+    }
     if !is_chat_capable_model(model_id) {
         return false;
     }
@@ -242,6 +247,9 @@ pub fn supports_tools_for_model(model_id: &str) -> bool {
 /// is a silent failure that confuses users.
 pub fn supports_vision_for_model(model_id: &str) -> bool {
     let id = capability_model_id(model_id);
+    if matches!(id, "tsubasa-fast" | "tsubasa-pro") {
+        return false;
+    }
 
     // ── Known text-only models ──────────────────────────────────────
     if id.starts_with("MiniMax-M2.7") {

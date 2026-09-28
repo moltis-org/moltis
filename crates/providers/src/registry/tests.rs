@@ -285,3 +285,155 @@ async fn explicit_strict_tools_overrides_fireworks_kimi_router_default() -> anyh
     assert_eq!(body["tools"][0]["function"]["strict"], true);
     Ok(())
 }
+
+#[tokio::test]
+async fn tsubasa_registration_uses_its_key_and_text_model_limits() -> anyhow::Result<()> {
+    let config = ProvidersConfig {
+        offered: vec!["tsubasa".into()],
+        ..ProvidersConfig::default()
+    };
+    let unrelated = HashMap::from([("OPENAI_API_KEY".into(), "unrelated-key".into())]);
+    let mut missing = ProviderRegistry::empty();
+    missing.register_openai_compatible_providers(&config, &unrelated, &HashMap::new());
+    assert!(missing.is_empty());
+
+    for model in ["tsubasa-fast", "tsubasa-pro"] {
+        let (base_url, body_rx) = capture_one_json_request()?;
+        let env = HashMap::from([
+            ("TSUBASA_API_KEY".into(), "test-tsubasa-key".into()),
+            ("TSUBASA_BASE_URL".into(), base_url),
+            ("OPENAI_API_KEY".into(), "unrelated-key".into()),
+        ]);
+        let mut registry = ProviderRegistry::empty();
+        registry.register_openai_compatible_providers(&config, &env, &HashMap::new());
+        let provider = registry
+            .get(&format!("tsubasa::{model}"))
+            .context("Tsubasa model")?;
+        assert_eq!(provider.context_window(), 32_768);
+        assert!(!provider.supports_tools());
+        assert!(!provider.supports_vision());
+        provider
+            .complete(&[ChatMessage::user_named("Hello", "reader")], &[])
+            .await?;
+        let body = body_rx.recv().context("request")??;
+        assert_eq!(body["model"], model);
+        assert_eq!(
+            body["messages"],
+            serde_json::json!([{"role":"user","content":"Hello"}])
+        );
+        assert!(body.get("reasoning_effort").is_none());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn tsubasa_streams_with_its_key_and_reports_auth_errors() -> anyhow::Result<()> {
+    use {
+        axum::{Json, Router, response::IntoResponse, routing::post},
+        futures::StreamExt as _,
+        http::{HeaderMap, StatusCode},
+        moltis_agents::model::StreamEvent,
+    };
+
+    let (requests_tx, mut requests_rx) = tokio::sync::mpsc::unbounded_channel();
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(move |headers: HeaderMap, Json(body): Json<Value>| {
+            let requests_tx = requests_tx.clone();
+            async move {
+                let authorization = headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default();
+                let authorized = authorization == "Bearer test-tsubasa-key";
+                let _ = requests_tx.send(body);
+                if !authorized {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(serde_json::json!({"error":{"message":"invalid key"}})),
+                    )
+                        .into_response();
+                }
+                (
+                    [("content-type", "text/event-stream")],
+                    concat!(
+                        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"}}]}\n\n",
+                        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2}}\n\n",
+                        "data: [DONE]\n\n",
+                    ),
+                )
+                    .into_response()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let base_url = format!("http://{}/v1", listener.local_addr()?);
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+
+    for model in ["tsubasa-fast", "tsubasa-pro"] {
+        for api_key in ["test-tsubasa-key", "invalid-test-key"] {
+            let mut config = ProvidersConfig {
+                offered: vec!["tsubasa".into()],
+                ..ProvidersConfig::default()
+            };
+            config.providers.insert("tsubasa".into(), ProviderEntry {
+                api_key: Some(Secret::new(api_key.into())),
+                base_url: Some(base_url.clone()),
+                ..ProviderEntry::default()
+            });
+            let mut registry = ProviderRegistry::empty();
+            registry.register_openai_compatible_providers(
+                &config,
+                &HashMap::new(),
+                &HashMap::new(),
+            );
+            let provider = registry
+                .get(&format!("tsubasa::{model}"))
+                .context("Tsubasa model")?;
+            let events: Vec<_> = provider
+                .stream(vec![ChatMessage::user_named("Hello", "reader")])
+                .collect()
+                .await;
+            let body = requests_rx.recv().await.context("streaming request")?;
+            assert_eq!(body["model"], model);
+            assert_eq!(body["stream"], true);
+            assert_eq!(body["stream_options"]["include_usage"], true);
+            assert!(body.get("reasoning_effort").is_none());
+            assert!(body["messages"][0].get("name").is_none());
+            if api_key == "test-tsubasa-key" {
+                assert!(
+                    events
+                        .iter()
+                        .any(|event| matches!(event, StreamEvent::Delta(text) if text == "Hello"))
+                );
+                assert!(events.iter().any(|event| matches!(event, StreamEvent::Done(usage) if usage.input_tokens == 4 && usage.output_tokens == 2)));
+                assert!(
+                    !events
+                        .iter()
+                        .any(|event| matches!(event, StreamEvent::Error(_)))
+                );
+            } else {
+                assert!(events.iter().any(
+                    |event| matches!(event, StreamEvent::Error(error) if error.contains("401"))
+                ));
+                assert!(
+                    !events
+                        .iter()
+                        .any(|event| matches!(event, StreamEvent::Done(_)))
+                );
+                let error = provider
+                    .complete(&[ChatMessage::user("Hello")], &[])
+                    .await
+                    .err()
+                    .context("invalid key must fail")?;
+                assert!(error.to_string().contains("401"));
+                let _ = requests_rx
+                    .recv()
+                    .await
+                    .context("failed completion request")?;
+            }
+        }
+    }
+    server.abort();
+    Ok(())
+}

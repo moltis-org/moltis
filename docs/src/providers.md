@@ -24,6 +24,15 @@ Configure providers through the web UI or directly in configuration files.
 | **NEAR AI Cloud** | `nearai` | `NEARAI_API_KEY` | Streaming, TEE-aware model discovery |
 | **Z.AI (Zhipu)** | `zai` | `Z_API_KEY` | Streaming, tools, model discovery |
 | **Z.AI Coding Plan** | `zai-code` | `Z_CODE_API_KEY` | Streaming, tools, model discovery (Coding plan billing endpoint) |
+| **Tsubasa** | `tsubasa` | `TSUBASA_API_KEY` | Text streaming, model discovery |
+
+### Tsubasa
+
+Set `TSUBASA_API_KEY`, then choose **Tsubasa** in **Settings** → **Providers**.
+The provider uses `https://api.tsubasa.sh/v1` and lists `tsubasa-fast` and
+`tsubasa-pro`. Both models have a 32,768-token context window. Text streaming
+uses the existing Chat Completions transport; tools, vision, and reasoning
+controls are disabled in the model metadata.
 
 ### OAuth Providers
 
