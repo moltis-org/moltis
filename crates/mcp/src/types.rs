@@ -196,6 +196,9 @@ pub enum McpTransportError {
         /// The `WWW-Authenticate` header value, if present.
         www_authenticate: Option<String>,
     },
+    /// MCP server rejected the current streamable HTTP session with HTTP 404.
+    #[error("MCP server session is no longer valid")]
+    SessionLost,
     /// MCP server returned a non-success HTTP status.
     #[error("MCP server returned HTTP {status}: {body}")]
     HttpError { status: u16, body: String },

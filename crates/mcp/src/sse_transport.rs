@@ -175,6 +175,13 @@ impl SseTransport {
         }
     }
 
+    async fn clear_session_if_matches(&self, session_id: &str) {
+        let mut slot = self.session_id.write().await;
+        if slot.as_deref() == Some(session_id) {
+            *slot = None;
+        }
+    }
+
     fn apply_default_headers(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         for (name, value) in &self.default_headers {
             if self.auth.is_some() && name == reqwest::header::AUTHORIZATION {
@@ -397,6 +404,7 @@ impl McpTransport for SseTransport {
     ) -> Result<JsonRpcResponse> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let req = JsonRpcRequest::new(id, method, params);
+        let session_id = self.session_id.read().await.clone();
 
         debug!(method = %method, id = %id, url = %self.display_url, "SSE client -> server");
 
@@ -405,6 +413,12 @@ impl McpTransport for SseTransport {
         if !http_resp.status().is_success() {
             let status = http_resp.status();
             let body = http_resp.text().await.unwrap_or_default();
+            if status == reqwest::StatusCode::NOT_FOUND
+                && let Some(session_id) = session_id.as_deref()
+            {
+                self.clear_session_if_matches(session_id).await;
+                return Err(McpTransportError::SessionLost.into());
+            }
             return Err(Error::message(format!(
                 "MCP SSE server returned HTTP {status} for '{method}': {body}"
             )));
@@ -439,6 +453,7 @@ impl McpTransport for SseTransport {
             method: method.into(),
             params,
         };
+        let session_id = self.session_id.read().await.clone();
 
         debug!(
             method = %method,
@@ -450,6 +465,11 @@ impl McpTransport for SseTransport {
 
         if !http_resp.status().is_success() {
             let status = http_resp.status();
+            if status == reqwest::StatusCode::NOT_FOUND
+                && let Some(session_id) = session_id.as_deref()
+            {
+                self.clear_session_if_matches(session_id).await;
+            }
             warn!(method = %method, %status, "SSE notification returned non-success");
         }
 
@@ -458,6 +478,7 @@ impl McpTransport for SseTransport {
 
     async fn is_alive(&self) -> bool {
         // Try a lightweight GET request to check connectivity and session continuity.
+        let session_id = self.session_id.read().await.clone();
         let mut req = self
             .client
             .get(self.request_url.expose_secret())
@@ -467,7 +488,7 @@ impl McpTransport for SseTransport {
 
         req = self.apply_default_headers(req);
 
-        if let Some(session_id) = self.session_id.read().await.clone() {
+        if let Some(session_id) = session_id.as_deref() {
             req = req.header(MCP_SESSION_ID_HEADER, session_id);
         }
 
@@ -481,6 +502,12 @@ impl McpTransport for SseTransport {
 
         match req.send().await {
             Ok(resp) => {
+                if resp.status() == reqwest::StatusCode::NOT_FOUND
+                    && let Some(session_id) = session_id.as_deref()
+                {
+                    self.clear_session_if_matches(session_id).await;
+                    return false;
+                }
                 self.store_session_id_from_response(&resp).await;
                 // Any HTTP response proves the server is reachable.
                 // Non-success statuses (401, 403, 405) are common for
@@ -805,6 +832,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sse_transport_404_with_session_returns_session_lost() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/")
+            .match_header("mcp-session-id", "expired-session")
+            .with_status(404)
+            .with_body("Session not found")
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        *transport.session_id.write().await = Some("expired-session".to_string());
+
+        let err = transport.request("tools/list", None).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::Transport(McpTransportError::SessionLost)
+        ));
+        assert!(transport.session_id.read().await.is_none());
+    }
+
+    #[tokio::test]
     async fn test_sse_transport_401_with_session_replays_before_reauth() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -976,6 +1026,23 @@ mod tests {
 
         let transport = SseTransport::new(&server.url()).unwrap();
         assert!(transport.is_alive().await);
+    }
+
+    #[tokio::test]
+    async fn test_is_alive_404_with_session_returns_false_and_clears_session() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .match_header("mcp-session-id", "expired-session")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        *transport.session_id.write().await = Some("expired-session".to_string());
+
+        assert!(!transport.is_alive().await);
+        assert!(transport.session_id.read().await.is_none());
     }
 
     #[tokio::test]

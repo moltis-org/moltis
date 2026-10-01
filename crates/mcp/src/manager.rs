@@ -67,6 +67,19 @@ struct McpManagerInner {
     /// OAuth auth providers for SSE servers, keyed by server name.
     auth_providers: HashMap<String, SharedAuthProvider>,
     env_overrides: HashMap<String, String>,
+    startup_states: HashMap<String, StartupState>,
+    next_start_id: u64,
+}
+
+#[derive(Clone, Copy)]
+enum StartupPhase {
+    Starting,
+    Failed,
+}
+
+struct StartupState {
+    phase: StartupPhase,
+    id: u64,
 }
 
 /// Manages the lifecycle of multiple MCP server connections.
@@ -110,6 +123,8 @@ impl McpManager {
                 registry,
                 auth_providers: HashMap::new(),
                 env_overrides,
+                startup_states: HashMap::new(),
+                next_start_id: 0,
             }),
             request_timeout_secs: AtomicU64::new(request_timeout_secs),
         }
@@ -242,6 +257,44 @@ impl McpManager {
     }
 
     pub async fn start_server_with_options(
+        &self,
+        name: &str,
+        config: &McpServerConfig,
+        stdio_options: &StdioLaunchOptions,
+    ) -> Result<()> {
+        let start_id = {
+            let mut inner = self.inner.write().await;
+            let start_id = inner.next_start_id;
+            inner.next_start_id = inner.next_start_id.wrapping_add(1);
+            inner.startup_states.insert(name.to_string(), StartupState {
+                phase: StartupPhase::Starting,
+                id: start_id,
+            });
+            start_id
+        };
+
+        let result = self.start_server_inner(name, config, stdio_options).await;
+
+        let mut inner = self.inner.write().await;
+        if inner
+            .startup_states
+            .get(name)
+            .is_some_and(|state| state.id == start_id)
+        {
+            if result.is_ok() {
+                inner.startup_states.remove(name);
+            } else {
+                inner.startup_states.insert(name.to_string(), StartupState {
+                    phase: StartupPhase::Failed,
+                    id: start_id,
+                });
+            }
+        }
+
+        result
+    }
+
+    async fn start_server_inner(
         &self,
         name: &str,
         config: &McpServerConfig,
@@ -562,6 +615,7 @@ impl McpManager {
         let slot = {
             let mut inner = self.inner.write().await;
             inner.tools.remove(name);
+            inner.startup_states.remove(name);
             inner.clients.remove(name)
         };
         if let Some(slot) = slot
@@ -686,6 +740,11 @@ impl McpManager {
                     McpClientState::Connected => "connecting",
                     McpClientState::Authenticating => "authenticating",
                     McpClientState::Closed => "stopped",
+                }
+            } else if let Some(startup) = inner.startup_states.get(name) {
+                match startup.phase {
+                    StartupPhase::Starting => "connecting",
+                    StartupPhase::Failed => "dead",
                 }
             } else {
                 "stopped"
@@ -1021,6 +1080,26 @@ mod tests {
         assert_eq!(statuses[0].state, "stopped");
         assert!(statuses[0].enabled);
         assert!(statuses[0].auth_state.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_failed_start_is_reported_dead_for_health_restart() {
+        let mut reg = McpRegistry::new();
+        reg.servers.insert("broken".into(), McpServerConfig {
+            command: "moltis-issue-1271-missing-command".into(),
+            enabled: true,
+            ..Default::default()
+        });
+        let mgr = McpManager::new(reg);
+
+        assert!(mgr.start_enabled().await.is_empty());
+
+        let status = mgr.status("broken").await.unwrap();
+        assert_eq!(status.state, "dead");
+        assert!(status.enabled);
+
+        mgr.stop_server("broken").await;
+        assert_eq!(mgr.status("broken").await.unwrap().state, "stopped");
     }
 
     #[tokio::test]
