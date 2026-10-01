@@ -358,7 +358,9 @@ impl McpClient {
             return Ok(());
         }
         if self.session_recovery.last_attempt.load(Ordering::Acquire) == generation {
-            return Ok(());
+            // Another task already attempted recovery for this generation. Do
+            // not report success or retry indefinitely; surface the typed loss.
+            return Err(McpTransportError::SessionLost.into());
         }
 
         self.session_recovery
@@ -520,6 +522,7 @@ mod tests {
         initial_losses: AtomicUsize,
         session_ready: AtomicBool,
         recovery_succeeds: bool,
+        notify_fails: AtomicBool,
         initial_loss_barrier: tokio::sync::Barrier,
     }
 
@@ -531,8 +534,13 @@ mod tests {
                 initial_losses: AtomicUsize::new(0),
                 session_ready: AtomicBool::new(false),
                 recovery_succeeds,
+                notify_fails: AtomicBool::new(false),
                 initial_loss_barrier: tokio::sync::Barrier::new(recovery_barrier),
             }
+        }
+
+        fn fail_recovery_notification(&self) {
+            self.notify_fails.store(true, Ordering::SeqCst);
         }
 
         fn response(result: Value) -> JsonRpcResponse {
@@ -578,6 +586,9 @@ mod tests {
 
         async fn notify(&self, method: &str, _params: Option<Value>) -> Result<()> {
             if method == "notifications/initialized" {
+                if self.notify_fails.load(Ordering::SeqCst) {
+                    return Err(McpTransportError::SessionLost.into());
+                }
                 self.session_ready
                     .store(self.recovery_succeeds, Ordering::SeqCst);
             }
@@ -690,6 +701,56 @@ mod tests {
 
         assert!(matches!(
             result,
+            Err(Error::Transport(McpTransportError::SessionLost))
+        ));
+        assert_eq!(transport.initialize_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(transport.tool_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_concurrent_session_recovery_failure_is_deduplicated() {
+        let transport = Arc::new(SessionRecoveryTransport::new(2, false));
+        transport.fail_recovery_notification();
+        let client = Arc::new(RwLock::new(session_recovery_client(Arc::clone(&transport))));
+
+        let first = {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move { client.read().await.call_tool("first", json!({})).await })
+        };
+        let second = {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move { client.read().await.call_tool("second", json!({})).await })
+        };
+
+        let first = first.await.expect("first task");
+        let second = second.await.expect("second task");
+        assert!(matches!(
+            first,
+            Err(Error::Transport(McpTransportError::SessionLost))
+        ));
+        assert!(matches!(
+            second,
+            Err(Error::Transport(McpTransportError::SessionLost))
+        ));
+        assert_eq!(transport.initialize_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(transport.tool_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_session_recovery_notification_failure_is_bounded_per_generation() {
+        let transport = Arc::new(SessionRecoveryTransport::new(1, true));
+        transport.fail_recovery_notification();
+        let client = session_recovery_client(Arc::clone(&transport));
+
+        let first = client.call_tool("test", json!({})).await;
+        let second = client.call_tool("test-again", json!({})).await;
+
+        assert!(matches!(
+            first,
+            Err(Error::Transport(McpTransportError::SessionLost))
+        ));
+        assert!(matches!(
+            second,
             Err(Error::Transport(McpTransportError::SessionLost))
         ));
         assert_eq!(transport.initialize_calls.load(Ordering::SeqCst), 1);

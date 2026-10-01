@@ -24,8 +24,15 @@ struct RestartState {
     last_attempt: Instant,
 }
 
-fn restartable(state: &str, enabled: bool, awaiting_auth: bool) -> bool {
-    enabled && state == "dead" && !awaiting_auth
+fn auth_requires_user_action(auth_state: Option<moltis_mcp::McpAuthState>) -> bool {
+    matches!(
+        auth_state,
+        Some(moltis_mcp::McpAuthState::AwaitingBrowser | moltis_mcp::McpAuthState::Failed)
+    )
+}
+
+fn restartable(state: &str, enabled: bool, auth_requires_user_action: bool) -> bool {
+    enabled && state == "dead" && !auth_requires_user_action
 }
 
 fn restart_budget_available(count: u32) -> bool {
@@ -55,9 +62,9 @@ pub async fn run_health_monitor(state: Arc<GatewayState>, mcp: Arc<LiveMcpServic
             }
 
             // Auto-restart dead servers, including servers whose first start
-            // failed. Skip interactive OAuth while a browser flow is pending.
-            let awaiting_auth = s.auth_state == Some(moltis_mcp::McpAuthState::AwaitingBrowser);
-            if restartable(&s.state, s.enabled, awaiting_auth) {
+            // failed. OAuth that needs a user action cannot be fixed by retrying.
+            let requires_user_action = auth_requires_user_action(s.auth_state);
+            if restartable(&s.state, s.enabled, requires_user_action) {
                 let rs = restart_states
                     .entry(s.name.clone())
                     .or_insert(RestartState {
@@ -145,6 +152,25 @@ mod tests {
     #[test]
     fn test_stopped_server_is_not_restartable() {
         assert!(!restartable("stopped", true, false));
+    }
+
+    #[test]
+    fn test_oauth_failure_is_not_restartable() {
+        assert!(!restartable("dead", true, true));
+    }
+
+    #[test]
+    fn test_auth_states_requiring_user_action_are_not_auto_retried() {
+        assert!(auth_requires_user_action(Some(
+            moltis_mcp::McpAuthState::AwaitingBrowser
+        )));
+        assert!(auth_requires_user_action(Some(
+            moltis_mcp::McpAuthState::Failed
+        )));
+        assert!(!auth_requires_user_action(Some(
+            moltis_mcp::McpAuthState::Authenticated
+        )));
+        assert!(!auth_requires_user_action(None));
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -71,15 +71,40 @@ struct McpManagerInner {
     next_start_id: u64,
 }
 
-#[derive(Clone, Copy)]
-enum StartupPhase {
-    Starting,
-    Failed,
+struct StartupState {
+    failed: Arc<AtomicBool>,
+    id: u64,
 }
 
-struct StartupState {
-    phase: StartupPhase,
-    id: u64,
+struct StartupGuard {
+    failed: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl StartupGuard {
+    fn new(failed: Arc<AtomicBool>) -> Self {
+        Self {
+            failed,
+            armed: true,
+        }
+    }
+
+    fn fail(&mut self) {
+        self.failed.store(true, Ordering::Release);
+        self.armed = false;
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for StartupGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.failed.store(true, Ordering::Release);
+        }
+    }
 }
 
 /// Manages the lifecycle of multiple MCP server connections.
@@ -262,18 +287,25 @@ impl McpManager {
         config: &McpServerConfig,
         stdio_options: &StdioLaunchOptions,
     ) -> Result<()> {
-        let start_id = {
+        let (start_id, failed) = {
             let mut inner = self.inner.write().await;
             let start_id = inner.next_start_id;
             inner.next_start_id = inner.next_start_id.wrapping_add(1);
+            let failed = Arc::new(AtomicBool::new(false));
             inner.startup_states.insert(name.to_string(), StartupState {
-                phase: StartupPhase::Starting,
+                failed: Arc::clone(&failed),
                 id: start_id,
             });
-            start_id
+            (start_id, failed)
         };
+        let mut startup_guard = StartupGuard::new(Arc::clone(&failed));
 
         let result = self.start_server_inner(name, config, stdio_options).await;
+        if result.is_err() {
+            startup_guard.fail();
+            return result;
+        }
+        startup_guard.disarm();
 
         let mut inner = self.inner.write().await;
         if inner
@@ -281,17 +313,10 @@ impl McpManager {
             .get(name)
             .is_some_and(|state| state.id == start_id)
         {
-            if result.is_ok() {
-                inner.startup_states.remove(name);
-            } else {
-                inner.startup_states.insert(name.to_string(), StartupState {
-                    phase: StartupPhase::Failed,
-                    id: start_id,
-                });
-            }
+            inner.startup_states.remove(name);
         }
 
-        result
+        Ok(())
     }
 
     async fn start_server_inner(
@@ -742,9 +767,10 @@ impl McpManager {
                     McpClientState::Closed => "stopped",
                 }
             } else if let Some(startup) = inner.startup_states.get(name) {
-                match startup.phase {
-                    StartupPhase::Starting => "connecting",
-                    StartupPhase::Failed => "dead",
+                if startup.failed.load(Ordering::Acquire) {
+                    "dead"
+                } else {
+                    "connecting"
                 }
             } else {
                 "stopped"
@@ -1100,6 +1126,42 @@ mod tests {
 
         mgr.stop_server("broken").await;
         assert_eq!(mgr.status("broken").await.unwrap().state, "stopped");
+    }
+
+    #[tokio::test]
+    async fn test_cancelled_start_is_reported_dead_for_health_restart() {
+        let config = McpServerConfig {
+            command: "sh".into(),
+            args: vec!["-c".into(), "sleep 30".into()],
+            enabled: true,
+            ..Default::default()
+        };
+        let mut reg = McpRegistry::new();
+        reg.servers.insert("blocked".into(), config.clone());
+        let mgr = Arc::new(McpManager::new(reg));
+        let worker = Arc::clone(&mgr);
+        let task = tokio::spawn(async move { worker.start_server("blocked", &config).await });
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if mgr
+                    .status("blocked")
+                    .await
+                    .is_some_and(|status| status.state == "connecting")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("start should enter the connecting state");
+
+        task.abort();
+        let _ = task.await;
+
+        let status = mgr.status("blocked").await.expect("server status");
+        assert_eq!(status.state, "dead");
     }
 
     #[tokio::test]
