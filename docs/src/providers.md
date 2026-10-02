@@ -14,7 +14,7 @@ Configure providers through the web UI or directly in configuration files.
 | **Google Gemini** | `gemini` | `GEMINI_API_KEY` | Streaming, tools, vision, model discovery |
 | **DeepSeek** | `deepseek` | `DEEPSEEK_API_KEY` | Streaming, tools, model discovery |
 | **Mistral** | `mistral` | `MISTRAL_API_KEY` | Streaming, tools, model discovery |
-| **Groq** | `groq` | `GROQ_API_KEY` | Streaming |
+| **Groq** | `groq` | `GROQ_API_KEY` | Streaming, tools (not Compound), model discovery |
 | **xAI (Grok)** | `xai` | `XAI_API_KEY` | Streaming |
 | **OpenRouter** | `openrouter` | `OPENROUTER_API_KEY` | Streaming, tools, model discovery |
 | **Cerebras** | `cerebras` | `CEREBRAS_API_KEY` | Streaming, tools, model discovery |

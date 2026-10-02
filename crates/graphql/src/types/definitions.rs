@@ -7,16 +7,39 @@
 //!
 //! For dynamic/untyped fields, the `Json` scalar is used.
 
-use {async_graphql::SimpleObject, serde::Deserialize};
+use {
+    async_graphql::SimpleObject,
+    serde::{Deserialize, Deserializer, de::Error as _},
+};
 
 use crate::scalars::Json;
 
 // ── Common result type ──────────────────────────────────────────────────────
 
-/// Generic boolean result for mutations that return `{ "ok": true }`.
-#[derive(Debug, SimpleObject, Deserialize)]
+/// Whether a mutation succeeded.
+///
+/// Services report failure as an error, and some also answer with an explicit
+/// `{ "ok": false }` envelope. Any other successful reply (the changed value, a
+/// count, an `{ "aborted": ... }` report) means the mutation succeeded.
+#[derive(Debug, SimpleObject)]
 pub struct BoolResult {
     pub ok: bool,
+}
+
+impl<'de> Deserialize<'de> for BoolResult {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let reply = serde_json::Value::deserialize(deserializer)?;
+        let ok = match reply.get("ok") {
+            None => true,
+            Some(serde_json::Value::Bool(ok)) => *ok,
+            Some(other) => {
+                return Err(D::Error::custom(format!(
+                    "`ok` must be a boolean, got {other}"
+                )));
+            },
+        };
+        Ok(Self { ok })
+    }
 }
 
 // ── Health & Status ─────────────────────────────────────────────────────────
@@ -1062,7 +1085,7 @@ pub struct MemoryStats {
 impl<'de> Deserialize<'de> for Json {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         let v = serde_json::Value::deserialize(deserializer)?;
         Ok(Json(v))
