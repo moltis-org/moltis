@@ -98,10 +98,16 @@ impl HookHandler for ShellHookHandler {
             "spawning shell hook"
         );
 
-        let mut cmd = Command::new("sh");
-        cmd.arg("-c")
-            .arg(&self.command)
-            .envs(&self.env)
+        let mut cmd = if cfg!(target_os = "windows") {
+            let mut c = Command::new("cmd");
+            c.arg("/C").arg(&self.command);
+            c
+        } else {
+            let mut c = Command::new("sh");
+            c.arg("-c").arg(&self.command);
+            c
+        };
+        cmd.envs(&self.env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
