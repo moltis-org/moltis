@@ -376,6 +376,10 @@ port = {port}                           # Port number (auto-generated for this i
 # [agents.presets.kids.skills]
 # deny = ["gaming", "social-media"] # Block specific skill categories
 #
+# Restrict which presets spawn_agent may target (absent = unrestricted):
+# [agents.presets.coordinator.spawn]
+# allow = ["research", "writer"]    # empty list = cannot spawn anyone
+#
 # Example: full-access agent for parents:
 # [agents.presets.admin]
 # [agents.presets.admin.mcp]

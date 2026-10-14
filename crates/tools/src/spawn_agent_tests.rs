@@ -1,13 +1,48 @@
 use {
     super::*,
     moltis_agents::model::{ChatMessage, CompletionResponse, StreamEvent, Usage},
-    moltis_config::schema::{AgentIdentity, PresetToolPolicy},
-    std::{pin::Pin, sync::Mutex},
+    moltis_config::schema::{AgentIdentity, PresetSpawnPolicy, PresetToolPolicy},
+    std::{
+        path::PathBuf,
+        pin::Pin,
+        sync::{Mutex, MutexGuard},
+    },
     tokio::sync::Notify,
     tokio_stream::Stream,
 };
 
 use crate::spawn_agent_tasks::{SpawnCancelTool, SpawnResultTool, SpawnStatusTool};
+
+/// Process-wide data-dir override for tests that touch workspace files.
+struct TestDataDirState {
+    path: Option<PathBuf>,
+}
+
+/// Serialize tests that override the process-wide data directory.
+/// The mutex guards the override path itself (not a void sentinel).
+static DATA_DIR_TEST_LOCK: Mutex<TestDataDirState> = Mutex::new(TestDataDirState { path: None });
+
+struct DataDirOverrideGuard {
+    _lock: MutexGuard<'static, TestDataDirState>,
+}
+
+impl DataDirOverrideGuard {
+    fn acquire(path: PathBuf) -> Self {
+        let mut lock = DATA_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        moltis_config::set_data_dir(path.clone());
+        lock.path = Some(path);
+        Self { _lock: lock }
+    }
+}
+
+impl Drop for DataDirOverrideGuard {
+    fn drop(&mut self) {
+        self._lock.path = None;
+        moltis_config::clear_data_dir();
+    }
+}
 
 /// Mock provider that returns a fixed response.
 struct MockProvider {
@@ -549,6 +584,7 @@ async fn test_build_sub_tools_applies_allow_and_deny() {
         ],
         &["task_list".to_string()],
         false,
+        None,
     );
     assert!(filtered.get("exec").is_some());
     assert!(filtered.get("task_list").is_none());
@@ -576,7 +612,7 @@ async fn test_build_sub_tools_delegate_only_uses_delegate_set() {
         ]),
     );
 
-    let filtered = spawn_tool.build_sub_tools(&[], &[], true);
+    let filtered = spawn_tool.build_sub_tools(&[], &[], true, None);
     assert!(filtered.get("spawn_agent").is_some());
     assert!(filtered.get("spawn_status").is_some());
     assert!(filtered.get("spawn_result").is_some());
@@ -597,7 +633,7 @@ async fn test_delegate_only_injects_spawn_agent_with_shared_task_store() {
     let spawn_tool = SpawnAgentTool::new(make_empty_provider_registry(), provider, registry)
         .with_task_store(Arc::clone(&store));
 
-    let filtered = spawn_tool.build_sub_tools(&[], &[], true);
+    let filtered = spawn_tool.build_sub_tools(&[], &[], true, None);
     let nested_spawn = filtered.get("spawn_agent").expect("injected spawn_agent");
     let result = nested_spawn
         .execute(serde_json::json!({
@@ -720,7 +756,13 @@ fn test_identity_injected_into_system_prompt() {
         ..Default::default()
     };
 
-    let prompt = build_sub_agent_prompt("find bugs", "in main.rs", Some(&preset), Some("scout"));
+    let prompt = build_sub_agent_prompt(
+        "find bugs",
+        "in main.rs",
+        Some(&preset),
+        Some("scout"),
+        true,
+    );
 
     assert!(prompt.contains("You are scout (🔍)"));
     assert!(prompt.contains("Your style is thorough"));
@@ -730,14 +772,147 @@ fn test_identity_injected_into_system_prompt() {
 }
 
 #[test]
+fn test_workspace_persona_injected_into_system_prompt() {
+    let dir = tempfile::tempdir().unwrap();
+    let _guard = DataDirOverrideGuard::acquire(dir.path().to_path_buf());
+
+    let workspace = moltis_config::agent_workspace_dir("research");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(
+        workspace.join("SOUL.md"),
+        "SOUL_MARKER_PARITY_7F3A — be curious.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("AGENTS.md"),
+        "<!-- mion:role -->\nROLE_MARKER_PARITY_7F3A\n<!-- /mion:role -->\nGUIDE_MARKER_PARITY_7F3A\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("GUIDELINES.md"),
+        "Extra guidelines body for spawn parity.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("IDENTITY.md"),
+        "---\nname: Research Bot\nemoji: 🔬\ntheme: precise\n---\n",
+    )
+    .unwrap();
+
+    let preset = AgentPreset {
+        identity: AgentIdentity {
+            name: Some("fallback-name".into()),
+            emoji: None,
+            theme: None,
+        },
+        system_prompt_suffix: Some("SUFFIX_MARKER_PARITY_7F3A".into()),
+        ..Default::default()
+    };
+
+    let prompt = build_sub_agent_prompt(
+        "summarize findings",
+        "",
+        Some(&preset),
+        Some("research"),
+        true,
+    );
+
+    assert!(prompt.contains("You are Research Bot (🔬)"));
+    assert!(prompt.contains("Your style is precise"));
+    assert!(prompt.contains("## Soul"));
+    assert!(prompt.contains("SOUL_MARKER_PARITY_7F3A"));
+    assert!(prompt.contains("## Workspace (AGENTS.md)"));
+    assert!(prompt.contains("ROLE_MARKER_PARITY_7F3A"));
+    assert!(prompt.contains("GUIDE_MARKER_PARITY_7F3A"));
+    assert!(prompt.contains("## Guidelines"));
+    assert!(prompt.contains("Extra guidelines body for spawn parity."));
+    assert!(prompt.contains("SUFFIX_MARKER_PARITY_7F3A"));
+    assert!(!prompt.contains("fallback-name"));
+}
+
+#[test]
+fn test_workspace_persona_skipped_without_private_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let _guard = DataDirOverrideGuard::acquire(dir.path().to_path_buf());
+
+    let workspace = moltis_config::agent_workspace_dir("research");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("SOUL.md"), "SOUL_PRIVATE_LEAK\n").unwrap();
+    std::fs::write(workspace.join("AGENTS.md"), "AGENTS_PRIVATE_LEAK\n").unwrap();
+    std::fs::write(workspace.join("GUIDELINES.md"), "GUIDE_PRIVATE_LEAK\n").unwrap();
+    // Root fallback that must also stay out of shared-channel spawns.
+    std::fs::write(dir.path().join("AGENTS.md"), "ROOT_AGENTS_PRIVATE_LEAK\n").unwrap();
+    std::fs::write(
+        workspace.join("IDENTITY.md"),
+        "---\nname: Research Bot\nemoji: 🔬\ntheme: precise\n---\n",
+    )
+    .unwrap();
+
+    let preset = AgentPreset {
+        identity: AgentIdentity {
+            name: Some("public-name".into()),
+            emoji: Some("📎".into()),
+            theme: Some("brief".into()),
+        },
+        system_prompt_suffix: Some("SUFFIX_PRIVATE_LEAK".into()),
+        ..Default::default()
+    };
+
+    let prompt = build_sub_agent_prompt(
+        "summarize findings",
+        "",
+        Some(&preset),
+        Some("research"),
+        false,
+    );
+
+    assert!(prompt.contains("You are public-name (📎)"));
+    assert!(prompt.contains("Your style is brief"));
+    assert!(!prompt.contains("Research Bot"));
+    assert!(!prompt.contains("## Soul"));
+    assert!(!prompt.contains("SOUL_PRIVATE_LEAK"));
+    assert!(!prompt.contains("## Workspace (AGENTS.md)"));
+    assert!(!prompt.contains("AGENTS_PRIVATE_LEAK"));
+    assert!(!prompt.contains("ROOT_AGENTS_PRIVATE_LEAK"));
+    assert!(!prompt.contains("## Guidelines"));
+    assert!(!prompt.contains("GUIDE_PRIVATE_LEAK"));
+    assert!(!prompt.contains("SUFFIX_PRIVATE_LEAK"));
+}
+
+#[test]
+fn test_workspace_agents_md_respects_size_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let _guard = DataDirOverrideGuard::acquire(dir.path().to_path_buf());
+
+    let workspace = moltis_config::agent_workspace_dir("bulky");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let max = moltis_config::discover_and_load()
+        .chat
+        .workspace_file_max_chars
+        .max(1);
+    let huge = "X".repeat(max + 64);
+    std::fs::write(workspace.join("AGENTS.md"), &huge).unwrap();
+
+    let prompt = build_sub_agent_prompt("trim guides", "", None, Some("bulky"), true);
+    assert!(prompt.contains("## Workspace (AGENTS.md)"));
+    assert!(prompt.contains("AGENTS.md truncated for prompt size"));
+    assert!(prompt.contains(&"X".repeat(32)));
+    assert!(!prompt.contains(&huge));
+}
+
+#[test]
 fn test_no_identity_uses_default_prompt() {
-    let prompt = build_sub_agent_prompt("do work", "", None, None);
+    let _lock = DATA_DIR_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let managed_files = moltis_config::managed_files_dir().display().to_string();
+    let prompt = build_sub_agent_prompt("do work", "", None, None, true);
 
     assert!(prompt.contains("You are a sub-agent"));
     assert!(prompt.contains("Task: do work"));
     assert!(prompt.contains("Managed Files: use $MOLTIS_FILES_DIR"));
     assert!(prompt.contains(crate::sandbox::SANDBOX_FILES_DIR));
-    assert!(prompt.contains(&moltis_config::managed_files_dir().display().to_string()));
+    assert!(prompt.contains(&managed_files));
     assert!(!prompt.contains("Context:"));
 }
 
@@ -843,4 +1018,248 @@ async fn test_timeout_cancels_long_running_agent() {
     let result = spawn_tool.execute(params).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("timed out"));
+}
+
+#[tokio::test]
+async fn test_resolve_preset_rejects_target_outside_spawn_allow() {
+    let (provider, _) = MockProvider::with_capture("ok", "mock");
+    let spawn_tool = SpawnAgentTool::new(
+        make_empty_provider_registry(),
+        provider,
+        Arc::new(ToolRegistry::new()),
+    )
+    .with_agents_config(agents_config_with_presets(None, &[
+        ("coordinator", AgentPreset {
+            spawn: PresetSpawnPolicy {
+                allow: Some(vec!["research".to_string()]),
+            },
+            ..Default::default()
+        }),
+        ("research", AgentPreset::default()),
+        ("writer", AgentPreset::default()),
+    ]))
+    .with_caller_agent_id("coordinator");
+
+    let denied = spawn_tool
+        .resolve_preset(&serde_json::json!({
+            "preset": "writer",
+            "_caller_agent_id": "coordinator",
+        }))
+        .await;
+    assert!(denied.is_err());
+    let message = denied.unwrap_err().to_string();
+    assert!(message.contains("spawn_agent denied"), "{message}");
+    assert!(message.contains("writer"), "{message}");
+    assert!(message.contains("research"), "{message}");
+
+    let allowed = spawn_tool
+        .resolve_preset(&serde_json::json!({
+            "preset": "research",
+            "_caller_agent_id": "coordinator",
+        }))
+        .await
+        .expect("research is allowlisted");
+    assert_eq!(allowed.0.as_deref(), Some("research"));
+}
+
+#[tokio::test]
+async fn test_resolve_preset_restricted_caller_rejects_missing_preset() {
+    let (provider, _) = MockProvider::with_capture("ok", "mock");
+    let spawn_tool = SpawnAgentTool::new(
+        make_empty_provider_registry(),
+        provider,
+        Arc::new(ToolRegistry::new()),
+    )
+    .with_agents_config(agents_config_with_presets(None, &[
+        ("solo", AgentPreset {
+            spawn: PresetSpawnPolicy {
+                allow: Some(vec![]),
+            },
+            ..Default::default()
+        }),
+        ("coordinator", AgentPreset {
+            spawn: PresetSpawnPolicy {
+                allow: Some(vec!["research".to_string()]),
+            },
+            ..Default::default()
+        }),
+        ("research", AgentPreset::default()),
+    ]));
+
+    let deny_all = spawn_tool
+        .resolve_preset(&serde_json::json!({
+            "_caller_agent_id": "solo",
+        }))
+        .await;
+    assert!(deny_all.is_err());
+    let deny_all_msg = deny_all.unwrap_err().to_string();
+    assert!(
+        deny_all_msg.contains("spawn_agent denied"),
+        "{deny_all_msg}"
+    );
+    assert!(deny_all_msg.contains("spawn.allow = []"), "{deny_all_msg}");
+
+    let allowlist = spawn_tool
+        .resolve_preset(&serde_json::json!({
+            "_caller_agent_id": "coordinator",
+        }))
+        .await;
+    assert!(allowlist.is_err());
+    let allowlist_msg = allowlist.unwrap_err().to_string();
+    assert!(
+        allowlist_msg.contains("requires an allowlisted preset"),
+        "{allowlist_msg}"
+    );
+
+    // Unrestricted callers may still omit preset when default_preset is unset.
+    let unrestricted = spawn_tool
+        .resolve_preset(&serde_json::json!({
+            "_caller_agent_id": "research",
+        }))
+        .await
+        .expect("absent spawn.allow stays unrestricted without a named preset");
+    assert_eq!(unrestricted.0, None);
+}
+
+#[tokio::test]
+async fn test_resolve_preset_empty_spawn_allow_rejects_all() {
+    let (provider, _) = MockProvider::with_capture("ok", "mock");
+    let spawn_tool = SpawnAgentTool::new(
+        make_empty_provider_registry(),
+        provider,
+        Arc::new(ToolRegistry::new()),
+    )
+    .with_agents_config(agents_config_with_presets(None, &[
+        ("solo", AgentPreset {
+            spawn: PresetSpawnPolicy {
+                allow: Some(vec![]),
+            },
+            ..Default::default()
+        }),
+        ("research", AgentPreset::default()),
+    ]));
+
+    let denied = spawn_tool
+        .resolve_preset(&serde_json::json!({
+            "preset": "research",
+            "_caller_agent_id": "solo",
+        }))
+        .await;
+    assert!(denied.is_err());
+    assert!(denied.unwrap_err().to_string().contains("spawn.allow = []"));
+}
+
+#[tokio::test]
+async fn test_resolve_preset_absent_spawn_allow_unrestricted() {
+    let (provider, _) = MockProvider::with_capture("ok", "mock");
+    let spawn_tool = SpawnAgentTool::new(
+        make_empty_provider_registry(),
+        provider,
+        Arc::new(ToolRegistry::new()),
+    )
+    .with_agents_config(agents_config_with_presets(None, &[
+        ("legacy", AgentPreset::default()),
+        ("research", AgentPreset::default()),
+    ]));
+
+    let (name, _) = spawn_tool
+        .resolve_preset(&serde_json::json!({
+            "preset": "research",
+            "_caller_agent_id": "legacy",
+        }))
+        .await
+        .expect("absent spawn.allow stays unrestricted");
+    assert_eq!(name.as_deref(), Some("research"));
+}
+
+#[tokio::test]
+async fn test_spawn_allow_bound_schema_lists_only_allowed_targets() {
+    let (provider, _) = MockProvider::with_capture("ok", "mock");
+    let agents = agents_config_with_presets(None, &[
+        ("coordinator", AgentPreset {
+            spawn: PresetSpawnPolicy {
+                allow: Some(vec!["research".to_string()]),
+            },
+            ..Default::default()
+        }),
+        ("research", AgentPreset {
+            identity: AgentIdentity {
+                name: Some("Researcher".into()),
+                emoji: None,
+                theme: Some("thorough".into()),
+            },
+            ..Default::default()
+        }),
+        ("writer", AgentPreset::default()),
+    ]);
+    let agents_snapshot = agents.read().await.clone();
+    let spawn_tool = SpawnAgentTool::new(
+        make_empty_provider_registry(),
+        provider,
+        Arc::new(ToolRegistry::new()),
+    )
+    .with_agents_config(Arc::clone(&agents))
+    .with_caller_agent_id("coordinator");
+
+    let description = spawn_tool.description();
+    assert!(description.contains("research"), "{description}");
+    assert!(description.contains("only spawn"), "{description}");
+
+    let schema = spawn_tool.parameters_schema();
+    let preset_desc = schema["properties"]["preset"]["description"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(preset_desc.contains("research"), "{preset_desc}");
+    assert!(
+        !preset_desc.contains("writer") || preset_desc.contains("Allowed"),
+        "{preset_desc}"
+    );
+    let enum_values = schema["properties"]["preset"]["enum"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(enum_values, vec![serde_json::Value::String(
+        "research".into()
+    )]);
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(spawn_tool));
+    bind_spawn_agent_allowlist(&mut registry, "coordinator", &agents_snapshot);
+    let bound = registry.get("spawn_agent").expect("bound spawn_agent");
+    assert!(bound.description().contains("research"));
+    assert_eq!(
+        bound.parameters_schema()["properties"]["preset"]["enum"],
+        serde_json::json!(["research"])
+    );
+}
+
+#[tokio::test]
+async fn test_execute_rejects_disallowed_preset_before_provider() {
+    let (provider, _) = MockProvider::with_capture("should-not-run", "mock");
+    let spawn_tool = SpawnAgentTool::new(
+        make_empty_provider_registry(),
+        provider,
+        Arc::new(ToolRegistry::new()),
+    )
+    .with_agents_config(agents_config_with_presets(None, &[
+        ("coordinator", AgentPreset {
+            spawn: PresetSpawnPolicy {
+                allow: Some(vec!["research".to_string()]),
+            },
+            ..Default::default()
+        }),
+        ("research", AgentPreset::default()),
+        ("writer", AgentPreset::default()),
+    ]));
+
+    let result = spawn_tool
+        .execute(serde_json::json!({
+            "task": "write a blog post",
+            "preset": "writer",
+            "_caller_agent_id": "coordinator",
+        }))
+        .await;
+    assert!(result.is_err());
+    let message = result.unwrap_err().to_string();
+    assert!(message.contains("spawn_agent denied"), "{message}");
 }

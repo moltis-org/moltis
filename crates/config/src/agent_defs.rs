@@ -44,6 +44,9 @@ struct AgentFrontmatter {
     sandbox_mode: Option<String>,
     skills_allow: Option<String>,
     skills_deny: Option<String>,
+    /// CSV list of preset ids this agent may spawn (`spawn.allow`).
+    /// Present empty string means `allow = []` (deny all).
+    spawn_allow: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Serialize)]
@@ -79,6 +82,8 @@ struct AgentFrontmatterOut {
     skills_allow: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     skills_deny: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spawn_allow: Option<String>,
 }
 
 /// Parse a markdown agent definition file into a preset name and config.
@@ -132,6 +137,9 @@ pub fn parse_agent_md(content: &str) -> anyhow::Result<(String, AgentPreset)> {
             allow: fm.skills_allow.map(csv_list),
             deny: fm.skills_deny.map(csv_list),
         },
+        spawn: crate::schema::PresetSpawnPolicy {
+            allow: fm.spawn_allow.map(csv_list),
+        },
         ..Default::default()
     };
 
@@ -173,6 +181,8 @@ pub fn render_agent_md(name: &str, preset: &AgentPreset) -> anyhow::Result<Strin
             .deny
             .as_ref()
             .and_then(|values| non_empty_join(values)),
+        // Preserve Some([]) as empty string so deny-all survives round-trip.
+        spawn_allow: preset.spawn.allow.as_ref().map(|values| values.join(", ")),
     };
     let frontmatter = serde_yaml::to_string(&fm)?;
     let body = preset.system_prompt_suffix.as_deref().unwrap_or_default();
@@ -688,5 +698,34 @@ Search thoroughly.
         let (_, parsed) = parse_agent_md(&rendered).unwrap();
 
         assert_eq!(parsed.skills.allow, Some(Vec::new()));
+    }
+
+    #[test]
+    fn test_render_preserves_spawn_allow_list_and_empty() {
+        use crate::schema::PresetSpawnPolicy;
+
+        let listed = AgentPreset {
+            spawn: PresetSpawnPolicy {
+                allow: Some(vec!["research".into(), "writer".into()]),
+            },
+            ..Default::default()
+        };
+        let rendered = render_agent_md("coordinator", &listed).unwrap();
+        assert!(rendered.contains("spawn_allow:"));
+        let (_, parsed) = parse_agent_md(&rendered).unwrap();
+        assert_eq!(
+            parsed.spawn.allow.as_deref(),
+            Some(["research".to_string(), "writer".to_string()].as_slice())
+        );
+
+        let empty = AgentPreset {
+            spawn: PresetSpawnPolicy {
+                allow: Some(Vec::new()),
+            },
+            ..Default::default()
+        };
+        let rendered_empty = render_agent_md("solo", &empty).unwrap();
+        let (_, parsed_empty) = parse_agent_md(&rendered_empty).unwrap();
+        assert_eq!(parsed_empty.spawn.allow, Some(Vec::new()));
     }
 }

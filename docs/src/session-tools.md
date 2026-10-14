@@ -89,6 +89,17 @@ the sub-agent continues in the background. Use `spawn_status` to check progress,
 `spawn_result` to fetch the final output, `spawn_list` to recover task IDs after
 context loss, and `cancel_spawn` to stop work that is no longer needed.
 
+Restrict which presets a caller may spawn with `spawn.allow` on the calling
+agent's preset. Absent means unrestricted (legacy). An empty list rejects every
+target; a non-empty list allows only those preset ids. Violations return a clear
+`spawn_agent denied` error. When set, the `spawn_agent` tool schema lists only
+the allowed targets.
+
+```toml
+[agents.presets.coordinator.spawn]
+allow = ["research", "writer"]
+```
+
 Use `active_tools` and `tool_choice` to prevent model drift on small/cheap
 LLMs. These controls apply **per agent run** (not per iteration within a run)
 and are available on agent presets, `spawn_agent`, and `cron` `agentTurn`

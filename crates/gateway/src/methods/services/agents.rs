@@ -654,6 +654,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 "allow": p.skills.allow,
                                 "deny": p.skills.deny,
                             },
+                            "spawn_allow": p.spawn.allow,
                         })
                     });
                     Ok(serde_json::json!({
@@ -860,6 +861,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 "tools_allow": preset.tools.allow,
                                 "tools_deny": preset.tools.deny,
                                 "delegate_only": preset.delegate_only,
+                                "spawn_allow": preset.spawn.allow,
                                 "toml": toml_str,
                                 "provenance": provenance,
                                 "deletable": markdown_backed && !toml_backed,
@@ -968,6 +970,13 @@ fn preset_from_rpc_params(
             Some(skills_deny)
         };
     }
+    if let Some(value) = params.get("spawn_allow") {
+        if value.is_null() {
+            preset.spawn.allow = None;
+        } else {
+            preset.spawn.allow = Some(require_string_list_param(params, "spawn_allow")?);
+        }
+    }
     Ok(preset)
 }
 
@@ -1021,6 +1030,37 @@ fn string_list_param(params: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Like `string_list_param`, but rejects non-arrays / non-string entries.
+///
+/// Empty `spawn.allow = []` means deny-all, so silently coercing bad input to
+/// an empty list would disable spawning instead of returning a validation error.
+#[cfg(feature = "agent")]
+fn require_string_list_param(
+    params: &serde_json::Value,
+    key: &str,
+) -> Result<Vec<String>, ErrorShape> {
+    let Some(value) = params.get(key) else {
+        return Ok(Vec::new());
+    };
+    let Some(values) = value.as_array() else {
+        return Err(ErrorShape::new(
+            error_codes::INVALID_REQUEST,
+            format!("'{key}' must be an array of strings (or null to clear)"),
+        ));
+    };
+    let mut out = Vec::with_capacity(values.len());
+    for (index, entry) in values.iter().enumerate() {
+        let Some(text) = entry.as_str().map(str::trim).filter(|v| !v.is_empty()) else {
+            return Err(ErrorShape::new(
+                error_codes::INVALID_REQUEST,
+                format!("'{key}[{index}]' must be a non-empty string"),
+            ));
+        };
+        out.push(text.to_string());
+    }
+    Ok(out)
+}
+
 #[cfg(feature = "agent")]
 fn parse_preset_param_error(message: String) -> ErrorShape {
     ErrorShape::new(error_codes::INVALID_REQUEST, message)
@@ -1050,5 +1090,60 @@ async fn refresh_agents_config(ctx: &MethodContext) {
         let fresh = moltis_config::discover_and_load();
         let mut guard = agents_config.write().await;
         *guard = fresh.agents;
+    }
+}
+
+#[cfg(all(test, feature = "agent"))]
+mod spawn_allow_param_tests {
+    use super::{preset_from_rpc_params, require_string_list_param};
+
+    #[test]
+    fn require_string_list_param_accepts_string_array() {
+        let params = serde_json::json!({ "spawn_allow": ["writer", " research "] });
+        let list = require_string_list_param(&params, "spawn_allow").expect("valid array");
+        assert_eq!(list, vec!["writer".to_string(), "research".to_string()]);
+    }
+
+    #[test]
+    fn require_string_list_param_rejects_non_array() {
+        let params = serde_json::json!({ "spawn_allow": "writer" });
+        let err = require_string_list_param(&params, "spawn_allow").expect_err("string rejected");
+        assert!(err.message.contains("must be an array of strings"));
+    }
+
+    #[test]
+    fn preset_from_rpc_params_rejects_malformed_spawn_allow() {
+        let err = preset_from_rpc_params(
+            "coordinator",
+            &serde_json::json!({ "spawn_allow": "writer" }),
+            None,
+        )
+        .expect_err("malformed spawn_allow");
+        assert!(err.message.contains("must be an array of strings"));
+    }
+
+    #[test]
+    fn preset_from_rpc_params_accepts_empty_spawn_allow_list() {
+        let preset =
+            preset_from_rpc_params("solo", &serde_json::json!({ "spawn_allow": [] }), None)
+                .expect("empty list is deny-all");
+        assert_eq!(preset.spawn.allow, Some(Vec::new()));
+    }
+
+    #[test]
+    fn preset_from_rpc_params_null_clears_spawn_allow() {
+        let base = moltis_config::AgentPreset {
+            spawn: moltis_config::schema::PresetSpawnPolicy {
+                allow: Some(vec!["writer".into()]),
+            },
+            ..Default::default()
+        };
+        let preset = preset_from_rpc_params(
+            "coordinator",
+            &serde_json::json!({ "spawn_allow": null }),
+            Some(&base),
+        )
+        .expect("null clears allowlist");
+        assert_eq!(preset.spawn.allow, None);
     }
 }

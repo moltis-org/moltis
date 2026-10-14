@@ -358,6 +358,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 "skills",
                 Struct(HashMap::from([("allow", Leaf), ("deny", Leaf)])),
             ),
+            ("spawn", Struct(HashMap::from([("allow", Leaf)]))),
         ]))
     };
 

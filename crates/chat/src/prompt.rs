@@ -393,6 +393,7 @@ pub(crate) fn build_tool_context(
     accept_language: Option<&str>,
     conn_id: Option<&str>,
     runtime_context: Option<&PromptRuntimeContext>,
+    caller_agent_id: Option<&str>,
 ) -> Value {
     let mut tool_context = serde_json::json!({
         "_session_key": session_key,
@@ -411,6 +412,9 @@ pub(crate) fn build_tool_context(
     if let Some(working_dir) = runtime_context.and_then(|context| context.host.working_dir.as_ref())
     {
         tool_context["_working_dir"] = serde_json::json!(working_dir);
+    }
+    if let Some(agent_id) = caller_agent_id.filter(|id| !id.is_empty()) {
+        tool_context["_caller_agent_id"] = serde_json::json!(agent_id);
     }
     tool_context
 }
@@ -579,6 +583,52 @@ pub(crate) fn apply_request_runtime_context(host: &mut PromptHostRuntimeContext,
     refresh_runtime_prompt_time(host);
 }
 
+/// Append `agents.presets.<id>.system_prompt_suffix` when non-empty.
+///
+/// Used by direct chat / raw_prompt so Role (and Layer-A composite content)
+/// apply outside of `spawn_agent`.
+pub(crate) fn append_preset_system_prompt_suffix(
+    system_prompt: String,
+    config: &moltis_config::MoltisConfig,
+    agent_id: &str,
+) -> String {
+    let Some(extra) = config
+        .agents
+        .get_preset(agent_id)
+        .and_then(|p| p.system_prompt_suffix.as_ref())
+        .map(|s| s.trim())
+        .filter(|v| !v.is_empty())
+    else {
+        return system_prompt;
+    };
+    let mut out = system_prompt;
+    out.push_str("\n\n");
+    out.push_str(extra);
+    out
+}
+
+/// Resolve chat model: explicit → session → preset → none (caller picks default).
+#[must_use]
+pub(crate) fn resolve_chat_model_id<'a>(
+    explicit: Option<&'a str>,
+    session_model: Option<&'a str>,
+    preset_model: Option<&'a str>,
+) -> Option<&'a str> {
+    explicit.or(session_model).or(preset_model)
+}
+
+/// Preset model for the same agent id used when building the chat prompt (`main` fallback).
+#[must_use]
+pub(crate) fn resolve_preset_model_for_session(
+    session_entry: Option<&SessionEntry>,
+) -> Option<String> {
+    let agent_id = resolve_prompt_agent_id(session_entry);
+    moltis_config::discover_and_load()
+        .agents
+        .get_preset(&agent_id)
+        .and_then(|p| p.model.clone())
+}
+
 pub(crate) fn apply_runtime_tool_filters(
     base: &moltis_agents::tool_registry::ToolRegistry,
     config: &moltis_config::MoltisConfig,
@@ -606,7 +656,7 @@ pub(crate) fn apply_runtime_tool_filters(
             _ => None,
         });
 
-    base_registry.clone_allowed_entries(|name, source| {
+    let filtered = base_registry.clone_allowed_entries(|name, source| {
         if !policy.is_allowed(name) {
             return false;
         }
@@ -614,7 +664,22 @@ pub(crate) fn apply_runtime_tool_filters(
             return allowed_servers.iter().any(|allowed| allowed == server);
         }
         true
-    })
+    });
+
+    // Match spawn_agent: coordinator presets keep only the shared delegate set.
+    let delegate_only = config
+        .agents
+        .get_preset(&policy_context.agent_id)
+        .is_some_and(|p| p.delegate_only);
+    if !delegate_only {
+        return filtered;
+    }
+
+    let allowed: std::collections::HashSet<&str> = moltis_tools::spawn_agent::DELEGATE_ONLY_TOOLS
+        .iter()
+        .copied()
+        .collect();
+    filtered.clone_allowed_by(|name| allowed.contains(name))
 }
 
 /// Build a `PolicyContext` from runtime context and request parameters.
@@ -743,6 +808,85 @@ mod tests {
     }
 
     #[test]
+    fn delegate_only_keeps_shared_delegate_toolset() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.tools.policy.allow = vec!["*".into()];
+        config
+            .agents
+            .presets
+            .insert("coordinator".into(), moltis_config::schema::AgentPreset {
+                delegate_only: true,
+                ..Default::default()
+            });
+
+        let mut registry = moltis_agents::tool_registry::ToolRegistry::new();
+        registry.register(Box::new(DummyTool("exec")));
+        registry.register(Box::new(DummyTool("spawn_agent")));
+        registry.register(Box::new(DummyTool("task_list")));
+        registry.register(Box::new(DummyTool("web_fetch")));
+
+        let filtered = apply_runtime_tool_filters(
+            &registry,
+            &config,
+            &[],
+            false,
+            &unrestricted_policy_context("coordinator"),
+        );
+
+        assert!(filtered.get("spawn_agent").is_some());
+        assert!(filtered.get("task_list").is_some());
+        assert!(filtered.get("exec").is_none());
+        assert!(filtered.get("web_fetch").is_none());
+    }
+
+    #[test]
+    fn append_preset_system_prompt_suffix_adds_trimmed_content() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config
+            .agents
+            .presets
+            .insert("support".into(), moltis_config::schema::AgentPreset {
+                system_prompt_suffix: Some("  ROLE_MARKER_PARITY_7F3A  ".into()),
+                ..Default::default()
+            });
+
+        let prompt = append_preset_system_prompt_suffix("base prompt".into(), &config, "support");
+        assert_eq!(prompt, "base prompt\n\nROLE_MARKER_PARITY_7F3A");
+    }
+
+    #[test]
+    fn append_preset_system_prompt_suffix_skips_empty() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config
+            .agents
+            .presets
+            .insert("support".into(), moltis_config::schema::AgentPreset {
+                system_prompt_suffix: Some("   \n".into()),
+                ..Default::default()
+            });
+
+        let prompt = append_preset_system_prompt_suffix("base prompt".into(), &config, "support");
+        assert_eq!(prompt, "base prompt");
+    }
+
+    #[test]
+    fn resolve_chat_model_id_prefers_explicit_then_session_then_preset() {
+        assert_eq!(
+            resolve_chat_model_id(Some("explicit"), Some("session"), Some("preset")),
+            Some("explicit")
+        );
+        assert_eq!(
+            resolve_chat_model_id(None, Some("session"), Some("preset")),
+            Some("session")
+        );
+        assert_eq!(
+            resolve_chat_model_id(None, None, Some("preset")),
+            Some("preset")
+        );
+        assert_eq!(resolve_chat_model_id(None, None, None), None);
+    }
+
+    #[test]
     fn skill_policy_allows_then_denies_by_name_or_category() {
         let skills = vec![
             moltis_skills::types::SkillMetadata {
@@ -777,7 +921,7 @@ mod tests {
         let mut runtime = PromptRuntimeContext::default();
         runtime.host.working_dir = Some("/workspace/project".into());
 
-        let context = build_tool_context("acp:test", None, None, Some(&runtime));
+        let context = build_tool_context("acp:test", None, None, Some(&runtime), Some("main"));
 
         assert_eq!(
             context.get("_working_dir").and_then(Value::as_str),
@@ -794,7 +938,13 @@ mod tests {
         runtime.host.channel_chat_id = Some("-100123".into());
         runtime.host.channel_outbound_to = Some("-100123:42".into());
 
-        let context = build_tool_context("telegram:main:-100123:42", None, None, Some(&runtime));
+        let context = build_tool_context(
+            "telegram:main:-100123:42",
+            None,
+            None,
+            Some(&runtime),
+            Some("main"),
+        );
 
         assert_eq!(context["_channel"]["account_id"], "main");
         assert_eq!(context["_channel"]["chat_id"], "-100123");

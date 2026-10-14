@@ -1272,6 +1272,57 @@ fn mcp_policy_empty_toml_is_all() {
 }
 
 #[test]
+fn spawn_allow_parses_none_empty_and_list() {
+    let unrestricted: MoltisConfig = toml::from_str(
+        r#"
+[agents.presets.legacy]
+"#,
+    )
+    .unwrap();
+    assert!(
+        unrestricted
+            .agents
+            .presets
+            .get("legacy")
+            .unwrap()
+            .spawn
+            .allow
+            .is_none()
+    );
+
+    let empty: MoltisConfig = toml::from_str(
+        r#"
+[agents.presets.solo.spawn]
+allow = []
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        empty.agents.presets.get("solo").unwrap().spawn.allow,
+        Some(vec![])
+    );
+
+    let listed: MoltisConfig = toml::from_str(
+        r#"
+[agents.presets.coordinator.spawn]
+allow = ["research", "writer"]
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        listed
+            .agents
+            .presets
+            .get("coordinator")
+            .unwrap()
+            .spawn
+            .allow
+            .as_deref(),
+        Some(["research".to_string(), "writer".to_string()].as_slice())
+    );
+}
+
+#[test]
 fn mcp_policy_empty_allow_is_not_all() {
     // allow_servers = [] should parse as Allow(vec![]), NOT as All.
     let toml_str = r#"

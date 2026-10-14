@@ -1,10 +1,12 @@
 # Agent Presets
 
-Agent presets let `spawn_agent` run sub-agents with role-specific configuration.
-Use them to control model cost, tool access, session visibility, and behavior.
+Agent presets configure named agents for both **direct chat** (web UI / channels
+bound to that agent) and **`spawn_agent` sub-runs**. Use them to control model
+cost, tool access, session visibility, and behavior.
 
 They are different from [modes](modes.md): modes are temporary overlays for the
-current chat session, while agent presets configure delegated sub-agents.
+current chat session, while agent presets are the durable persona/policy for an
+agent id across chat and delegation.
 
 ## Built-In Presets
 
@@ -69,11 +71,13 @@ Per preset (`[agents.presets.<name>]`):
 - `mcp` — MCP server access: `allow_servers` or `deny_servers`
 - `sandbox.*` — per-agent sandbox overrides
 - `skills.allow`, `skills.deny`
-- `system_prompt_suffix`
+- `system_prompt_suffix` — appended for spawned sub-agents and for private
+  direct-chat / channel turns (shared channels omit private workspace text and
+  this suffix)
 - `max_iterations`, `timeout_secs` (override `[tools]` runtime limits for matching direct sessions and spawned sub-agents)
 - `sessions.*` access policy
 - `memory.scope`, `memory.max_lines`
-- `delegate_only`
+- `delegate_only` — same restricted toolset in direct chat and spawned runs
 
 ## Tool Policy Behavior
 
@@ -81,7 +85,8 @@ Per preset (`[agents.presets.<name>]`):
 - If `tools.allow` is non-empty, only those tools are allowed.
 - `tools.deny` is applied after allow-list filtering.
 - For normal sub-agents, `spawn_agent` is always removed to avoid recursive runaway spawning.
-- For `delegate_only = true`, the registry is restricted to delegation/session tools:
+- For `delegate_only = true`, the registry is restricted to delegation/session tools
+  in both spawn and direct chat:
   `spawn_agent`, `sessions_list`, `sessions_history`, `sessions_search`, `sessions_send`,
   `task_list`.
 
@@ -170,6 +175,13 @@ When `spawn_agent` runs, model choice is:
 1. Explicit `model` parameter in tool call
 2. Preset `model`
 3. Parent/default provider model
+
+For direct chat / channel turns, model choice is:
+
+1. Explicit model on the request
+2. Session-stored model
+3. Preset `model` for the session's prompt agent (`main` when unset / unknown)
+4. First registered / history fallback provider
 
 ## Markdown Agent Definitions
 

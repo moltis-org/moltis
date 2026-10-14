@@ -37,7 +37,7 @@ use crate::{
     chat_error::parse_chat_error,
     message::apply_voice_reply_suffix,
     models::DisabledModelsStore,
-    prompt::prompt_build_limits_from_config,
+    prompt::{append_preset_system_prompt_suffix, prompt_build_limits_from_config},
     runtime::ChatRuntime,
     service::ActiveAssistantDraft,
     types::*,
@@ -127,7 +127,7 @@ pub(crate) async fn run_streaming(
     provider_name: &str,
     history_raw: &[Value],
     session_key: &str,
-    _agent_id: &str,
+    agent_id: &str,
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
     user_message_index: usize,
@@ -217,6 +217,13 @@ pub(crate) async fn run_streaming(
             .flatten(),
     )
     .prompt;
+
+    // Match run_with_tools: Role / Layer-A suffix only in private context.
+    let system_prompt = if private_context {
+        append_preset_system_prompt_suffix(system_prompt, &persona.config, agent_id)
+    } else {
+        system_prompt
+    };
 
     // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
     let system_prompt = apply_voice_reply_suffix(system_prompt, desired_reply_medium);
