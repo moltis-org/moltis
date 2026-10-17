@@ -13,7 +13,9 @@ use gpui::{AssetSource, Result, SharedString, Styled, Svg, px, svg};
 pub enum Icon {
     ArrowUp,
     ChevronDown,
+    ChevronRight,
     Clock,
+    Globe,
     Monitor,
     Plus,
     Settings,
@@ -22,10 +24,12 @@ pub enum Icon {
 }
 
 impl Icon {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 10] = [
         Self::ArrowUp,
         Self::ChevronDown,
+        Self::ChevronRight,
         Self::Clock,
+        Self::Globe,
         Self::Monitor,
         Self::Plus,
         Self::Settings,
@@ -38,7 +42,9 @@ impl Icon {
         match self {
             Self::ArrowUp => "icons/arrow-up.svg",
             Self::ChevronDown => "icons/chevron-down.svg",
+            Self::ChevronRight => "icons/chevron-right.svg",
             Self::Clock => "icons/clock.svg",
+            Self::Globe => "icons/globe.svg",
             Self::Monitor => "icons/monitor.svg",
             Self::Plus => "icons/plus.svg",
             Self::Settings => "icons/settings.svg",
@@ -51,7 +57,9 @@ impl Icon {
         match self {
             Self::ArrowUp => include_bytes!("../assets/icons/arrow-up.svg"),
             Self::ChevronDown => include_bytes!("../assets/icons/chevron-down.svg"),
+            Self::ChevronRight => include_bytes!("../assets/icons/chevron-right.svg"),
             Self::Clock => include_bytes!("../assets/icons/clock.svg"),
+            Self::Globe => include_bytes!("../assets/icons/globe.svg"),
             Self::Monitor => include_bytes!("../assets/icons/monitor.svg"),
             Self::Plus => include_bytes!("../assets/icons/plus.svg"),
             Self::Settings => include_bytes!("../assets/icons/settings.svg"),

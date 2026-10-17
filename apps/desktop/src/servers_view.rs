@@ -202,6 +202,12 @@ impl ServersView {
         cx.notify();
     }
 
+    /// Open the "Add a server" form.
+    pub fn start_adding(&mut self, cx: &mut Context<Self>) {
+        self.adding = true;
+        cx.notify();
+    }
+
     fn add(&mut self, cx: &mut Context<Self>) {
         match self.build_profile(cx) {
             Ok(profile) => {

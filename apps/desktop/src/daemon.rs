@@ -108,8 +108,11 @@ pub struct Daemon {
     profile: ServerProfile,
     phase: Phase,
     connected_once: bool,
-    /// The local daemon was found stopped and started once already; a second
-    /// failure waits for the user instead of reinstalling the service in a loop.
+    /// The local daemon was found stopped and restarted once already; a
+    /// second failure waits for the user instead of reinstalling the service
+    /// in a loop. Only a daemon already installed as a service is started
+    /// unasked: otherwise the user chooses between running moltis here and
+    /// connecting to another computer.
     auto_started: bool,
     /// The installed service was checked against the bundled daemon.
     service_checked: bool,
@@ -515,7 +518,8 @@ impl Daemon {
                         std::env::var_os("PATH"),
                         moltis_config::home_dir().as_deref(),
                     );
-                    let auto_start = moltis.is_some() && !self.auto_started;
+                    let auto_start =
+                        moltis.is_some() && !self.auto_started && local_service_installed();
                     self.set_phase(
                         Phase::NotRunning {
                             moltis,
@@ -1210,6 +1214,14 @@ fn hostname() -> String {
         .map(|h| h.trim_end_matches(".local").to_string())
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| "this computer".into())
+}
+
+/// Whether `moltis service install` already ran on this computer: the user
+/// chose to run moltis here, so a stopped daemon is started without asking.
+fn local_service_installed() -> bool {
+    moltis_config::home_dir().is_some_and(|home| {
+        local_daemon::installed_service_binary(&home, &moltis_config::data_dir()).is_some()
+    })
 }
 
 #[cfg(test)]

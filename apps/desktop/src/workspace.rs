@@ -342,6 +342,15 @@ impl Workspace {
         cx.notify();
     }
 
+    fn add_server(&mut self, _: &AddServer, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_servers = true;
+        self.servers.update(cx, |view, cx| view.start_adding(cx));
+        self.sync_servers(cx);
+        #[cfg(feature = "mdns")]
+        self.servers.update(cx, |view, cx| view.browse(cx));
+        cx.notify();
+    }
+
     fn reconnect(&mut self, _: &ReconnectNow, _: &mut Window, cx: &mut Context<Self>) {
         self.with_daemon(cx, |daemon, cx| daemon.retry_now(cx));
     }
@@ -406,6 +415,7 @@ impl Render for Workspace {
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::new_session))
             .on_action(cx.listener(Self::show_servers_action))
+            .on_action(cx.listener(Self::add_server))
             .on_action(cx.listener(Self::reconnect))
             .on_action(cx.listener(Self::sign_out))
             .on_action(cx.listener(|this, _: &OpenWebUi, _, cx| this.open_web("/", cx)))

@@ -1,9 +1,9 @@
 //! Full-window states while not chatting: connecting, login, certificate
-//! trust, starting the local daemon, failures.
+//! trust, choosing where moltis runs, failures.
 
 use gpui::{
-    Context, Entity, FontWeight, IntoElement, ParentElement, Render, Styled, Subscription, Window,
-    div, prelude::*,
+    Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Stateful, Styled,
+    Subscription, Window, div, prelude::*,
 };
 
 use {
@@ -12,8 +12,11 @@ use {
 };
 
 use crate::{
+    actions::AddServer,
+    assets::{Icon, icon},
     daemon::{Daemon, Phase},
     input::{InputEvent, TextInput},
+    local_daemon,
     theme::Theme,
     ui::{ButtonKind, button, card, centered, field, label, muted},
 };
@@ -167,6 +170,137 @@ impl StatusView {
     }
 }
 
+impl StatusView {
+    /// No daemon answers on this computer: run one here, or connect to
+    /// another computer instead (nothing gets installed then).
+    fn render_not_running(
+        &self,
+        moltis: Option<&std::path::Path>,
+        starting: bool,
+        error: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = Theme::global(cx).clone();
+        if starting {
+            return card(cx)
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Starting Moltis on this computer…"),
+                )
+                .child(muted(
+                    "Installing the daemon as a background service. This window connects as soon as it is up.",
+                    cx,
+                ))
+                .into_any_element();
+        }
+        let found = moltis.is_some();
+        let bundled =
+            moltis.and_then(std::path::Path::parent) == local_daemon::bundled_dir().as_deref();
+        let local_detail = match (found, bundled) {
+            (true, true) => {
+                "Run the daemon included with this app as a background service. It keeps running when the app quits and starts at login."
+            },
+            (true, false) => {
+                "Run your installed moltis as a background service. It keeps running when the app quits and starts at login."
+            },
+            (false, _) => {
+                "The moltis command was not found. Install moltis, or use an app download that includes it."
+            },
+        };
+        card(cx)
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Where should Moltis run?"),
+            )
+            .child(muted(
+                "Moltis Desktop is a window onto a moltis daemon, which answers your channels and runs your agents.",
+                cx,
+            ))
+            .child(
+                choice("run-here", Icon::Monitor, "On this computer", local_detail, found, &theme)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.daemon
+                            .update(cx, |daemon, cx| daemon.start_local_daemon(cx));
+                    })),
+            )
+            .child(
+                choice(
+                    "connect-remote",
+                    Icon::Globe,
+                    "On another computer",
+                    "Connect to a moltis daemon over HTTPS, or through an SSH tunnel. Nothing is installed here.",
+                    true,
+                    &theme,
+                )
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(AddServer), cx);
+                }),
+            )
+            .child(muted(
+                "Starting moltis yourself? This window connects as soon as it is up.",
+                cx,
+            ))
+            .when_some(error, |this, error| {
+                this.child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.danger)
+                        .child(error.to_string()),
+                )
+            })
+            .into_any_element()
+    }
+}
+
+/// One clickable option: icon, title, explanation, and a chevron.
+fn choice(
+    id: &'static str,
+    glyph: Icon,
+    title: &'static str,
+    detail: &'static str,
+    enabled: bool,
+    theme: &Theme,
+) -> Stateful<Div> {
+    let hover = theme.surface_hover;
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap_3()
+        .p_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.surface)
+        .when(enabled, |this| {
+            this.cursor_pointer().hover(move |style| style.bg(hover))
+        })
+        .when(!enabled, |this| this.opacity(0.55))
+        .child(icon(glyph, 20.).text_color(theme.text_muted))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(title),
+                )
+                .child(div().text_xs().text_color(theme.text_muted).child(detail)),
+        )
+        .when(enabled, |this| {
+            this.child(icon(Icon::ChevronRight, 14.).text_color(theme.text_faint))
+        })
+}
+
 impl Render for StatusView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::global(cx).clone();
@@ -238,41 +372,7 @@ impl Render for StatusView {
                 moltis,
                 starting,
                 error,
-            } => {
-                let mut panel = card(cx)
-                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Moltis isn't running"))
-                    .child(muted(
-                        "The desktop app connects to the moltis daemon, which keeps running when the app quits.",
-                        cx,
-                    ));
-                panel = match moltis {
-                    Some(_) if starting => panel.child(muted("Starting moltis as a background service…", cx)),
-                    Some(path) => panel
-                        .child(muted(format!("Found {}", path.display()), cx))
-                        .child(
-                            div().flex().gap_2().child(
-                                button(
-                                    "start-daemon",
-                                    if starting { "Starting…" } else { "Start as background service" },
-                                    ButtonKind::Primary,
-                                    cx,
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.daemon.update(cx, |daemon, cx| daemon.start_local_daemon(cx));
-                                })),
-                            ),
-                        ),
-                    None => panel.child(muted(
-                        "The moltis command was not found. Install moltis (or use an app bundle that includes it), then run `moltis service install`.",
-                        cx,
-                    )),
-                };
-                panel
-                    .child(muted("Waiting for it to start — this window connects automatically.", cx))
-                    .when_some(error, |this, error| {
-                        this.child(div().text_sm().text_color(theme.danger).child(error))
-                    })
-            },
+            } => div().child(self.render_not_running(moltis.as_deref(), starting, error.as_deref(), cx)),
             Phase::Failed { reason } => card(cx)
                 .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(format!("Could not connect to {}", profile.name)))
                 .child(div().text_sm().text_color(theme.danger).child(reason))

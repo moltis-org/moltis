@@ -14,6 +14,8 @@ actions!(moltis, [
     OpenWebSkills,
     OpenWebLogs,
     ShowServers,
+    /// The servers screen with the "Add a server" form open.
+    AddServer,
     ReconnectNow,
     SignOut,
     FocusComposer,

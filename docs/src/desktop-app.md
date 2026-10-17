@@ -65,17 +65,25 @@ sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
 On start the app connects to the last server you used, or to the daemon
 configured on this computer (found through `moltis.toml`, honouring
 `MOLTIS_CONFIG_DIR`). On a clean installation, **This computer** uses the
-default local configuration so the bundled service can be installed on first
-launch. The **Servers** screen (`⌘⇧S`, or click the server name
-at the bottom of the sidebar) lists:
+default local configuration, and when no daemon answers the app asks **Where
+should Moltis run?**:
 
-- **This computer**: the local daemon. If it is not running, the app starts
-  it as a background service (`moltis service install`: a launchd agent on
-  macOS, a systemd user unit on Linux, or a small supervisor script where
-  systemd is unavailable) and connects as soon as it is up. It uses the `moltis` binary shipped
-  inside the app, or else the one on your `PATH`. The service keeps running
-  after the app quits and starts at login; `moltis service uninstall` removes
-  it.
+- **On this computer** installs moltis as a background service and connects
+  as soon as it is up.
+- **On another computer** opens the **Add a server** form, to connect over
+  HTTPS or an SSH tunnel. Nothing is installed locally, so you can use the app
+  with a remote daemon only.
+
+Once the service is installed, the app starts it again without asking when it
+finds it stopped. The **Servers** screen (`⌘⇧S`, or click the server name at
+the bottom of the sidebar) lists:
+
+- **This computer**: the local daemon, run as a background service
+  (`moltis service install`: a launchd agent on macOS, a systemd user unit on
+  Linux, or a small supervisor script where systemd is unavailable). It uses
+  the `moltis` binary shipped inside the app, or else the one on your `PATH`.
+  The service keeps running after the app quits and starts at login;
+  `moltis service uninstall` removes it.
   - If you move or delete the app, the service is left pointing at a path
     that no longer exists; the next launch reinstalls it from the app's new
     location. A daemon you installed another way (Homebrew, cargo) is never
