@@ -308,6 +308,9 @@ build_targeted_rust_test_cmd() {
   while IFS= read -r file; do
     [[ -e "$file" ]] || continue
     [[ "$file" == *.rs ]] || continue
+    # apps/desktop is its own Cargo workspace (excluded from the root one);
+    # .github/workflows/desktop.yml tests it.
+    [[ "$file" == apps/desktop/* ]] && continue
 
     local package
     package="$(package_name_for_path "$file")"
