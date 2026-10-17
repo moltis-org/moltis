@@ -58,12 +58,14 @@ jobs:
       - name: Clippy
         working-directory: apps/desktop
         run: |
-          cargo clippy --locked --all-targets --features capture -- -D warnings
+          cargo clippy --locked --all-targets --features mockup -- -D warnings
           cargo clippy --locked --all-targets --no-default-features -- -D warnings
 
       - name: Test
         working-directory: apps/desktop
-        run: cargo test --locked
+        run: |
+          cargo test --locked
+          cargo test --locked --features mockup mockup::
 
       - name: Client crate tests
         run: cargo test --locked -p moltis-client --all-features

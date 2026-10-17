@@ -12,6 +12,8 @@ mod daemon;
 mod input;
 mod local_daemon;
 mod markdown;
+#[cfg(feature = "mockup")]
+mod mockup;
 mod runtime;
 mod servers;
 mod servers_view;
@@ -34,6 +36,10 @@ fn main() {
     // override, which config file discovery honours (the variable alone is not).
     if let Some(dir) = std::env::var_os("MOLTIS_CONFIG_DIR").filter(|d| !d.is_empty()) {
         moltis_config::set_config_dir(dir.into());
+    }
+    #[cfg(feature = "mockup")]
+    if let Some(options) = mockup::Options::from_args(std::env::args().skip(1)) {
+        return mockup::run(options);
     }
     app::run();
 }

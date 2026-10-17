@@ -420,12 +420,28 @@ desktop-test:
 
 # Lint the desktop client (all feature combinations it ships with).
 desktop-lint:
-    cd apps/desktop && cargo clippy --all-targets --features capture -- -D warnings
+    cd apps/desktop && cargo clippy --all-targets --features mockup -- -D warnings
     cd apps/desktop && cargo clippy --all-targets --no-default-features -- -D warnings
 
 # Run the desktop client.
 desktop-run:
     cd apps/desktop && cargo run
+
+# Show UI variants from FILE side by side (the gpui-mockup agent skill).
+# Without FILE it shows the built-in demo (apps/desktop/src/mockup/demo.rs).
+desktop-mockup file="" feedback="" capture="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    absolute() { case "$1" in ""|/*) printf '%s' "$1" ;; *) printf '%s/%s' {{quote(invocation_directory())}} "$1" ;; esac; }
+    file="$(absolute {{quote(file)}})"
+    feedback="$(absolute {{quote(feedback)}})"
+    capture="$(absolute {{quote(capture)}})"
+    cd apps/desktop
+    MOLTIS_MOCKUP_FILE="$file" cargo build --locked --features mockup
+    args=(--mockup)
+    if [ -n "$feedback" ]; then args+=(--feedback "$feedback"); fi
+    if [ -n "$capture" ]; then args+=(--capture "$capture"); fi
+    exec target/debug/moltis-desktop "${args[@]}"
 
 # Package "Moltis Desktop.app" (macOS).
 desktop-package-macos:

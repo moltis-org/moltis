@@ -67,6 +67,9 @@ default = ["mdns", "metrics", "ssh"]
 # Discover daemons on the local network.
 mdns    = ["moltis-client/mdns"]
 metrics = ["moltis-client/metrics"]
+# Development only: `--mockup` shows UI variants from MOLTIS_MOCKUP_FILE side by
+# side for the gpui-mockup agent skill (`just desktop-mockup FILE`).
+mockup = ["capture"]
 # Reach remote daemons through SSH port forwarding.
 ssh = ["moltis-client/ssh"]
 

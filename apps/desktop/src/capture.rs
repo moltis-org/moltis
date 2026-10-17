@@ -4,7 +4,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use gpui::{AnyWindowHandle, App};
+use gpui::{AnyWindowHandle, App, Task};
 
 /// Time for the first frames, the connection attempt and fonts to settle.
 const DEFAULT_SETTLE: Duration = Duration::from_millis(2500);
@@ -18,15 +18,9 @@ pub fn install(window: AnyWindowHandle, cx: &mut App) {
         .and_then(|ms| ms.parse().ok())
         .map_or(DEFAULT_SETTLE, Duration::from_millis);
     let quit = std::env::var("MOLTIS_DESKTOP_CAPTURE_QUIT").is_ok_and(|v| v == "1");
+    let saved = save_after(window, path.clone(), settle, cx);
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(settle).await;
-        let image = cx.update(|cx| window.update(cx, |_, window, _| window.render_to_image()));
-        let saved = match image {
-            Ok(Ok(image)) => image.save(&path).map_err(anyhow::Error::from),
-            Ok(Err(error)) => Err(error),
-            Err(error) => Err(error),
-        };
-        match saved {
+        match saved.await {
             Ok(()) => println!("capture: saved {}", path.display()),
             Err(error) => eprintln!("capture: failed: {error:#}"),
         }
@@ -35,4 +29,23 @@ pub fn install(window: AnyWindowHandle, cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// Saves a PNG of `window` as gpui last drew it, after `settle`: no
+/// screen-recording permission, and covered windows capture whole.
+pub fn save_after(
+    window: AnyWindowHandle,
+    path: PathBuf,
+    settle: Duration,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(settle).await;
+        let image = cx.update(|cx| window.update(cx, |_, window, _| window.render_to_image()));
+        match image {
+            Ok(Ok(image)) => image.save(&path).map_err(anyhow::Error::from),
+            Ok(Err(error)) => Err(error),
+            Err(error) => Err(error),
+        }
+    })
 }

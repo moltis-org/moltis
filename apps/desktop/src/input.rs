@@ -101,6 +101,13 @@ impl TextInput {
         self.set_text("", cx);
     }
 
+    /// Whether an IME composition is in progress, which owns Escape and Enter.
+    #[cfg(feature = "mockup")]
+    #[must_use]
+    pub fn is_composing(&self) -> bool {
+        self.edit.marked().is_some()
+    }
+
     fn is_multiline(&self) -> bool {
         self.max_lines > 1
     }
