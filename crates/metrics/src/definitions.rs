@@ -54,6 +54,22 @@ pub mod llm {
     pub const TOKENS_PER_SECOND: &str = "moltis_llm_tokens_per_second";
 }
 
+/// Native client (`moltis-client`) metrics
+pub mod client {
+    /// Total WebSocket connection attempts to a daemon
+    pub const CONNECT_ATTEMPTS_TOTAL: &str = "moltis_client_connect_attempts_total";
+    /// Total failed connection attempts
+    pub const CONNECT_ERRORS_TOTAL: &str = "moltis_client_connect_errors_total";
+    /// Total RPC calls sent
+    pub const RPC_CALLS_TOTAL: &str = "moltis_client_rpc_calls_total";
+    /// Total RPC calls that failed (error response, timeout, disconnect)
+    pub const RPC_ERRORS_TOTAL: &str = "moltis_client_rpc_errors_total";
+    /// RPC round-trip duration in seconds
+    pub const RPC_DURATION_SECONDS: &str = "moltis_client_rpc_duration_seconds";
+    /// Total server events received
+    pub const EVENTS_RECEIVED_TOTAL: &str = "moltis_client_events_received_total";
+}
+
 /// Session metrics
 pub mod session {
     /// Total number of sessions created

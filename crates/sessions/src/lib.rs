@@ -7,13 +7,15 @@
 pub mod compaction;
 pub mod error;
 pub mod key;
-pub mod message;
 pub mod metadata;
 pub mod session_events;
 pub mod state_store;
 mod storage_layout;
 pub mod store;
 
+/// Persisted message types live in `moltis-protocol` so clients can share them
+/// without depending on session storage.
+pub use moltis_protocol::message;
 pub use {
     error::{Error, Result},
     key::SessionKey,

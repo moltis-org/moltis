@@ -7,6 +7,10 @@
 //! - `ResponseFrame` — gateway → client RPC result (also client → server in v4)
 //! - `EventFrame`    — gateway → client server-push
 
+pub mod chat_event;
+pub mod client_api;
+mod external_agent;
+pub mod message;
 mod node_exec;
 mod types;
-pub use {node_exec::*, types::*};
+pub use {external_agent::ExternalAgentKind, node_exec::*, types::*};

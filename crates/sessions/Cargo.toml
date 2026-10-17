@@ -8,18 +8,19 @@ default = ["metrics"]
 metrics = ["dep:moltis-metrics"]
 
 [dependencies]
-fd-lock        = { workspace = true }
-hex            = { workspace = true }
-libc           = { workspace = true }
-moltis-common  = { workspace = true }
-moltis-metrics = { optional = true, workspace = true }
-serde          = { workspace = true }
-serde_json     = { workspace = true }
-sqlx           = { workspace = true }
-thiserror      = { workspace = true }
-tokio          = { workspace = true }
-tracing        = { workspace = true }
-uuid           = { workspace = true }
+fd-lock         = { workspace = true }
+hex             = { workspace = true }
+libc            = { workspace = true }
+moltis-common   = { workspace = true }
+moltis-metrics  = { optional = true, workspace = true }
+moltis-protocol = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+sqlx            = { workspace = true }
+thiserror       = { workspace = true }
+tokio           = { workspace = true }
+tracing         = { workspace = true }
+uuid            = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

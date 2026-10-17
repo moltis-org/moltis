@@ -7471,6 +7471,7 @@ dependencies = [
  "moltis-observability",
  "moltis-plugins",
  "moltis-projects",
+ "moltis-protocol",
  "moltis-providers",
  "moltis-service-traits",
  "moltis-sessions",
@@ -7502,6 +7503,34 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "moltis-client"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures",
+ "mdns-sd",
+ "moltis-config",
+ "moltis-metrics",
+ "moltis-protocol",
+ "rcgen",
+ "reqwest 0.13.2",
+ "rustls 0.23.39",
+ "rustls-platform-verifier",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tokio-tungstenite 0.26.2",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -7574,7 +7603,7 @@ dependencies = [
  "directories",
  "ipnet",
  "moltis-metrics",
- "moltis-sessions",
+ "moltis-protocol",
  "secrecy 0.8.0",
  "serde",
  "serde_json",
@@ -7716,13 +7745,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "futures",
+ "moltis-client",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
- "tokio-tungstenite 0.26.2",
- "uuid",
 ]
 
 [[package]]
@@ -7958,6 +7985,7 @@ dependencies = [
  "moltis-auth",
  "moltis-browser",
  "moltis-channels",
+ "moltis-client",
  "moltis-code-index",
  "moltis-common",
  "moltis-config",
@@ -8563,6 +8591,7 @@ dependencies = [
  "libc",
  "moltis-common",
  "moltis-metrics",
+ "moltis-protocol",
  "serde",
  "serde_json",
  "sqlx",

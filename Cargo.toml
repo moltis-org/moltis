@@ -13,6 +13,7 @@ default-members = [
   "crates/chat",
   "crates/claude-import",
   "crates/cli",
+  "crates/client",
   "crates/code-index",
   "crates/codex-import",
   "crates/common",
@@ -91,6 +92,7 @@ members = [
   "crates/chat",
   "crates/claude-import",
   "crates/cli",
+  "crates/client",
   "crates/code-index",
   "crates/codex-import",
   "crates/common",
@@ -303,12 +305,13 @@ whatsapp-rust-ureq-http-client = "0.6"
 # QR code rendering
 qrcode = "0.14"
 # TLS / certificate generation
-axum-server    = { features = ["tls-rustls"], version = "0.7" }
-rcgen          = "0.13"
-rustls         = { features = ["ring"], version = "0.23" }
-rustls-pemfile = "2"
-time           = { features = ["serde-human-readable"], version = "0.3" }
-tokio-rustls   = "0.26"
+axum-server              = { features = ["tls-rustls"], version = "0.7" }
+rcgen                    = "0.13"
+rustls                   = { features = ["ring"], version = "0.23" }
+rustls-pemfile           = "2"
+rustls-platform-verifier = "0.6"
+time                     = { features = ["serde-human-readable"], version = "0.3" }
+tokio-rustls             = "0.26"
 # Cryptography / authentication
 argon2            = "0.5"
 chacha20poly1305  = { features = ["std"], version = "0.10" }
@@ -412,6 +415,7 @@ moltis-canvas             = { path = "crates/canvas" }
 moltis-channels           = { path = "crates/channels" }
 moltis-chat               = { path = "crates/chat" }
 moltis-claude-import      = { path = "crates/claude-import" }
+moltis-client             = { default-features = false, path = "crates/client" }
 moltis-code-index         = { path = "crates/code-index" }
 moltis-codex-import       = { path = "crates/codex-import" }
 moltis-common             = { path = "crates/common" }

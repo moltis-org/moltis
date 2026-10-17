@@ -117,6 +117,7 @@ voice = ["moltis-gateway/voice"]
 web-ui = ["moltis-gateway/web-ui"]
 
 [dev-dependencies]
+moltis-client               = { workspace = true }
 moltis-code-index.workspace = true
 moltis-providers            = { workspace = true }
 moltis-web                  = { workspace = true }

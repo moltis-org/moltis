@@ -1,0 +1,46 @@
+[package]
+description       = "Network client for a running Moltis daemon (WebSocket RPC v4, auth, discovery)"
+edition.workspace = true
+license.workspace = true
+name              = "moltis-client"
+version.workspace = true
+
+[dependencies]
+futures                  = { workspace = true }
+mdns-sd                  = { optional = true, workspace = true }
+moltis-config            = { optional = true, workspace = true }
+moltis-metrics           = { optional = true, workspace = true }
+moltis-protocol          = { workspace = true }
+reqwest                  = { workspace = true }
+rustls                   = { workspace = true }
+rustls-platform-verifier = { workspace = true }
+secrecy                  = { workspace = true }
+serde                    = { workspace = true }
+serde_json               = { workspace = true }
+sha2                     = { workspace = true }
+thiserror                = { workspace = true }
+tokio                    = { workspace = true }
+tokio-rustls             = { workspace = true }
+tokio-tungstenite        = { features = ["rustls-tls-webpki-roots"], workspace = true }
+tracing                  = { workspace = true }
+url                      = { features = ["serde"], workspace = true }
+uuid                     = { workspace = true }
+
+[dev-dependencies]
+axum     = { workspace = true }
+rcgen    = { workspace = true }
+tempfile = { workspace = true }
+tokio    = { features = ["macros", "rt-multi-thread", "test-util"], workspace = true }
+
+[features]
+default = ["local", "metrics"]
+# Find the daemon configured on this machine through `moltis.toml`.
+local = ["dep:moltis-config"]
+# Browse `_moltis._tcp.local.` for daemons on the local network.
+mdns    = ["dep:mdns-sd"]
+metrics = ["dep:moltis-metrics"]
+# Forward a remote daemon's loopback port through the system `ssh`.
+ssh = ["tokio/process"]
+
+[lints]
+workspace = true

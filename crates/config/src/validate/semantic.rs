@@ -614,9 +614,9 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         }
     }
 
-    let valid_agent_kinds = moltis_sessions::metadata::ExternalAgentKind::ALL
+    let valid_agent_kinds = moltis_protocol::ExternalAgentKind::ALL
         .iter()
-        .map(moltis_sessions::metadata::ExternalAgentKind::as_str)
+        .map(moltis_protocol::ExternalAgentKind::as_str)
         .collect::<Vec<_>>();
     for agent_kind in config.external_agents.agents.keys() {
         if !valid_agent_kinds.contains(&agent_kind.as_str()) {

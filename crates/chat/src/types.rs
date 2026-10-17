@@ -327,6 +327,7 @@ pub(crate) fn session_token_usage_from_messages(messages: &[Value]) -> SessionTo
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {
@@ -434,6 +435,50 @@ mod tests {
         assert_eq!(payload.request_cache_write_tokens, Some(2));
         assert_eq!(payload.message_index, 7);
         assert_eq!(payload.seq, Some(42));
+    }
+
+    /// Native clients parse `final` with `moltis_protocol::chat_event`; keep the
+    /// wire shape compatible.
+    #[test]
+    fn chat_final_broadcast_parses_as_protocol_event() {
+        use moltis_protocol::chat_event::{ChatEvent, ChatEventKind};
+
+        let usage = Usage {
+            input_tokens: 12,
+            output_tokens: 3,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        };
+        let payload = build_chat_final_broadcast(
+            "run-1",
+            "main",
+            "hello".to_string(),
+            "gpt-4.1".to_string(),
+            "openai".to_string(),
+            UsageSnapshot::new(usage, None),
+            250,
+            7,
+            ReplyMedium::Text,
+            None,
+            None,
+            None,
+            None,
+            Some("why".to_string()),
+            Some(42),
+        );
+        let event: ChatEvent =
+            serde_json::from_value(serde_json::to_value(&payload).unwrap()).unwrap();
+        assert_eq!(event.session_key, "main");
+        assert_eq!(event.run_id.as_deref(), Some("run-1"));
+        assert_eq!(event.seq, Some(42));
+        let ChatEventKind::Final(done) = event.kind else {
+            panic!("expected final, got {:?}", event.kind);
+        };
+        assert_eq!(done.text, "hello");
+        assert_eq!(done.output_tokens, 3);
+        assert_eq!(done.duration_ms, 250);
+        assert_eq!(done.message_index, Some(7));
+        assert_eq!(done.reasoning.as_deref(), Some("why"));
     }
 
     #[test]

@@ -9,7 +9,7 @@ chrono-tz       = { workspace = true }
 directories     = { workspace = true }
 ipnet           = { workspace = true }
 moltis-metrics  = { optional = true, workspace = true }
-moltis-sessions = { workspace = true }
+moltis-protocol = { workspace = true }
 secrecy         = { workspace = true }
 serde           = { workspace = true }
 serde_json      = { workspace = true }

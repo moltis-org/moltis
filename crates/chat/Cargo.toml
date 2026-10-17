@@ -16,9 +16,9 @@ moltis-agents         = { workspace = true }
 moltis-channels       = { workspace = true }
 moltis-common         = { workspace = true }
 moltis-config         = { workspace = true }
-moltis-observability   = { workspace = true }
 moltis-memory         = { workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
+moltis-observability  = { workspace = true }
 moltis-plugins        = { workspace = true }
 moltis-projects       = { workspace = true }
 moltis-providers      = { workspace = true }
@@ -56,6 +56,7 @@ default = ["llm-compaction"]
 [dev-dependencies]
 async-stream    = { workspace = true }
 moltis-channels = { workspace = true }
+moltis-protocol = { workspace = true }
 sqlx            = { workspace = true }
 tempfile        = { workspace = true }
 tokio           = { workspace = true }
