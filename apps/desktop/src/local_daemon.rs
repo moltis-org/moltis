@@ -24,16 +24,32 @@ fn extra_dirs(home: Option<&Path>) -> Vec<PathBuf> {
     dirs
 }
 
-/// Find an executable `moltis` in `path` or the usual install locations.
+/// The directory of the running executable. A packaged app ships `moltis`
+/// next to it (`Moltis Desktop.app/Contents/MacOS/moltis`).
 #[must_use]
-pub fn find_moltis(path: Option<OsString>, home: Option<&Path>) -> Option<PathBuf> {
+pub fn bundled_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+}
+
+/// Find an executable `moltis`: the one bundled with the app first, then
+/// `path`, then the usual install locations.
+#[must_use]
+pub fn find_moltis(
+    bundled: Option<&Path>,
+    path: Option<OsString>,
+    home: Option<&Path>,
+) -> Option<PathBuf> {
     let name = if cfg!(windows) {
         "moltis.exe"
     } else {
         "moltis"
     };
-    path.iter()
-        .flat_map(std::env::split_paths)
+    bundled
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(path.iter().flat_map(std::env::split_paths))
         .chain(extra_dirs(home))
         .map(|dir| dir.join(name))
         .find(|candidate| is_executable(candidate))
@@ -93,7 +109,23 @@ mod tests {
     fn finds_binary_on_path_before_fallbacks() {
         let dir = tempfile::tempdir().unwrap();
         let script = write_script(dir.path(), "exit 0");
-        let found = find_moltis(Some(dir.path().as_os_str().to_owned()), None).unwrap();
+        let found = find_moltis(None, Some(dir.path().as_os_str().to_owned()), None).unwrap();
+        assert_eq!(found, script);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundled_binary_wins_over_path() {
+        let bundled = tempfile::tempdir().unwrap();
+        let on_path = tempfile::tempdir().unwrap();
+        let script = write_script(bundled.path(), "exit 0");
+        write_script(on_path.path(), "exit 0");
+        let found = find_moltis(
+            Some(bundled.path()),
+            Some(on_path.path().as_os_str().to_owned()),
+            None,
+        )
+        .unwrap();
         assert_eq!(found, script);
     }
 
@@ -103,7 +135,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(home.path().join(".cargo/bin")).unwrap();
         let script = write_script(&home.path().join(".cargo/bin"), "exit 0");
-        let found = find_moltis(Some(OsString::new()), Some(home.path()));
+        let found = find_moltis(None, Some(OsString::new()), Some(home.path()));
         // A system-wide moltis would win; only check ours is found otherwise.
         if !Path::new("/opt/homebrew/bin/moltis").exists()
             && !Path::new("/usr/local/bin/moltis").exists()
@@ -118,7 +150,7 @@ mod tests {
     fn non_executable_files_are_skipped() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("moltis"), "data").unwrap();
-        let found = find_moltis(Some(dir.path().as_os_str().to_owned()), None);
+        let found = find_moltis(None, Some(dir.path().as_os_str().to_owned()), None);
         assert_ne!(found.as_deref(), Some(dir.path().join("moltis").as_path()));
     }
 

@@ -8,6 +8,9 @@
 #   DESKTOP_SIGN_IDENTITY codesign identity, e.g. "Developer ID Application: …".
 #                         Unset: ad-hoc signature (local use only).
 #   DESKTOP_TARGET        cargo target triple (default: host)
+#   DESKTOP_DAEMON_BIN    a moltis binary to ship inside the app
+#                         (Contents/MacOS/moltis). The app starts it as a user
+#                         service when no daemon is running.
 #
 # The bundle is required for system notifications on macOS.
 set -euo pipefail
@@ -38,6 +41,10 @@ echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$release_dir/moltis-desktop" "$APP/Contents/MacOS/moltis-desktop"
+if [[ -n "${DESKTOP_DAEMON_BIN:-}" ]]; then
+  echo "==> Bundling daemon $DESKTOP_DAEMON_BIN"
+  cp "$DESKTOP_DAEMON_BIN" "$APP/Contents/MacOS/moltis"
+fi
 
 # Icon set from the existing app icon PNGs.
 iconset="$(mktemp -d)/Moltis.iconset"
@@ -79,11 +86,16 @@ PLIST
 
 if [[ -n "${DESKTOP_SIGN_IDENTITY:-}" ]]; then
   echo "==> Signing with $DESKTOP_SIGN_IDENTITY"
-  codesign --force --options runtime --timestamp --sign "$DESKTOP_SIGN_IDENTITY" "$APP"
+  sign_args=(--force --options runtime --timestamp --sign "$DESKTOP_SIGN_IDENTITY")
 else
   echo "==> Ad-hoc signing (set DESKTOP_SIGN_IDENTITY for distribution)"
-  codesign --force --sign - "$APP"
+  sign_args=(--force --sign -)
 fi
+# Nested executables are signed before the bundle that seals them.
+if [[ -f "$APP/Contents/MacOS/moltis" ]]; then
+  codesign "${sign_args[@]}" "$APP/Contents/MacOS/moltis"
+fi
+codesign "${sign_args[@]}" "$APP"
 codesign --verify --strict "$APP"
 
 echo "==> Built $APP"

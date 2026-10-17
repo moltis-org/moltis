@@ -102,6 +102,9 @@ pub struct Daemon {
     profile: ServerProfile,
     phase: Phase,
     connected_once: bool,
+    /// The local daemon was found stopped and started once already; a second
+    /// failure waits for the user instead of reinstalling the service in a loop.
+    auto_started: bool,
     client: Option<ManagedClient>,
     endpoint: Option<Endpoint>,
     #[cfg(feature = "ssh")]
@@ -126,6 +129,7 @@ impl Daemon {
             profile,
             phase: Phase::Connecting { attempt: 1 },
             connected_once: false,
+            auto_started: false,
             client: None,
             endpoint: None,
             #[cfg(feature = "ssh")]
@@ -383,9 +387,11 @@ impl Daemon {
             FailureKind::Unreachable if self.profile.is_local() && !self.connected_once => {
                 if !matches!(self.phase, Phase::NotRunning { .. }) {
                     let moltis = local_daemon::find_moltis(
+                        local_daemon::bundled_dir().as_deref(),
                         std::env::var_os("PATH"),
                         moltis_config::home_dir().as_deref(),
                     );
+                    let auto_start = moltis.is_some() && !self.auto_started;
                     self.set_phase(
                         Phase::NotRunning {
                             moltis,
@@ -394,6 +400,10 @@ impl Daemon {
                         },
                         cx,
                     );
+                    if auto_start {
+                        self.auto_started = true;
+                        self.start_local_daemon(cx);
+                    }
                 }
             },
             _ => self.set_phase(Phase::Reconnecting { reason, retry_in }, cx),
@@ -595,11 +605,7 @@ impl Daemon {
         cx.spawn(async move |this, cx| {
             let result = install.await;
             let _ = this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    if let Some(client) = &this.client {
-                        client.reconnect_now();
-                    }
-                },
+                Ok(_) => this.poll_started_daemon(cx),
                 Err(error) => {
                     if let Phase::NotRunning { moltis, .. } = &this.phase {
                         let phase = Phase::NotRunning {
@@ -611,6 +617,33 @@ impl Daemon {
                     }
                 },
             });
+        })
+        .detach();
+    }
+
+    /// The service was installed; the daemon needs a few seconds to listen.
+    /// Retry every half second instead of waiting out the reconnect backoff.
+    fn poll_started_daemon(&mut self, cx: &mut Context<Self>) {
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            for _ in 0..120 {
+                let waiting = this
+                    .update(cx, |this, _| {
+                        let waiting = this.generation == generation
+                            && matches!(this.phase, Phase::NotRunning { .. });
+                        if waiting && let Some(client) = &this.client {
+                            client.reconnect_now();
+                        }
+                        waiting
+                    })
+                    .unwrap_or(false);
+                if !waiting {
+                    break;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(500))
+                    .await;
+            }
         })
         .detach();
     }

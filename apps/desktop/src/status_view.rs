@@ -246,6 +246,7 @@ impl Render for StatusView {
                         cx,
                     ));
                 panel = match moltis {
+                    Some(_) if starting => panel.child(muted("Starting moltis as a background service…", cx)),
                     Some(path) => panel
                         .child(muted(format!("Found {}", path.display()), cx))
                         .child(
@@ -262,7 +263,7 @@ impl Render for StatusView {
                             ),
                         ),
                     None => panel.child(muted(
-                        "The moltis command was not found. Install moltis, then run `moltis service install`.",
+                        "The moltis command was not found. Install moltis (or use an app bundle that includes it), then run `moltis service install`.",
                         cx,
                     )),
                 };

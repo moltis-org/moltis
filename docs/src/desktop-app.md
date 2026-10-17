@@ -19,8 +19,9 @@ The app lives in `apps/desktop`, a separate Cargo workspace:
 
 ```bash
 just desktop-run              # debug build and run
-just desktop-open-macos       # build "Moltis Desktop.app" (release) and open it
+just desktop-open-macos       # build the daemon and "Moltis Desktop.app" (release), open it
 just desktop-package-macos    # only build the bundle, in apps/desktop/target/bundle
+                              # (DESKTOP_DAEMON_BIN=path/to/moltis ships a daemon inside)
 ```
 
 System notifications (approval prompts) need the app bundle on macOS.
@@ -32,9 +33,12 @@ configured on this computer (found through `moltis.toml`, honouring
 `MOLTIS_CONFIG_DIR`). The **Servers** screen (`⌘⇧S`, or click the server name
 at the bottom of the sidebar) lists:
 
-- **This computer**: the local daemon. If it is not running, the app offers
-  to install it as a background service (`moltis service install`) and
-  connects as soon as it is up.
+- **This computer**: the local daemon. If it is not running, the app starts
+  it as a background service (`moltis service install`, a launchd agent on
+  macOS) and connects as soon as it is up. It uses the `moltis` binary shipped
+  inside the app, or else the one on your `PATH`. The service keeps running
+  after the app quits and starts at login; `moltis service uninstall` removes
+  it.
 - **Saved servers**: added by URL (direct HTTPS) or as an SSH tunnel.
 - **Nearby**: daemons advertising `_moltis._tcp` over Bonjour/mDNS.
 

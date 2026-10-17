@@ -431,8 +431,12 @@ desktop-run:
 desktop-package-macos:
     ./scripts/package-desktop-macos.sh
 
-# Build and open "Moltis Desktop.app" (macOS; notifications need the bundle).
-desktop-open-macos: desktop-package-macos
+# Build "Moltis Desktop.app" with the moltis daemon inside (release) and open it.
+desktop-open-macos:
+    # Stripped proc-macro dylibs fail to load with recent macOS linkers
+    # ("mis-aligned LINKEDIT string pool"), so build-time code stays unstripped.
+    CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false cargo build --release -p moltis --no-default-features --features portable
+    DESKTOP_DAEMON_BIN=target/release/moltis ./scripts/package-desktop-macos.sh
     open "apps/desktop/target/bundle/Moltis Desktop.app"
 
 # Build Rust static library and generated C header for the macOS app.
