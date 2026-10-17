@@ -155,3 +155,27 @@ fn truncated_containers_are_closed() {
     let blocks = parse("> - open item");
     assert!(matches!(&blocks[0], Block::Quote(inner) if matches!(inner[0], Block::List { .. })));
 }
+
+#[test]
+fn hostile_nesting_is_flattened() {
+    let deep = format!("{}deep", "> ".repeat(5_000));
+    let blocks = parse(&deep);
+    fn depth(blocks: &[Block]) -> usize {
+        blocks
+            .iter()
+            .map(|block| match block {
+                Block::Quote(inner) => 1 + depth(inner),
+                Block::List { items, .. } => 1 + items.iter().map(|i| depth(i)).max().unwrap_or(0),
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+    assert!(
+        depth(&blocks) <= MAX_NESTING + 1,
+        "depth {}",
+        depth(&blocks)
+    );
+    let lists = format!("{}x", "- ".repeat(5_000));
+    assert!(depth(&parse(&lists)) <= MAX_NESTING + 1);
+}

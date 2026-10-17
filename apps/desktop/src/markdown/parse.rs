@@ -125,8 +125,14 @@ struct Table {
     in_head: bool,
 }
 
+/// Containers nested deeper than this are flattened into their parent, so
+/// hostile input cannot build an arbitrarily deep tree.
+const MAX_NESTING: usize = 24;
+
 struct Builder {
     stack: Vec<Container>,
+    /// Containers opened past `MAX_NESTING` and not pushed.
+    flattened: usize,
     inline: Option<(InlineKind, Inline)>,
     code: Option<(Option<String>, String)>,
     table: Option<Table>,
@@ -189,6 +195,26 @@ impl Builder {
         }
     }
 
+    /// Whether a new container may be pushed; otherwise it is flattened.
+    fn open_container(&mut self) -> bool {
+        self.flush_inline();
+        if self.stack.len() > MAX_NESTING {
+            self.flattened += 1;
+            return false;
+        }
+        true
+    }
+
+    /// Whether the closing container was flattened (nothing to pop).
+    fn close_flattened(&mut self) -> bool {
+        self.flush_inline();
+        if self.flattened > 0 {
+            self.flattened -= 1;
+            return true;
+        }
+        false
+    }
+
     fn start(&mut self, tag: Tag<'_>) {
         match tag {
             Tag::Paragraph => {
@@ -212,19 +238,22 @@ impl Builder {
                 self.code = Some((lang, String::new()));
             },
             Tag::BlockQuote(_) => {
-                self.flush_inline();
-                self.stack.push(Container::Quote(Vec::new()));
+                if self.open_container() {
+                    self.stack.push(Container::Quote(Vec::new()));
+                }
             },
             Tag::List(start) => {
-                self.flush_inline();
-                self.stack.push(Container::List {
-                    start,
-                    items: Vec::new(),
-                });
+                if self.open_container() {
+                    self.stack.push(Container::List {
+                        start,
+                        items: Vec::new(),
+                    });
+                }
             },
             Tag::Item => {
-                self.flush_inline();
-                self.stack.push(Container::Item(Vec::new()));
+                if self.open_container() {
+                    self.stack.push(Container::Item(Vec::new()));
+                }
             },
             Tag::Table(_) => {
                 self.flush_inline();
@@ -258,13 +287,17 @@ impl Builder {
                 }
             },
             TagEnd::BlockQuote(_) => {
-                self.flush_inline();
+                if self.close_flattened() {
+                    return;
+                }
                 if let Some(Container::Quote(blocks)) = self.stack.pop() {
                     self.push_block(Block::Quote(blocks));
                 }
             },
             TagEnd::Item => {
-                self.flush_inline();
+                if self.close_flattened() {
+                    return;
+                }
                 if let Some(Container::Item(blocks)) = self.stack.pop()
                     && let Some(Container::List { items, .. }) = self.stack.last_mut()
                 {
@@ -272,7 +305,9 @@ impl Builder {
                 }
             },
             TagEnd::List(_) => {
-                self.flush_inline();
+                if self.close_flattened() {
+                    return;
+                }
                 if let Some(Container::List { start, items }) = self.stack.pop() {
                     self.push_block(Block::List { start, items });
                 }
@@ -328,6 +363,7 @@ pub fn parse(markdown: &str) -> Vec<Block> {
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut builder = Builder {
         stack: vec![Container::Root(Vec::new())],
+        flattened: 0,
         inline: None,
         code: None,
         table: None,

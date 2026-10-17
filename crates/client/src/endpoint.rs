@@ -61,6 +61,26 @@ impl Endpoint {
         self.base.scheme() == "https"
     }
 
+    /// Whether the host is this machine (`localhost`, `127.0.0.0/8`, `::1`).
+    #[must_use]
+    pub fn is_loopback(&self) -> bool {
+        match self.base.host() {
+            Some(url::Host::Domain(domain)) => {
+                domain.eq_ignore_ascii_case("localhost") || domain.ends_with(".localhost")
+            },
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            None => false,
+        }
+    }
+
+    /// Whether credentials may be sent: over TLS, or to this machine (which
+    /// includes SSH tunnels, encrypted by ssh).
+    #[must_use]
+    pub fn protects_credentials(&self) -> bool {
+        self.is_tls() || self.is_loopback()
+    }
+
     #[must_use]
     pub fn host(&self) -> &str {
         self.base.host_str().unwrap_or_default()
@@ -154,6 +174,22 @@ mod tests {
         assert!(endpoint.is_tls());
         assert_eq!(endpoint.to_string(), "https://host:18789");
         assert_eq!(parse("https://host").port(), 443);
+    }
+
+    #[test]
+    fn loopback_and_credential_safety() {
+        for url in [
+            "http://localhost:1",
+            "http://127.0.0.1:1",
+            "http://[::1]:1",
+            "http://a.localhost",
+        ] {
+            assert!(parse(url).is_loopback(), "{url}");
+            assert!(parse(url).protects_credentials(), "{url}");
+        }
+        assert!(!parse("http://192.168.1.2:1").is_loopback());
+        assert!(!parse("http://studio.lan:1").protects_credentials());
+        assert!(parse("https://studio.lan:1").protects_credentials());
     }
 
     #[test]

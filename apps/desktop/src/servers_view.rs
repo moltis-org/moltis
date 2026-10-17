@@ -96,8 +96,17 @@ impl ServersView {
         match self.mode {
             Mode::Direct => {
                 let url = self.url.read(cx).text().trim().to_string();
+                // Without a scheme, assume the daemon's default HTTPS.
+                let url = if url.contains("://") {
+                    url
+                } else {
+                    format!("https://{url}")
+                };
                 let endpoint =
                     Endpoint::parse(&url, TlsTrust::System).map_err(|e| e.to_string())?;
+                if !endpoint.protects_credentials() {
+                    return Err("Use https:// (or an SSH tunnel) for other machines; plain http:// would send credentials unencrypted.".into());
+                }
                 let name = if name.is_empty() {
                     endpoint.host().to_string()
                 } else {

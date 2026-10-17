@@ -36,6 +36,9 @@ use crate::{
 /// Keychain account name for API keys.
 const KEYCHAIN_USER: &str = "api-key";
 
+/// Shown instead of sending credentials over plain HTTP to another machine.
+const PLAINTEXT_REFUSED: &str = "This server uses plain http://, which would send your credentials unencrypted. Use https:// or an SSH tunnel.";
+
 /// Events the desktop subscribes to.
 const SUBSCRIPTIONS: &[&str] = &[
     events::CHAT,
@@ -401,7 +404,9 @@ impl Daemon {
         let Some(endpoint) = self.endpoint.clone() else {
             return;
         };
-        let changed = matches!(self.profile.tls(), TlsTrust::Fingerprint { .. });
+        // Only a server never verified before gets a first-use prompt; a
+        // pinned or CA-verified one failing is a changed certificate.
+        let changed = !matches!(self.profile.tls(), TlsTrust::System);
         let generation = self.generation;
         let probe = runtime::spawn(cx, async move { tls::probe_fingerprint(&endpoint).await });
         cx.spawn(async move |this, cx| {
@@ -488,6 +493,10 @@ impl Daemon {
         let Some(endpoint) = self.endpoint.clone() else {
             return;
         };
+        if !endpoint.protects_credentials() {
+            self.set_login_state(false, Some(PLAINTEXT_REFUSED.into()), cx);
+            return;
+        }
         self.set_login_state(true, None, cx);
         let label = format!("Moltis Desktop ({})", hostname());
         let key = runtime::spawn(cx, async move {
@@ -516,6 +525,14 @@ impl Daemon {
 
     /// Use an API key created in the web UI (Settings → Security).
     pub fn use_api_key(&mut self, key: SecretString, cx: &mut Context<Self>) {
+        if self
+            .endpoint
+            .as_ref()
+            .is_some_and(|endpoint| !endpoint.protects_credentials())
+        {
+            self.set_login_state(false, Some(PLAINTEXT_REFUSED.into()), cx);
+            return;
+        }
         if !key.expose_secret().trim().starts_with("mk_") {
             self.set_login_state(false, Some("API keys start with mk_.".into()), cx);
             return;

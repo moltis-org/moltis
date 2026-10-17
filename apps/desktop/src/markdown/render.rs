@@ -28,12 +28,21 @@ pub fn render(id: &str, blocks: &[Block], cx: &App) -> AnyElement {
             blocks
                 .iter()
                 .enumerate()
-                .map(|(i, block)| render_block(&format!("{id}-{i}"), block, theme)),
+                .map(|(i, block)| render_block(&format!("{id}-{i}"), block, theme, 0)),
         )
         .into_any_element()
 }
 
-fn render_block(id: &str, block: &Block, theme: &Theme) -> AnyElement {
+/// Deeper nesting (from model output) is not rendered, bounding recursion.
+const MAX_DEPTH: usize = 12;
+
+fn render_block(id: &str, block: &Block, theme: &Theme, depth: usize) -> AnyElement {
+    if depth > MAX_DEPTH {
+        return div()
+            .text_color(theme.text_muted)
+            .child("…")
+            .into_any_element();
+    }
     match block {
         Block::Paragraph(inline) => inline_element(id, inline, theme),
         Block::Heading { level, content } => {
@@ -51,33 +60,31 @@ fn render_block(id: &str, block: &Block, theme: &Theme) -> AnyElement {
                 .into_any_element()
         },
         Block::Code { lang, code } => code_block(code, lang.as_deref(), theme),
-        Block::List { start, items } => {
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .children(items.iter().enumerate().map(|(i, item)| {
-                    let marker = match start {
-                        Some(first) => format!("{}.", first + i as u64),
-                        None => "•".into(),
-                    };
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(
-                            div()
-                                .min_w(px(18.))
-                                .text_color(theme.text_muted)
-                                .child(marker),
-                        )
-                        .child(div().flex_1().flex().flex_col().gap_1().children(
-                            item.iter().enumerate().map(|(j, block)| {
-                                render_block(&format!("{id}-{i}-{j}"), block, theme)
-                            }),
-                        ))
-                }))
-                .into_any_element()
-        },
+        Block::List { start, items } => div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .children(items.iter().enumerate().map(|(i, item)| {
+                let marker = match start {
+                    Some(first) => format!("{}.", first + i as u64),
+                    None => "•".into(),
+                };
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .min_w(px(18.))
+                            .text_color(theme.text_muted)
+                            .child(marker),
+                    )
+                    .child(div().flex_1().flex().flex_col().gap_1().children(
+                        item.iter().enumerate().map(|(j, block)| {
+                            render_block(&format!("{id}-{i}-{j}"), block, theme, depth + 1)
+                        }),
+                    ))
+            }))
+            .into_any_element(),
         Block::Quote(blocks) => div()
             .pl_3()
             .border_l_2()
@@ -90,7 +97,7 @@ fn render_block(id: &str, block: &Block, theme: &Theme) -> AnyElement {
                 blocks
                     .iter()
                     .enumerate()
-                    .map(|(i, block)| render_block(&format!("{id}-{i}"), block, theme)),
+                    .map(|(i, block)| render_block(&format!("{id}-{i}"), block, theme, depth + 1)),
             )
             .into_any_element(),
         Block::Rule => div()

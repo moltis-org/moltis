@@ -23,6 +23,8 @@ use crate::{
 
 /// How long a toast stays up.
 const TOAST_DURATION: Duration = Duration::from_secs(5);
+/// Longest command shown (and approvable) in a notification.
+const NOTIFICATION_COMMAND_MAX: usize = 160;
 /// Tag prefix of approval notifications.
 const APPROVAL_TAG: &str = "approval:";
 
@@ -247,11 +249,28 @@ impl Workspace {
             if !self.notified.insert(request.request_id.clone()) || window.is_window_active() {
                 continue;
             }
-            cx.show_system_notification(SystemNotification {
-                tag: format!("{APPROVAL_TAG}{}", request.request_id).into(),
-                title: "Moltis wants to run a command".into(),
-                body: request.command.chars().take(200).collect::<String>().into(),
-                actions: vec![
+            // Approving from the notification is offered only when it shows
+            // the whole command; otherwise clicking opens the app.
+            let fully_shown = approvable_in_notification(&request.command);
+            let body = if fully_shown {
+                request.command.clone()
+            } else {
+                format!(
+                    "{}… (open Moltis to review the full command)",
+                    request
+                        .command
+                        .chars()
+                        .map(|c| if c.is_control() {
+                            ' '
+                        } else {
+                            c
+                        })
+                        .take(NOTIFICATION_COMMAND_MAX)
+                        .collect::<String>()
+                )
+            };
+            let actions = if fully_shown {
+                vec![
                     SystemNotificationAction {
                         id: "approve".into(),
                         label: "Approve".into(),
@@ -260,7 +279,15 @@ impl Workspace {
                         id: "deny".into(),
                         label: "Deny".into(),
                     },
-                ],
+                ]
+            } else {
+                Vec::new()
+            };
+            cx.show_system_notification(SystemNotification {
+                tag: format!("{APPROVAL_TAG}{}", request.request_id).into(),
+                title: "Moltis wants to run a command".into(),
+                body: body.into(),
+                actions,
             });
         }
     }
@@ -397,5 +424,29 @@ impl Render for Workspace {
                         .child(toast),
                 )
             })
+    }
+}
+
+/// A command can be approved from a notification only if it is shown whole:
+/// short, one line, no control characters.
+fn approvable_in_notification(command: &str) -> bool {
+    command.chars().count() <= NOTIFICATION_COMMAND_MAX
+        && !command.trim().is_empty()
+        && !command.chars().any(char::is_control)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_whole_commands_are_approvable_from_notifications() {
+        assert!(approvable_in_notification("ls -la"));
+        assert!(!approvable_in_notification("echo ok\nrm -rf ~"));
+        assert!(!approvable_in_notification("echo \u{1b}[2Khidden"));
+        assert!(!approvable_in_notification(
+            &"a".repeat(NOTIFICATION_COMMAND_MAX + 1)
+        ));
+        assert!(!approvable_in_notification("   "));
     }
 }

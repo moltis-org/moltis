@@ -30,5 +30,10 @@ fn main() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
         )
         .init();
+    // Look where the daemon looks: its CLI applies MOLTIS_CONFIG_DIR as an
+    // override, which config file discovery honours (the variable alone is not).
+    if let Some(dir) = std::env::var_os("MOLTIS_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        moltis_config::set_config_dir(dir.into());
+    }
     app::run();
 }
