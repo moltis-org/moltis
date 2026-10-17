@@ -89,9 +89,6 @@ daemon=""
 if [[ -n "${DESKTOP_DAEMON_BIN:-}" ]]; then
   daemon="$DESKTOP_DAEMON_BIN"
 elif [[ "${DESKTOP_DAEMON:-1}" != "0" ]]; then
-  # Stripped proc-macro dylibs fail to load with recent macOS linkers
-  # ("mis-aligned LINKEDIT string pool"), so build-time code stays unstripped.
-  export CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false
   export MOLTIS_BUILD_FEATURES="${DESKTOP_DAEMON_FEATURES:-portable}"
   build_binary "moltis daemon ($MOLTIS_BUILD_FEATURES)" "$ROOT" "$ROOT/target" \
     "$work/moltis" moltis "$ROOT/scripts/cargo-build-moltis.sh"

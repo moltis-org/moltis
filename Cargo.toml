@@ -483,6 +483,11 @@ lto           = "thin"
 panic         = "abort"
 strip         = true
 
+# Build scripts and proc macros never ship, and recent macOS linkers leave a
+# stripped proc-macro dylib unloadable ("mis-aligned LINKEDIT string pool").
+[profile.release.build-override]
+strip = false
+
 [profile.swift-ci]
 debug    = 0
 inherits = "dev"
