@@ -42,6 +42,23 @@ pub struct ServerProfile {
 }
 
 impl ServerProfile {
+    /// Offer the local service even before its first launch writes moltis.toml.
+    /// Read-only discovery also honours config overrides.
+    pub fn local() -> Option<Self> {
+        let config = moltis_config::discover_and_load_readonly();
+        Self::local_for(&config, &moltis_config::config_dir()?).ok()
+    }
+
+    fn local_for(config: &moltis_config::MoltisConfig, dir: &Path) -> moltis_client::Result<Self> {
+        Ok(Self {
+            id: LOCAL_ID.into(),
+            name: "This computer".into(),
+            kind: ServerKind::Direct {
+                endpoint: moltis_client::local::endpoint_for(config, dir)?,
+            },
+        })
+    }
+
     #[must_use]
     pub fn direct(name: impl Into<String>, endpoint: Endpoint) -> Self {
         Self {
@@ -205,6 +222,28 @@ mod tests {
 
     fn endpoint(url: &str) -> Endpoint {
         Endpoint::parse(url, TlsTrust::System).unwrap()
+    }
+
+    #[test]
+    fn clean_install_has_a_local_service_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = moltis_config::MoltisConfig::default();
+        let profile = ServerProfile::local_for(&config, dir.path()).unwrap();
+        assert!(profile.is_local());
+        assert_eq!(profile.name, "This computer");
+        assert!(profile.address().contains("localhost"));
+        assert!(!dir.path().join("moltis.toml").exists());
+    }
+
+    #[test]
+    fn local_profile_honours_custom_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = moltis_config::MoltisConfig::default();
+        config.server.port = 4321;
+        config.tls.enabled = false;
+        let profile = ServerProfile::local_for(&config, dir.path()).unwrap();
+        assert!(profile.is_local());
+        assert_eq!(profile.address(), "http://localhost:4321");
     }
 
     #[test]

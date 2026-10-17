@@ -64,7 +64,9 @@ sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
 
 On start the app connects to the last server you used, or to the daemon
 configured on this computer (found through `moltis.toml`, honouring
-`MOLTIS_CONFIG_DIR`). The **Servers** screen (`⌘⇧S`, or click the server name
+`MOLTIS_CONFIG_DIR`). On a clean installation, **This computer** uses the
+default local configuration so the bundled service can be installed on first
+launch. The **Servers** screen (`⌘⇧S`, or click the server name
 at the bottom of the sidebar) lists:
 
 - **This computer**: the local daemon. If it is not running, the app starts
@@ -102,6 +104,9 @@ config, agent and hardware keys work as in a terminal) with a local port
 forward to the remote loopback address. The daemon does not need to listen on
 the network.
 
+If SSH exits during a network outage, the app reopens the tunnel automatically
+with retry backoff. **Retry now** also recreates a stopped tunnel.
+
 ```admonish note
 Before a daemon's first-run setup is complete, connections from its own
 loopback address are trusted without credentials. A tunnel lands on that
@@ -131,6 +136,11 @@ it into the app.
   server; click it to switch servers.
 - Replies stream in with native markdown, syntax-highlighted code, collapsible
   reasoning, tool cards (click to see output) and token/speed details.
+- After reconnecting, the app reloads the open conversation; other cached
+  conversations reload when selected. Live events received while history is
+  loading are reconciled with the snapshot.
+- The message box keeps your draft until the daemon accepts it. Offline or
+  failed submissions retain the text, and edits made while sending are kept.
 - Under the message box: the context in use against the model's window
   (`20k / 200k`, from `chat.context`) and the model picker. Stop a reply with
   the stop button or `⌘.`.

@@ -14,7 +14,7 @@ use crate::{
     actions::*,
     chat_view::ChatView,
     daemon::{Daemon, DaemonEvent, Phase},
-    servers::{LOCAL_ID, ServerKind, ServerProfile, ServerStore},
+    servers::{LOCAL_ID, ServerProfile, ServerStore},
     servers_view::{ServersEvent, ServersView},
     sidebar::Sidebar,
     status_view::StatusView,
@@ -58,13 +58,7 @@ impl Focusable for Workspace {
 impl Workspace {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = ServerStore::load(ServerStore::default_path());
-        let local = moltis_client::local::local_daemon().map(|local| ServerProfile {
-            id: LOCAL_ID.into(),
-            name: "This computer".into(),
-            kind: ServerKind::Direct {
-                endpoint: local.endpoint,
-            },
-        });
+        let local = ServerProfile::local();
         let servers = cx.new(ServersView::new);
         let subscription = cx.subscribe_in(&servers, window, Self::on_servers_event);
         let mut this = Self {

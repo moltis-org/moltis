@@ -1,6 +1,8 @@
 //! One daemon connection: credentials, transport, reconnects, and the state
 //! the views render (sessions, transcripts, models, approvals).
 
+mod history;
+
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use {
@@ -10,6 +12,7 @@ use {
         SecretString, TlsTrust,
         api::Rpc,
         auth::{AuthClient, AuthStatus},
+        backoff::Backoff,
         protocol::{
             EventFrame, HelloOk,
             chat_event::{ChatEvent, ChatEventKind},
@@ -33,6 +36,8 @@ use crate::{
     sessions::{Sessions, new_session_key},
     transcript::{Change, Transcript},
 };
+
+use self::history::TranscriptCache;
 
 /// Keychain account name for API keys.
 const KEYCHAIN_USER: &str = "api-key";
@@ -117,7 +122,9 @@ pub struct Daemon {
     tunnel: Option<SshTunnel>,
     hello: Option<HelloOk>,
     sessions: Sessions,
-    transcripts: HashMap<String, Transcript>,
+    transcripts: TranscriptCache,
+    /// Invalidates data requests across socket reconnects as well as transports.
+    data_epoch: u64,
     models: Vec<ModelEntry>,
     /// Token usage per session, from `chat.context`.
     contexts: HashMap<String, ContextTokenUsage>,
@@ -133,6 +140,13 @@ pub struct Daemon {
 impl EventEmitter<DaemonEvent> for Daemon {}
 
 impl Daemon {
+    #[cfg(test)]
+    pub(crate) fn disconnected_for_test(profile: ServerProfile, cx: &mut Context<Self>) -> Self {
+        let mut daemon = Self::new(profile, cx);
+        daemon.stop();
+        daemon
+    }
+
     pub fn new(profile: ServerProfile, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             profile,
@@ -147,7 +161,8 @@ impl Daemon {
             tunnel: None,
             hello: None,
             sessions: Sessions::default(),
-            transcripts: HashMap::new(),
+            transcripts: TranscriptCache::default(),
+            data_epoch: 0,
             models: Vec::new(),
             contexts: HashMap::new(),
             identity: None,
@@ -261,6 +276,7 @@ impl Daemon {
     }
 
     fn stop(&mut self) {
+        self.invalidate_data();
         if let Some(client) = self.client.take() {
             client.shutdown();
         }
@@ -273,10 +289,22 @@ impl Daemon {
 
     /// Retry now instead of waiting out the backoff.
     pub fn retry_now(&mut self, cx: &mut Context<Self>) {
+        if self.transport_dead() {
+            self.connect(cx);
+            return;
+        }
         match &self.client {
             Some(client) => client.reconnect_now(),
             None => self.connect(cx),
         }
+    }
+
+    fn transport_dead(&mut self) -> bool {
+        #[cfg(feature = "ssh")]
+        if matches!(self.profile.kind, ServerKind::Ssh { .. }) {
+            return self.tunnel.as_mut().is_none_or(|tunnel| !tunnel.is_alive());
+        }
+        false
     }
 
     async fn run(
@@ -286,7 +314,59 @@ impl Daemon {
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
         let api_key = read_api_key(&profile, cx).await;
-        let endpoint = Self::open_transport(&this, &profile, generation, cx).await?;
+        let mut backoff = Backoff::default();
+        loop {
+            let endpoint = match Self::open_transport(&this, &profile, generation, cx).await {
+                Ok(endpoint) => endpoint,
+                Err(error) => {
+                    let retry_in = backoff.next_delay();
+                    let current = this.update(cx, |this, cx| {
+                        if this.generation != generation {
+                            return false;
+                        }
+                        this.set_phase(
+                            Phase::Reconnecting {
+                                reason: format!("{error:#}"),
+                                retry_in,
+                            },
+                            cx,
+                        );
+                        true
+                    })?;
+                    if !current {
+                        return Ok(());
+                    }
+                    cx.background_executor().timer(retry_in).await;
+                    continue;
+                },
+            };
+            backoff.reset();
+            if !Self::run_client(&this, endpoint, api_key.clone(), generation, cx).await? {
+                return Ok(());
+            }
+            // The SSH process exited. Drop the old forward/client before
+            // opening a replacement, which may choose a different local port.
+            this.update(cx, |this, _| {
+                if let Some(client) = this.client.take() {
+                    client.shutdown();
+                }
+                this.endpoint = None;
+                #[cfg(feature = "ssh")]
+                {
+                    this.tunnel = None;
+                }
+            })?;
+        }
+    }
+
+    /// Returns true when the underlying transport needs to be recreated.
+    async fn run_client(
+        this: &WeakEntity<Self>,
+        endpoint: Endpoint,
+        api_key: Option<SecretString>,
+        generation: u64,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<bool> {
         let options = ConnectOptions::new(endpoint.clone(), identity()).with_api_key(api_key);
         let subscriptions = SUBSCRIPTIONS.iter().map(ToString::to_string).collect();
         let (client, mut updates) = cx.update(|cx| {
@@ -302,18 +382,36 @@ impl Daemon {
             }
         })?;
         while let Some(update) = updates.recv().await {
-            let current = this.update(cx, |this, cx| {
+            let (current, reopen) = this.update(cx, |this, cx| {
                 if this.generation != generation {
-                    return false;
+                    return (false, false);
                 }
-                this.on_update(update, cx);
-                true
+                let reopen = matches!(
+                    update,
+                    ClientUpdate::Connecting { .. } | ClientUpdate::Disconnected { .. }
+                ) && this.transport_dead();
+                if reopen {
+                    this.invalidate_data();
+                    this.set_phase(
+                        Phase::Reconnecting {
+                            reason: "SSH tunnel closed. Reopening the connection.".into(),
+                            retry_in: Duration::ZERO,
+                        },
+                        cx,
+                    );
+                } else {
+                    this.on_update(update, cx);
+                }
+                (true, reopen)
             })?;
+            if reopen {
+                return Ok(true);
+            }
             if !current {
                 break;
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     #[cfg_attr(not(feature = "ssh"), allow(clippy::unused_async))]
@@ -355,10 +453,14 @@ impl Daemon {
                 }
             },
             ClientUpdate::Connected { hello } => {
+                self.invalidate_data();
                 self.connected_once = true;
                 self.hello = Some(*hello);
                 self.set_phase(Phase::Connected, cx);
                 self.refresh(cx);
+                if let Some(key) = self.sessions.selected().map(String::from) {
+                    self.load_history(&key, cx);
+                }
                 self.check_service(cx);
             },
             ClientUpdate::Disconnected {
@@ -381,6 +483,7 @@ impl Daemon {
             },
             ClientUpdate::Event(frame) => self.on_event(*frame, cx),
             ClientUpdate::Lagged(_) => {
+                self.invalidate_data();
                 self.refresh(cx);
                 if let Some(key) = self.sessions.selected().map(String::from) {
                     self.load_history(&key, cx);
@@ -396,6 +499,7 @@ impl Daemon {
         retry_in: Duration,
         cx: &mut Context<Self>,
     ) {
+        self.invalidate_data();
         match kind {
             FailureKind::Tls => {
                 // Retrying cannot help until the user trusts the certificate.
@@ -752,11 +856,18 @@ impl Daemon {
 
     // ── Data ────────────────────────────────────────────────────────────
 
+    fn invalidate_data(&mut self) {
+        self.data_epoch += 1;
+        self.transcripts.invalidate();
+        self.contexts.clear();
+    }
+
     /// Refetch sessions and models (after connecting or missing events).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let Some(client) = self.client.clone() else {
             return;
         };
+        let epoch = self.data_epoch;
         let fetch = runtime::spawn(cx, async move {
             tokio::join!(
                 client.sessions_list(),
@@ -769,12 +880,15 @@ impl Daemon {
                 return;
             };
             let _ = this.update(cx, |this, cx| {
+                if this.data_epoch != epoch {
+                    return;
+                }
                 match sessions {
                     Ok(sessions) => {
                         this.sessions.replace(sessions);
                         cx.emit(DaemonEvent::Sessions);
                         if let Some(key) = this.sessions.selected().map(String::from)
-                            && !this.transcripts.contains_key(&key)
+                            && this.transcripts.needs_load(&key)
                         {
                             this.load_history(&key, cx);
                         }
@@ -803,7 +917,13 @@ impl Daemon {
     }
 
     fn load_history(&mut self, session_key: &str, cx: &mut Context<Self>) {
+        if !matches!(self.phase, Phase::Connected) {
+            return;
+        }
         let Some(client) = self.client.clone() else {
+            return;
+        };
+        let Some(request) = self.transcripts.begin_load(session_key) else {
             return;
         };
         let key = session_key.to_string();
@@ -817,16 +937,21 @@ impl Daemon {
             };
             let _ = this.update(cx, |this, cx| match result {
                 Ok(history) => {
+                    if !this.transcripts.finish_load(&key, request, &history) {
+                        return;
+                    }
                     this.fetch_context(&key, cx);
-                    this.transcripts
-                        .insert(key.clone(), Transcript::from_history(&history));
                     cx.emit(DaemonEvent::Transcript {
                         session_key: key,
                         change: Change::Reset,
                     });
                     cx.notify();
                 },
-                Err(error) => this.toast(format!("Could not load the conversation: {error}"), cx),
+                Err(error) => {
+                    if this.transcripts.fail_load(&key, request) {
+                        this.toast(format!("Could not load the conversation: {error}"), cx);
+                    }
+                },
             });
         })
         .detach();
@@ -837,6 +962,7 @@ impl Daemon {
         let Some(client) = self.client.clone() else {
             return;
         };
+        let epoch = self.data_epoch;
         let key = session_key.to_string();
         let fetch = runtime::spawn(cx, {
             let key = key.clone();
@@ -846,12 +972,17 @@ impl Daemon {
             let Some(result) = fetch.await else {
                 return;
             };
-            let _ = this.update(cx, |this, cx| match result {
-                Ok(context) => {
-                    this.contexts.insert(key, context.token_usage);
-                    cx.notify();
-                },
-                Err(error) => tracing::debug!(%error, "session context unavailable"),
+            let _ = this.update(cx, |this, cx| {
+                if this.data_epoch != epoch {
+                    return;
+                }
+                match result {
+                    Ok(context) => {
+                        this.contexts.insert(key, context.token_usage);
+                        cx.notify();
+                    },
+                    Err(error) => tracing::debug!(%error, "session context unavailable"),
+                }
             });
         })
         .detach();
@@ -916,10 +1047,7 @@ impl Daemon {
         } else if row_changed {
             cx.emit(DaemonEvent::Sessions);
         }
-        let Some(transcript) = self.transcripts.get_mut(&event.session_key) else {
-            return;
-        };
-        let change = transcript.apply(&event.kind);
+        let change = self.transcripts.apply(&event);
         if change != Change::None || matches!(event.kind, ChatEventKind::Thinking) {
             cx.emit(DaemonEvent::Transcript {
                 session_key: event.session_key,
@@ -933,15 +1061,19 @@ impl Daemon {
 
     pub fn select_session(&mut self, key: &str, cx: &mut Context<Self>) {
         if !self.sessions.select(key) {
+            if self.transcripts.needs_load(key) {
+                self.load_history(key, cx);
+            }
             return;
         }
         cx.emit(DaemonEvent::Sessions);
-        if self.transcripts.contains_key(key) {
+        if self.transcripts.get(key).is_some() {
             cx.emit(DaemonEvent::Transcript {
                 session_key: key.to_string(),
                 change: Change::Reset,
             });
-        } else {
+        }
+        if self.transcripts.needs_load(key) {
             self.load_history(key, cx);
         }
         cx.notify();
@@ -949,7 +1081,7 @@ impl Daemon {
 
     pub fn new_session(&mut self, cx: &mut Context<Self>) {
         let key = new_session_key();
-        self.transcripts.insert(key.clone(), Transcript::default());
+        self.transcripts.insert_draft(&key);
         self.sessions.insert_draft(&key);
         cx.emit(DaemonEvent::Sessions);
         cx.emit(DaemonEvent::Transcript {
@@ -965,19 +1097,22 @@ impl Daemon {
         cx.notify();
     }
 
-    pub fn send(&mut self, text: String, cx: &mut Context<Self>) {
+    pub fn send(&mut self, text: String, cx: &mut Context<Self>) -> Option<Task<bool>> {
         let text = text.trim().to_string();
         if text.is_empty() {
-            return;
+            return None;
+        }
+        if !matches!(self.phase, Phase::Connected) {
+            self.toast("Not connected to the daemon. Your draft has been kept.", cx);
+            return None;
         }
         let (Some(client), Some(session_key)) = (
             self.client.clone(),
             self.sessions.selected().map(String::from),
         ) else {
             self.toast("Not connected to the daemon.", cx);
-            return;
+            return None;
         };
-        self.transcripts.entry(session_key.clone()).or_default();
         self.seq += 1;
         let params = ChatSendParams {
             text,
@@ -986,14 +1121,17 @@ impl Daemon {
             seq: Some(self.seq),
         };
         let sent = runtime::spawn(cx, async move { client.chat_send(&params).await });
-        cx.spawn(async move |this, cx| {
-            if let Some(Err(error)) = sent.await {
-                let _ = this.update(cx, |this, cx| {
-                    this.toast(format!("Message not sent: {error}"), cx);
-                });
-            }
-        })
-        .detach();
+        Some(cx.spawn(async move |this, cx| match sent.await {
+            Some(Ok(_)) => true,
+            result => {
+                let message = match result {
+                    Some(Err(error)) => format!("Message not sent: {error}"),
+                    _ => "Message not sent: network runtime stopped.".into(),
+                };
+                let _ = this.update(cx, |this, cx| this.toast(message, cx));
+                false
+            },
+        }))
     }
 
     pub fn abort(&mut self, cx: &mut Context<Self>) {
@@ -1073,3 +1211,7 @@ fn hostname() -> String {
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| "this computer".into())
 }
+
+#[cfg(test)]
+#[path = "daemon/tests.rs"]
+mod tests;

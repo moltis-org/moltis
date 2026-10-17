@@ -33,6 +33,8 @@ pub struct ChatView {
     list: ListState,
     shown_session: Option<String>,
     composer: Entity<TextInput>,
+    sending: bool,
+    composer_version: u64,
     expanded: HashSet<u64>,
     /// Parsed markdown per item id, with the hash of the text it came from.
     markdown: HashMap<u64, (u64, Rc<Vec<Block>>)>,
@@ -55,10 +57,9 @@ impl ChatView {
         list.set_follow_mode(FollowMode::Tail);
         let subscriptions = vec![
             cx.subscribe(&daemon, Self::on_daemon_event),
-            cx.subscribe(&composer, |this, _, event, cx| {
-                if *event == InputEvent::Submit {
-                    this.send(cx);
-                }
+            cx.subscribe(&composer, |this, _, event, cx| match event {
+                InputEvent::Submit => this.send(cx),
+                InputEvent::Changed => this.composer_version += 1,
             }),
         ];
         let mut this = Self {
@@ -66,6 +67,8 @@ impl ChatView {
             list,
             shown_session: None,
             composer,
+            sending: false,
+            composer_version: 0,
             expanded: HashSet::new(),
             markdown: HashMap::new(),
             model_menu_open: false,
@@ -132,13 +135,37 @@ impl ChatView {
     }
 
     fn send(&mut self, cx: &mut Context<Self>) {
+        if self.sending {
+            return;
+        }
         let text = self.composer.read(cx).text().to_string();
         if text.trim().is_empty() {
             return;
         }
-        self.composer.update(cx, |input, cx| input.clear(cx));
+        let Some(sent) = self.daemon.update(cx, |daemon, cx| daemon.send(text, cx)) else {
+            return;
+        };
+        self.sending = true;
+        let version = self.composer_version;
         self.list.scroll_to_end();
-        self.daemon.update(cx, |daemon, cx| daemon.send(text, cx));
+        cx.spawn(async move |this, cx| {
+            let success = sent.await;
+            let _ = this.update(cx, |this, cx| {
+                this.finish_send(success, version, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn finish_send(&mut self, success: bool, version: u64, cx: &mut Context<Self>) {
+        self.sending = false;
+        // Keep the original draft until acceptance. A failed RPC (or an edit
+        // while it was pending) must never erase user text.
+        if success && self.composer_version == version {
+            self.composer.update(cx, |input, cx| input.clear(cx));
+        }
+        cx.notify();
     }
 
     fn abort(&mut self, _: &AbortRun, _: &mut Window, cx: &mut Context<Self>) {
@@ -431,6 +458,12 @@ impl ChatView {
                 .text_color(theme.text_faint)
                 .child("Offline")
                 .into_any_element()
+        } else if self.sending {
+            div()
+                .text_xs()
+                .text_color(theme.text_faint)
+                .child("Sending…")
+                .into_any_element()
         } else if busy {
             div()
                 .id("stop")
@@ -662,7 +695,89 @@ fn greeting(name: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use {
+        gpui::{AppContext, TestAppContext},
+        moltis_client::{Endpoint, TlsTrust},
+    };
+
     use super::*;
+
+    fn chat(cx: &mut TestAppContext) -> Entity<ChatView> {
+        let daemon = cx.new(|cx| {
+            Daemon::disconnected_for_test(
+                crate::servers::ServerProfile::direct(
+                    "test",
+                    Endpoint::parse("http://localhost:1", TlsTrust::System).unwrap(),
+                ),
+                cx,
+            )
+        });
+        cx.new(|cx| ChatView::new(daemon, cx))
+    }
+
+    #[gpui::test]
+    fn offline_enter_keeps_the_draft(cx: &mut TestAppContext) {
+        let chat = chat(cx);
+        chat.update(cx, |chat, cx| {
+            chat.composer
+                .update(cx, |input, cx| input.set_text("keep this draft", cx));
+            chat.send(cx);
+            assert_eq!(chat.composer.read(cx).text(), "keep this draft");
+            assert!(!chat.sending);
+        });
+    }
+
+    #[gpui::test]
+    fn failed_submission_keeps_draft_and_success_clears_it(cx: &mut TestAppContext) {
+        let chat = chat(cx);
+        chat.update(cx, |chat, cx| {
+            chat.composer
+                .update(cx, |input, cx| input.set_text("draft", cx));
+        });
+        cx.run_until_parked();
+        chat.update(cx, |chat, cx| {
+            chat.sending = true;
+            let version = chat.composer_version;
+            chat.finish_send(false, version, cx);
+            assert_eq!(chat.composer.read(cx).text(), "draft");
+            assert!(!chat.sending);
+            chat.finish_send(true, version, cx);
+            assert_eq!(chat.composer.read(cx).text(), "");
+        });
+    }
+
+    #[gpui::test]
+    fn acknowledgement_preserves_edits_made_while_sending(cx: &mut TestAppContext) {
+        let chat = chat(cx);
+        let version = chat.update(cx, |chat, cx| {
+            chat.sending = true;
+            let version = chat.composer_version;
+            chat.composer
+                .update(cx, |input, cx| input.set_text("new draft", cx));
+            version
+        });
+        cx.run_until_parked();
+        chat.update(cx, |chat, cx| {
+            chat.finish_send(true, version, cx);
+            assert_eq!(chat.composer.read(cx).text(), "new draft");
+            assert!(!chat.sending);
+        });
+    }
+
+    #[gpui::test]
+    fn repeated_enter_during_submission_does_not_clear_draft(cx: &mut TestAppContext) {
+        let chat = chat(cx);
+        chat.update(cx, |chat, cx| {
+            chat.composer
+                .update(cx, |input, cx| input.set_text("draft", cx));
+            chat.sending = true;
+            chat.send(cx);
+            assert!(chat.sending);
+            assert_eq!(chat.composer.read(cx).text(), "draft");
+        });
+    }
 
     #[test]
     fn token_counts_are_compact() {

@@ -1073,13 +1073,15 @@ impl LiveChatService {
         // We intentionally omit messageIndex (same rationale as
         // channel_user in dispatch.rs) and include `seq` so that the
         // originating web client can suppress the echo it already
-        // rendered optimistically.
+        // rendered optimistically. The run ID also links the echo to the
+        // persisted user message when a client's history load overlaps a send.
         broadcast(
             &self.state,
             "chat",
             serde_json::json!({
                 "state": "user_message",
                 "text": text,
+                "runId": run_id,
                 "sessionKey": session_key,
                 "seq": client_seq,
             }),
