@@ -170,6 +170,7 @@ pub(crate) struct LocalCa {
 /// Load the persisted CA, or create a new one when it is missing, legacy
 /// (unconstrained), near expiry, or does not cover a required SAN.
 pub(crate) fn load_or_create(dir: &Path, required_sans: &[ServerSan]) -> Result<LocalCa> {
+    restrict_dir(dir)?;
     let cert_path = dir.join(CA_CERT_FILE);
     let key_path = dir.join(CA_KEY_FILE);
     let scope_path = dir.join(CA_SCOPE_FILE);
@@ -285,9 +286,46 @@ fn age_days(path: &Path) -> Option<i64> {
 }
 
 /// Write a private key readable only by the current user.
+///
+/// The key goes to a sibling temp file created owner-only, then is renamed
+/// into place, so it is never readable by others, even briefly.
 pub(crate) fn write_private(path: &Path, contents: &str) -> Result<()> {
-    std::fs::write(path, contents).context("write private key")?;
-    restrict_permissions(path)
+    use std::io::Write;
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("key");
+    let tmp_path = path.with_file_name(format!(".{file_name}.tmp"));
+    let _ = std::fs::remove_file(&tmp_path);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&tmp_path).context("create private key")?;
+    file.write_all(contents.as_bytes())
+        .and_then(|()| file.sync_all())
+        .context("write private key")?;
+    drop(file);
+    std::fs::rename(&tmp_path, path).context("install private key")?;
+    Ok(())
+}
+
+/// Restrict the certificate directory to the current user.
+#[cfg(unix)]
+pub(crate) fn restrict_dir(dir: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+        .context("restrict certificate directory permissions")?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn restrict_dir(_dir: &Path) -> Result<()> {
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -421,5 +459,17 @@ mod tests {
         load_or_create(tmp.path(), &[]).unwrap();
         let mode = std::fs::metadata(&key_path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+        let dir_mode = std::fs::metadata(tmp.path()).unwrap().permissions().mode();
+        assert_eq!(dir_mode & 0o777, 0o700);
+    }
+
+    #[test]
+    fn write_private_replaces_existing_key_and_cleans_up_temp_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("server-key.pem");
+        write_private(&path, "old").unwrap();
+        write_private(&path, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        assert!(!tmp.path().join(".server-key.pem.tmp").exists());
     }
 }

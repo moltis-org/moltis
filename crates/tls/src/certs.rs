@@ -154,6 +154,7 @@ pub fn cert_dir() -> Result<PathBuf> {
         .unwrap_or_else(|| PathBuf::from(".moltis"))
         .join("certs");
     std::fs::create_dir_all(&dir).context("failed to create certs directory")?;
+    crate::ca::restrict_dir(&dir)?;
     Ok(dir)
 }
 

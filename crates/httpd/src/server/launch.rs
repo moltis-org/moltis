@@ -183,8 +183,12 @@ pub(crate) fn next_step_lines(step: &NextStep<'_>) -> Vec<String> {
     if !step.onboarded {
         lines.push("to finish setting up Moltis".into());
     }
-    if let Some(code) = step.setup_code {
-        lines.push(format!("setup code: {code}"));
+    if step.setup_code.is_some() {
+        lines.push(if step.browser == BrowserOutcome::Opened {
+            "the setup code is already filled in".into()
+        } else {
+            "setup code: see the startup banner above".into()
+        });
     }
     lines
 }
@@ -308,11 +312,10 @@ async fn watch_onboarding(args: &AfterListen) {
                 }
             },
             None if onboarded => return,
+            // Logs reach the web UI log buffer and exporters, so reminders
+            // never repeat the setup code (it is in the startup banner).
             None if last_reminder.elapsed() >= REMINDER_INTERVAL => {
-                info!(
-                    "{}",
-                    status_message(&args.base_url, false, setup_code.as_deref())
-                );
+                info!("{}", status_message(&args.base_url, false, None));
                 last_reminder = Instant::now();
             },
             None => {},
@@ -498,7 +501,11 @@ mod tests {
                 .any(|l| l.contains("ssh -L 4000:localhost:4000"))
         );
         assert!(lines.contains(&"then open http://localhost:4000/onboarding".to_string()));
-        assert!(lines.contains(&"setup code: 123456".to_string()));
+        assert!(lines.contains(&"setup code: see the startup banner above".to_string()));
+        assert!(
+            !lines.iter().any(|l| l.contains("123456")),
+            "code must not be logged"
+        );
     }
 
     #[test]
