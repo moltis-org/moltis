@@ -78,6 +78,9 @@ fn open_window(cx: &mut App) {
             titlebar: Some(crate::titlebar::options("Moltis")),
             window_min_size: Some(size(px(720.), px(480.))),
             app_owns_titlebar_drag: cfg!(target_os = "macos"),
+            // Matches `org.moltis.desktop.desktop`, so Linux desktops show
+            // the launcher's name and icon for the window.
+            app_id: Some("org.moltis.desktop".into()),
             ..WindowOptions::default()
         },
         |window, cx| {

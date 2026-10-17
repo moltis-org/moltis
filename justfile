@@ -447,6 +447,10 @@ desktop-mockup file="" feedback="" capture="":
 desktop-package-macos:
     ./scripts/package-desktop-macos.sh
 
+# Package the Moltis Desktop AppImage (Linux) with the moltis daemon inside.
+desktop-package-linux:
+    ./scripts/package-desktop-linux.sh
+
 # Build "Moltis Desktop.app" with the moltis daemon inside (release) and open it.
 desktop-open-macos: desktop-package-macos
     open "apps/desktop/target/bundle/Moltis Desktop.app"

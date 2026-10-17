@@ -73,7 +73,7 @@ fn is_executable(path: &Path) -> bool {
 /// `moltis service install` — installs and starts the user service.
 /// Blocking; run it off the UI thread.
 pub fn install_service(moltis: &Path) -> anyhow::Result<()> {
-    run_service_command(moltis, "install")
+    run_service_command(&service_binary(moltis)?, "install")
 }
 
 fn run_service_command(moltis: &Path, action: &str) -> anyhow::Result<()> {
@@ -96,7 +96,66 @@ fn run_service_command(moltis: &Path, action: &str) -> anyhow::Result<()> {
 /// `moltis service restart`: restart the installed user service, for example
 /// to pick up a newer bundled binary. Blocking; run it off the UI thread.
 pub fn restart_service(moltis: &Path) -> anyhow::Result<()> {
-    run_service_command(moltis, "restart")
+    run_service_command(&service_binary(moltis)?, "restart")
+}
+
+/// The daemon bundled with this app, if it ships one.
+#[must_use]
+pub fn bundled_daemon() -> Option<PathBuf> {
+    bundled_dir()
+        .map(|dir| {
+            dir.join(if cfg!(windows) {
+                "moltis.exe"
+            } else {
+                "moltis"
+            })
+        })
+        .filter(|path| path.is_file())
+}
+
+/// Where the service will run `moltis` from. An AppImage is mounted at a new
+/// temporary path on every launch and unmounted when the app quits, so a
+/// daemon inside it is copied to `<data_dir>/bin/moltis` for the service to
+/// outlive the app. Anything else runs where it is.
+#[must_use]
+pub fn service_path(moltis: &Path) -> PathBuf {
+    let appdir = std::env::var_os("APPDIR").map(PathBuf::from);
+    stable_path(moltis, appdir.as_deref(), &moltis_config::data_dir())
+        .unwrap_or_else(|| moltis.to_path_buf())
+}
+
+fn stable_path(moltis: &Path, appdir: Option<&Path>, data_dir: &Path) -> Option<PathBuf> {
+    let appdir = appdir?;
+    moltis
+        .starts_with(appdir)
+        .then(|| data_dir.join("bin").join("moltis"))
+}
+
+/// [`service_path`], copying the daemon there first when it differs. The copy
+/// is renamed into place, so a daemon still running the old file is
+/// unaffected until it restarts.
+fn service_binary(moltis: &Path) -> anyhow::Result<PathBuf> {
+    let target = service_path(moltis);
+    if target != moltis {
+        copy_executable(moltis, &target)?;
+    }
+    Ok(target)
+}
+
+fn copy_executable(from: &Path, to: &Path) -> anyhow::Result<()> {
+    let dir = to
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("{} has no parent directory", to.display()))?;
+    std::fs::create_dir_all(dir)?;
+    let partial = to.with_extension("partial");
+    std::fs::copy(from, &partial)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755))?;
+    }
+    std::fs::rename(&partial, to)?;
+    Ok(())
 }
 
 /// The version this app was built as (`MOLTIS_VERSION` at build time), which
@@ -106,18 +165,28 @@ pub fn bundled_version() -> Option<&'static str> {
     option_env!("MOLTIS_VERSION").filter(|version| !version.is_empty())
 }
 
-/// The binary the installed launchd service runs, read from its plist
-/// (`~/Library/LaunchAgents/org.moltis.gateway.plist`, written by
-/// `moltis service install`). `None` when no service is installed, or on
-/// other platforms.
+/// The binary the installed user service runs, as `moltis service install`
+/// wrote it: the launchd plist on macOS
+/// (`~/Library/LaunchAgents/org.moltis.gateway.plist`); on Linux the systemd
+/// unit (`~/.config/systemd/user/moltis.service`) or, without systemd, the
+/// supervisor script in the data directory. `None` when no service is
+/// installed.
 #[must_use]
-pub fn installed_service_binary(home: &Path) -> Option<PathBuf> {
-    if !cfg!(target_os = "macos") {
-        return None;
+pub fn installed_service_binary(home: &Path, data_dir: &Path) -> Option<PathBuf> {
+    let read = |path: PathBuf| std::fs::read_to_string(path).ok();
+    if cfg!(target_os = "macos") {
+        return read(home.join("Library/LaunchAgents/org.moltis.gateway.plist"))
+            .and_then(|plist| program_from_plist(&plist));
     }
-    let plist = home.join("Library/LaunchAgents/org.moltis.gateway.plist");
-    let text = std::fs::read_to_string(plist).ok()?;
-    program_from_plist(&text)
+    if cfg!(target_os = "linux") {
+        return read(home.join(".config/systemd/user/moltis.service"))
+            .and_then(|unit| program_from_systemd_unit(&unit))
+            .or_else(|| {
+                read(data_dir.join("moltis-service-supervisor.sh"))
+                    .and_then(|script| program_from_supervisor(&script))
+            });
+    }
+    None
 }
 
 /// The first `ProgramArguments` entry of a launchd plist.
@@ -132,6 +201,32 @@ fn program_from_plist(plist: &str) -> Option<PathBuf> {
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
         .replace("&amp;", "&");
+    (!program.is_empty()).then(|| PathBuf::from(program))
+}
+
+/// The program of a systemd unit's `ExecStart=` line.
+fn program_from_systemd_unit(unit: &str) -> Option<PathBuf> {
+    let command = unit
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("ExecStart="))?
+        .trim();
+    let program = match command.strip_prefix('"') {
+        Some(quoted) => quoted.split('"').next()?,
+        None => command.split_whitespace().next()?,
+    };
+    (!program.is_empty()).then(|| PathBuf::from(program))
+}
+
+/// The `MOLTIS_BIN='...'` assignment of the portable supervisor script.
+fn program_from_supervisor(script: &str) -> Option<PathBuf> {
+    let value = script
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("MOLTIS_BIN="))?
+        .trim();
+    let program = value
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+        .map_or_else(|| value.to_string(), |inner| inner.replace("'\\''", "'"));
     (!program.is_empty()).then(|| PathBuf::from(program))
 }
 
@@ -280,6 +375,73 @@ mod tests {
             Some(PathBuf::from("/a&b/moltis"))
         );
         assert_eq!(program_from_plist("<plist/>"), None);
+    }
+
+    #[test]
+    fn reads_program_from_systemd_unit() {
+        let unit =
+            "[Service]\nType=simple\nExecStart=/home/me/.moltis/bin/moltis --log-level info\n";
+        assert_eq!(
+            program_from_systemd_unit(unit),
+            Some(PathBuf::from("/home/me/.moltis/bin/moltis"))
+        );
+        assert_eq!(
+            program_from_systemd_unit("ExecStart=\"/opt/my apps/moltis\" --log-level info"),
+            Some(PathBuf::from("/opt/my apps/moltis"))
+        );
+        assert_eq!(program_from_systemd_unit("[Service]\n"), None);
+    }
+
+    #[test]
+    fn reads_program_from_supervisor_script() {
+        let script =
+            "#!/bin/sh\nset -u\n\nMOLTIS_BIN='/home/me/.moltis/bin/moltis'\nDATA_DIR='/x'\n";
+        assert_eq!(
+            program_from_supervisor(script),
+            Some(PathBuf::from("/home/me/.moltis/bin/moltis"))
+        );
+        assert_eq!(
+            program_from_supervisor("MOLTIS_BIN='/it'\\''s/moltis'"),
+            Some(PathBuf::from("/it's/moltis"))
+        );
+        assert_eq!(program_from_supervisor("#!/bin/sh\n"), None);
+    }
+
+    #[test]
+    fn appimage_daemons_move_to_the_data_dir() {
+        let appdir = Path::new("/tmp/.mount_MoltisAbc");
+        let data = Path::new("/home/me/.moltis");
+        assert_eq!(
+            stable_path(&appdir.join("usr/bin/moltis"), Some(appdir), data),
+            Some(data.join("bin/moltis"))
+        );
+        // Outside an AppImage, or a daemon not inside it, runs where it is.
+        assert_eq!(
+            stable_path(Path::new("/usr/bin/moltis"), Some(appdir), data),
+            None
+        );
+        assert_eq!(
+            stable_path(&appdir.join("usr/bin/moltis"), None, data),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copies_executable_over_an_existing_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let from = write_script(dir.path(), "exit 0");
+        let to = dir.path().join("bin/moltis");
+        copy_executable(&from, &to).unwrap();
+        std::fs::write(&from, "#!/bin/sh\nexit 1\n").unwrap();
+        copy_executable(&from, &to).unwrap();
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "#!/bin/sh\nexit 1\n");
+        assert_ne!(
+            std::fs::metadata(&to).unwrap().permissions().mode() & 0o111,
+            0
+        );
+        assert!(!dir.path().join("bin/moltis.partial").exists());
     }
 
     #[test]

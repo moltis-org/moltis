@@ -656,19 +656,18 @@ impl Daemon {
             return;
         }
         self.service_checked = true;
-        let bundled = local_daemon::bundled_dir()
-            .map(|dir| dir.join("moltis"))
-            .filter(|path| path.is_file());
-        let installed = moltis_config::home_dir()
-            .as_deref()
-            .and_then(local_daemon::installed_service_binary);
+        let bundled = local_daemon::bundled_daemon();
+        let service_path = bundled.as_deref().map(local_daemon::service_path);
+        let installed = moltis_config::home_dir().and_then(|home| {
+            local_daemon::installed_service_binary(&home, &moltis_config::data_dir())
+        });
         let running = self
             .hello
             .as_ref()
             .map(|hello| hello.server.version.clone());
         match local_daemon::check_service(
             installed.as_deref(),
-            bundled.as_deref(),
+            service_path.as_deref(),
             running.as_deref(),
             local_daemon::bundled_version(),
         ) {
@@ -699,10 +698,7 @@ impl Daemon {
 
     /// Restart the user service so it runs the bundled (newer) daemon.
     pub fn restart_local_daemon(&mut self, cx: &mut Context<Self>) {
-        let Some(moltis) = local_daemon::bundled_dir()
-            .map(|dir| dir.join("moltis"))
-            .filter(|path| path.is_file())
-        else {
+        let Some(moltis) = local_daemon::bundled_daemon() else {
             return;
         };
         self.outdated = None;

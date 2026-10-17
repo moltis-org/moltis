@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "apps/desktop/**"
+      - "scripts/package-desktop-*.sh"
       - "crates/client/**"
       - "crates/protocol/**"
       - "crates/config/**"
@@ -13,6 +14,7 @@ on:
   pull_request:
     paths:
       - "apps/desktop/**"
+      - "scripts/package-desktop-*.sh"
       - "crates/client/**"
       - "crates/protocol/**"
       - "crates/config/**"
@@ -32,14 +34,31 @@ env:
 
 jobs:
   desktop:
-    name: Desktop (macOS)
-    runs-on: macos-latest
+    name: Desktop (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+          - name: Linux
+            os: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+
+      # gpui's X11/Wayland backends, keyboard handling, fonts and Vulkan.
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
+            libxcb1-dev libfontconfig-dev libfreetype-dev libvulkan-dev
 
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
@@ -49,7 +68,7 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           workspaces: apps/desktop
-          shared-key: desktop-v1
+          shared-key: desktop-v1-${{ matrix.name }}
 
       - name: Format
         working-directory: apps/desktop

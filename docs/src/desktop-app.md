@@ -21,6 +21,19 @@ daemon**, so nothing else needs to be installed: unzip it, move
 **Moltis Desktop** to Applications and open it. The first time, the app
 installs its daemon as a background service and connects.
 
+For Linux, each release attaches `moltis-desktop-<version>-x86_64.AppImage` and
+`moltis-desktop-<version>-aarch64.AppImage`, also with the daemon inside:
+
+```bash
+chmod +x moltis-desktop-*.AppImage
+./moltis-desktop-*.AppImage
+```
+
+It runs on X11 and Wayland and needs a Vulkan driver, `libxkbcommon` and
+`fontconfig`, which desktop distributions install by default. An AppImage is
+mounted at a new temporary path on every launch, so the app copies its daemon
+to `~/.moltis/bin/moltis` and runs the service from there.
+
 ## Building it
 
 The app lives in `apps/desktop`, a separate Cargo workspace:
@@ -29,12 +42,23 @@ The app lives in `apps/desktop`, a separate Cargo workspace:
 just desktop-run              # debug build and run (no bundle, no daemon)
 just desktop-open-macos       # build the app with its daemon (release), open it
 just desktop-package-macos    # only build it, in apps/desktop/target/bundle
+just desktop-package-linux    # build the AppImage, in apps/desktop/target/bundle
 ```
 
 `scripts/package-desktop-macos.sh` builds both binaries and signs them. Its
 environment variables choose a universal build (`DESKTOP_UNIVERSAL=1`), the
 signing identity (`DESKTOP_SIGN_IDENTITY`), the daemon's features, or no
 daemon at all (`DESKTOP_DAEMON=0`); see the script's header.
+`scripts/package-desktop-linux.sh` takes the same daemon variables, plus
+`DESKTOP_TARGET` and `APPIMAGETOOL`.
+
+On Linux, building needs the development packages of gpui's backends, for
+example on Debian or Ubuntu:
+
+```bash
+sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+  libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype-dev libvulkan-dev
+```
 
 ## Connecting
 
@@ -44,8 +68,9 @@ configured on this computer (found through `moltis.toml`, honouring
 at the bottom of the sidebar) lists:
 
 - **This computer**: the local daemon. If it is not running, the app starts
-  it as a background service (`moltis service install`, a launchd agent on
-  macOS) and connects as soon as it is up. It uses the `moltis` binary shipped
+  it as a background service (`moltis service install`: a launchd agent on
+  macOS, a systemd user unit on Linux, or a small supervisor script where
+  systemd is unavailable) and connects as soon as it is up. It uses the `moltis` binary shipped
   inside the app, or else the one on your `PATH`. The service keeps running
   after the app quits and starts at login; `moltis service uninstall` removes
   it.
