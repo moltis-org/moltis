@@ -337,11 +337,13 @@ build_targeted_rust_test_cmd() {
       # connectors_tests module.
       local filter_name
       filter_name="$(basename "$file" _tests.rs)"
-      commands+=("$base_cmd $filter_name")
+      commands+=("$base_cmd $filter_name --no-tests=warn")
     elif grep -Eq '#\[(tokio::)?test\]' "$file" 2>/dev/null; then
+      # A filename filter is a guess and can select zero tests, e.g. when the
+      # file's tests sit behind a feature the targeted run does not enable.
       local filter_name
       filter_name="$(basename "$file" .rs)"
-      commands+=("$base_cmd $filter_name")
+      commands+=("$base_cmd $filter_name --no-tests=warn")
     fi
   done < <(changed_files)
 
