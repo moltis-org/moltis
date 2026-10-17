@@ -326,6 +326,80 @@ async fn tsubasa_registration_uses_its_key_and_text_model_limits() -> anyhow::Re
     Ok(())
 }
 
+#[test]
+fn tsubasa_static_models_survive_disabled_discovery() -> anyhow::Result<()> {
+    let mut config = ProvidersConfig {
+        offered: vec!["tsubasa".into()],
+        ..ProvidersConfig::default()
+    };
+    config.providers.insert("tsubasa".into(), ProviderEntry {
+        api_key: Some(Secret::new("test-tsubasa-key".into())),
+        fetch_models: false,
+        alias: Some("my-tsubasa".into()),
+        ..ProviderEntry::default()
+    });
+    let mut registry = ProviderRegistry::empty();
+    registry.register_openai_compatible_providers(&config, &HashMap::new(), &HashMap::new());
+    for model in ["tsubasa-fast", "tsubasa-pro"] {
+        let provider = registry
+            .get(&format!("my-tsubasa::{model}"))
+            .context("static Tsubasa model")?;
+        assert_eq!(provider.context_window(), 32_768);
+        assert!(!provider.supports_tools());
+        assert!(!provider.supports_vision());
+    }
+    Ok(())
+}
+
+#[test]
+fn tsubasa_model_names_do_not_override_custom_provider_capabilities() -> anyhow::Result<()> {
+    let mut config = ProvidersConfig::default();
+    config
+        .providers
+        .insert("custom-other".into(), ProviderEntry {
+            api_key: Some(Secret::new("test-custom-key".into())),
+            base_url: Some("http://127.0.0.1:1/v1".into()),
+            models: vec!["tsubasa-fast".into(), "tsubasa-pro".into()],
+            fetch_models: false,
+            ..ProviderEntry::default()
+        });
+    let mut registry = ProviderRegistry::empty();
+    registry.register_custom_providers(&config, &HashMap::new());
+    for model in ["tsubasa-fast", "tsubasa-pro"] {
+        let provider = registry
+            .get(&format!("custom-other::{model}"))
+            .context("custom model")?;
+        assert_eq!(provider.context_window(), 200_000);
+        assert!(provider.supports_tools());
+        assert!(provider.supports_vision());
+    }
+    Ok(())
+}
+
+#[test]
+fn tsubasa_discovery_keeps_context_without_enabling_unqualified_capabilities() -> anyhow::Result<()>
+{
+    let config = ProvidersConfig {
+        offered: vec!["tsubasa".into()],
+        ..ProvidersConfig::default()
+    };
+    let env = HashMap::from([("TSUBASA_API_KEY".into(), "test-tsubasa-key".into())]);
+    let mut capabilities = crate::ModelCapabilities::infer("custom-model");
+    capabilities.context_window = 65_536;
+    let prefetched = HashMap::from([("tsubasa".into(), vec![
+        crate::DiscoveredModel::new("tsubasa-fast", "Tsubasa Fast").with_capabilities(capabilities),
+    ])]);
+    let mut registry = ProviderRegistry::empty();
+    registry.register_openai_compatible_providers(&config, &env, &prefetched);
+    let provider = registry
+        .get("tsubasa::tsubasa-fast")
+        .context("discovered model")?;
+    assert_eq!(provider.context_window(), 65_536);
+    assert!(!provider.supports_tools());
+    assert!(!provider.supports_vision());
+    Ok(())
+}
+
 #[tokio::test]
 async fn tsubasa_streams_with_its_key_and_reports_auth_errors() -> anyhow::Result<()> {
     use {

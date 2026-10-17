@@ -1,8 +1,11 @@
 //! Static model catalogs and OpenAI-compatible provider definitions.
 
-use crate::openai::{
-    CacheControlPolicy, OpenAiProviderCapabilities, ProbeFallbackPolicy, ProbeOutputCapPolicy,
-    RateLimitPolicy, ReasoningEffortPolicy, SystemMessageRewriteStrategy,
+use crate::{
+    ModelCapabilities,
+    openai::{
+        CacheControlPolicy, OpenAiProviderCapabilities, ProbeFallbackPolicy, ProbeOutputCapPolicy,
+        RateLimitPolicy, ReasoningEffortPolicy, SystemMessageRewriteStrategy,
+    },
 };
 
 /// Known Anthropic Claude models (model_id, display_name).
@@ -146,6 +149,8 @@ pub(crate) struct OpenAiCompatDef {
     pub(crate) env_base_url_key: &'static str,
     pub(crate) default_base_url: &'static str,
     pub(crate) models: &'static [(&'static str, &'static str)],
+    /// Provider-scoped capabilities; discovered context windows still take precedence.
+    pub(crate) model_capabilities: Option<ModelCapabilities>,
     /// Whether to attempt `/models` discovery by default. Providers whose API
     /// does not expose a models endpoint (e.g. MiniMax returns 404) should set
     /// this to `false` so the static catalog is used without a noisy warning.
@@ -171,6 +176,7 @@ impl OpenAiCompatDef {
         env_base_url_key: "",
         default_base_url: "",
         models: &[],
+        model_capabilities: None,
         supports_model_discovery: true,
         requires_api_key: true,
         local_only: false,
@@ -188,6 +194,14 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
             ("tsubasa-fast", "Tsubasa Fast"),
             ("tsubasa-pro", "Tsubasa Pro"),
         ],
+        model_capabilities: Some(ModelCapabilities {
+            context_window: 32_768,
+            text_generation: true,
+            tools: false,
+            vision: false,
+            reasoning: false,
+            requires_responses_api: false,
+        }),
         capabilities: OpenAiProviderCapabilities {
             supports_user_name: false,
             reasoning_effort_policy: ReasoningEffortPolicy::Unsupported,

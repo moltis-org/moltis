@@ -979,11 +979,8 @@ impl ProviderRegistry {
                         Some(models) => models.clone(),
                         None => static_catalog(),
                     }
-                } else if !def.supports_model_discovery && !def.models.is_empty() {
-                    // Provider has no /models endpoint — use the static catalog.
-                    static_catalog()
                 } else {
-                    Vec::new()
+                    static_catalog()
                 };
             let models = merge_preferred_and_discovered_models(preferred, discovered);
 
@@ -1005,9 +1002,18 @@ impl ProviderRegistry {
             };
 
             for model in models {
-                let caps = model
-                    .capabilities
-                    .unwrap_or_else(|| ModelCapabilities::infer(&model.id));
+                let caps = if let Some(defaults) = def.model_capabilities {
+                    ModelCapabilities {
+                        context_window: model
+                            .capabilities
+                            .map_or(defaults.context_window, |caps| caps.context_window),
+                        ..defaults
+                    }
+                } else {
+                    model
+                        .capabilities
+                        .unwrap_or_else(|| ModelCapabilities::infer(&model.id))
+                };
                 let (model_id, display_name, created_at, recommended) = (
                     model.id,
                     model.display_name,
