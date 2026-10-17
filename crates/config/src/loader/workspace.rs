@@ -22,6 +22,11 @@ pub struct LoadedWorkspaceMarkdown {
     pub source: WorkspaceMarkdownSource,
 }
 
+/// Sentinel file written once the onboarding wizard has been completed.
+pub fn onboarded_sentinel_path() -> PathBuf {
+    data_dir().join(".onboarded")
+}
+
 /// Return the workspace directory for a named agent: `data_dir()/agents/<id>`.
 pub fn agent_workspace_dir(agent_id: &str) -> PathBuf {
     data_dir().join("agents").join(agent_id)

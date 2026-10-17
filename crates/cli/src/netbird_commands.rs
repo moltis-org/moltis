@@ -25,7 +25,7 @@ pub async fn handle_netbird(action: NetbirdAction) -> Result<()> {
                 .mode
                 .parse::<NetbirdMode>()
                 .unwrap_or_default();
-            let manager = CliNetbirdManager::new(mode, config.server.port, config.tls.enabled);
+            let manager = CliNetbirdManager::new(mode, config.server.port, config.tls_active());
             let status = manager.status().await?;
             println!("Mode:       {}", status.mode);
             println!("NetBird up: {}", status.netbird_up);

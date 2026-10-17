@@ -1043,6 +1043,7 @@ pub async fn start_gateway(
     data_dir: Option<PathBuf>,
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
     extra_routes: Option<RouteEnhancer>,
+    launch: LaunchOptions,
 ) -> crate::error::Result<()> {
     let prepared = prepare_gateway(
         bind,
@@ -1068,9 +1069,7 @@ pub async fn start_gateway(
         .map_err(|e| crate::Error::Config(format!("invalid bind address '{bind}': {e}")))?;
     let addr = SocketAddr::new(ip, port);
 
-    #[cfg_attr(not(feature = "tls"), allow(unused_variables))]
-    let is_localhost =
-        matches!(bind, "127.0.0.1" | "::1" | "localhost") || bind.ends_with(".localhost");
+    let is_localhost = moltis_config::is_loopback_bind(bind);
 
     // Register the gateway as a Bonjour/mDNS service so LAN clients can
     // discover it without typing the URL manually.
@@ -1164,6 +1163,11 @@ pub async fn start_gateway(
             ));
         };
 
+        if tls_config.cert_path.is_none()
+            && let Some(ref ca) = ca_path
+        {
+            launch::offer_ca_trust(ca).await;
+        }
         ca_cert_path = ca_path.clone();
 
         let mgr = moltis_tls::FsCertManager::new().map_err(|e| crate::Error::Tls(e.to_string()))?;
@@ -1200,14 +1204,11 @@ pub async fn start_gateway(
     } else {
         addr
     };
-    #[cfg(feature = "tls")]
-    let display_host = if is_localhost && tls_active {
+    let display_host = if is_localhost {
         format!("localhost:{port}")
     } else {
         display_ip.to_string()
     };
-    #[cfg(not(feature = "tls"))]
-    let display_host = display_ip.to_string();
     let passkey_origins = if let Some(registry) = banner.webauthn_registry.as_ref() {
         registry.read().await.get_all_origins()
     } else {
@@ -1307,21 +1308,23 @@ pub async fn start_gateway(
         lines.extend(startup_setup_code_lines(code));
     }
     #[cfg(feature = "tls")]
-    if tls_active {
-        if let Some(ref ca) = ca_cert_path {
-            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
-            let ca_host = if is_localhost {
-                "localhost"
-            } else {
-                bind
-            };
-            lines.push(format!(
-                "CA cert: http://{}:{}/certs/ca.pem",
-                ca_host, http_port
-            ));
-            lines.push(format!("  or: {}", ca.display()));
+    if tls_active && let Some(ref ca) = ca_cert_path {
+        let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
+        let ca_host = if is_localhost {
+            "localhost"
+        } else {
+            bind
+        };
+        lines.push(format!(
+            "CA cert: http://{}:{}/certs/ca.pem",
+            ca_host, http_port
+        ));
+        lines.push(format!("  or: {}", ca.display()));
+        if moltis_tls::trust::recorded_decision(ca)
+            != Some(moltis_tls::trust::TrustDecision::Trusted)
+        {
+            lines.push("run `moltis trust-ca` to remove browser warnings".into());
         }
-        lines.push("run `moltis trust-ca` to remove browser warnings".into());
     }
     // Tailscale: enable serve/funnel and show in banner.
     #[cfg(feature = "tailscale")]
@@ -1349,12 +1352,7 @@ pub async fn start_gateway(
             }
         }
     }
-    let width = lines.iter().map(|l| l.len()).max().unwrap_or(0) + 4;
-    info!("┌{}┐", "─".repeat(width));
-    for line in &lines {
-        info!("│  {:<w$}│", line, w = width - 2);
-    }
-    info!("└{}┘", "─".repeat(width));
+    launch::log_box(&lines);
 
     // Dispatch GatewayStart hook.
     if let Some(ref hooks) = state.inner.read().await.hook_registry {
@@ -1366,92 +1364,27 @@ pub async fn start_gateway(
         }
     }
 
-    {
-        let browser_for_shutdown = Arc::clone(&banner.browser_for_lifecycle);
-        let instrumentation_for_shutdown = Arc::clone(&state.instrumentation);
-        #[cfg(feature = "connectors")]
-        let gateway_for_shutdown = Arc::clone(state);
+    shutdown::spawn_shutdown_handler(shutdown::ShutdownHooks {
+        state: Arc::clone(state),
+        browser: Arc::clone(&banner.browser_for_lifecycle),
+        status: launch.status.clone(),
+        #[cfg(feature = "mdns")]
+        mdns: _mdns_daemon.map(|daemon| -> Box<dyn FnOnce() + Send> {
+            Box::new(move || moltis_gateway::mdns::shutdown(&daemon))
+        }),
         #[cfg(feature = "tailscale")]
-        let reset_tailscale_on_exit =
-            banner.tailscale_mode != TailscaleMode::Off && banner.tailscale_reset_on_exit;
-        #[cfg(feature = "tailscale")]
-        let ts_mode = banner.tailscale_mode;
-        tokio::spawn(async move {
-            #[cfg(unix)]
-            let signal_name: &str = {
-                use tokio::signal::unix::{SignalKind, signal};
-                let mut sigterm =
-                    signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
-                let mut sighup =
-                    signal(SignalKind::hangup()).expect("failed to register SIGHUP handler");
-                tokio::select! {
-                    result = tokio::signal::ctrl_c() => {
-                        if result.is_err() { return; }
-                        "SIGINT"
-                    }
-                    result = sigterm.recv() => {
-                        if result.is_none() { return; }
-                        "SIGTERM"
-                    }
-                    result = sighup.recv() => {
-                        if result.is_none() { return; }
-                        "SIGHUP"
-                    }
-                }
-            };
-            #[cfg(not(unix))]
-            let signal_name: &str = {
-                if tokio::signal::ctrl_c().await.is_err() {
-                    return;
-                }
-                "SIGINT"
-            };
-            if signal_name == "SIGINT" {
-                info!("received SIGINT, flushing instrumentation before exit");
-                instrumentation_for_shutdown
-                    .shutdown(std::time::Duration::from_secs(1))
-                    .await;
-                std::process::exit(0);
-            }
-            info!(signal = signal_name, "starting graceful shutdown");
-            #[cfg(feature = "connectors")]
-            gateway_for_shutdown.shutdown_connectors().await;
-            #[cfg(feature = "mdns")]
-            if let Some(ref daemon) = _mdns_daemon {
-                moltis_gateway::mdns::shutdown(daemon);
-            }
-            #[cfg(feature = "tailscale")]
-            if reset_tailscale_on_exit {
-                info!("shutting down tailscale {ts_mode}");
-                let manager = CliTailscaleManager::new();
-                if let Err(e) = manager.disable().await {
-                    warn!("failed to reset tailscale on exit: {e}");
-                }
-            }
-            let shutdown_grace = std::time::Duration::from_secs(5);
-            instrumentation_for_shutdown.shutdown(shutdown_grace).await;
-            info!(
-                grace_secs = shutdown_grace.as_secs(),
-                "shutting down browser pool"
-            );
-            if browser_for_shutdown
-                .shutdown_with_grace(shutdown_grace)
-                .await
-            {
-                info!(
-                    grace_secs = shutdown_grace.as_secs(),
-                    "browser pool shut down"
-                );
-            } else {
-                warn!(
-                    grace_secs = shutdown_grace.as_secs(),
-                    "browser pool shutdown exceeded grace period, forcing process exit"
-                );
-            }
-
-            std::process::exit(0);
-        });
-    }
+        tailscale_reset: (banner.tailscale_mode != TailscaleMode::Off
+            && banner.tailscale_reset_on_exit)
+            .then_some(banner.tailscale_mode),
+    });
+    let after_listen = launch::AfterListen {
+        base_url: format!("{scheme}://{}:{port}", launch::browse_host(bind)),
+        port,
+        bind_is_loopback: is_localhost,
+        policy: launch.open_browser.unwrap_or(config.server.open_browser),
+        status: launch.status,
+        state: Arc::clone(state),
+    };
 
     #[cfg(feature = "tls")]
     if tls_active {
@@ -1473,6 +1406,7 @@ pub async fn start_gateway(
         // Plain HTTP requests to this port get a 301 redirect instead of a TLS error.
         let tls_cfg = rustls_config.expect("rustls config must be set when TLS is active");
         let tcp_listener = tokio::net::TcpListener::bind(addr).await?;
+        launch::spawn_after_listen(after_listen);
         moltis_gateway::server::start_openclaw_background_tasks(banner.data_dir.clone());
         moltis_gateway::server::start_browser_warmup_after_listener(
             Arc::clone(&browser_for_warmup),
@@ -1486,6 +1420,7 @@ pub async fn start_gateway(
 
     // Plain HTTP server (existing behavior, or TLS feature disabled).
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    launch::spawn_after_listen(after_listen);
     moltis_gateway::server::start_openclaw_background_tasks(banner.data_dir.clone());
     moltis_gateway::server::start_browser_warmup_after_listener(
         Arc::clone(&browser_for_warmup),

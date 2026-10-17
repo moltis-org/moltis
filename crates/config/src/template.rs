@@ -9,9 +9,11 @@
 
 /// Generate the default config template with a specific port.
 ///
-/// The template is override-only: only the installation-specific port is set
-/// as an active value. All other settings are commented out with documentation
-/// so users can see what's available without accidentally freezing defaults.
+/// The template is override-only: it sets the installation-specific port and
+/// opts new installs into `tls.loopback_http` (older configs lack the key and
+/// keep HTTPS on loopback). All other settings are commented out with
+/// documentation so users can see what's available without accidentally
+/// freezing defaults.
 pub fn default_config_template(port: u16) -> String {
     format!(
         r##"# Moltis User Configuration
@@ -48,6 +50,8 @@ port = {port}                           # Port number (auto-generated for this i
 # external_url = "https://moltis.example.com"  # Public URL when behind a reverse proxy.
                                                  # Used for WebAuthn passkey origins.
                                                  # Env var MOLTIS_EXTERNAL_URL takes precedence.
+# open_browser = "first-run"             # Open the web UI on start: "first-run" | "always" | "never"
+                                         # Interactive desktop sessions only (never over SSH/containers/CI).
 
 # ══════════════════════════════════════════════════════════════════════════════
 # UPSTREAM PROXY
@@ -81,7 +85,10 @@ port = {port}                           # Port number (auto-generated for this i
 # TLS / HTTPS
 # ══════════════════════════════════════════════════════════════════════════════
 
-# [tls]
+[tls]
+loopback_http = true                # Plain HTTP on loopback binds: http://localhost is a secure
+                                    # context, so passkeys work with no certificate to trust.
+                                    # Non-loopback binds still use HTTPS.
 # enabled = true                    # Enable HTTPS (recommended)
 # auto_generate = true              # Auto-generate local CA and server certificate
 # public_ip = "203.0.113.10"        # Optional IP SAN for direct https://IP access

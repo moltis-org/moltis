@@ -5,9 +5,11 @@
 //! server on a secondary port serves the CA cert for easy download and
 //! redirects everything else to HTTPS.
 
+mod ca;
 mod certs;
 pub mod error;
 mod server;
+pub mod trust;
 
 pub use {
     certs::*,

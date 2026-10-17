@@ -7,6 +7,7 @@
 
 pub mod agent_defs;
 pub mod apple_container;
+pub mod bind;
 pub mod container_mounts;
 pub mod defaults;
 pub mod env_subst;
@@ -28,6 +29,7 @@ pub use apple_container::{
 };
 
 pub use {
+    bind::is_loopback_bind,
     error::{Error, Result},
     loader::{
         DEFAULT_SOUL, LoadedWorkspaceMarkdown, WorkspaceMarkdownSource, agent_workspace_dir,
@@ -41,12 +43,12 @@ pub use {
         load_identity_for_agent, load_memory_md, load_memory_md_for_agent,
         load_memory_md_for_agent_with_source, load_soul, load_soul_for_agent, load_tools_md,
         load_tools_md_for_agent, load_user, managed_files_dir, memory_path,
-        normalize_workspace_markdown_content, resolve_identity, resolve_identity_from_config,
-        resolve_user_profile, resolve_user_profile_from_config, resubstitute_config, save_config,
-        save_identity, save_identity_for_agent, save_raw_config, save_soul, save_soul_for_agent,
-        save_user, save_user_with_mode, set_config_dir, set_data_dir, set_share_dir, share_dir,
-        soul_path, tools_path, update_config, user_global_config_dir,
-        user_global_config_dir_if_different, user_path,
+        normalize_workspace_markdown_content, onboarded_sentinel_path, resolve_identity,
+        resolve_identity_from_config, resolve_user_profile, resolve_user_profile_from_config,
+        resubstitute_config, save_config, save_identity, save_identity_for_agent, save_raw_config,
+        save_soul, save_soul_for_agent, save_user, save_user_with_mode, set_config_dir,
+        set_data_dir, set_share_dir, share_dir, soul_path, tools_path, update_config,
+        user_global_config_dir, user_global_config_dir_if_different, user_path,
     },
     provider_env::{
         GenericProviderEnv, env_value_with_overrides, generic_provider_api_key_from_env,
@@ -60,8 +62,8 @@ pub use {
         GeoLocation, GroupToolPolicy, HeartbeatConfig, HomeAssistantAccountConfig,
         HomeAssistantConfig, InstrumentationConfig, LangfuseSettings, MemoryBackend,
         MemoryCitationsMode, MemoryProvider, MemoryScope, MemorySearchMergeStrategy, MemoryStyle,
-        MessageQueueMode, ModePreset, ModesConfig, MoltisConfig, NgrokConfig, OtlpSettings,
-        PresetMemoryConfig, PresetToolPolicy, PromptMemoryMode, ResolvedIdentity,
+        MessageQueueMode, ModePreset, ModesConfig, MoltisConfig, NgrokConfig, OpenBrowser,
+        OtlpSettings, PresetMemoryConfig, PresetToolPolicy, PromptMemoryMode, ResolvedIdentity,
         SessionAccessPolicyConfig, SessionExportMode, Timezone, ToolMode, ToolPolicyConfig,
         ToolRegistryMode, UserProfile, UserProfileWriteMode, VoiceConfig, VoiceElevenLabsConfig,
         VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig, VoiceTtsProvider,

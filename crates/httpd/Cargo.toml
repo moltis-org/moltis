@@ -63,6 +63,7 @@ url                   = { workspace = true }
 urlencoding           = { workspace = true }
 uuid                  = { workspace = true }
 webauthn-rs           = { features = ["danger-allow-state-serialisation"], workspace = true }
+webbrowser            = { workspace = true }
 
 [features]
 cloudflare-tunnel = []

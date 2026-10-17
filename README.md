@@ -128,6 +128,7 @@ Verify releases with `gh attestation verify <artifact> -R moltis-org/moltis` or 
 - **Safer Agent Editing** — Automatic checkpoints before built-in skill and memory mutations, restore tooling, session branching
 - **Extensibility** — MCP servers (stdio + HTTP/SSE), skill system, 15 lifecycle hook events with circuit breaker, destructive command guard
 - **Agent Client Protocol** — drives external ACP agents (`codex-acp`, `claude-agent-acp`, Cursor), and serves Moltis to ACP clients over stdio via `moltis acp`
+- **First Run** — Opens onboarding in your browser with the setup code pre-filled, serves certificate-free `http://localhost`, offers once to trust a name-constrained local CA for LAN HTTPS, and pins the web UI URL below the terminal logs (with an `ssh -L` hint over SSH)
 - **Security** — Encryption-at-rest vault (XChaCha20-Poly1305 + Argon2id), password + passkey + API key auth, sandbox isolation, SSRF/CSWSH protection
 - **Operations** — Cron scheduling, durable local CalDAV, Gmail, Himalaya email, and reusable Slack/Discord/Matrix/Teams message datasets, provider-specific read-only agent tools, fast full-text search, JSONL/Markdown projections, agent instrumentation (Langfuse for LLM traces, OTLP for Grafana/Datadog), Prometheus metrics, cloud deploy (Fly.io, DigitalOcean), Tailscale integration, managed SSH deploy keys, host-pinned remote targets, live tool inventory in Settings, and CLI/web remote-exec doctor flows
 

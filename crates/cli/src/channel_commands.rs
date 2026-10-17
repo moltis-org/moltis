@@ -327,7 +327,7 @@ fn build_channel_config(
 }
 
 fn default_gateway_base_url(config: &moltis_config::MoltisConfig) -> String {
-    let scheme = if config.tls.enabled {
+    let scheme = if config.tls_active() {
         "https"
     } else {
         "http"

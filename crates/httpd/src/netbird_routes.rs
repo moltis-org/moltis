@@ -41,7 +41,7 @@ async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
     let manager = moltis_gateway::netbird::CliNetbirdManager::new(
         mode,
         config.server.port,
-        config.tls.enabled,
+        config.tls_active(),
     );
     match moltis_gateway::netbird::NetbirdManager::status(&manager).await {
         Ok(status) => {
@@ -113,7 +113,7 @@ async fn configure_handler(
             &updated.netbird,
             &updated.server.bind,
             updated.server.port,
-            updated.tls.enabled,
+            updated.tls_active(),
         )
         .await
     {

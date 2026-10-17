@@ -427,9 +427,61 @@ key_path = "~/.config/moltis/key.pem"
 # Port for the plain-HTTP redirect / CA-download server.
 # Defaults to the server port + 1 when not set.
 # http_redirect_port = 13132
+
+# Serve plain HTTP when bound to a loopback address (127.0.0.1, ::1,
+# localhost). New installs write `true`; configs without the key keep HTTPS.
+loopback_http = true
 ```
 
 Override via environment variable: `MOLTIS_TLS__HTTP_REDIRECT_PORT=8080`.
+
+### Loopback over plain HTTP
+
+With `loopback_http = true`, a gateway bound to loopback serves
+`http://localhost:<port>`. Browsers treat that origin as a secure context:
+passkeys, service workers and `Secure` cookies all work, and there is no
+certificate to trust. Any non-loopback bind, such as `0.0.0.0` or a LAN IP,
+still uses HTTPS. Set `loopback_http = false` to keep HTTPS on localhost, for
+example if you already rely on `https://localhost` bookmarks or passkeys.
+
+### Trusting the local CA
+
+When TLS is active with auto-generated certificates and Moltis runs from a
+terminal on your desktop, it asks once whether to trust its local CA:
+
+- **macOS:** the login keychain, which shows a password dialog.
+- **Linux:** the system store via `sudo update-ca-certificates`.
+- **Windows:** the user root store.
+- **Firefox and Chromium:** their NSS databases, when NSS `certutil` is installed.
+
+Moltis remembers your answer for that CA in `certs/ca-trust.txt`. Run
+`moltis trust-ca` at any time to install the CA manually.
+
+The CA carries X.509 name constraints that limit it to `localhost`,
+`*.localhost`, `.local`, loopback, private (RFC 1918), CGNAT and link-local
+addresses, plus any extra names the server certificate needs, such as
+`public_ip` or the machine's hostname. A leaked CA key therefore cannot be used
+to impersonate public websites. The CA is valid for 10 years and is kept when
+the server certificate renews. A new CA is generated only when the certificate
+needs a name outside its scope; you then need to trust it again. CA and server
+private keys are stored with owner-only permissions.
+
+## Opening the Browser on Start
+
+```toml
+[server]
+open_browser = "first-run"   # "first-run" | "always" | "never"
+```
+
+- `first-run` (default) opens the web UI until onboarding is finished.
+- `always` opens it on every start.
+- `never` never opens a browser.
+
+A browser is opened only when Moltis runs in an interactive terminal on a
+desktop session: never over SSH, inside a container, in CI, or under a service
+manager. On Linux, a `DISPLAY` or `WAYLAND_DISPLAY` is also required. The
+`--open-browser` and `--no-open-browser` flags override this setting for a
+single run. The `BROWSER` environment variable selects which browser to use.
 
 ## Tailscale Integration
 

@@ -384,6 +384,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("shiki_cdn_url", Leaf),
                 ("terminal_enabled", Leaf),
                 ("external_url", Leaf),
+                ("open_browser", Leaf),
             ])),
         ),
         ("providers", MapWithFields {
@@ -501,6 +502,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("ca_cert_path", Leaf),
                 ("public_ip", Leaf),
                 ("http_redirect_port", Leaf),
+                ("loopback_http", Leaf),
             ])),
         ),
         (

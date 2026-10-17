@@ -140,8 +140,9 @@ pub async fn prepare_gateway_core_with_profile(
     let mut startup_mem_probe = StartupMemProbe::new();
     startup_mem_probe.checkpoint("prepare_gateway.start");
 
-    // CLI --no-tls / MOLTIS_NO_TLS overrides config file TLS setting.
-    if no_tls {
+    // CLI --no-tls / MOLTIS_NO_TLS overrides config file TLS setting, and
+    // `tls.loopback_http` serves plain HTTP on loopback binds.
+    if no_tls || !config.tls.active_for_bind(bind) {
         config.tls.enabled = false;
     }
     let behind_proxy = env_flag_enabled("MOLTIS_BEHIND_PROXY");

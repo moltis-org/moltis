@@ -54,11 +54,13 @@ mod builder;
 mod cloudflare_tunnel;
 mod gateway;
 mod handlers;
+mod launch;
 mod middleware;
 #[cfg(feature = "netbird")]
 mod netbird;
 mod ngrok;
 mod runtime;
+mod shutdown;
 #[cfg(feature = "slack")]
 mod slack_callbacks;
 mod types;
@@ -70,6 +72,7 @@ mod types;
 pub use {
     builder::{build_gateway_app, build_gateway_base, finalize_gateway_app},
     gateway::prepare_gateway,
+    launch::{LaunchOptions, StartupStatus},
     runtime::{prepare_httpd_embedded, start_gateway},
     types::*,
 };

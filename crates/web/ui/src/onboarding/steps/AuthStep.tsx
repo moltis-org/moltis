@@ -7,6 +7,7 @@ import { detectPasskeyName } from "../../passkey-detect";
 import { targetValue } from "../../typed-events";
 import { copyToClipboard } from "../../ui";
 import { prepareCreationOptions } from "../../webauthn-helpers";
+import { getLaunchSetupCode } from "../launch-setup-code";
 import { bufferToBase64, ErrorPanel, ensureWsConnected } from "../shared";
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auth step handles passkey+password+code flows
@@ -14,7 +15,8 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 	const [method, setMethod] = useState<string | null>(null); // null | "passkey" | "password"
 	const [password, setPassword] = useState("");
 	const [confirm, setConfirm] = useState("");
-	const [setupCode, setSetupCode] = useState("");
+	const launchSetupCode = getLaunchSetupCode();
+	const [setupCode, setSetupCode] = useState(launchSetupCode ?? "");
 	const [passkeyName, setPasskeyName] = useState("");
 	const [codeRequired, setCodeRequired] = useState(false);
 	const [localhostOnly, setLocalhostOnly] = useState(false);
@@ -425,13 +427,17 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 					<input
 						type="text"
 						className="provider-key-input w-full"
-						inputMode="numeric"
-						pattern="[0-9]*"
+						autoCapitalize="characters"
+						autoComplete="off"
 						value={setupCode}
 						onInput={(e) => setSetupCode(targetValue(e))}
-						placeholder="6-digit code from terminal"
+						placeholder="Code from the moltis terminal"
 					/>
-					<div className="text-xs text-[var(--muted)] mt-1">Find this code in the moltis process log (stdout).</div>
+					<div className="text-xs text-[var(--muted)] mt-1">
+						{launchSetupCode && setupCode === launchSetupCode
+							? "Filled in from the link moltis opened."
+							: "Find this code in the moltis process log (stdout)."}
+					</div>
 				</div>
 			)}
 

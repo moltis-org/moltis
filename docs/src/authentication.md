@@ -206,7 +206,9 @@ direct socket address.
 
 On first run (no credentials configured):
 
-1. A random 6-digit **setup code** is printed to the terminal
+1. A random 8-character **setup code** is printed to the terminal. When Moltis
+   opens the browser for you, the code is passed in the URL fragment
+   (`#setup=…`) and pre-filled on the onboarding page
 2. Local connections get full access (Tier 2) — no setup code needed
 3. Remote connections are redirected to `/onboarding` (Tier 3) — the
    setup code is required to set a password or register a passkey

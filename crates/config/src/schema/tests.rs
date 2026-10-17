@@ -1351,3 +1351,50 @@ fn external_agents_default_to_enabled_for_detection() {
     assert!(config.external_agents.enabled);
     assert!(config.external_agents.agents.is_empty());
 }
+
+#[test]
+fn tls_loopback_http_missing_from_legacy_config_keeps_https() {
+    let config: MoltisConfig = toml::from_str("[tls]\nenabled = true\n").unwrap();
+    assert!(!config.tls.loopback_http);
+    assert!(config.tls_active());
+}
+
+#[test]
+fn tls_loopback_http_serves_plain_http_only_on_loopback() {
+    let mut tls = TlsConfig {
+        loopback_http: true,
+        ..TlsConfig::default()
+    };
+    assert!(!tls.active_for_bind("127.0.0.1"));
+    assert!(!tls.active_for_bind("::1"));
+    assert!(!tls.active_for_bind("localhost"));
+    assert!(tls.active_for_bind("0.0.0.0"));
+    assert!(tls.active_for_bind("192.168.1.10"));
+
+    tls.enabled = false;
+    assert!(!tls.active_for_bind("0.0.0.0"));
+}
+
+#[test]
+fn new_install_template_opts_into_loopback_http() {
+    let config: MoltisConfig =
+        toml::from_str(&crate::template::default_config_template(18789)).unwrap();
+    assert!(config.tls.loopback_http);
+    assert!(config.tls.enabled);
+    assert!(!config.tls_active(), "default bind is loopback");
+}
+
+#[test]
+fn open_browser_parses_kebab_case_and_defaults_to_first_run() {
+    assert_eq!(ServerConfig::default().open_browser, OpenBrowser::FirstRun);
+    for (raw, expected) in [
+        ("first-run", OpenBrowser::FirstRun),
+        ("always", OpenBrowser::Always),
+        ("never", OpenBrowser::Never),
+    ] {
+        let config: MoltisConfig =
+            toml::from_str(&format!("[server]\nopen_browser = \"{raw}\"\n")).unwrap();
+        assert_eq!(config.server.open_browser, expected);
+    }
+    assert!(toml::from_str::<MoltisConfig>("[server]\nopen_browser = \"sometimes\"\n").is_err());
+}

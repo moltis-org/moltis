@@ -146,7 +146,7 @@ async fn save_config_handler(
             &updated.cloudflare_tunnel,
             &updated.server.bind,
             updated.server.port,
-            updated.tls.enabled,
+            updated.tls_active(),
         )
         .await
     {

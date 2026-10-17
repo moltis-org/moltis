@@ -108,11 +108,29 @@ After installation, start Moltis:
 moltis
 ```
 
-On first launch:
+On first launch, when you run it from a terminal on your desktop, Moltis opens
+the web UI in your browser at `http://localhost:<port>/onboarding`. The
+onboarding page walks you through securing the instance, configuring an LLM
+provider, and picking a name for your agent.
 
-1. Open `http://localhost:<port>` in your browser (the port is shown in the terminal output)
-2. Configure your LLM provider (API key)
-3. Start chatting!
+- **The setup code is filled in for you.** The link Moltis opens carries it in
+  the URL fragment (`#setup=…`), which browsers never send to the server. The
+  page removes it from the address bar after reading it.
+- **No certificate warning.** On a loopback bind (the default), new installs
+  serve plain HTTP. Browsers treat `http://localhost` as a secure context, so
+  passkeys work without trusting a certificate. See
+  [TLS / HTTPS](configuration.md#tls--https).
+- **The URL stays visible.** In an interactive terminal, a status line pinned
+  below the logs shows the URL and setup code until onboarding is finished,
+  then switches to `● Moltis running at …`. Without a terminal (Docker, a
+  service, piped output), Moltis prints a "next step" box after startup and
+  repeats the URL in the log every minute until onboarding is finished.
+
+Moltis never opens a browser over SSH, in a container, in CI, or under a
+service manager. Over SSH it prints the `ssh -L` command that forwards the port
+to your computer instead. Use `--no-open-browser`, `--open-browser`, or
+[`server.open_browser`](configuration.md#opening-the-browser-on-start) to
+change this.
 
 ```admonish tip
 Moltis picks a random available port on first install to avoid conflicts. The port is saved in your config and reused on subsequent runs.

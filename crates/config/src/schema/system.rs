@@ -56,6 +56,24 @@ pub struct ServerConfig {
     /// The `MOLTIS_EXTERNAL_URL` environment variable takes precedence
     /// over this field.
     pub external_url: Option<String>,
+    /// When to open the web UI in a browser after the gateway starts.
+    ///
+    /// Only applies to interactive desktop sessions; SSH, containers, CI and
+    /// service managers never open a browser.
+    pub open_browser: OpenBrowser,
+}
+
+/// When the gateway opens the web UI in the local browser on startup.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OpenBrowser {
+    /// Open until onboarding has been completed.
+    #[default]
+    FirstRun,
+    /// Open on every start.
+    Always,
+    /// Never open a browser.
+    Never,
 }
 
 fn default_log_buffer_size() -> usize {
@@ -88,6 +106,7 @@ impl Default for ServerConfig {
             shiki_cdn_url: None,
             terminal_enabled: default_terminal_enabled(),
             external_url: None,
+            open_browser: OpenBrowser::default(),
         }
     }
 }

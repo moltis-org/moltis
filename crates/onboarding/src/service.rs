@@ -333,7 +333,7 @@ impl LiveOnboardingService {
 
 /// Path to the `.onboarded` sentinel file in the data directory.
 fn onboarded_sentinel() -> PathBuf {
-    moltis_config::data_dir().join(".onboarded")
+    moltis_config::onboarded_sentinel_path()
 }
 
 fn merge_identity(dst: &mut AgentIdentity, src: &AgentIdentity) {

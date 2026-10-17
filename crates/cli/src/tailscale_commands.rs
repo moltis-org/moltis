@@ -43,7 +43,7 @@ pub async fn handle_tailscale(action: TailscaleAction) -> Result<()> {
         },
         TailscaleAction::Serve { port } => {
             let config = moltis_config::discover_and_load();
-            let tls = config.tls.enabled;
+            let tls = config.tls_active();
             validate_tailscale_config(TailscaleMode::Serve, "127.0.0.1", false)?;
             manager.enable_serve(port, tls).await?;
             println!("Tailscale serve enabled on port {port}");
@@ -53,7 +53,7 @@ pub async fn handle_tailscale(action: TailscaleAction) -> Result<()> {
         },
         TailscaleAction::Funnel { port } => {
             let config = moltis_config::discover_and_load();
-            let tls = config.tls.enabled;
+            let tls = config.tls_active();
             let has_password = !config.auth.disabled;
             validate_tailscale_config(TailscaleMode::Funnel, "127.0.0.1", has_password)?;
             manager.enable_funnel(port, tls).await?;

@@ -7,7 +7,9 @@ use std::{
 };
 
 use {
-    rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose, SanType},
+    rcgen::{
+        CertificateParams, DnType, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose, SanType,
+    },
     rustls::ServerConfig,
     time::OffsetDateTime,
     tracing::info,
@@ -157,31 +159,27 @@ pub fn cert_dir() -> Result<PathBuf> {
 
 impl CertManager for FsCertManager {
     fn ensure_certs(&self, runtime_sans: &[ServerSan]) -> Result<(PathBuf, PathBuf, PathBuf)> {
-        let ca_cert_path = self.cert_dir.join("ca.pem");
-        let ca_key_path = self.cert_dir.join("ca-key.pem");
         let server_cert_path = self.cert_dir.join("server.pem");
         let server_key_path = self.cert_dir.join("server-key.pem");
         let server_sans_path = self.cert_dir.join("server-sans.txt");
         let required_sans = required_server_sans(runtime_sans);
 
-        let need_regen = !ca_cert_path.exists()
+        let ca = crate::ca::load_or_create(&self.cert_dir, &required_sans)?;
+        let need_server = ca.created
             || !server_cert_path.exists()
             || !server_key_path.exists()
             || is_expired(&server_cert_path, &server_sans_path, 30, &required_sans);
 
-        if need_regen {
-            info!("generating TLS certificates");
-            let (ca_cert_pem, ca_key_pem, server_cert_pem, server_key_pem) =
-                generate_all(&required_sans)?;
-            std::fs::write(&ca_cert_path, &ca_cert_pem)?;
-            std::fs::write(&ca_key_path, &ca_key_pem)?;
+        if need_server {
+            info!("issuing TLS server certificate");
+            let (server_cert_pem, server_key_pem) = issue_server_cert(&ca, &required_sans)?;
             std::fs::write(&server_cert_path, &server_cert_pem)?;
-            std::fs::write(&server_key_path, &server_key_pem)?;
+            crate::ca::write_private(&server_key_path, &server_key_pem)?;
             write_san_metadata(&server_sans_path, &required_sans)?;
             info!(dir = %self.cert_dir.display(), "certificates written");
         }
 
-        Ok((ca_cert_path, server_cert_path, server_key_path))
+        Ok((ca.cert_path, server_cert_path, server_key_path))
     }
 
     fn build_rustls_config(&self, cert: &Path, key: &Path) -> Result<ServerConfig> {
@@ -274,27 +272,12 @@ fn write_san_metadata(path: &Path, sans: &[ServerSan]) -> Result<()> {
     Ok(())
 }
 
-/// Generate CA + server certificates. Returns (ca_cert, ca_key, server_cert, server_key) PEM strings.
-fn generate_all(required_sans: &[ServerSan]) -> Result<(String, String, String, String)> {
+/// Issue a server certificate signed by the local CA. Returns (cert, key) PEM strings.
+fn issue_server_cert(
+    ca: &crate::ca::LocalCa,
+    required_sans: &[ServerSan],
+) -> Result<(String, String)> {
     let now = OffsetDateTime::now_utc();
-
-    // --- CA ---
-    let ca_key = KeyPair::generate()?;
-    let mut ca_params = CertificateParams::new(Vec::<String>::new())?;
-    ca_params
-        .distinguished_name
-        .push(DnType::CommonName, "Moltis Local CA");
-    ca_params
-        .distinguished_name
-        .push(DnType::OrganizationName, "Moltis");
-    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-    // 10-year validity from today.
-    ca_params.not_before = now;
-    ca_params.not_after = now + time::Duration::days(365 * 10);
-    let ca_cert = ca_params.self_signed(&ca_key)?;
-
-    // --- Server cert signed by CA ---
     let server_key = KeyPair::generate()?;
     let mut server_params = CertificateParams::new(vec![LOCALHOST_DOMAIN.to_string()])?;
     server_params
@@ -308,17 +291,14 @@ fn generate_all(required_sans: &[ServerSan]) -> Result<(String, String, String, 
         })
         .collect();
     server_params.subject_alt_names = subject_alt_names;
+    server_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     // 1-year validity from today.
     server_params.not_before = now;
     server_params.not_after = now + time::Duration::days(365);
-    let server_cert = server_params.signed_by(&server_key, &ca_cert, &ca_key)?;
+    let server_cert = server_params.signed_by(&server_key, &ca.cert, &ca.key)?;
 
-    Ok((
-        ca_cert.pem(),
-        ca_key.serialize_pem(),
-        server_cert.pem(),
-        server_key.serialize_pem(),
-    ))
+    Ok((server_cert.pem(), server_key.serialize_pem()))
 }
 
 /// Load cert + key PEM files into a `rustls::ServerConfig`.
@@ -352,13 +332,73 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_generate_all_produces_valid_pems() {
-        let (ca_cert, ca_key, server_cert, server_key) =
-            generate_all(&default_required_sans()).unwrap();
-        assert!(ca_cert.contains("BEGIN CERTIFICATE"));
-        assert!(ca_key.contains("BEGIN PRIVATE KEY"));
-        assert!(server_cert.contains("BEGIN CERTIFICATE"));
-        assert!(server_key.contains("BEGIN PRIVATE KEY"));
+    fn issued_server_cert_chains_to_persisted_ca() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = FsCertManager::with_dir(tmp.path().to_path_buf());
+        let (ca, cert, key) = mgr.ensure_certs(&[]).unwrap();
+        assert!(
+            std::fs::read_to_string(&ca)
+                .unwrap()
+                .contains("BEGIN CERTIFICATE")
+        );
+        assert!(
+            std::fs::read_to_string(&cert)
+                .unwrap()
+                .contains("BEGIN CERTIFICATE")
+        );
+        assert!(
+            std::fs::read_to_string(&key)
+                .unwrap()
+                .contains("BEGIN PRIVATE KEY")
+        );
+        assert_chain_verifies(&ca, &cert, "localhost");
+    }
+
+    #[test]
+    fn server_renewal_keeps_ca_and_still_verifies() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = FsCertManager::with_dir(tmp.path().to_path_buf());
+        let (ca, cert, _) = mgr.ensure_certs(&[]).unwrap();
+        let ca_pem = std::fs::read_to_string(&ca).unwrap();
+        let cert_pem = std::fs::read_to_string(&cert).unwrap();
+
+        // A new LAN IP forces a server re-issue but stays inside the CA scope.
+        let (ca, cert, _) = mgr
+            .ensure_certs(&[ServerSan::Ip("192.168.1.42".parse().unwrap())])
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&ca).unwrap(), ca_pem);
+        assert_ne!(std::fs::read_to_string(&cert).unwrap(), cert_pem);
+        assert_chain_verifies(&ca, &cert, "localhost");
+    }
+
+    fn assert_chain_verifies(ca: &Path, cert: &Path, host: &str) {
+        use rustls::{
+            client::{WebPkiServerVerifier, danger::ServerCertVerifier},
+            pki_types::{ServerName, UnixTime},
+        };
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let mut roots = rustls::RootCertStore::empty();
+        for der in rustls_pemfile::certs(&mut BufReader::new(std::fs::read(ca).unwrap().as_slice()))
+        {
+            roots.add(der.unwrap()).unwrap();
+        }
+        let verifier = WebPkiServerVerifier::builder(std::sync::Arc::new(roots))
+            .build()
+            .unwrap();
+        let leaf =
+            rustls_pemfile::certs(&mut BufReader::new(std::fs::read(cert).unwrap().as_slice()))
+                .next()
+                .unwrap()
+                .unwrap();
+        verifier
+            .verify_server_cert(
+                &leaf,
+                &[],
+                &ServerName::try_from(host.to_string()).unwrap(),
+                &[],
+                UnixTime::now(),
+            )
+            .unwrap();
     }
 
     #[test]

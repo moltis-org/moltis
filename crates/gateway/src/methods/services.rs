@@ -165,7 +165,7 @@ fn mark_onboarded_if_ready(
             .is_some_and(|n| !n.is_empty());
 
     if has_agent_name && has_user_name {
-        let sentinel = moltis_config::data_dir().join(".onboarded");
+        let sentinel = moltis_config::onboarded_sentinel_path();
         let _ = std::fs::write(&sentinel, "");
     }
 }

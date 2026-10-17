@@ -1040,7 +1040,7 @@ pub(crate) async fn onboarding_completed(_gw: &GatewayState) -> bool {
     // Check the onboarded sentinel file directly instead of going through
     // wizard_status() which acquires a std::sync::Mutex and does filesystem
     // I/O — both block the async runtime on low-CPU runners.
-    tokio::task::spawn_blocking(|| moltis_config::data_dir().join(".onboarded").exists())
+    tokio::task::spawn_blocking(|| moltis_config::onboarded_sentinel_path().exists())
         .await
         .unwrap_or(false)
 }

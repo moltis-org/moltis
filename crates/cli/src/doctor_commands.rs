@@ -552,6 +552,13 @@ fn check_tls(config: &MoltisConfig) -> Section {
         section.push(Status::Skip, "TLS disabled in config");
         return section;
     }
+    if !config.tls_active() {
+        section.push(
+            Status::Ok,
+            "Loopback bind served over plain HTTP (tls.loopback_http); no certificate needed",
+        );
+        return section;
+    }
 
     // Custom cert/key paths
     if let (Some(cert_path), Some(key_path)) = (&config.tls.cert_path, &config.tls.key_path) {

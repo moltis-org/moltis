@@ -49,14 +49,18 @@ mod node_commands;
 mod providers_commands;
 mod sandbox_commands;
 mod service_commands;
+mod status_line;
 #[cfg(feature = "tailscale")]
 mod tailscale_commands;
 mod voicecall_commands;
+
+use std::sync::Arc;
 
 use {
     anyhow::anyhow,
     clap::{Parser, Subcommand},
     moltis_gateway::logs::{EnabledLogLevels, LogBroadcastLayer, LogBuffer},
+    status_line::StatusLine,
     tracing::info,
     tracing_subscriber::{
         EnvFilter, Layer as _,
@@ -105,6 +109,12 @@ struct Cli {
     #[cfg(feature = "tls")]
     #[arg(long, global = true, env = "MOLTIS_NO_TLS")]
     no_tls: bool,
+    /// Open the web UI in a browser on start (overrides `server.open_browser`).
+    #[arg(long, global = true, conflicts_with = "no_open_browser")]
+    open_browser: bool,
+    /// Never open a browser on start (overrides `server.open_browser`).
+    #[arg(long, global = true)]
+    no_open_browser: bool,
     /// Tailscale mode: off, serve, or funnel.
     #[cfg(feature = "tailscale")]
     #[arg(long, global = true, env = "MOLTIS_TAILSCALE")]
@@ -334,9 +344,25 @@ fn telemetry_target_allowed(target: &str, protocol_payloads_possible: bool) -> b
     .any(|prefix| target.starts_with(prefix))
 }
 
+fn command_starts_gateway(command: Option<&Commands>) -> bool {
+    matches!(command, None | Some(Commands::Gateway))
+}
+
+/// `server.open_browser` override from `--open-browser` / `--no-open-browser`.
+fn open_browser_override(cli: &Cli) -> Option<moltis_config::OpenBrowser> {
+    match (cli.open_browser, cli.no_open_browser) {
+        (true, _) => Some(moltis_config::OpenBrowser::Always),
+        (_, true) => Some(moltis_config::OpenBrowser::Never),
+        _ => None,
+    }
+}
+
 /// Initialise tracing and optionally attach a [`LogBroadcastLayer`] that
 /// captures events into an in-memory ring buffer for the web UI.
-fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
+///
+/// Returns the pinned status line when the gateway runs in an interactive
+/// terminal with human-readable logs.
+fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) -> Option<Arc<StatusLine>> {
     let mut filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| default_telemetry_filter(&cli.log_level));
     // The ACP SDK logs complete JSON-RPC payloads, including prompts and MCP
@@ -356,8 +382,14 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
     let stdout_reserved = command_reserves_stdout(cli.command.as_ref());
     // Apply the payload filter independently to the in-memory layer. EnvFilter
     // specificity must never be able to re-enable protocol payload targets.
+    let status_line =
+        (!cli.json_logs && !stdout_reserved && command_starts_gateway(cli.command.as_ref()))
+            .then(StatusLine::for_stdout)
+            .flatten();
     let writer = if stdout_reserved {
         BoxMakeWriter::new(std::io::stderr)
+    } else if let Some(ref line) = status_line {
+        BoxMakeWriter::new(line.writer())
     } else {
         BoxMakeWriter::new(std::io::stdout)
     };
@@ -400,6 +432,7 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
             }))
             .init();
     }
+    status_line
 }
 
 #[cfg(feature = "tls")]
@@ -416,63 +449,24 @@ async fn trust_ca() -> anyhow::Result<()> {
     }
 
     eprintln!("Installing CA certificate: {}", ca_path.display());
-
-    #[cfg(target_os = "macos")]
-    {
-        let status = std::process::Command::new("security")
-            .args([
-                "add-trusted-cert",
-                "-r",
-                "trustRoot",
-                "-k",
-                &format!(
-                    "{}/Library/Keychains/login.keychain-db",
-                    std::env::var("HOME").unwrap_or_default()
-                ),
-            ])
-            .arg(&ca_path)
-            .status()?;
-        if status.success() {
-            eprintln!(
-                "CA certificate installed successfully. Restart your browser to pick up the change."
-            );
-        } else {
-            eprintln!("Failed to install CA certificate (exit code: {})", status);
+    let report = moltis_httpd::tls::trust::install_ca(&ca_path);
+    for step in &report.steps {
+        match &step.result {
+            Ok(()) => eprintln!("  ✓ {}", step.store),
+            Err(error) => eprintln!("  ✗ {} ({error})", step.store),
         }
     }
-
-    #[cfg(target_os = "linux")]
-    {
-        let dest = std::path::PathBuf::from("/usr/local/share/ca-certificates/moltis-ca.crt");
-        eprintln!("Copying CA to {} (may require sudo)", dest.display());
-        let status = std::process::Command::new("sudo")
-            .args(["cp"])
-            .arg(&ca_path)
-            .arg(&dest)
-            .status()?;
-        if status.success() {
-            let update = std::process::Command::new("sudo")
-                .arg("update-ca-certificates")
-                .status()?;
-            if update.success() {
-                eprintln!("CA certificate installed successfully.");
-            } else {
-                eprintln!("update-ca-certificates failed (exit code: {})", update);
-            }
-        } else {
-            eprintln!("Failed to copy CA certificate (exit code: {})", status);
-        }
+    for hint in &report.hints {
+        eprintln!("{hint}");
     }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
+    if report.any_installed() {
+        eprintln!("CA certificate installed. Restart your browser to pick up the change.");
+    } else {
         eprintln!(
-            "Automatic trust installation is not supported on this OS.\n\
-             Manually import the CA certificate from: {}",
+            "CA certificate was not installed. Import {} manually.",
             ca_path.display()
         );
     }
-
     Ok(())
 }
 
@@ -484,13 +478,17 @@ async fn main() -> anyhow::Result<()> {
     // Create the log buffer only for the gateway command so the web UI can
     // display captured log entries. Default capacity (1000) can be overridden
     // via `server.log_buffer_size` in moltis.toml.
-    let log_buffer = if matches!(cli.command, None | Some(Commands::Gateway)) {
+    let log_buffer = if command_starts_gateway(cli.command.as_ref()) {
         Some(LogBuffer::default())
     } else {
         None
     };
 
-    init_telemetry(&cli, log_buffer.clone());
+    let status_line = init_telemetry(&cli, log_buffer.clone());
+    let launch = moltis_httpd::LaunchOptions {
+        open_browser: open_browser_override(&cli),
+        status: status_line.map(|line| line as Arc<dyn moltis_httpd::StartupStatus>),
+    };
 
     info!(version = moltis_config::VERSION, "moltis starting");
 
@@ -567,6 +565,7 @@ async fn main() -> anyhow::Result<()> {
                 #[cfg(feature = "tailscale")]
                 tailscale_opts,
                 extra_routes,
+                launch,
             )
             .await
             .map_err(Into::into)

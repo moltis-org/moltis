@@ -1,4 +1,5 @@
 import { init as initI18n } from "./i18n";
+import { captureLaunchSetupCode } from "./onboarding/launch-setup-code";
 import * as S from "./state";
 import { initTheme, injectMarkdownStyles } from "./theme";
 import "./time-format";
@@ -6,6 +7,7 @@ import "./time-format";
 // Expose state module for E2E test WS mocking via shims.
 window.__moltis_state = S;
 
+captureLaunchSetupCode();
 initTheme();
 injectMarkdownStyles();
 const i18nReady = initI18n().catch((err: unknown) => {

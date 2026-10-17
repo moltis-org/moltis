@@ -46,4 +46,7 @@ pub mod tailscale_routes;
 pub use moltis_tls as tls;
 #[cfg(feature = "tailscale")]
 pub use server::TailscaleOpts;
-pub use server::{AppState, PreparedGateway, RouteEnhancer, prepare_httpd_embedded, start_gateway};
+pub use server::{
+    AppState, LaunchOptions, PreparedGateway, RouteEnhancer, StartupStatus, prepare_httpd_embedded,
+    start_gateway,
+};

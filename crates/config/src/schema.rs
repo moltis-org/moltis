@@ -479,6 +479,12 @@ impl MoltisConfig {
     pub fn is_onboarded(&self) -> bool {
         self.identity.name.is_some() && self.user.name.is_some()
     }
+
+    /// Whether the gateway serves HTTPS for the configured bind address.
+    #[must_use]
+    pub fn tls_active(&self) -> bool {
+        self.tls.active_for_bind(&self.server.bind)
+    }
 }
 
 fn serialize_option_secret<S: serde::Serializer>(

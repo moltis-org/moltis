@@ -106,7 +106,7 @@ async function dismissRecoveryKeyIfShown(page) {
 async function completePasswordAuthStep(page) {
 	if (await clickFirstVisibleButton(page, { name: /^Next$/ })) return true;
 
-	const setupCodeInput = page.getByPlaceholder("6-digit code from terminal");
+	const setupCodeInput = page.getByPlaceholder("Code from the moltis terminal");
 	if (await isVisible(setupCodeInput)) {
 		await setupCodeInput.fill("123456");
 
@@ -153,6 +153,25 @@ async function completeIdentityStep(page) {
  */
 test.describe("Onboarding with forced auth (remote)", () => {
 	test.describe.configure({ mode: "serial" });
+
+	// Runs first: the next test consumes the setup code.
+	test("prefills the setup code from the #setup= link and strips it", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/onboarding#setup=123456");
+		await expect
+			.poll(() => new URL(page.url()).pathname, { timeout: 15_000 })
+			.toMatch(/^\/(?:onboarding|login|chats\/.+)$/);
+		// A retry after auth was configured lands elsewhere; nothing to check.
+		if (new URL(page.url()).pathname !== "/onboarding" || (await waitForStableStep(page)) !== "auth") {
+			expect(pageErrors).toEqual([]);
+			return;
+		}
+
+		await expect(page.getByPlaceholder("Code from the moltis terminal")).toHaveValue("123456");
+		await expect(page.getByText("Filled in from the link moltis opened.", { exact: true })).toBeVisible();
+		expect(new URL(page.url()).hash).toBe("");
+		expect(pageErrors).toEqual([]);
+	});
 
 	test("completes auth and identity steps via WebSocket", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);

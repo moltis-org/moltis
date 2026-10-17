@@ -456,6 +456,21 @@ pub struct TlsConfig {
     /// Port for the plain-HTTP redirect/CA-download server.
     /// Defaults to the gateway port + 1 when not set.
     pub http_redirect_port: Option<u16>,
+    /// Serve plain HTTP instead of HTTPS when bound to a loopback address.
+    ///
+    /// Browsers treat `http://localhost` as a secure context, so passkeys,
+    /// service workers and `Secure` cookies work without trusting a local CA.
+    /// TLS still applies to any non-loopback bind. Missing from older configs,
+    /// so it defaults to `false` there; new installs write `true`.
+    pub loopback_http: bool,
+}
+
+impl TlsConfig {
+    /// Whether the gateway serves HTTPS when bound to `bind`.
+    #[must_use]
+    pub fn active_for_bind(&self, bind: &str) -> bool {
+        self.enabled && !(self.loopback_http && crate::is_loopback_bind(bind))
+    }
 }
 
 impl Default for TlsConfig {
@@ -468,6 +483,7 @@ impl Default for TlsConfig {
             ca_cert_path: None,
             public_ip: None,
             http_redirect_port: None,
+            loopback_http: false,
         }
     }
 }

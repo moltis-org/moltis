@@ -196,7 +196,7 @@ fn write_default_config_writes_template_to_requested_path() {
         "generated template should include selected server port"
     );
     // The override-only template has most settings commented out.
-    // Port is the only active value (installation-specific).
+    // Only installation-specific values (port, tls.loopback_http) are active.
     assert!(
         raw.contains("# message_queue_mode"),
         "generated template should document queue mode as commented example"

@@ -125,9 +125,7 @@ pub(super) fn check_provider_names(
 
 /// Run semantic checks on a successfully parsed config.
 pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnostic>) {
-    let is_localhost = config.server.bind == "127.0.0.1"
-        || config.server.bind == "localhost"
-        || config.server.bind == "::1";
+    let is_localhost = crate::is_loopback_bind(&config.server.bind);
 
     // auth.disabled + non-localhost
     if config.auth.disabled && !is_localhost {
