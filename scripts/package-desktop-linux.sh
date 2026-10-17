@@ -16,8 +16,8 @@
 #   DESKTOP_DAEMON_FEATURES daemon cargo features (default "portable"; release
 #                           CI adds "embedded-assets,embedded-wasm", since the
 #                           copied daemon has no share dir beside it)
-#   APPIMAGETOOL            appimagetool to use (default: download the
-#                           continuous build for this architecture)
+#   APPIMAGETOOL            appimagetool to use (default: download the pinned
+#                           release and check its digest)
 #
 # Output: OUTPUT_DIR/moltis-desktop-<version>-<arch>.AppImage
 set -euo pipefail
@@ -110,18 +110,53 @@ exec "$HERE/usr/bin/moltis-desktop" "$@"
 APPRUN
 chmod 755 "$app_dir/AppRun"
 
+# Pinned appimagetool and AppImage runtime, checked against their digests
+# before use (the "continuous" builds change under the same URL).
+APPIMAGETOOL_VERSION="1.9.1"
+RUNTIME_VERSION="20251108"
+case "$arch" in
+  x86_64)
+    appimagetool_sha256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+    runtime_sha256="2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
+    ;;
+  aarch64)
+    appimagetool_sha256="f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158"
+    runtime_sha256="00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444"
+    ;;
+  *)
+    echo "error: no pinned appimagetool for $arch" >&2
+    exit 1
+    ;;
+esac
+
+# Download `url` to `output` and fail unless it has the expected digest.
+fetch_verified() {
+  local url="$1" output="$2" sha256="$3"
+  curl -fsSL -o "$output" "$url"
+  echo "$sha256  $output" | sha256sum -c --quiet -
+}
+
 appimagetool="${APPIMAGETOOL:-}"
 if [[ -z "$appimagetool" ]]; then
   appimagetool="$work/appimagetool"
-  echo "==> Downloading appimagetool ($arch)"
-  curl -fsSL -o "$appimagetool" \
-    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${arch}.AppImage"
+  echo "==> Downloading appimagetool $APPIMAGETOOL_VERSION ($arch)"
+  fetch_verified \
+    "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-${arch}.AppImage" \
+    "$appimagetool" "$appimagetool_sha256"
   chmod 755 "$appimagetool"
 fi
+
+# Without --runtime-file, appimagetool fetches the latest runtime itself.
+runtime="$work/runtime-$arch"
+echo "==> Downloading AppImage runtime $RUNTIME_VERSION ($arch)"
+fetch_verified \
+  "https://github.com/AppImage/type2-runtime/releases/download/${RUNTIME_VERSION}/runtime-${arch}" \
+  "$runtime" "$runtime_sha256"
 
 mkdir -p "$OUT"
 image="$OUT/moltis-desktop-${VERSION}-${arch}.AppImage"
 # --appimage-extract-and-run: no FUSE needed to run appimagetool itself.
-ARCH="$arch" "$appimagetool" --appimage-extract-and-run "$app_dir" "$image"
+ARCH="$arch" "$appimagetool" --appimage-extract-and-run --runtime-file "$runtime" \
+  "$app_dir" "$image"
 
 echo "==> Built $image"
