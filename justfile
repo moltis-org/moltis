@@ -431,6 +431,10 @@ desktop-run:
 desktop-package-macos:
     ./scripts/package-desktop-macos.sh
 
+# Build and open "Moltis Desktop.app" (macOS; notifications need the bundle).
+desktop-open-macos: desktop-package-macos
+    open "apps/desktop/target/bundle/Moltis Desktop.app"
+
 # Build Rust static library and generated C header for the macOS app.
 swift-build-rust:
     ./scripts/build-swift-bridge.sh

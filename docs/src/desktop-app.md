@@ -19,7 +19,8 @@ The app lives in `apps/desktop`, a separate Cargo workspace:
 
 ```bash
 just desktop-run              # debug build and run
-just desktop-package-macos    # "Moltis Desktop.app" in apps/desktop/target/bundle
+just desktop-open-macos       # build "Moltis Desktop.app" (release) and open it
+just desktop-package-macos    # only build the bundle, in apps/desktop/target/bundle
 ```
 
 System notifications (approval prompts) need the app bundle on macOS.
