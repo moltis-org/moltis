@@ -1205,7 +1205,7 @@ pub async fn start_gateway(
         addr
     };
     let display_host = if is_localhost {
-        format!("localhost:{port}")
+        format!("{}:{port}", launch::browse_host(bind))
     } else {
         display_ip.to_string()
     };

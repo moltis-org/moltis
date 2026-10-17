@@ -227,6 +227,9 @@ fn reusable_ca(
     if !cert_path.exists() {
         return Err("CA certificate is missing".into());
     }
+    if !cert_matches_key(cert_path, &key) {
+        return Err("CA certificate does not match the CA key".into());
+    }
     let scope = read_scope(scope_path).ok_or("CA predates name constraints")?;
     if age_days(cert_path).is_none_or(|days| days > CA_ROTATE_AFTER_DAYS) {
         return Err("CA is close to expiry".into());
@@ -235,6 +238,26 @@ fn reusable_ca(
         return Err(format!("CA does not cover {san:?}"));
     }
     Ok(Some((key, scope)))
+}
+
+/// Whether the certificate in `cert_path` was issued for `key`.
+///
+/// A crash between writing `ca.pem` and `ca-key.pem` leaves a certificate for
+/// one key next to another key. Server certificates signed with the saved key
+/// would then fail to verify against the advertised CA, so the pair must
+/// match before reuse. The certificate embeds the key's SubjectPublicKeyInfo
+/// DER verbatim, so a byte search is exact.
+fn cert_matches_key(cert_path: &Path, key: &KeyPair) -> bool {
+    let Ok(pem) = std::fs::read(cert_path) else {
+        return false;
+    };
+    let spki = key.public_key_der();
+    let mut reader = pem.as_slice();
+    let mut certs = rustls_pemfile::certs(&mut reader);
+    match (certs.next(), certs.next()) {
+        (Some(Ok(der)), None) => der.windows(spki.len()).any(|window| window == spki),
+        _ => false,
+    }
 }
 
 /// Deterministic CA parameters: rebuilding them with the persisted key yields
@@ -441,6 +464,30 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         load_or_create(tmp.path(), &[]).unwrap();
         std::fs::remove_file(tmp.path().join(CA_SCOPE_FILE)).unwrap();
+        assert!(load_or_create(tmp.path(), &[]).unwrap().created);
+    }
+
+    #[test]
+    fn ca_whose_cert_and_key_disagree_is_replaced() {
+        // Simulates a crash after `ca.pem` was replaced but before the new
+        // key was written: the certificate belongs to a different key.
+        let tmp = tempfile::tempdir().unwrap();
+        let first = load_or_create(tmp.path(), &[]).unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let foreign = load_or_create(other.path(), &[]).unwrap();
+        std::fs::copy(&foreign.cert_path, &first.cert_path).unwrap();
+        assert!(!cert_matches_key(&first.cert_path, &first.key));
+
+        let repaired = load_or_create(tmp.path(), &[]).unwrap();
+        assert!(repaired.created);
+        assert!(cert_matches_key(&repaired.cert_path, &repaired.key));
+    }
+
+    #[test]
+    fn unreadable_ca_cert_is_replaced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = load_or_create(tmp.path(), &[]).unwrap();
+        std::fs::write(&first.cert_path, "-----BEGIN CERTIFICATE-----\ntrunc").unwrap();
         assert!(load_or_create(tmp.path(), &[]).unwrap().created);
     }
 

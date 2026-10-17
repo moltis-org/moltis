@@ -116,14 +116,23 @@ pub(crate) fn should_open_browser(
 }
 
 /// Host a local browser should use to reach a gateway bound to `bind`.
+///
+/// Only binds that `localhost` actually reaches (the standard loopback
+/// addresses and wildcards) become `localhost`. Other loopback addresses
+/// such as `127.1.2.3` keep their literal form, since the listener does not
+/// accept connections to `127.0.0.1` / `::1`.
 pub(crate) fn browse_host(bind: &str) -> String {
-    let unspecified = bind.parse::<IpAddr>().is_ok_and(|ip| ip.is_unspecified());
-    if unspecified || moltis_config::is_loopback_bind(bind) {
+    let host = bind.trim().trim_start_matches('[').trim_end_matches(']');
+    if host.eq_ignore_ascii_case("localhost") {
         return "localhost".to_string();
     }
-    match bind.parse::<IpAddr>() {
+    match host.parse::<IpAddr>() {
+        Ok(ip) if ip.is_unspecified() || ip == IpAddr::from([127, 0, 0, 1]) => {
+            "localhost".to_string()
+        },
+        Ok(IpAddr::V6(ip)) if ip.is_loopback() => "localhost".to_string(),
         Ok(IpAddr::V6(ip)) => format!("[{ip}]"),
-        _ => bind.to_string(),
+        _ => host.to_string(),
     }
 }
 
@@ -324,6 +333,29 @@ async fn watch_onboarding(args: &AfterListen) {
     }
 }
 
+/// How the user answered the `[Y/n]` CA trust prompt.
+#[cfg(any(feature = "tls", test))]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum TrustAnswer {
+    Accept,
+    Decline,
+    /// EOF (Ctrl+D) or a read error: ask again next time.
+    Cancel,
+}
+
+/// Interpret the prompt's `read_line` result. Only a submitted line counts
+/// as an answer, so an empty line accepts the default but EOF cancels.
+#[cfg(any(feature = "tls", test))]
+pub(crate) fn trust_answer(read: std::io::Result<usize>, answer: &str) -> TrustAnswer {
+    if !matches!(read, Ok(bytes) if bytes > 0) {
+        return TrustAnswer::Cancel;
+    }
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "" | "y" | "yes" => TrustAnswer::Accept,
+        _ => TrustAnswer::Decline,
+    }
+}
+
 /// Offer to install the local CA into the OS and browser trust stores, once
 /// per CA, when someone at this desktop can answer.
 #[cfg(feature = "tls")]
@@ -341,17 +373,18 @@ pub(crate) async fn offer_ca_trust(ca_path: &Path) {
              Your OS may ask for your password. [Y/n] "
         );
         let mut answer = String::new();
-        if std::io::stdin().read_line(&mut answer).is_err() {
-            return None;
+        let read = std::io::stdin().read_line(&mut answer);
+        match trust_answer(read, &answer) {
+            TrustAnswer::Accept => Some(trust::install_ca(&ca_path)),
+            TrustAnswer::Decline => {
+                let _ = trust::record_decision(&ca_path, TrustDecision::Declined);
+                None
+            },
+            TrustAnswer::Cancel => {
+                eprintln!();
+                None
+            },
         }
-        if !matches!(
-            answer.trim().to_ascii_lowercase().as_str(),
-            "" | "y" | "yes"
-        ) {
-            let _ = trust::record_decision(&ca_path, TrustDecision::Declined);
-            return None;
-        }
-        Some(trust::install_ca(&ca_path))
     })
     .await;
 
@@ -456,6 +489,29 @@ mod tests {
         assert_eq!(browse_host("::"), "localhost");
         assert_eq!(browse_host("192.168.1.5"), "192.168.1.5");
         assert_eq!(browse_host("fd00::5"), "[fd00::5]");
+        assert_eq!(browse_host("[::1]"), "localhost");
+        assert_eq!(browse_host("localhost"), "localhost");
+    }
+
+    #[test]
+    fn trust_answer_treats_eof_as_cancel_not_default_yes() {
+        assert_eq!(trust_answer(Ok(0), ""), TrustAnswer::Cancel);
+        assert_eq!(
+            trust_answer(Err(std::io::Error::other("closed")), ""),
+            TrustAnswer::Cancel
+        );
+        assert_eq!(trust_answer(Ok(1), "\n"), TrustAnswer::Accept);
+        assert_eq!(trust_answer(Ok(4), "Yes\n"), TrustAnswer::Accept);
+        assert_eq!(trust_answer(Ok(2), "n\n"), TrustAnswer::Decline);
+        assert_eq!(trust_answer(Ok(6), "maybe\n"), TrustAnswer::Decline);
+    }
+
+    #[test]
+    fn browse_host_keeps_nonstandard_loopback_binds() {
+        // The listener only accepts the exact address, so `localhost` would
+        // not reach it.
+        assert_eq!(browse_host("127.1.2.3"), "127.1.2.3");
+        assert_eq!(browse_host("moltis.localhost"), "moltis.localhost");
     }
 
     #[test]
