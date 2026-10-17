@@ -241,7 +241,7 @@ struct MessageBubbleView: View {
                 case let .image(image):
                     Image(nsImage: image)
                         .resizable()
-                        .aspectRatio(contentMode: .fill)
+                        .scaledToFill()
                         .frame(maxWidth: 120, maxHeight: 90)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .overlay {
