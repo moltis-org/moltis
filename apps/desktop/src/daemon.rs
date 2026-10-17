@@ -302,7 +302,7 @@ impl Daemon {
     ) -> anyhow::Result<Endpoint> {
         match &profile.kind {
             ServerKind::Direct { endpoint } => {
-                let _ = (this, generation);
+                let _ = (this, generation, cx);
                 Ok(endpoint.clone())
             },
             #[cfg(feature = "ssh")]

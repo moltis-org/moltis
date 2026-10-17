@@ -35,6 +35,7 @@
   - [Trusted Network](trusted-network.md)
 - [Voice](voice.md)
 - [Remote Access](remote-access.md)
+- [Desktop App](desktop-app.md)
 - [Channels](channels.md)
   - [Telegram](telegram.md)
   - [Microsoft Teams](teams.md)

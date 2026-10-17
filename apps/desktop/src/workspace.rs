@@ -24,7 +24,7 @@ use crate::{
 /// How long a toast stays up.
 const TOAST_DURATION: Duration = Duration::from_secs(5);
 /// Longest command shown (and approvable) in a notification.
-const NOTIFICATION_COMMAND_MAX: usize = 160;
+const NOTIFICATION_COMMAND_MAX: usize = 120;
 /// Tag prefix of approval notifications.
 const APPROVAL_TAG: &str = "approval:";
 
@@ -87,7 +87,11 @@ impl Workspace {
             .or_else(|| this.store.servers().first().cloned());
         match initial {
             Some(profile) => this.connect(profile, window, cx),
-            None => this.show_servers = true,
+            None => {
+                this.show_servers = true;
+                #[cfg(feature = "mdns")]
+                this.servers.update(cx, |view, cx| view.browse(cx));
+            },
         }
         this.sync_servers(cx);
         this
@@ -337,6 +341,10 @@ impl Workspace {
     fn show_servers_action(&mut self, _: &ShowServers, _: &mut Window, cx: &mut Context<Self>) {
         self.show_servers = !self.show_servers || self.connected.is_none();
         self.sync_servers(cx);
+        #[cfg(feature = "mdns")]
+        if self.show_servers {
+            self.servers.update(cx, |view, cx| view.browse(cx));
+        }
         cx.notify();
     }
 
@@ -427,12 +435,14 @@ impl Render for Workspace {
     }
 }
 
-/// A command can be approved from a notification only if it is shown whole:
-/// short, one line, no control characters.
+/// A command can be approved from a notification only if it is shown whole
+/// and exactly as it runs: short, one line, printable ASCII. Anything else
+/// (control, bidi or other format characters, look-alike Unicode) must be
+/// reviewed in the app.
 fn approvable_in_notification(command: &str) -> bool {
-    command.chars().count() <= NOTIFICATION_COMMAND_MAX
+    command.len() <= NOTIFICATION_COMMAND_MAX
         && !command.trim().is_empty()
-        && !command.chars().any(char::is_control)
+        && command.chars().all(|c| matches!(c, ' '..='~'))
 }
 
 #[cfg(test)]
@@ -448,5 +458,8 @@ mod tests {
             &"a".repeat(NOTIFICATION_COMMAND_MAX + 1)
         ));
         assert!(!approvable_in_notification("   "));
+        assert!(!approvable_in_notification("echo safe \u{202e}fr- mr"));
+        assert!(!approvable_in_notification("ls \u{200b}-la"));
+        assert!(!approvable_in_notification("cat ｆile"));
     }
 }

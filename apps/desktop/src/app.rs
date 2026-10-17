@@ -13,6 +13,8 @@ pub fn run() {
             cx.quit();
             return;
         }
+        // Notifications are attributed to the bundle (see Info.plist).
+        cx.set_app_identity("org.moltis.desktop", "Moltis");
         cx.set_global(Theme::for_appearance(cx.window_appearance()));
         bind_keys(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());

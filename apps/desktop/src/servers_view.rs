@@ -8,11 +8,11 @@ use gpui::{
 use moltis_client::{Endpoint, TlsTrust};
 
 #[cfg(feature = "ssh")]
-use moltis_client::ssh::SshTarget;
+use {crate::servers::ServerKind, moltis_client::ssh::SshTarget};
 
 use crate::{
     input::TextInput,
-    servers::{ServerKind, ServerProfile},
+    servers::ServerProfile,
     theme::Theme,
     ui::{ButtonKind, button, card, field, label, muted},
 };
@@ -45,6 +45,10 @@ pub struct ServersView {
     destination: Entity<TextInput>,
     remote_port: Entity<TextInput>,
     error: Option<String>,
+    #[cfg(feature = "mdns")]
+    nearby: Vec<moltis_client::mdns::DiscoveredDaemon>,
+    #[cfg(feature = "mdns")]
+    browsing: Option<gpui::Task<()>>,
 }
 
 impl ServersView {
@@ -59,7 +63,117 @@ impl ServersView {
             destination: cx.new(|cx| TextInput::single_line("user@studio", cx)),
             remote_port: cx.new(|cx| TextInput::single_line(DEFAULT_PORT.to_string(), cx)),
             error: None,
+            #[cfg(feature = "mdns")]
+            nearby: Vec::new(),
+            #[cfg(feature = "mdns")]
+            browsing: None,
         }
+    }
+
+    /// Look for daemons advertised on the local network.
+    #[cfg(feature = "mdns")]
+    pub fn browse(&mut self, cx: &mut Context<Self>) {
+        let found = crate::runtime::spawn(cx, async {
+            moltis_client::mdns::browse(std::time::Duration::from_secs(3)).await
+        });
+        self.browsing = Some(cx.spawn(async move |this, cx| {
+            let result = found.await;
+            let _ = this.update(cx, |this, cx| {
+                this.browsing = None;
+                match result {
+                    Some(Ok(daemons)) => this.nearby = daemons,
+                    Some(Err(error)) => tracing::debug!(%error, "mDNS browse failed"),
+                    None => {},
+                }
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    /// Discovered daemons not already saved.
+    #[cfg(feature = "mdns")]
+    fn unsaved_nearby(&self) -> Vec<(moltis_client::mdns::DiscoveredDaemon, Endpoint)> {
+        self.nearby
+            .iter()
+            .filter_map(|daemon| Some((daemon.clone(), daemon.endpoint()?)))
+            .filter(|(_, endpoint)| {
+                let address = endpoint.to_string();
+                !self.profiles.iter().any(|p| p.address() == address)
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "mdns")]
+    fn render_nearby(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = Theme::global(cx).clone();
+        let nearby = self.unsaved_nearby();
+        let header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(div().font_weight(FontWeight::SEMIBOLD).child("Nearby"))
+            .child(
+                button(
+                    "browse",
+                    if self.browsing.is_some() {
+                        "Looking…"
+                    } else {
+                        "Refresh"
+                    },
+                    ButtonKind::Ghost,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.browse(cx))),
+            );
+        let rows = nearby
+            .into_iter()
+            .enumerate()
+            .map(|(i, (daemon, endpoint))| {
+                let name = daemon
+                    .hostname
+                    .clone()
+                    .unwrap_or_else(|| daemon.name.clone());
+                let profile = ServerProfile::direct(name.clone(), endpoint.clone());
+                div()
+                    .id(("nearby", i))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .p_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .cursor_pointer()
+                    .hover(|style| style.bg(theme.surface))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(ServersEvent::Save(profile.clone()));
+                        cx.emit(ServersEvent::Connect(profile.clone()));
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(div().font_weight(FontWeight::MEDIUM).child(name))
+                            .child(div().text_xs().text_color(theme.text_muted).child(
+                                match &daemon.version {
+                                    Some(version) => format!("{endpoint} · v{version}"),
+                                    None => endpoint.to_string(),
+                                },
+                            )),
+                    )
+                    .child(div().text_xs().text_color(theme.accent).child("Connect"))
+            });
+        let empty = self.unsaved_nearby().is_empty() && self.browsing.is_none();
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(header)
+            .children(rows)
+            .when(empty, |this| {
+                this.child(muted("No other moltis daemons found on this network.", cx))
+            })
+            .into_any_element()
     }
 
     /// The servers to list (the local daemon first) and the connected one.
@@ -161,6 +275,7 @@ impl ServersView {
             div()
                 .id(id)
                 .flex_1()
+                .min_w_0()
                 .p_2()
                 .rounded_md()
                 .border_1()
@@ -251,6 +366,10 @@ impl ServersView {
 impl Render for ServersView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::global(cx).clone();
+        #[cfg(feature = "mdns")]
+        let nearby = Some(self.render_nearby(cx));
+        #[cfg(not(feature = "mdns"))]
+        let nearby: Option<gpui::AnyElement> = None;
         let rows = self
             .profiles
             .clone()
@@ -332,6 +451,7 @@ impl Render for ServersView {
                         cx,
                     ))
                     .children(rows)
+                    .children(nearby)
                     .child(if self.adding {
                         self.render_form(cx).into_any_element()
                     } else {

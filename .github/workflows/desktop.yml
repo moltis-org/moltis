@@ -1,0 +1,69 @@
+name: Desktop App
+
+# apps/desktop is its own Cargo workspace, so the main CI does not build it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - "crates/client/**"
+      - "crates/protocol/**"
+      - "crates/config/**"
+      - ".github/workflows/desktop.yml"
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "crates/client/**"
+      - "crates/protocol/**"
+      - "crates/config/**"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Must match rust-toolchain.toml (single source of truth for the nightly pin).
+  NIGHTLY_TOOLCHAIN: nightly-2026-06-20
+
+jobs:
+  desktop:
+    name: Desktop (macOS)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        with:
+          toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          workspaces: apps/desktop
+          shared-key: desktop-v1
+
+      - name: Format
+        working-directory: apps/desktop
+        run: cargo fmt -- --check
+
+      - name: Clippy
+        working-directory: apps/desktop
+        run: |
+          cargo clippy --locked --all-targets --features capture -- -D warnings
+          cargo clippy --locked --all-targets --no-default-features -- -D warnings
+
+      - name: Test
+        working-directory: apps/desktop
+        run: cargo test --locked
+
+      - name: Client crate tests
+        run: cargo test --locked -p moltis-client --all-features

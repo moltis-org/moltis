@@ -1,0 +1,105 @@
+# Desktop App
+
+Moltis Desktop is a native client written in Rust with
+[gpui](https://gpui.rs). It **connects to a running moltis daemon** instead of
+embedding one: quit the app and the daemon keeps answering your channels, cron
+jobs and other clients. It can connect to the daemon on this computer or to
+remote daemons.
+
+```mermaid
+flowchart LR
+    App[Moltis Desktop] -- "WSS /ws/chat + API key" --> Local[(moltis on this computer)]
+    App -- "HTTPS (LAN, Tailscale)" --> Remote[(moltis on another machine)]
+    App -- "ssh -L → 127.0.0.1:port" --> Tunnel[(moltis behind SSH)]
+```
+
+## Running it
+
+The app lives in `apps/desktop`, a separate Cargo workspace:
+
+```bash
+just desktop-run              # debug build and run
+just desktop-package-macos    # "Moltis Desktop.app" in apps/desktop/target/bundle
+```
+
+System notifications (approval prompts) need the app bundle on macOS.
+
+## Connecting
+
+On start the app connects to the last server you used, or to the daemon
+configured on this computer (found through `moltis.toml`, honouring
+`MOLTIS_CONFIG_DIR`). The **Servers** screen (`⌘⇧S`, or click the server name
+at the bottom of the sidebar) lists:
+
+- **This computer**: the local daemon. If it is not running, the app offers
+  to install it as a background service (`moltis service install`) and
+  connects as soon as it is up.
+- **Saved servers**: added by URL (direct HTTPS) or as an SSH tunnel.
+- **Nearby**: daemons advertising `_moltis._tcp` over Bonjour/mDNS.
+
+### Direct (HTTPS)
+
+Enter `https://host:port`. Moltis daemons serve a certificate from their own
+certificate authority, so the first connection shows the certificate's SHA-256
+fingerprint. Compare it with the daemon's before trusting it; the app then
+pins it. If the certificate later changes, the app stops and asks again.
+
+Plain `http://` is only accepted for `localhost`: credentials are never sent
+unencrypted to another machine.
+
+### SSH tunnel
+
+Enter an SSH destination (`user@host` or an alias from `~/.ssh/config`) and
+the daemon's port on that machine. The app runs your system `ssh` (so your
+config, agent and hardware keys work as in a terminal) with a local port
+forward to the remote loopback address. The daemon does not need to listen on
+the network.
+
+```admonish note
+Before a daemon's first-run setup is complete, connections from its own
+loopback address are trusted without credentials. A tunnel lands on that
+address, so anyone who can SSH into the machine can use such a daemon.
+Finish the setup (set a password) on any daemon you reach over SSH.
+```
+
+## Signing in
+
+The first time a daemon asks for credentials, sign in with its password. The
+app exchanges it for a scoped API key (`operator.read`, `operator.write`,
+`operator.approvals`, never `operator.admin`) labelled
+"Moltis Desktop (hostname)", stores the key in the system keychain and forgets
+the password. Revoke it any time in the web UI under **Settings → Security**.
+
+Daemons secured only with passkeys: create an API key in the web UI and paste
+it into the app.
+
+**File → Sign Out of This Server** deletes the stored key.
+
+## Chatting
+
+- Sessions of the daemon appear in the sidebar; **New chat** (`⌘N`) starts one.
+- Replies stream in with native markdown, syntax-highlighted code, collapsible
+  reasoning, tool cards (click to see output) and token/speed details.
+- Pick the model from the header; stop a reply with **Stop** or `⌘.`.
+- When a command needs approval, an approval card appears above the message
+  box. If the window is in the background, a notification is posted; short,
+  single-line commands can be approved from it, anything else opens the app
+  so you can review the full command.
+
+## Web UI
+
+Settings, channels, providers, scheduled jobs and logs open in your browser
+from the **Web** menu (`⌘,` opens settings).
+
+## Protocol
+
+The app speaks the WebSocket RPC protocol v4 through the `moltis-client`
+crate, which is also what `moltis-ctl` uses. Typed payloads (chat events,
+sessions, models, approvals) are defined in `moltis-protocol` and shared with
+the daemon.
+
+## Troubleshooting
+
+- Logs: run with `MOLTIS_DESKTOP_LOG=debug`.
+- Screenshots for bug reports: build with `--features capture` and set
+  `MOLTIS_DESKTOP_CAPTURE=/path/to/shot.png`.

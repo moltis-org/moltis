@@ -410,6 +410,27 @@ ui-e2e-headed:
 # Build all Linux packages (deb + rpm + arch + appimage) for all architectures
 packages-all: deb-all rpm-all arch-pkg-all
 
+# Build the native gpui desktop client (apps/desktop, its own workspace).
+desktop-build:
+    cd apps/desktop && cargo build
+
+# Run the desktop client's tests.
+desktop-test:
+    cd apps/desktop && cargo test
+
+# Lint the desktop client (all feature combinations it ships with).
+desktop-lint:
+    cd apps/desktop && cargo clippy --all-targets --features capture -- -D warnings
+    cd apps/desktop && cargo clippy --all-targets --no-default-features -- -D warnings
+
+# Run the desktop client.
+desktop-run:
+    cd apps/desktop && cargo run
+
+# Package "Moltis Desktop.app" (macOS).
+desktop-package-macos:
+    ./scripts/package-desktop-macos.sh
+
 # Build Rust static library and generated C header for the macOS app.
 swift-build-rust:
     ./scripts/build-swift-bridge.sh
