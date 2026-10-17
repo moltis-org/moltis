@@ -14,8 +14,8 @@ use {
             EventFrame, HelloOk,
             chat_event::{ChatEvent, ChatEventKind},
             client_api::{
-                ApprovalDecision, ChatSendParams, ExecApprovalRequest, ModelEntry, SessionEvent,
-                events,
+                AgentIdentity, ApprovalDecision, ChatSendParams, ContextTokenUsage,
+                ExecApprovalRequest, ModelEntry, SessionEvent, events,
             },
         },
         tls,
@@ -113,6 +113,9 @@ pub struct Daemon {
     sessions: Sessions,
     transcripts: HashMap<String, Transcript>,
     models: Vec<ModelEntry>,
+    /// Token usage per session, from `chat.context`.
+    contexts: HashMap<String, ContextTokenUsage>,
+    identity: Option<AgentIdentity>,
     model: Option<String>,
     approvals: Vec<ExecApprovalRequest>,
     seq: u64,
@@ -138,6 +141,8 @@ impl Daemon {
             sessions: Sessions::default(),
             transcripts: HashMap::new(),
             models: Vec::new(),
+            contexts: HashMap::new(),
+            identity: None,
             model: None,
             approvals: Vec::new(),
             seq: 0,
@@ -158,11 +163,6 @@ impl Daemon {
     #[must_use]
     pub fn phase(&self) -> &Phase {
         &self.phase
-    }
-
-    #[must_use]
-    pub fn hello(&self) -> Option<&HelloOk> {
-        self.hello.as_ref()
     }
 
     #[must_use]
@@ -191,6 +191,17 @@ impl Daemon {
     }
 
     #[must_use]
+    /// Token usage of the selected session, once fetched.
+    pub fn selected_context(&self) -> Option<ContextTokenUsage> {
+        let key = self.sessions.selected()?;
+        self.contexts.get(key).copied()
+    }
+
+    /// The agent's identity and the owner's name, once fetched.
+    pub fn identity(&self) -> Option<&AgentIdentity> {
+        self.identity.as_ref()
+    }
+
     pub fn approvals(&self) -> &[ExecApprovalRequest] {
         &self.approvals
     }
@@ -656,11 +667,14 @@ impl Daemon {
             return;
         };
         let fetch = runtime::spawn(cx, async move {
-            let (sessions, models) = tokio::join!(client.sessions_list(), client.models_list());
-            (sessions, models)
+            tokio::join!(
+                client.sessions_list(),
+                client.models_list(),
+                client.agent_identity()
+            )
         });
         cx.spawn(async move |this, cx| {
-            let Some((sessions, models)) = fetch.await else {
+            let Some((sessions, models, identity)) = fetch.await else {
                 return;
             };
             let _ = this.update(cx, |this, cx| {
@@ -687,6 +701,10 @@ impl Daemon {
                     this.models = models;
                     cx.emit(DaemonEvent::Models);
                 }
+                match identity {
+                    Ok(identity) => this.identity = Some(identity),
+                    Err(error) => tracing::debug!(%error, "agent identity unavailable"),
+                }
                 cx.notify();
             });
         })
@@ -708,6 +726,7 @@ impl Daemon {
             };
             let _ = this.update(cx, |this, cx| match result {
                 Ok(history) => {
+                    this.fetch_context(&key, cx);
                     this.transcripts
                         .insert(key.clone(), Transcript::from_history(&history));
                     cx.emit(DaemonEvent::Transcript {
@@ -717,6 +736,31 @@ impl Daemon {
                     cx.notify();
                 },
                 Err(error) => this.toast(format!("Could not load the conversation: {error}"), cx),
+            });
+        })
+        .detach();
+    }
+
+    /// Refetch a session's token usage (after loading it or a finished turn).
+    fn fetch_context(&mut self, session_key: &str, cx: &mut Context<Self>) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        let key = session_key.to_string();
+        let fetch = runtime::spawn(cx, {
+            let key = key.clone();
+            async move { client.chat_context(&key).await }
+        });
+        cx.spawn(async move |this, cx| {
+            let Some(result) = fetch.await else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(context) => {
+                    this.contexts.insert(key, context.token_usage);
+                    cx.notify();
+                },
+                Err(error) => tracing::debug!(%error, "session context unavailable"),
             });
         })
         .detach();
@@ -769,6 +813,12 @@ impl Daemon {
     }
 
     fn on_chat_event(&mut self, event: ChatEvent, cx: &mut Context<Self>) {
+        if matches!(
+            event.kind,
+            ChatEventKind::Final(_) | ChatEventKind::Error { .. } | ChatEventKind::Aborted { .. }
+        ) {
+            self.fetch_context(&event.session_key, cx);
+        }
         let (row_changed, unknown) = self.sessions.apply_chat_event(&event);
         if unknown {
             self.refresh(cx);

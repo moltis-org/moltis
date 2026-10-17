@@ -5,8 +5,8 @@ use std::future::Future;
 use {
     moltis_protocol::{
         client_api::{
-            ApprovalDecision, ChatSendParams, ExecApprovalResolveParams, ModelEntry, SessionEntry,
-            SessionKeyParams, methods,
+            AgentIdentity, ApprovalDecision, ChatContext, ChatSendParams,
+            ExecApprovalResolveParams, ModelEntry, SessionEntry, SessionKeyParams, methods,
         },
         message::PersistedMessage,
     },
@@ -77,6 +77,19 @@ pub trait Rpc: Sync {
 
     fn models_list(&self) -> impl Future<Output = Result<Vec<ModelEntry>>> + Send {
         self.call_typed(methods::MODELS_LIST, &NoParams {})
+    }
+
+    /// Token usage and context window of a session.
+    fn chat_context(&self, session_key: &str) -> impl Future<Output = Result<ChatContext>> + Send {
+        let params = SessionKeyParams {
+            session_key: session_key.into(),
+        };
+        async move { self.call_typed(methods::CHAT_CONTEXT, &params).await }
+    }
+
+    /// The agent's identity and the owner's name.
+    fn agent_identity(&self) -> impl Future<Output = Result<AgentIdentity>> + Send {
+        self.call_typed(methods::AGENT_IDENTITY_GET, &NoParams {})
     }
 
     fn resolve_approval(
@@ -191,5 +204,22 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(models[0].name(), "a");
+    }
+
+    #[tokio::test]
+    async fn context_and_identity_use_wire_names() {
+        let rpc = fake(
+            json!({"tokenUsage": {"currentTotal": 10, "contextWindow": 100}, "user_name": "Ada"}),
+        );
+        let context = rpc.chat_context("s").await.unwrap();
+        assert_eq!(context.token_usage.fraction(), Some(0.1));
+        let identity = rpc.agent_identity().await.unwrap();
+        assert_eq!(identity.user_name.as_deref(), Some("Ada"));
+        let calls = rpc.calls.lock().unwrap().clone();
+        assert_eq!(
+            calls[0],
+            ("chat.context".into(), json!({"sessionKey": "s"}))
+        );
+        assert_eq!(calls[1], ("agent.identity.get".into(), json!({})));
     }
 }

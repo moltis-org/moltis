@@ -11,6 +11,7 @@ actions!(moltis, [
     OpenWebSettings,
     OpenWebProviders,
     OpenWebCrons,
+    OpenWebSkills,
     OpenWebLogs,
     ShowServers,
     ReconnectNow,

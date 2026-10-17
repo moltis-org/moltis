@@ -23,7 +23,8 @@ pub fn render(id: &str, blocks: &[Block], cx: &App) -> AnyElement {
     div()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap_3()
+        .line_height(px(23.))
         .children(
             blocks
                 .iter()
@@ -122,16 +123,20 @@ fn code_block(code: &str, lang: Option<&str>, theme: &Theme) -> AnyElement {
         .collect::<Vec<_>>();
     div()
         .w_full()
-        .rounded_md()
+        .rounded_lg()
+        .overflow_hidden()
         .bg(theme.code_background)
         .border_1()
         .border_color(theme.border)
-        .when_some(lang, |this, lang| {
+        .when_some(lang.filter(|lang| !lang.is_empty()), |this, lang| {
             this.child(
                 div()
                     .px_3()
-                    .pt_1()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(theme.border)
                     .text_xs()
+                    .line_height(px(18.))
                     .text_color(theme.text_muted)
                     .child(lang.to_string()),
             )
@@ -142,6 +147,7 @@ fn code_block(code: &str, lang: Option<&str>, theme: &Theme) -> AnyElement {
                 .py_2()
                 .font_family(theme.mono_font.clone())
                 .text_size(px(12.5))
+                .line_height(px(19.))
                 .child(
                     StyledText::new(SharedString::from(code.to_string()))
                         .with_highlights(highlights),

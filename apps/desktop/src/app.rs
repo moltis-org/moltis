@@ -1,8 +1,6 @@
 //! Application startup: runtime, theme, menus, keys, the main window.
 
-use gpui::{
-    App, AppContext, Bounds, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions, px, size,
-};
+use gpui::{App, AppContext, Bounds, Menu, MenuItem, WindowBounds, WindowOptions, px, size};
 
 use crate::{actions::*, runtime::Tokio, theme::Theme, workspace::Workspace};
 
@@ -62,6 +60,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("Open Web UI", OpenWebUi),
                 MenuItem::action("Providers", OpenWebProviders),
                 MenuItem::action("Scheduled Jobs", OpenWebCrons),
+                MenuItem::action("Skills", OpenWebSkills),
                 MenuItem::action("Logs", OpenWebLogs),
             ],
             disabled: false,
@@ -74,10 +73,9 @@ fn open_window(cx: &mut App) {
     let opened = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Moltis".into()),
-                ..TitlebarOptions::default()
-            }),
+            titlebar: Some(crate::titlebar::options("Moltis")),
+            window_min_size: Some(size(px(720.), px(480.))),
+            app_owns_titlebar_drag: cfg!(target_os = "macos"),
             ..WindowOptions::default()
         },
         |window, cx| {

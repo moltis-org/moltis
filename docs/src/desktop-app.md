@@ -82,10 +82,16 @@ it into the app.
 
 ## Chatting
 
-- Sessions of the daemon appear in the sidebar; **New chat** (`⌘N`) starts one.
+- Sessions of the daemon appear in the sidebar, grouped into **Today** and
+  **Earlier**; a filled dot marks one that is replying. **New chat** (`⌘N`)
+  starts one; **Scheduled** and **Skills** open those pages of the web UI.
+- The footer shows the owner's name (from the daemon's user profile) and the
+  server; click it to switch servers.
 - Replies stream in with native markdown, syntax-highlighted code, collapsible
   reasoning, tool cards (click to see output) and token/speed details.
-- Pick the model from the header; stop a reply with **Stop** or `⌘.`.
+- Under the message box: the context in use against the model's window
+  (`20k / 200k`, from `chat.context`) and the model picker. Stop a reply with
+  the stop button or `⌘.`.
 - When a command needs approval, an approval card appears above the message
   box. If the window is in the background, a notification is posted; short,
   single-line commands can be approved from it, anything else opens the app

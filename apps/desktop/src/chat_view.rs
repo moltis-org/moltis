@@ -22,7 +22,7 @@ use crate::{
     status_view::reconnect_text,
     theme::Theme,
     transcript::{Change, RunState},
-    ui::{ButtonKind, button, field, muted},
+    ui::{ButtonKind, button},
 };
 
 use moltis_client::protocol::client_api::ApprovalDecision;
@@ -49,7 +49,7 @@ impl Focusable for ChatView {
 impl ChatView {
     pub fn new(daemon: Entity<Daemon>, cx: &mut Context<Self>) -> Self {
         let composer =
-            cx.new(|cx| TextInput::multi_line("Message Moltis…  (⇧↩ for a new line)", 10, cx));
+            cx.new(|cx| TextInput::multi_line("Describe a task or ask a question", 10, cx));
         let list = ListState::new(0, ListAlignment::Top, px(1000.));
         list.set_follow_mode(FollowMode::Tail);
         let subscriptions = vec![
@@ -169,47 +169,72 @@ impl ChatView {
         blocks
     }
 
-    fn render_header(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    /// The chat title, centred in the band that also moves the window.
+    fn render_header(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::global(cx).clone();
-        let daemon = self.daemon.read(cx);
-        let title = daemon
+        let title = self
+            .daemon
+            .read(cx)
             .sessions()
             .selected_entry()
             .map_or_else(|| "New chat".to_string(), |e| e.title().to_string());
+        crate::titlebar::movable(
+            div()
+                .id("chat-titlebar")
+                .flex_none()
+                .h(px(crate::titlebar::INSET.max(40.)))
+                .px_24()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child(div().min_w_0().truncate().child(title)),
+        )
+        .into_any_element()
+    }
+
+    /// The model name with a menu that opens upwards, above the composer.
+    fn render_model_picker(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::global(cx).clone();
+        let daemon = self.daemon.read(cx);
         let model_name = daemon
             .model()
             .and_then(|id| daemon.models().iter().find(|m| m.id == id))
             .map_or_else(|| "Default model".to_string(), |m| m.name().to_string());
         let models = daemon.models().to_vec();
         let current = daemon.model().map(String::from);
-
-        let picker = div()
+        let hover = theme.surface_hover;
+        div()
             .relative()
             .child(
-                button(
-                    "model-picker",
-                    format!("{model_name} ▾"),
-                    ButtonKind::Secondary,
-                    cx,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.model_menu_open = !this.model_menu_open;
-                    cx.notify();
-                })),
+                div()
+                    .id("model-picker")
+                    .px_2()
+                    .py(px(2.))
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_color(theme.text)
+                    .hover(move |style| style.bg(hover))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.model_menu_open = !this.model_menu_open;
+                        cx.notify();
+                    }))
+                    .child(format!("{model_name} ▾")),
             )
             .when(self.model_menu_open, |this| {
                 this.child(deferred(
-                    anchored().anchor(Anchor::TopRight).child(
+                    anchored().anchor(Anchor::BottomRight).child(
                         div()
                             .id("model-menu")
-                            .mt_1()
+                            .mb_1()
                             .w(px(300.))
                             .max_h(px(360.))
                             .overflow_y_scroll()
-                            .rounded_md()
+                            .rounded_lg()
                             .border_1()
                             .border_color(theme.border)
-                            .bg(theme.background)
+                            .bg(theme.surface)
                             .shadow_lg()
                             .p_1()
                             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
@@ -223,10 +248,10 @@ impl ChatView {
                                     .id(("model", i))
                                     .px_2()
                                     .py_1()
-                                    .rounded_sm()
+                                    .rounded_md()
                                     .cursor_pointer()
-                                    .when(selected, |this| this.bg(theme.surface))
-                                    .hover(|style| style.bg(theme.surface_hover))
+                                    .when(selected, |this| this.bg(theme.selected))
+                                    .hover(move |style| style.bg(hover))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.model_menu_open = false;
                                         this.daemon
@@ -242,27 +267,7 @@ impl ChatView {
                             })),
                     ),
                 ))
-            });
-
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .px_4()
-            .h(px(44.))
-            .border_b_1()
-            .border_color(theme.border)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(title),
-            )
-            .child(picker)
+            })
             .into_any_element()
     }
 
@@ -373,44 +378,178 @@ impl ChatView {
     }
 
     fn render_composer(&self, cx: &mut Context<Self>) -> AnyElement {
-        let state = self
-            .daemon
-            .read(cx)
+        let theme = Theme::global(cx).clone();
+        let daemon = self.daemon.read(cx);
+        let state = daemon
             .selected_transcript()
             .map(crate::transcript::Transcript::state)
             .unwrap_or_default();
         let busy = state != RunState::Idle;
+        let connected = matches!(daemon.phase(), Phase::Connected);
+        let server = daemon.profile().name.clone();
+        let context = daemon.selected_context();
         let status = match state {
-            RunState::Thinking => Some("Thinking…"),
-            RunState::RunningTool => Some("Running a tool…"),
-            RunState::Idle | RunState::Streaming => None,
+            RunState::Thinking => "Thinking…",
+            RunState::RunningTool => "Running a tool…",
+            RunState::Streaming => "Replying…",
+            RunState::Idle => "⇧↩ for a new line",
         };
-        let connected = matches!(self.daemon.read(cx).phase(), Phase::Connected);
-        let action = if busy {
-            button("stop", "Stop", ButtonKind::Secondary, cx)
+        let hover = theme.surface_hover;
+        let action = if !connected {
+            div()
+                .text_xs()
+                .text_color(theme.text_faint)
+                .child("Offline")
+                .into_any_element()
+        } else if busy {
+            div()
+                .id("stop")
+                .size(px(28.))
+                .rounded_lg()
+                .bg(theme.accent)
+                .text_color(theme.accent_text)
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
                 .on_click(cx.listener(|this, _, _, cx| this.daemon.update(cx, |d, cx| d.abort(cx))))
+                .child("■")
+                .into_any_element()
         } else {
-            button("send", "Send", ButtonKind::Primary, cx)
+            div()
+                .id("send")
+                .size(px(28.))
+                .rounded_lg()
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .text_color(theme.text_faint)
+                .hover(move |style| style.bg(hover))
                 .on_click(cx.listener(|this, _, _, cx| this.send(cx)))
+                .child("⏎")
+                .into_any_element()
         };
+        let picker = self.render_model_picker(cx);
         div()
+            .w_full()
+            .max_w(px(messages::COLUMN))
+            .mx_auto()
             .flex()
             .flex_col()
-            .gap_1()
-            .when_some(status, |this, status| this.child(muted(status, cx)))
+            .gap_2()
+            .child(
+                div().flex().gap_2().child(
+                    div()
+                        .id("server-chip")
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py(px(3.))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.surface)
+                        .text_xs()
+                        .cursor_pointer()
+                        .hover(move |style| style.bg(hover))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::actions::ShowServers), cx);
+                        })
+                        .child(div().text_color(theme.text_muted).child("▭"))
+                        .child(server),
+                ),
+            )
             .child(
                 div()
                     .flex()
                     .items_end()
                     .gap_2()
-                    .child(field(cx).flex_1().py_2().child(self.composer.clone()))
-                    .child(if connected {
-                        action.into_any_element()
-                    } else {
-                        muted("Offline", cx).into_any_element()
-                    }),
+                    .pl_3()
+                    .pr_2()
+                    .py_2()
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.surface)
+                    .child(div().flex_1().min_w_0().py_1().child(self.composer.clone()))
+                    .child(action),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .px_1()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(div().flex_1().min_w_0().truncate().child(status))
+                    .when_some(
+                        context.and_then(|c| c.fraction().map(|f| (c, f))),
+                        |this, (usage, fraction)| {
+                            this.child(context_meter(
+                                usage.used(),
+                                usage.context_window,
+                                fraction,
+                                &theme,
+                            ))
+                        },
+                    )
+                    .child(picker),
             )
             .into_any_element()
+    }
+}
+
+/// "38k / 200k" with a short bar that warms up as the window fills.
+fn context_meter(used: u64, window: u64, fraction: f32, theme: &Theme) -> impl IntoElement {
+    const WIDTH: f32 = 48.;
+    let color = if fraction >= 0.9 {
+        theme.danger
+    } else if fraction >= 0.7 {
+        theme.warning
+    } else {
+        theme.success
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .w(px(WIDTH))
+                .h(px(4.))
+                .rounded_full()
+                .bg(theme.surface_hover)
+                .child(
+                    div()
+                        .w(px((WIDTH * fraction).max(2.)))
+                        .h_full()
+                        .rounded_full()
+                        .bg(color),
+                ),
+        )
+        .child(format!(
+            "{} / {}",
+            format_tokens(used),
+            format_tokens(window)
+        ))
+}
+
+/// Compact token counts: 950, 38k, 1.2M.
+fn format_tokens(tokens: u64) -> String {
+    match tokens {
+        0..1_000 => tokens.to_string(),
+        1_000..1_000_000 => format!("{}k", tokens / 1_000),
+        _ => {
+            let tenths = tokens / 100_000;
+            if tenths.is_multiple_of(10) {
+                format!("{}M", tenths / 10)
+            } else {
+                format!("{}.{}M", tenths / 10, tenths % 10)
+            }
+        },
     }
 }
 
@@ -428,10 +567,20 @@ impl Render for ChatView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(muted(
-                    "Ask anything. Messages stream from your moltis daemon.",
-                    cx,
-                ))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_xl()
+                        .child(div().text_color(theme.brand).child("✳"))
+                        .child(greeting(
+                            self.daemon
+                                .read(cx)
+                                .identity()
+                                .and_then(|identity| identity.user_name.as_deref()),
+                        )),
+                )
                 .into_any_element()
         } else {
             list(
@@ -458,11 +607,46 @@ impl Render for ChatView {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .px_4()
-                    .pb_4()
+                    .px_6()
+                    .pb_3()
                     .pt_2()
-                    .child(approvals)
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(messages::COLUMN))
+                            .mx_auto()
+                            .child(approvals),
+                    )
                     .child(composer),
             )
+    }
+}
+
+/// The empty chat's prompt, by name when the daemon knows the owner's.
+fn greeting(name: Option<&str>) -> String {
+    match name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => format!("What's next, {name}?"),
+        None => "What's next?".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_counts_are_compact() {
+        assert_eq!(format_tokens(950), "950");
+        assert_eq!(format_tokens(38_400), "38k");
+        assert_eq!(format_tokens(200_000), "200k");
+        assert_eq!(format_tokens(1_000_000), "1M");
+        assert_eq!(format_tokens(1_250_000), "1.2M");
+    }
+
+    #[test]
+    fn greeting_uses_the_owner_name() {
+        assert_eq!(greeting(Some("Fabien")), "What's next, Fabien?");
+        assert_eq!(greeting(Some("  ")), "What's next?");
+        assert_eq!(greeting(None), "What's next?");
     }
 }

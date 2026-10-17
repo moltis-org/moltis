@@ -1,16 +1,22 @@
-//! Sessions of the connected daemon, plus the server switcher.
+//! The left pane: shortcuts, the sessions of the connected daemon grouped by
+//! day, and a footer with the owner and the server switcher.
 
 use gpui::{
-    Context, Entity, FontWeight, IntoElement, ParentElement, Render, Styled, Subscription, Window,
-    div, prelude::*, px,
+    Action, AnyElement, Context, Entity, FontWeight, Hsla, IntoElement, ParentElement, Render,
+    SharedString, Styled, Subscription, Window, div, prelude::*, px,
 };
 
-use crate::{
-    actions::{NewSession, ShowServers},
-    daemon::{Daemon, Phase},
-    theme::Theme,
-    ui::{ButtonKind, button},
+use {
+    crate::{
+        actions::{NewSession, OpenWebCrons, OpenWebSettings, OpenWebSkills, ShowServers},
+        daemon::{Daemon, Phase},
+        sessions::{Recency, today_start_ms},
+        theme::Theme,
+    },
+    moltis_client::protocol::client_api::SessionEntry,
 };
+
+pub const WIDTH: f32 = 260.;
 
 pub struct Sidebar {
     daemon: Entity<Daemon>,
@@ -25,6 +31,127 @@ impl Sidebar {
             _subscription: subscription,
         }
     }
+
+    fn render_row(
+        &self,
+        index: usize,
+        entry: &SessionEntry,
+        selected: bool,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let key = entry.key.clone();
+        let unread = entry.has_unread() && !selected;
+        let (bullet, bullet_color) = if entry.replying {
+            ("●", theme.brand)
+        } else {
+            ("○", theme.text_faint)
+        };
+        let hover = theme.surface_hover;
+        div()
+            .id(("session", index))
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py(px(5.))
+            .rounded_md()
+            .cursor_pointer()
+            .when(selected, |this| this.bg(theme.selected))
+            .when(!selected, |this| this.hover(move |style| style.bg(hover)))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.daemon
+                    .update(cx, |daemon, cx| daemon.select_session(&key, cx));
+            }))
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(14.))
+                    .text_xs()
+                    .text_color(bullet_color)
+                    .child(bullet),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .when(unread, |this| this.font_weight(FontWeight::SEMIBOLD))
+                    .child(entry.title().to_string()),
+            )
+            .into_any_element()
+    }
+}
+
+fn nav_item(
+    id: &'static str,
+    glyph: &'static str,
+    label: &'static str,
+    action: impl Action,
+    theme: &Theme,
+) -> impl IntoElement {
+    let hover = theme.surface_hover;
+    let action = action.boxed_clone();
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_2()
+        .py(px(5.))
+        .rounded_md()
+        .cursor_pointer()
+        .text_sm()
+        .hover(move |style| style.bg(hover))
+        .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
+        .child(
+            div()
+                .flex_none()
+                .w(px(18.))
+                .flex()
+                .justify_center()
+                .text_color(theme.text_muted)
+                .child(glyph),
+        )
+        .child(label)
+}
+
+fn section_label(text: &'static str, theme: &Theme) -> impl IntoElement {
+    div()
+        .px_2()
+        .pt_3()
+        .pb_1()
+        .text_xs()
+        .text_color(theme.text_faint)
+        .child(text)
+}
+
+/// Up to two initials for the avatar: "Fabien Penso" → "FP".
+#[must_use]
+pub fn initials(name: &str) -> String {
+    let initials: String = name
+        .split_whitespace()
+        .filter_map(|word| word.chars().next())
+        .take(2)
+        .flat_map(char::to_uppercase)
+        .collect();
+    if initials.is_empty() {
+        "?".into()
+    } else {
+        initials
+    }
+}
+
+/// The colour of the server's status dot.
+fn status_color(phase: &Phase, theme: &Theme) -> Hsla {
+    match phase {
+        Phase::Connected => theme.success,
+        Phase::Reconnecting { .. } | Phase::Connecting { .. } | Phase::NeedsLogin { .. } => {
+            theme.warning
+        },
+        _ => theme.danger,
+    }
 }
 
 impl Render for Sidebar {
@@ -33,131 +160,173 @@ impl Render for Sidebar {
         let daemon = self.daemon.read(cx);
         let selected = daemon.sessions().selected().map(String::from);
         let entries = daemon.sessions().entries().to_vec();
-        let profile = daemon.profile().clone();
-        let (status, status_color) = match daemon.phase() {
-            Phase::Connected => ("Connected", theme.success),
-            Phase::Reconnecting { .. } | Phase::Connecting { .. } => ("Connecting", theme.warning),
-            Phase::NeedsLogin { .. } => ("Sign in required", theme.warning),
-            _ => ("Offline", theme.danger),
-        };
-        let version = daemon.hello().map(|h| h.server.version.clone());
+        let server: SharedString = daemon.profile().name.clone().into();
+        let status_color = status_color(daemon.phase(), &theme);
+        let owner = daemon
+            .identity()
+            .and_then(|identity| identity.user_name.clone())
+            .filter(|name| !name.trim().is_empty());
+
+        let today_start = today_start_ms();
+        let mut today = Vec::new();
+        let mut earlier = Vec::new();
+        for (index, entry) in entries.iter().enumerate() {
+            let is_selected = selected.as_deref() == Some(entry.key.as_str());
+            let row = self.render_row(index, entry, is_selected, &theme, cx);
+            match Recency::of(entry.updated_at, today_start) {
+                Recency::Today => today.push(row),
+                Recency::Earlier => earlier.push(row),
+            }
+        }
+
+        let hover = theme.surface_hover;
+        let footer = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .border_t_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .id("server-switcher")
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_1()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowServers), cx))
+                    .child(
+                        div()
+                            .flex_none()
+                            .size(px(22.))
+                            .rounded_full()
+                            .bg(theme.selected)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(initials(owner.as_deref().unwrap_or(&server))),
+                    )
+                    .child(match &owner {
+                        Some(owner) => div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(div().flex_none().text_sm().child(owner.clone()))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(theme.text_muted)
+                                    .child(format!("· {server} ▾")),
+                            ),
+                        None => div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .child(format!("{server} ▾")),
+                    })
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(status_color)
+                            .child("●"),
+                    ),
+            )
+            .child(
+                div()
+                    .id("settings")
+                    .flex_none()
+                    .size(px(26.))
+                    .rounded_md()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .text_sm()
+                    .text_color(theme.text_muted)
+                    .hover(move |style| style.bg(hover))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(OpenWebSettings), cx);
+                    })
+                    .child("⚙"),
+            );
 
         div()
-            .w(px(260.))
+            .w(px(WIDTH))
+            .flex_none()
             .h_full()
             .flex()
             .flex_col()
             .bg(theme.sidebar)
             .border_r_1()
             .border_color(theme.border)
+            .child(crate::titlebar::movable(
+                div()
+                    .id("sidebar-titlebar")
+                    .flex_none()
+                    .h(px(crate::titlebar::INSET)),
+            ))
             .child(
-                div().p_3().child(
-                    button("new-chat", "+  New chat", ButtonKind::Secondary, cx)
-                        .w_full()
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(NewSession), cx);
-                        }),
-                ),
+                div()
+                    .flex()
+                    .flex_col()
+                    .px_2()
+                    .child(nav_item("nav-new", "+", "New chat", NewSession, &theme))
+                    .child(nav_item(
+                        "nav-scheduled",
+                        "◷",
+                        "Scheduled",
+                        OpenWebCrons,
+                        &theme,
+                    ))
+                    .child(nav_item("nav-skills", "✦", "Skills", OpenWebSkills, &theme)),
             )
             .child(
                 div()
                     .id("sessions")
                     .flex_1()
+                    .min_h_0()
                     .overflow_y_scroll()
                     .px_2()
+                    .pb_2()
                     .flex()
                     .flex_col()
-                    .gap_px()
-                    .children(entries.into_iter().enumerate().map(|(i, entry)| {
-                        let is_selected = selected.as_deref() == Some(entry.key.as_str());
-                        let key = entry.key.clone();
-                        let unread = entry.has_unread() && !is_selected;
-                        div()
-                            .id(("session", i))
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .when(is_selected, |this| this.bg(theme.surface_hover))
-                            .hover(|style| style.bg(theme.surface))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.daemon
-                                    .update(cx, |daemon, cx| daemon.select_session(&key, cx));
-                            }))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .whitespace_nowrap()
-                                            .text_sm()
-                                            .when(unread, |this| {
-                                                this.font_weight(FontWeight::SEMIBOLD)
-                                            })
-                                            .child(entry.title().to_string()),
-                                    )
-                                    .when(entry.replying, |this| {
-                                        this.child(
-                                            div().text_xs().text_color(theme.accent).child("●"),
-                                        )
-                                    }),
-                            )
-                            .when(entry.label.is_some(), |this| {
-                                this.when_some(entry.preview.clone(), |this, preview| {
-                                    this.child(
-                                        div()
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .whitespace_nowrap()
-                                            .text_xs()
-                                            .text_color(theme.text_muted)
-                                            .child(preview),
-                                    )
-                                })
-                            })
-                    })),
+                    .when(!today.is_empty(), |this| {
+                        this.child(section_label("Today", &theme)).children(today)
+                    })
+                    .when(!earlier.is_empty(), |this| {
+                        this.child(section_label("Earlier", &theme))
+                            .children(earlier)
+                    }),
             )
-            .child(
-                div()
-                    .id("server-footer")
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .p_3()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .cursor_pointer()
-                    .hover(|style| style.bg(theme.surface))
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowServers), cx))
-                    .child(div().text_color(status_color).child("●"))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .whitespace_nowrap()
-                                    .child(profile.name.clone()),
-                            )
-                            .child(div().text_xs().text_color(theme.text_muted).child(
-                                match version {
-                                    Some(version) => format!("{status} · v{version}"),
-                                    None => status.to_string(),
-                                },
-                            )),
-                    )
-                    .child(div().text_xs().text_color(theme.text_muted).child("Switch")),
-            )
+            .child(footer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initials_take_the_first_two_words() {
+        assert_eq!(initials("Fabien Penso"), "FP");
+        assert_eq!(initials("ada"), "A");
+        assert_eq!(initials("Jean Luc Picard"), "JL");
+        assert_eq!(initials("  "), "?");
+        assert_eq!(initials("élodie durand"), "ÉD");
     }
 }

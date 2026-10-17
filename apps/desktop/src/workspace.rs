@@ -378,14 +378,34 @@ impl Render for Workspace {
                     .size_full()
                     .flex()
                     .child(connected.sidebar.clone())
-                    .child(div().flex_1().h_full().child(if blocking {
-                        connected.status.clone().into_any_element()
+                    .child(if blocking {
+                        // The status card has no header of its own.
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .child(titlebar_band())
+                            .child(div().flex_1().min_h_0().child(connected.status.clone()))
+                            .into_any_element()
                     } else {
-                        connected.chat.clone().into_any_element()
-                    }))
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .child(connected.chat.clone())
+                            .into_any_element()
+                    })
                     .into_any_element()
             },
-            _ => self.servers.clone().into_any_element(),
+            _ => div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(titlebar_band())
+                .child(div().flex_1().min_h_0().child(self.servers.clone()))
+                .into_any_element(),
         };
         div()
             .key_context("Workspace")
@@ -404,6 +424,7 @@ impl Render for Workspace {
             .on_action(
                 cx.listener(|this, _: &OpenWebCrons, _, cx| this.open_web("/settings/crons", cx)),
             )
+            .on_action(cx.listener(|this, _: &OpenWebSkills, _, cx| this.open_web("/skills", cx)))
             .on_action(
                 cx.listener(|this, _: &OpenWebLogs, _, cx| this.open_web("/settings/logs", cx)),
             )
@@ -433,6 +454,17 @@ impl Render for Workspace {
                 )
             })
     }
+}
+
+/// An empty band that moves the window, where macOS draws the traffic lights.
+fn titlebar_band() -> impl IntoElement {
+    crate::titlebar::movable(
+        div()
+            .id("titlebar-band")
+            .flex_none()
+            .w_full()
+            .h(px(crate::titlebar::INSET)),
+    )
 }
 
 /// A command can be approved from a notification only if it is shown whole

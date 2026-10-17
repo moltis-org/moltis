@@ -21,6 +21,7 @@ mod sessions;
 mod sidebar;
 mod status_view;
 mod theme;
+mod titlebar;
 mod transcript;
 mod ui;
 mod workspace;

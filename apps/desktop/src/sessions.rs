@@ -132,6 +132,35 @@ impl Sessions {
     }
 }
 
+/// Which sidebar group a session falls in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Recency {
+    Today,
+    Earlier,
+}
+
+impl Recency {
+    /// `updated_at_ms` against the start of the local day. A draft has no
+    /// timestamp yet and was just created, so it counts as today.
+    #[must_use]
+    pub fn of(updated_at_ms: u64, today_start_ms: u64) -> Self {
+        if updated_at_ms == 0 || updated_at_ms >= today_start_ms {
+            Self::Today
+        } else {
+            Self::Earlier
+        }
+    }
+}
+
+/// Milliseconds since the epoch at the last local midnight (UTC when the
+/// local offset is unknown).
+#[must_use]
+pub fn today_start_ms() -> u64 {
+    let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    let midnight = now.replace_time(time::Time::MIDNIGHT);
+    u64::try_from(midnight.unix_timestamp_nanos() / 1_000_000).unwrap_or_default()
+}
+
 /// A fresh session key, like the web UI's `session:<uuid>`.
 #[must_use]
 pub fn new_session_key() -> String {
@@ -143,6 +172,16 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use {super::*, moltis_protocol::chat_event::ChatFinal};
+
+    #[test]
+    fn recency_splits_at_midnight() {
+        assert_eq!(Recency::of(1_000, 1_000), Recency::Today);
+        assert_eq!(Recency::of(999, 1_000), Recency::Earlier);
+        assert_eq!(Recency::of(0, 1_000), Recency::Today);
+        let start = today_start_ms();
+        assert!(start > 0);
+        assert_eq!(start % 60_000, 0);
+    }
 
     fn entry(key: &str, updated_at: u64) -> SessionEntry {
         SessionEntry {

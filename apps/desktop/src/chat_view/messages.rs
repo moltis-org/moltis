@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// Messages are centred in a readable column.
-const COLUMN: f32 = 760.;
+pub(super) const COLUMN: f32 = 720.;
 
 impl ChatView {
     pub(super) fn render_item(
@@ -38,9 +38,10 @@ impl ChatView {
                 .child(
                     div()
                         .max_w(px(COLUMN * 0.8))
-                        .px_3()
+                        .px_4()
                         .py_2()
-                        .rounded_lg()
+                        .rounded_2xl()
+                        .line_height(px(22.))
                         .bg(theme.user_bubble)
                         .child(text.clone()),
                 )
@@ -91,6 +92,15 @@ impl ChatView {
         let expanded = self.expanded.contains(&id);
         let reasoning = message.reasoning.clone().filter(|r| !r.trim().is_empty());
         let text = message.text.clone();
+        // The daemon reports the model id; show the name the picker shows.
+        let model_name = message.model.as_ref().map(|id| {
+            self.daemon
+                .read(cx)
+                .models()
+                .iter()
+                .find(|model| &model.id == id)
+                .map_or_else(|| id.clone(), |model| model.name().to_string())
+        });
         div()
             .flex()
             .flex_col()
@@ -134,7 +144,7 @@ impl ChatView {
             })
             .child(render_markdown(&format!("md-{id}"), &blocks, cx))
             .when(message.streaming, |this| {
-                this.child(div().text_color(theme.accent).child("▍"))
+                this.child(div().text_color(theme.brand).child("▍"))
             })
             .child(
                 div()
@@ -142,8 +152,8 @@ impl ChatView {
                     .gap_3()
                     .items_center()
                     .text_xs()
-                    .text_color(theme.text_muted)
-                    .when_some(message.model.clone(), |this, model| this.child(model))
+                    .text_color(theme.text_faint)
+                    .when_some(model_name, |this, model| this.child(model))
                     .when_some(message.usage.as_ref().map(usage_text), |this, usage| {
                         this.child(usage)
                     })
@@ -177,7 +187,8 @@ impl ChatView {
             .id(("tool", id))
             .flex()
             .flex_col()
-            .rounded_md()
+            .overflow_hidden()
+            .rounded_lg()
             .border_1()
             .border_color(theme.border)
             .bg(theme.surface)

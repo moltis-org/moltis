@@ -17,6 +17,8 @@ pub mod methods {
     pub const MODELS_LIST: &str = "models.list";
     pub const EXEC_APPROVAL_RESOLVE: &str = "exec.approval.resolve";
     pub const STATUS: &str = "status";
+    pub const CHAT_CONTEXT: &str = "chat.context";
+    pub const AGENT_IDENTITY_GET: &str = "agent.identity.get";
 }
 
 /// Event names native clients subscribe to.
@@ -165,6 +167,55 @@ pub struct ExecApprovalResolveParams {
     pub decision: ApprovalDecision,
 }
 
+/// The part of the `chat.context` response native clients read.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ChatContext {
+    pub token_usage: ContextTokenUsage,
+}
+
+/// Token accounting of a session, from `chat.context`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ContextTokenUsage {
+    /// Tokens of the latest request (input and output).
+    pub current_total: u64,
+    pub estimated_next_input_tokens: u64,
+    /// The model's context window, in tokens.
+    pub context_window: u64,
+}
+
+impl ContextTokenUsage {
+    /// Tokens the conversation occupies in the context window.
+    #[must_use]
+    pub fn used(&self) -> u64 {
+        if self.current_total > 0 {
+            self.current_total
+        } else {
+            self.estimated_next_input_tokens
+        }
+    }
+
+    /// Share of the context window in use, `0.0..=1.0`, when the window is
+    /// known.
+    #[must_use]
+    pub fn fraction(&self) -> Option<f32> {
+        (self.context_window > 0)
+            .then(|| (self.used() as f64 / self.context_window as f64).clamp(0.0, 1.0) as f32)
+    }
+}
+
+/// The part of the `agent.identity.get` response native clients read.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentIdentity {
+    /// The agent's name ("moltis" unless renamed).
+    pub name: String,
+    pub emoji: Option<String>,
+    /// The owner's name from the user profile.
+    pub user_name: Option<String>,
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
@@ -243,5 +294,36 @@ mod tests {
         .unwrap();
         assert_eq!(model.name(), "GPT");
         assert!(model.supports_tools);
+    }
+
+    #[test]
+    fn context_usage_prefers_current_total() {
+        let context: ChatContext = serde_json::from_value(serde_json::json!({
+            "sessionKey": "main",
+            "tokenUsage": {"currentTotal": 38_000, "estimatedNextInputTokens": 1, "contextWindow": 200_000, "total": 9}
+        }))
+        .unwrap();
+        let usage = context.token_usage;
+        assert_eq!(usage.used(), 38_000);
+        assert_eq!(usage.fraction(), Some(0.19));
+
+        let fallback = ContextTokenUsage {
+            estimated_next_input_tokens: 500,
+            context_window: 400,
+            ..ContextTokenUsage::default()
+        };
+        assert_eq!(fallback.used(), 500);
+        assert_eq!(fallback.fraction(), Some(1.0));
+        assert_eq!(ContextTokenUsage::default().fraction(), None);
+    }
+
+    #[test]
+    fn identity_reads_snake_case_fields() {
+        let identity: AgentIdentity = serde_json::from_value(serde_json::json!({
+            "name": "moltis", "emoji": null, "user_name": "Fabien", "soul": "…"
+        }))
+        .unwrap();
+        assert_eq!(identity.user_name.as_deref(), Some("Fabien"));
+        assert_eq!(identity.name, "moltis");
     }
 }
