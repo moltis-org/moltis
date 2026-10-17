@@ -130,11 +130,30 @@ impl ServersView {
             .into_iter()
             .enumerate()
             .map(|(i, (daemon, endpoint))| {
-                let name = daemon
+                // Advertisements are unauthenticated: lead with the address,
+                // show the advertised name as a claim, and save the server
+                // only once its certificate is trusted (ProfileChanged).
+                let advertised = daemon
                     .hostname
-                    .clone()
-                    .unwrap_or_else(|| daemon.name.clone());
-                let profile = ServerProfile::direct(name.clone(), endpoint.clone());
+                    .as_deref()
+                    .map(sanitize_advertised)
+                    .filter(|name| !name.is_empty());
+                let address = format!("{}:{}", endpoint.host(), endpoint.port());
+                let profile = ServerProfile::direct(
+                    advertised.clone().unwrap_or_else(|| address.clone()),
+                    endpoint.clone(),
+                );
+                let detail = match (
+                    &advertised,
+                    daemon.version.as_deref().map(sanitize_advertised),
+                ) {
+                    (Some(name), Some(version)) => {
+                        format!("calls itself {name} · v{version} · unverified")
+                    },
+                    (Some(name), None) => format!("calls itself {name} · unverified"),
+                    (None, Some(version)) => format!("v{version} · unverified"),
+                    (None, None) => "unverified".to_string(),
+                };
                 div()
                     .id(("nearby", i))
                     .flex()
@@ -147,19 +166,13 @@ impl ServersView {
                     .cursor_pointer()
                     .hover(|style| style.bg(theme.surface))
                     .on_click(cx.listener(move |_, _, _, cx| {
-                        cx.emit(ServersEvent::Save(profile.clone()));
                         cx.emit(ServersEvent::Connect(profile.clone()));
                     }))
                     .child(
                         div()
                             .flex_1()
-                            .child(div().font_weight(FontWeight::MEDIUM).child(name))
-                            .child(div().text_xs().text_color(theme.text_muted).child(
-                                match &daemon.version {
-                                    Some(version) => format!("{endpoint} · v{version}"),
-                                    None => endpoint.to_string(),
-                                },
-                            )),
+                            .child(div().font_weight(FontWeight::MEDIUM).child(address))
+                            .child(div().text_xs().text_color(theme.text_muted).child(detail)),
                     )
                     .child(div().text_xs().text_color(theme.accent).child("Connect"))
             });
@@ -463,5 +476,31 @@ impl Render for ServersView {
                             .into_any_element()
                     }),
             )
+    }
+}
+
+/// Printable text from an mDNS TXT field: no control, format or bidi
+/// characters, at most 64 characters.
+#[cfg(feature = "mdns")]
+fn sanitize_advertised(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | ':'))
+        .take(64)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+#[cfg(all(test, feature = "mdns"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn advertised_text_is_sanitized() {
+        assert_eq!(sanitize_advertised("studio.local"), "studio.local");
+        assert_eq!(sanitize_advertised("evil\u{202e}lacol\u{7}"), "evillacol");
+        assert_eq!(sanitize_advertised(&"a".repeat(100)).len(), 64);
+        assert_eq!(sanitize_advertised("  "), "");
     }
 }
