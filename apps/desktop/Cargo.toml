@@ -1,0 +1,78 @@
+# Moltis Desktop: a native gpui client for a running moltis daemon.
+#
+# Its own workspace (and lockfile) so gpui's dependency tree stays out of the
+# main workspace's builds and CI. It shares the wire protocol with the daemon
+# through path dependencies on `moltis-protocol` and `moltis-client`.
+[workspace]
+members  = ["."]
+resolver = "2"
+
+[workspace.lints.rust]
+unsafe_code           = "deny"
+unused_qualifications = "deny"
+
+[workspace.lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
+
+[package]
+description = "Native desktop client for the Moltis daemon"
+edition     = "2024"
+license     = "MIT"
+name        = "moltis-desktop"
+publish     = false
+version     = "0.1.0"
+
+[[bin]]
+name = "moltis-desktop"
+path = "src/main.rs"
+
+[dependencies]
+anyhow      = "1"
+futures     = "0.3"
+gethostname = "1"
+gpui        = { package = "gpui-pre", version = "=0.3.6" }
+# The platform crate enables nothing by default: without font-kit (macOS) or a
+# Linux backend, text silently goes to a no-op text system.
+gpui_platform = { features = ["font-kit", "runtime_shaders", "wayland", "x11"], package = "gpui-pre-platform", version = "=0.3.6" }
+# PNG encoding for `capture` screenshots; the version gpui already links.
+image           = { default-features = false, features = ["png"], optional = true, version = "0.25" }
+moltis-client   = { features = ["local"], path = "../../crates/client" }
+moltis-config   = { path = "../../crates/config" }
+moltis-protocol = { path = "../../crates/protocol" }
+pulldown-cmark  = { default-features = false, version = "0.13" }
+secrecy         = { features = ["serde"], version = "0.8" }
+serde           = { features = ["derive"], version = "1" }
+serde_json      = "1"
+# Code block colouring: bundled grammars, pure-Rust regex engine, no themes
+# (colours come from the app theme).
+syntect              = { default-features = false, features = ["default-syntaxes", "parsing", "regex-fancy"], version = "5.3" }
+thiserror            = "2"
+time                 = { features = ["formatting", "local-offset", "macros"], version = "0.3" }
+tokio                = { features = ["rt-multi-thread", "sync", "time"], version = "1" }
+tracing              = "0.1"
+tracing-subscriber   = { features = ["env-filter", "fmt"], version = "0.3" }
+unicode-segmentation = "1"
+uuid                 = { features = ["v4"], version = "1" }
+
+[dev-dependencies]
+gpui     = { features = ["test-support"], package = "gpui-pre", version = "=0.3.6" }
+tempfile = "3"
+
+[features]
+# Save a PNG of the window when MOLTIS_DESKTOP_CAPTURE is set (visual QA and
+# E2E screenshots; needs no screen-recording permission).
+capture = ["dep:image", "gpui_platform/test-support"]
+default = ["mdns", "metrics", "ssh"]
+# Discover daemons on the local network.
+mdns    = ["moltis-client/mdns"]
+metrics = ["moltis-client/metrics"]
+# Reach remote daemons through SSH port forwarding.
+ssh = ["moltis-client/ssh"]
+
+[lints]
+workspace = true
+
+[profile.release]
+codegen-units = 1
+lto           = "thin"

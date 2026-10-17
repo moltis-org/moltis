@@ -239,6 +239,10 @@ impl ServerCertVerifier for PinnedVerifier {
     }
 }
 
+#[cfg(test)]
+#[path = "tls_tests.rs"]
+mod integration_tests;
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {

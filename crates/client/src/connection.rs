@@ -386,9 +386,18 @@ fn map_ws_error(endpoint: &Endpoint, error: tungstenite::Error) -> Error {
                 .into_owned(),
         },
         tungstenite::Error::Tls(e) => Error::Tls(e.to_string()),
+        tungstenite::Error::Io(e) if is_tls_failure(&e) => Error::Tls(e.to_string()),
         tungstenite::Error::Io(e) => Error::Connect(format!("{endpoint}: {e}")),
         other => Error::Connect(format!("{endpoint}: {other}")),
     }
+}
+
+/// rustls reports handshake failures (untrusted or changed certificates)
+/// as I/O errors wrapping a `rustls::Error`.
+fn is_tls_failure(error: &std::io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<rustls::Error>())
 }
 
 /// Read until the response to `connect` arrives.

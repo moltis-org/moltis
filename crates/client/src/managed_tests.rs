@@ -87,7 +87,8 @@ async fn retries_until_daemon_starts() {
     let (client, mut updates) = ManagedClient::spawn_with_backoff(options, vec![], fast());
     let mut failures = 0;
     while failures < 2 {
-        if let ClientUpdate::Disconnected { .. } = next(&mut updates).await {
+        if let ClientUpdate::Disconnected { kind, .. } = next(&mut updates).await {
+            assert_eq!(kind, FailureKind::Unreachable);
             failures += 1;
         }
     }

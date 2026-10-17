@@ -77,7 +77,7 @@ default-members = [
   "crates/webhooks",
   "crates/whatsapp",
 ]
-exclude = ["vendor/agent-client-protocol"]
+exclude = ["apps/desktop", "vendor/agent-client-protocol"]
 members = [
   "apps/courier",
   "crates/acp",

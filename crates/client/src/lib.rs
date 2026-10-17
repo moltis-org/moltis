@@ -30,7 +30,7 @@ pub mod tls;
 pub use {
     connection::{ClientIdentity, ConnectOptions, Connection},
     endpoint::Endpoint,
-    error::{Error, Result},
+    error::{Error, FailureKind, Result},
     managed::{ClientUpdate, ManagedClient},
     moltis_protocol as protocol,
     secrecy::SecretString,

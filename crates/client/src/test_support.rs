@@ -53,6 +53,7 @@ pub struct MockServer {
     pub addr: SocketAddr,
     pub log: Arc<MockLog>,
     task: tokio::task::JoinHandle<()>,
+    tls: bool,
 }
 
 impl Drop for MockServer {
@@ -79,10 +80,82 @@ impl MockServer {
                 tokio::spawn(handle(stream, config, log));
             }
         });
-        Self { addr, log, task }
+        Self {
+            addr,
+            log,
+            task,
+            tls: false,
+        }
+    }
+
+    /// Serve over TLS with a leaf certificate for `localhost` signed by a
+    /// fresh CA. Returns the server, the leaf DER and the CA PEM.
+    pub async fn start_tls(config: MockConfig) -> (Self, Vec<u8>, String) {
+        use {
+            rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair},
+            rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer},
+        };
+
+        let ca_key = KeyPair::generate().unwrap();
+        let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let ca = ca_params.self_signed(&ca_key).unwrap();
+        let leaf_key = KeyPair::generate().unwrap();
+        let leaf = CertificateParams::new(vec!["localhost".into()])
+            .unwrap()
+            .signed_by(&leaf_key, &ca, &ca_key)
+            .unwrap();
+        let leaf_der = leaf.der().to_vec();
+
+        let server_config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![leaf.der().clone()],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(leaf_key.serialize_der())),
+        )
+        .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let log = Arc::new(MockLog::default());
+        let task_log = Arc::clone(&log);
+        let task = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let log = Arc::clone(&task_log);
+                let config = config.clone();
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    if let Ok(tls) = acceptor.accept(stream).await {
+                        handle(tls, config, log).await;
+                    }
+                });
+            }
+        });
+        (
+            Self {
+                addr,
+                log,
+                task,
+                tls: true,
+            },
+            leaf_der,
+            ca.pem(),
+        )
     }
 
     pub fn endpoint(&self) -> Endpoint {
+        if self.tls {
+            return Endpoint::parse(
+                &format!("https://localhost:{}", self.addr.port()),
+                TlsTrust::System,
+            )
+            .unwrap();
+        }
         Endpoint::parse(&format!("http://{}", self.addr), TlsTrust::System).unwrap()
     }
 
@@ -130,7 +203,10 @@ fn text(value: &impl serde::Serialize) -> Message {
     Message::Text(serde_json::to_string(value).unwrap().into())
 }
 
-async fn handle(stream: tokio::net::TcpStream, config: MockConfig, log: Arc<MockLog>) {
+async fn handle<S>(stream: S, config: MockConfig, log: Arc<MockLog>)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let auth_log = Arc::clone(&log);
     let reject = config.reject_upgrade;
     #[allow(clippy::result_large_err)]

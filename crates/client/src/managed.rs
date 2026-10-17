@@ -22,7 +22,7 @@ use {
 use crate::{
     backoff::Backoff,
     connection::{ConnectOptions, Connection},
-    error::{Error, Result},
+    error::{Error, FailureKind, Result},
 };
 
 /// Progress of a [`ManagedClient`].
@@ -37,6 +37,7 @@ pub enum ClientUpdate {
     /// The socket dropped or a connect attempt failed; retrying after `retry_in`.
     Disconnected {
         reason: String,
+        kind: FailureKind,
         retry_in: Duration,
     },
     /// The daemon rejected the credentials; the supervisor stopped.
@@ -143,7 +144,7 @@ async fn supervise(
         }
         attempt += 1;
         let _ = updates.send(ClientUpdate::Connecting { attempt });
-        let reason = match connect_and_subscribe(&options, &subscriptions).await {
+        let (reason, kind) = match connect_and_subscribe(&options, &subscriptions).await {
             Ok((connection, mut events)) => {
                 info!(endpoint = %options.endpoint, "connected to daemon");
                 attempt = 0;
@@ -175,7 +176,7 @@ async fn supervise(
                     }
                 };
                 let _ = current.send(None);
-                reason
+                (reason, FailureKind::Closed)
             },
             Err(error) if error.is_auth() => {
                 let _ = updates.send(ClientUpdate::AuthFailed {
@@ -183,11 +184,15 @@ async fn supervise(
                 });
                 return;
             },
-            Err(error) => error.to_string(),
+            Err(error) => (error.to_string(), error.failure_kind()),
         };
         let retry_in = backoff.next_delay();
         debug!(%reason, ?retry_in, "daemon connection lost");
-        let _ = updates.send(ClientUpdate::Disconnected { reason, retry_in });
+        let _ = updates.send(ClientUpdate::Disconnected {
+            reason,
+            kind,
+            retry_in,
+        });
         tokio::select! {
             () = tokio::time::sleep(retry_in) => {},
             () = shared.retry_now.notified() => {},
