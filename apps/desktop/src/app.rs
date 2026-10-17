@@ -5,22 +5,24 @@ use gpui::{App, AppContext, Bounds, Menu, MenuItem, WindowBounds, WindowOptions,
 use crate::{actions::*, runtime::Tokio, theme::Theme, workspace::Workspace};
 
 pub fn run() {
-    gpui_platform::application().run(|cx: &mut App| {
-        if let Err(error) = Tokio::install(cx) {
-            tracing::error!(%error, "could not start the network runtime");
-            cx.quit();
-            return;
-        }
-        // Notifications are attributed to the bundle (see Info.plist).
-        cx.set_app_identity("org.moltis.desktop", "Moltis");
-        cx.set_global(Theme::for_appearance(cx.window_appearance()));
-        bind_keys(cx);
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.on_action(|_: &Hide, cx| cx.hide());
-        cx.set_menus(menus());
-        open_window(cx);
-        cx.activate(true);
-    });
+    gpui_platform::application()
+        .with_assets(crate::assets::Assets)
+        .run(|cx: &mut App| {
+            if let Err(error) = Tokio::install(cx) {
+                tracing::error!(%error, "could not start the network runtime");
+                cx.quit();
+                return;
+            }
+            // Notifications are attributed to the bundle (see Info.plist).
+            cx.set_app_identity("org.moltis.desktop", "Moltis");
+            cx.set_global(Theme::for_appearance(cx.window_appearance()));
+            bind_keys(cx);
+            cx.on_action(|_: &Quit, cx| cx.quit());
+            cx.on_action(|_: &Hide, cx| cx.hide());
+            cx.set_menus(menus());
+            open_window(cx);
+            cx.activate(true);
+        });
 }
 
 fn menus() -> Vec<Menu> {

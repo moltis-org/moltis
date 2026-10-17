@@ -101,53 +101,56 @@ const SETTLE: Duration = Duration::from_millis(750);
 
 pub fn run(options: Options) {
     let Options { feedback, capture } = options;
-    gpui_platform::application().run(move |cx: &mut App| {
-        cx.set_global(Theme::for_appearance(cx.window_appearance()));
-        crate::actions::bind_keys(cx);
-        cx.bind_keys(window::key_bindings());
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.on_window_closed(|cx, _| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        })
-        .detach();
-        let mockup = current();
-        let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);
-        let title = format!("Mockup: {}", mockup.title);
-        let opened = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(640.), px(400.))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(title.into()),
-                    ..TitlebarOptions::default()
-                }),
-                ..WindowOptions::default()
-            },
-            |window, cx| cx.new(|cx| window::MockupWindow::new(mockup, feedback, window, cx)),
-        );
-        match opened {
-            // The skill reads this line to know the window is up.
-            Ok(handle) => {
-                println!("mockup: ready pid={}", std::process::id());
-                if let Some(path) = capture {
-                    let saved = crate::capture::save_after(handle.into(), path.clone(), SETTLE, cx);
-                    cx.spawn(async move |_| match saved.await {
-                        // The skill waits for this line before reading the file.
-                        Ok(()) => println!("mockup: captured {}", path.display()),
-                        Err(error) => eprintln!("mockup: capture failed: {error:#}"),
-                    })
-                    .detach();
+    gpui_platform::application()
+        .with_assets(crate::assets::Assets)
+        .run(move |cx: &mut App| {
+            cx.set_global(Theme::for_appearance(cx.window_appearance()));
+            crate::actions::bind_keys(cx);
+            cx.bind_keys(window::key_bindings());
+            cx.on_action(|_: &Quit, cx| cx.quit());
+            cx.on_window_closed(|cx, _| {
+                if cx.windows().is_empty() {
+                    cx.quit();
                 }
-            },
-            Err(error) => {
-                eprintln!("mockup: unable to open the window: {error}");
-                cx.quit();
-            },
-        }
-        cx.activate(true);
-    });
+            })
+            .detach();
+            let mockup = current();
+            let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);
+            let title = format!("Mockup: {}", mockup.title);
+            let opened = cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(640.), px(400.))),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some(title.into()),
+                        ..TitlebarOptions::default()
+                    }),
+                    ..WindowOptions::default()
+                },
+                |window, cx| cx.new(|cx| window::MockupWindow::new(mockup, feedback, window, cx)),
+            );
+            match opened {
+                // The skill reads this line to know the window is up.
+                Ok(handle) => {
+                    println!("mockup: ready pid={}", std::process::id());
+                    if let Some(path) = capture {
+                        let saved =
+                            crate::capture::save_after(handle.into(), path.clone(), SETTLE, cx);
+                        cx.spawn(async move |_| match saved.await {
+                            // The skill waits for this line before reading the file.
+                            Ok(()) => println!("mockup: captured {}", path.display()),
+                            Err(error) => eprintln!("mockup: capture failed: {error:#}"),
+                        })
+                        .detach();
+                    }
+                },
+                Err(error) => {
+                    eprintln!("mockup: unable to open the window: {error}");
+                    cx.quit();
+                },
+            }
+            cx.activate(true);
+        });
 }
 
 #[cfg(test)]

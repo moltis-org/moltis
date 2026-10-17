@@ -9,6 +9,7 @@ use gpui::{
 use {
     crate::{
         actions::{NewSession, OpenWebCrons, OpenWebSettings, OpenWebSkills, ShowServers},
+        assets::{Icon, icon},
         daemon::{Daemon, Phase},
         sessions::{Recency, today_start_ms},
         theme::Theme,
@@ -86,7 +87,7 @@ impl Sidebar {
 
 fn nav_item(
     id: &'static str,
-    glyph: &'static str,
+    glyph: Icon,
     label: &'static str,
     action: impl Action,
     theme: &Theme,
@@ -105,15 +106,7 @@ fn nav_item(
         .text_sm()
         .hover(move |style| style.bg(hover))
         .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
-        .child(
-            div()
-                .flex_none()
-                .w(px(18.))
-                .flex()
-                .justify_center()
-                .text_color(theme.text_muted)
-                .child(glyph),
-        )
+        .child(icon(glyph, 16.).text_color(theme.text_muted))
         .child(label)
 }
 
@@ -229,21 +222,23 @@ impl Render for Sidebar {
                                     .truncate()
                                     .text_xs()
                                     .text_color(theme.text_muted)
-                                    .child(format!("· {server} ▾")),
+                                    .child(format!("· {server}")),
                             ),
                         None => div()
                             .flex_1()
                             .min_w_0()
                             .truncate()
                             .text_sm()
-                            .child(format!("{server} ▾")),
+                            .child(server.clone()),
                     })
+                    .child(icon(Icon::ChevronDown, 10.).text_color(theme.text_muted))
                     .child(
                         div()
                             .flex_none()
-                            .text_xs()
-                            .text_color(status_color)
-                            .child("●"),
+                            .mx_1()
+                            .size(px(8.))
+                            .rounded_full()
+                            .bg(status_color),
                     ),
             )
             .child(
@@ -256,13 +251,12 @@ impl Render for Sidebar {
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
-                    .text_sm()
                     .text_color(theme.text_muted)
                     .hover(move |style| style.bg(hover))
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(OpenWebSettings), cx);
                     })
-                    .child("⚙"),
+                    .child(icon(Icon::Settings, 17.).text_color(theme.text_muted)),
             );
 
         div()
@@ -285,15 +279,27 @@ impl Render for Sidebar {
                     .flex()
                     .flex_col()
                     .px_2()
-                    .child(nav_item("nav-new", "+", "New chat", NewSession, &theme))
+                    .child(nav_item(
+                        "nav-new",
+                        Icon::Plus,
+                        "New chat",
+                        NewSession,
+                        &theme,
+                    ))
                     .child(nav_item(
                         "nav-scheduled",
-                        "◷",
+                        Icon::Clock,
                         "Scheduled",
                         OpenWebCrons,
                         &theme,
                     ))
-                    .child(nav_item("nav-skills", "✦", "Skills", OpenWebSkills, &theme)),
+                    .child(nav_item(
+                        "nav-skills",
+                        Icon::Sparkles,
+                        "Skills",
+                        OpenWebSkills,
+                        &theme,
+                    )),
             )
             .child(
                 div()

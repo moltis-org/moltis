@@ -16,6 +16,7 @@ use gpui::{
 
 use crate::{
     actions::{AbortRun, FocusComposer},
+    assets::{Icon, icon},
     daemon::{Daemon, DaemonEvent, Phase},
     input::{InputEvent, TextInput},
     markdown::parse::{Block, parse},
@@ -220,7 +221,11 @@ impl ChatView {
                         this.model_menu_open = !this.model_menu_open;
                         cx.notify();
                     }))
-                    .child(format!("{model_name} ▾")),
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(model_name)
+                    .child(icon(Icon::ChevronDown, 11.).text_color(theme.text_muted)),
             )
             .when(self.model_menu_open, |this| {
                 this.child(deferred(
@@ -413,7 +418,7 @@ impl ChatView {
                 .justify_center()
                 .cursor_pointer()
                 .on_click(cx.listener(|this, _, _, cx| this.daemon.update(cx, |d, cx| d.abort(cx))))
-                .child("■")
+                .child(icon(Icon::Stop, 18.).text_color(theme.accent_text))
                 .into_any_element()
         } else {
             div()
@@ -427,7 +432,7 @@ impl ChatView {
                 .text_color(theme.text_faint)
                 .hover(move |style| style.bg(hover))
                 .on_click(cx.listener(|this, _, _, cx| this.send(cx)))
-                .child("⏎")
+                .child(icon(Icon::ArrowUp, 16.).text_color(theme.text_muted))
                 .into_any_element()
         };
         let picker = self.render_model_picker(cx);
@@ -457,7 +462,7 @@ impl ChatView {
                         .on_click(|_, window, cx| {
                             window.dispatch_action(Box::new(crate::actions::ShowServers), cx);
                         })
-                        .child(div().text_color(theme.text_muted).child("▭"))
+                        .child(icon(Icon::Monitor, 13.).text_color(theme.text_muted))
                         .child(server),
                 ),
             )

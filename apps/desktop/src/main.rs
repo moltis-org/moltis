@@ -5,6 +5,7 @@
 
 mod actions;
 mod app;
+mod assets;
 #[cfg(feature = "capture")]
 mod capture;
 mod chat_view;
