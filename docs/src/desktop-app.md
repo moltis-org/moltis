@@ -13,18 +13,28 @@ flowchart LR
     App -- "ssh -L → 127.0.0.1:port" --> Tunnel[(moltis behind SSH)]
 ```
 
-## Running it
+## Installing
+
+Each release attaches `moltis-desktop-<version>-macos.app.zip`: a universal
+(Apple silicon and Intel), signed and notarized app. It **includes the moltis
+daemon**, so nothing else needs to be installed: unzip it, move
+**Moltis Desktop** to Applications and open it. The first time, the app
+installs its daemon as a background service and connects.
+
+## Building it
 
 The app lives in `apps/desktop`, a separate Cargo workspace:
 
 ```bash
-just desktop-run              # debug build and run
-just desktop-open-macos       # build the daemon and "Moltis Desktop.app" (release), open it
-just desktop-package-macos    # only build the bundle, in apps/desktop/target/bundle
-                              # (DESKTOP_DAEMON_BIN=path/to/moltis ships a daemon inside)
+just desktop-run              # debug build and run (no bundle, no daemon)
+just desktop-open-macos       # build the app with its daemon (release), open it
+just desktop-package-macos    # only build it, in apps/desktop/target/bundle
 ```
 
-System notifications (approval prompts) need the app bundle on macOS.
+`scripts/package-desktop-macos.sh` builds both binaries and signs them. Its
+environment variables choose a universal build (`DESKTOP_UNIVERSAL=1`), the
+signing identity (`DESKTOP_SIGN_IDENTITY`), the daemon's features, or no
+daemon at all (`DESKTOP_DAEMON=0`); see the script's header.
 
 ## Connecting
 
@@ -39,6 +49,13 @@ at the bottom of the sidebar) lists:
   inside the app, or else the one on your `PATH`. The service keeps running
   after the app quits and starts at login; `moltis service uninstall` removes
   it.
+  - If you move or delete the app, the service is left pointing at a path
+    that no longer exists; the next launch reinstalls it from the app's new
+    location. A daemon you installed another way (Homebrew, cargo) is never
+    replaced.
+  - After an update, the running daemon may be older than the one inside the
+    app. A banner offers **Restart daemon**; the app never restarts it
+    unasked, since it may be busy.
 - **Saved servers**: added by URL (direct HTTPS) or as an SSH tunnel.
 - **Nearby**: daemons advertising `_moltis._tcp` over Bonjour/mDNS.
 

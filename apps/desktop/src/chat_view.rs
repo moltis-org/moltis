@@ -278,6 +278,31 @@ impl ChatView {
 
     fn render_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = Theme::global(cx).clone();
+        if let Some((running, bundled)) = self.daemon.read(cx).outdated().cloned() {
+            return Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px_4()
+                    .py_1()
+                    .bg(theme.brand.opacity(0.12))
+                    .text_sm()
+                    .child(format!(
+                        "This app includes moltis {bundled}; the running daemon is {running}."
+                    ))
+                    .child(
+                        button("restart-daemon", "Restart daemon", ButtonKind::Ghost, cx).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.daemon
+                                    .update(cx, |daemon, cx| daemon.restart_local_daemon(cx));
+                            }),
+                        ),
+                    )
+                    .into_any_element(),
+            );
+        }
         let Phase::Reconnecting { reason, retry_in } = self.daemon.read(cx).phase().clone() else {
             return None;
         };

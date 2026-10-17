@@ -27,7 +27,8 @@ use {
 use moltis_client::ssh::SshTunnel;
 
 use crate::{
-    local_daemon, runtime,
+    local_daemon::{self, ServiceCheck},
+    runtime,
     servers::{ServerKind, ServerProfile},
     sessions::{Sessions, new_session_key},
     transcript::{Change, Transcript},
@@ -105,6 +106,11 @@ pub struct Daemon {
     /// The local daemon was found stopped and started once already; a second
     /// failure waits for the user instead of reinstalling the service in a loop.
     auto_started: bool,
+    /// The installed service was checked against the bundled daemon.
+    service_checked: bool,
+    /// The running local daemon is older than the bundled one: `(running,
+    /// bundled)` versions, until the user restarts it.
+    outdated: Option<(String, String)>,
     client: Option<ManagedClient>,
     endpoint: Option<Endpoint>,
     #[cfg(feature = "ssh")]
@@ -133,6 +139,8 @@ impl Daemon {
             phase: Phase::Connecting { attempt: 1 },
             connected_once: false,
             auto_started: false,
+            service_checked: false,
+            outdated: None,
             client: None,
             endpoint: None,
             #[cfg(feature = "ssh")]
@@ -351,6 +359,7 @@ impl Daemon {
                 self.hello = Some(*hello);
                 self.set_phase(Phase::Connected, cx);
                 self.refresh(cx);
+                self.check_service(cx);
             },
             ClientUpdate::Disconnected {
                 reason,
@@ -632,17 +641,103 @@ impl Daemon {
         .detach();
     }
 
-    /// The service was installed; the daemon needs a few seconds to listen.
-    /// Retry every half second instead of waiting out the reconnect backoff.
+    /// The local daemon is older than the one bundled with this app:
+    /// `(running, bundled)` versions.
+    pub fn outdated(&self) -> Option<&(String, String)> {
+        self.outdated.as_ref()
+    }
+
+    /// Once per connection to this computer: make sure the user service runs
+    /// this app's daemon. A service left pointing at a moved or deleted app
+    /// is reinstalled; an older daemon after an in-place update is offered a
+    /// restart (it may be busy, so never restarted unasked).
+    fn check_service(&mut self, cx: &mut Context<Self>) {
+        if self.service_checked || !self.profile.is_local() {
+            return;
+        }
+        self.service_checked = true;
+        let bundled = local_daemon::bundled_dir()
+            .map(|dir| dir.join("moltis"))
+            .filter(|path| path.is_file());
+        let installed = moltis_config::home_dir()
+            .as_deref()
+            .and_then(local_daemon::installed_service_binary);
+        let running = self
+            .hello
+            .as_ref()
+            .map(|hello| hello.server.version.clone());
+        match local_daemon::check_service(
+            installed.as_deref(),
+            bundled.as_deref(),
+            running.as_deref(),
+            local_daemon::bundled_version(),
+        ) {
+            ServiceCheck::Fine => {},
+            ServiceCheck::Reinstall => {
+                let Some(moltis) = bundled else {
+                    return;
+                };
+                tracing::info!(?installed, "moltis service points elsewhere; reinstalling");
+                let install = cx
+                    .background_executor()
+                    .spawn(async move { local_daemon::install_service(&moltis) });
+                cx.spawn(async move |this, cx| {
+                    let result = install.await;
+                    let _ = this.update(cx, |this, cx| match result {
+                        Ok(()) => this.poll_started_daemon(cx),
+                        Err(error) => this.toast(format!("{error:#}"), cx),
+                    });
+                })
+                .detach();
+            },
+            ServiceCheck::Restart { running, bundled } => {
+                self.outdated = Some((running, bundled));
+                cx.notify();
+            },
+        }
+    }
+
+    /// Restart the user service so it runs the bundled (newer) daemon.
+    pub fn restart_local_daemon(&mut self, cx: &mut Context<Self>) {
+        let Some(moltis) = local_daemon::bundled_dir()
+            .map(|dir| dir.join("moltis"))
+            .filter(|path| path.is_file())
+        else {
+            return;
+        };
+        self.outdated = None;
+        cx.notify();
+        let restart = cx
+            .background_executor()
+            .spawn(async move { local_daemon::restart_service(&moltis) });
+        cx.spawn(async move |this, cx| {
+            let result = restart.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(()) => this.poll_started_daemon(cx),
+                Err(error) => this.toast(format!("{error:#}"), cx),
+            });
+        })
+        .detach();
+    }
+
+    /// The service was (re)installed or restarted; the daemon needs a few
+    /// seconds to listen. Retry every half second instead of waiting out the
+    /// reconnect backoff, until the connection has dropped (a restart takes
+    /// down the one we have) and come back.
     fn poll_started_daemon(&mut self, cx: &mut Context<Self>) {
         let generation = self.generation;
         cx.spawn(async move |this, cx| {
+            let mut went_down = false;
             for _ in 0..120 {
                 let waiting = this
                     .update(cx, |this, _| {
-                        let waiting = this.generation == generation
-                            && matches!(this.phase, Phase::NotRunning { .. });
-                        if waiting && let Some(client) = &this.client {
+                        let connected = matches!(this.phase, Phase::Connected);
+                        went_down |= !connected;
+                        let waiting = this.generation == generation && !(went_down && connected);
+                        if waiting
+                            && !connected
+                            && let Some(client) = &this.client
+                        {
                             client.reconnect_now();
                         }
                         waiting
