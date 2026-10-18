@@ -135,6 +135,22 @@ impl TextInput {
         }
     }
 
+    /// Text the platform asks for (IME, dictation, accessibility). A masked
+    /// field answers nothing, so its secret never leaves through native
+    /// text queries.
+    fn queried_text(
+        &self,
+        range_utf16: &Range<usize>,
+        actual: &mut Option<Range<usize>>,
+    ) -> Option<String> {
+        if self.masked {
+            return None;
+        }
+        let range = self.edit.range_from_utf16(range_utf16);
+        *actual = Some(self.edit.range_to_utf16(&range));
+        Some(self.edit.text()[range].to_string())
+    }
+
     fn real_offset(&self, offset: usize) -> usize {
         if self.masked {
             self.edit
@@ -392,9 +408,7 @@ impl EntityInputHandler for TextInput {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<String> {
-        let range = self.edit.range_from_utf16(&range_utf16);
-        *actual = Some(self.edit.range_to_utf16(&range));
-        Some(self.edit.text()[range].to_string())
+        self.queried_text(&range_utf16, actual)
     }
 
     fn selected_text_range(
@@ -775,7 +789,27 @@ fn selection_rects(
 
 #[cfg(test)]
 mod tests {
+    use gpui::{AppContext, TestAppContext};
+
     use super::*;
+
+    #[gpui::test]
+    fn masked_fields_answer_no_text_queries(cx: &mut TestAppContext) {
+        let plain = cx.new(|cx| TextInput::single_line("Name", cx));
+        let secret = cx.new(|cx| TextInput::single_line("Password", cx).masked());
+        for input in [&plain, &secret] {
+            input.update(cx, |input, cx| input.set_text("hunter2", cx));
+        }
+        let mut actual = None;
+        let text = plain.read_with(cx, |input, _| input.queried_text(&(0..7), &mut actual));
+        assert_eq!(text.as_deref(), Some("hunter2"));
+        assert_eq!(actual, Some(0..7));
+
+        let mut actual = None;
+        let text = secret.read_with(cx, |input, _| input.queried_text(&(0..7), &mut actual));
+        assert_eq!(text, None);
+        assert_eq!(actual, None);
+    }
 
     #[test]
     fn selection_rects_span_rows() {

@@ -14,6 +14,8 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "tracing")]
+use tracing::{debug, warn};
 use {
     futures::{SinkExt, StreamExt},
     moltis_protocol::{
@@ -32,7 +34,6 @@ use {
             http::{HeaderValue, StatusCode, header::AUTHORIZATION},
         },
     },
-    tracing::{debug, warn},
 };
 
 #[cfg(feature = "metrics")]
@@ -148,7 +149,7 @@ impl std::fmt::Debug for Connection {
 
 impl Connection {
     /// Open the socket and complete the `connect` handshake.
-    #[tracing::instrument(skip_all, fields(endpoint = %options.endpoint))]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, fields(endpoint = %options.endpoint)))]
     pub async fn connect(options: &ConnectOptions) -> Result<Self> {
         #[cfg(feature = "metrics")]
         counter!(metric::CONNECT_ATTEMPTS_TOTAL).increment(1);
@@ -226,6 +227,7 @@ impl Connection {
             tokio::time::timeout(options.handshake_timeout, read_hello(&mut ws, &connect_id))
                 .await
                 .map_err(|_| Error::Timeout)??;
+        #[cfg(feature = "tracing")]
         debug!(conn_id = %hello.server.conn_id, server = %hello.server.version, "connected");
 
         let (sink, stream) = ws.split();
@@ -294,7 +296,10 @@ impl Connection {
     }
 
     /// Send a request and wait for its response payload.
-    #[tracing::instrument(skip(self, params), fields(conn_id = %self.inner.hello.server.conn_id))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip(self, params), fields(conn_id = %self.inner.hello.server.conn_id))
+    )]
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
         #[cfg(feature = "metrics")]
         let started = std::time::Instant::now();
@@ -458,8 +463,9 @@ async fn write_loop(
             _ = ping.tick() => Message::Ping(Vec::new().into()),
         };
         let closing = matches!(message, Message::Close(_));
-        if let Err(error) = sink.send(message).await {
-            debug!(%error, "websocket write failed");
+        if let Err(_error) = sink.send(message).await {
+            #[cfg(feature = "tracing")]
+            debug!(error = %_error, "websocket write failed");
             break;
         }
         if closing {
@@ -498,6 +504,7 @@ async fn read_loop(
         };
         dispatch(&text, &pending, &events, &outgoing);
     };
+    #[cfg(feature = "tracing")]
     debug!(%reason, "websocket closed");
     let waiters: Vec<_> = pending
         .lock()
@@ -519,12 +526,14 @@ fn dispatch(
     outgoing: &mpsc::UnboundedSender<Message>,
 ) {
     let Ok(value) = serde_json::from_str::<Value>(text) else {
+        #[cfg(feature = "tracing")]
         warn!("ignoring non-JSON frame");
         return;
     };
     match value.get("type").and_then(Value::as_str) {
         Some("res") => {
             let Ok(response) = serde_json::from_value::<ResponseFrame>(value) else {
+                #[cfg(feature = "tracing")]
                 warn!("ignoring malformed response frame");
                 return;
             };
@@ -546,6 +555,7 @@ fn dispatch(
         },
         Some("event") => {
             let Ok(event) = serde_json::from_value::<EventFrame>(value) else {
+                #[cfg(feature = "tracing")]
                 warn!("ignoring malformed event frame");
                 return;
             };

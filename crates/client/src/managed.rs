@@ -9,6 +9,8 @@
 
 use std::{sync::Arc, time::Duration};
 
+#[cfg(feature = "tracing")]
+use tracing::{debug, info};
 use {
     moltis_protocol::{
         EventFrame, HelloOk,
@@ -16,7 +18,6 @@ use {
     },
     serde_json::Value,
     tokio::sync::{Notify, broadcast::error::RecvError, mpsc, watch},
-    tracing::{debug, info},
 };
 
 use crate::{
@@ -146,6 +147,7 @@ async fn supervise(
         let _ = updates.send(ClientUpdate::Connecting { attempt });
         let (reason, kind) = match connect_and_subscribe(&options, &subscriptions).await {
             Ok((connection, mut events)) => {
+                #[cfg(feature = "tracing")]
                 info!(endpoint = %options.endpoint, "connected to daemon");
                 attempt = 0;
                 backoff.reset();
@@ -187,6 +189,7 @@ async fn supervise(
             Err(error) => (error.to_string(), error.failure_kind()),
         };
         let retry_in = backoff.next_delay();
+        #[cfg(feature = "tracing")]
         debug!(%reason, ?retry_in, "daemon connection lost");
         let _ = updates.send(ClientUpdate::Disconnected {
             reason,

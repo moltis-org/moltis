@@ -152,7 +152,10 @@ impl AuthClient {
     }
 
     /// Log in, mint a desktop API key, and log out again.
-    #[tracing::instrument(skip(self, password), fields(endpoint = %self.endpoint))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip(self, password), fields(endpoint = %self.endpoint))
+    )]
     pub async fn exchange_password_for_key(
         &self,
         password: &SecretString,
