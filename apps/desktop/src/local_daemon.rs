@@ -77,7 +77,15 @@ pub fn install_service(moltis: &Path) -> anyhow::Result<()> {
 }
 
 fn run_service_command(moltis: &Path, action: &str) -> anyhow::Result<()> {
-    let output = Command::new(moltis).args(["service", action]).output()?;
+    run_checked(
+        Command::new(moltis).args(["service", action]),
+        &format!("moltis service {action}"),
+    )
+}
+
+/// Run `command`; a failure carries its output.
+fn run_checked(command: &mut Command, what: &str) -> anyhow::Result<()> {
+    let output = command.output()?;
     if output.status.success() {
         return Ok(());
     }
@@ -87,17 +95,46 @@ fn run_service_command(moltis: &Path, action: &str) -> anyhow::Result<()> {
         .into_iter()
         .find(|s| !s.is_empty())
         .unwrap_or("no output");
-    anyhow::bail!(
-        "moltis service {action} failed ({}): {detail}",
-        output.status
-    )
+    anyhow::bail!("{what} failed ({}): {detail}", output.status)
 }
 
 /// Start an installed service that is not running with the binary it was
 /// installed with (`moltis service restart` rewrites nothing). Blocking; run
 /// it off the UI thread.
 pub fn start_installed_service(installed: &Path) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    if let Some(home) = moltis_config::home_dir() {
+        load_launch_agent(&home.join(LAUNCH_AGENT))?;
+    }
     run_service_command(installed, "restart")
+}
+
+/// The launchd agent `moltis service install` writes, relative to home.
+const LAUNCH_AGENT: &str = "Library/LaunchAgents/org.moltis.gateway.plist";
+
+/// Load the saved launch agent when launchd has unloaded it (`launchctl
+/// bootout`, or a failed launch): `service restart` only kickstarts a loaded
+/// service, and the installed binary may predate any fix for that. The plist
+/// itself is left as installed.
+#[cfg(target_os = "macos")]
+fn load_launch_agent(plist: &Path) -> anyhow::Result<()> {
+    let uid = Command::new("id").arg("-u").output()?;
+    let domain = format!("gui/{}", String::from_utf8_lossy(&uid.stdout).trim());
+    let loaded = Command::new("launchctl")
+        .args(["print", &format!("{domain}/org.moltis.gateway")])
+        .output()?
+        .status
+        .success();
+    if loaded {
+        return Ok(());
+    }
+    run_checked(
+        Command::new("launchctl")
+            .arg("bootstrap")
+            .arg(&domain)
+            .arg(plist),
+        "launchctl bootstrap",
+    )
 }
 
 /// `moltis service restart`: restart the installed user service, for example
@@ -182,8 +219,7 @@ pub fn bundled_version() -> Option<&'static str> {
 pub fn installed_service_binary(home: &Path, data_dir: &Path) -> Option<PathBuf> {
     let read = |path: PathBuf| std::fs::read_to_string(path).ok();
     if cfg!(target_os = "macos") {
-        return read(home.join("Library/LaunchAgents/org.moltis.gateway.plist"))
-            .and_then(|plist| program_from_plist(&plist));
+        return read(home.join(LAUNCH_AGENT)).and_then(|plist| program_from_plist(&plist));
     }
     if cfg!(target_os = "linux") {
         return read(home.join(".config/systemd/user/moltis.service"))
