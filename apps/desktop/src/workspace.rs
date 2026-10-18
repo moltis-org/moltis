@@ -149,7 +149,7 @@ impl Workspace {
 
     fn save_store(&self) {
         if let Err(error) = self.store.save() {
-            tracing::warn!(%error, "could not save servers.json");
+            crate::logging::warn!(%error, "could not save servers.json");
         }
     }
 

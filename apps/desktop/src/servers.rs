@@ -49,6 +49,18 @@ impl ServerProfile {
         Self::local_for(&config, &moltis_config::config_dir()?).ok()
     }
 
+    /// The local profile read again, when its trust has changed since this
+    /// copy was made. On a clean install the profile is read before the
+    /// daemon's first launch writes `certs/ca.pem`, so it starts out trusting
+    /// only the system store.
+    pub fn reloaded_local(&self) -> Option<Self> {
+        self.reloaded(Self::local())
+    }
+
+    fn reloaded(&self, fresh: Option<Self>) -> Option<Self> {
+        fresh.filter(|fresh| self.is_local() && fresh.tls() != self.tls())
+    }
+
     fn local_for(config: &moltis_config::MoltisConfig, dir: &Path) -> moltis_client::Result<Self> {
         Ok(Self {
             id: LOCAL_ID.into(),
@@ -146,7 +158,7 @@ impl ServerStore {
             .and_then(|text| match serde_json::from_str(&text) {
                 Ok(file) => Some(file),
                 Err(error) => {
-                    tracing::warn!(%error, "ignoring unreadable servers.json");
+                    crate::logging::warn!(%error, "ignoring unreadable servers.json");
                     None
                 },
             })
@@ -233,6 +245,30 @@ mod tests {
         assert_eq!(profile.name, "This computer");
         assert!(profile.address().contains("localhost"));
         assert!(!dir.path().join("moltis.toml").exists());
+    }
+
+    #[test]
+    fn local_profile_picks_up_a_ca_written_after_it_was_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = moltis_config::MoltisConfig::default();
+        config.tls.enabled = true;
+        let before = ServerProfile::local_for(&config, dir.path()).unwrap();
+        assert_eq!(before.tls(), &TlsTrust::System);
+        // Unchanged trust: keep the profile as is.
+        let same = ServerProfile::local_for(&config, dir.path()).unwrap();
+        assert_eq!(before.reloaded(Some(same)), None);
+
+        // The daemon's first launch writes its CA.
+        std::fs::create_dir_all(dir.path().join("certs")).unwrap();
+        std::fs::write(dir.path().join("certs/ca.pem"), "PEM").unwrap();
+        let after = ServerProfile::local_for(&config, dir.path()).unwrap();
+        let reloaded = before.reloaded(Some(after)).unwrap();
+        assert_eq!(reloaded.tls(), &TlsTrust::CaPem { pem: "PEM".into() });
+
+        // Remote profiles are never replaced by the local one.
+        let remote = ServerProfile::direct("studio", endpoint("https://studio.local:13131"));
+        let fresh = ServerProfile::local_for(&config, dir.path()).unwrap();
+        assert_eq!(remote.reloaded(Some(fresh)), None);
     }
 
     #[test]

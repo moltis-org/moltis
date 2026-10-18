@@ -12,6 +12,7 @@ mod chat_view;
 mod daemon;
 mod input;
 mod local_daemon;
+mod logging;
 mod markdown;
 #[cfg(feature = "mockup")]
 mod mockup;
@@ -28,6 +29,7 @@ mod ui;
 mod workspace;
 
 fn main() {
+    #[cfg(feature = "tracing")]
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("MOLTIS_DESKTOP_LOG")

@@ -93,6 +93,13 @@ fn run_service_command(moltis: &Path, action: &str) -> anyhow::Result<()> {
     )
 }
 
+/// Start an installed service that is not running with the binary it was
+/// installed with (`moltis service restart` rewrites nothing). Blocking; run
+/// it off the UI thread.
+pub fn start_installed_service(installed: &Path) -> anyhow::Result<()> {
+    run_service_command(installed, "restart")
+}
+
 /// `moltis service restart`: restart the installed user service, for example
 /// to pick up a newer bundled binary. Blocking; run it off the UI thread.
 pub fn restart_service(moltis: &Path) -> anyhow::Result<()> {
@@ -228,6 +235,30 @@ fn program_from_supervisor(script: &str) -> Option<PathBuf> {
         .and_then(|value| value.strip_suffix('\''))
         .map_or_else(|| value.to_string(), |inner| inner.replace("'\\''", "'"));
     (!program.is_empty()).then(|| PathBuf::from(program))
+}
+
+/// How to bring back a local service that is installed but not running.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AutoStart {
+    /// The service is this app's but its binary is gone or another app copy:
+    /// install this app's daemon.
+    Install,
+    /// Start the service as installed, keeping its binary and options (it may
+    /// be a Homebrew or cargo install).
+    Start(PathBuf),
+}
+
+/// Decide how to start a stopped service without asking. `None` means no
+/// service is installed (the user has not chosen to run moltis here) or
+/// nothing can start it.
+#[must_use]
+pub fn auto_start(installed: Option<&Path>, bundled: Option<&Path>) -> Option<AutoStart> {
+    let installed = installed?;
+    match check_service(Some(installed), bundled, None, None) {
+        ServiceCheck::Reinstall => Some(AutoStart::Install),
+        _ if installed.exists() => Some(AutoStart::Start(installed.to_path_buf())),
+        _ => None,
+    }
 }
 
 /// What the app should do about the installed service once connected.
@@ -442,6 +473,34 @@ mod tests {
             0
         );
         assert!(!dir.path().join("bin/moltis.partial").exists());
+    }
+
+    #[test]
+    fn auto_start_keeps_other_installs() {
+        let bundled = Path::new("/Applications/Moltis Desktop.app/Contents/MacOS/moltis");
+        let dir = tempfile::tempdir().unwrap();
+        let homebrew = dir.path().join("moltis");
+        std::fs::write(&homebrew, "").unwrap();
+        // A Homebrew or cargo service is started as installed, never replaced.
+        assert_eq!(
+            auto_start(Some(&homebrew), Some(bundled)),
+            Some(AutoStart::Start(homebrew.clone()))
+        );
+        assert_eq!(
+            auto_start(Some(&homebrew), None),
+            Some(AutoStart::Start(homebrew))
+        );
+        // This app's service whose binary moved is reinstalled.
+        assert_eq!(
+            auto_start(Some(Path::new("/nonexistent/old/moltis")), Some(bundled)),
+            Some(AutoStart::Install)
+        );
+        // Nothing installed, or nothing left to run.
+        assert_eq!(auto_start(None, Some(bundled)), None);
+        assert_eq!(
+            auto_start(Some(Path::new("/nonexistent/moltis")), None),
+            None
+        );
     }
 
     #[test]

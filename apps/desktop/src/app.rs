@@ -9,7 +9,7 @@ pub fn run() {
         .with_assets(crate::assets::Assets)
         .run(|cx: &mut App| {
             if let Err(error) = Tokio::install(cx) {
-                tracing::error!(%error, "could not start the network runtime");
+                crate::logging::error!(%error, "could not start the network runtime");
                 cx.quit();
                 return;
             }
@@ -107,7 +107,7 @@ fn open_window(cx: &mut App) {
         #[cfg(not(feature = "capture"))]
         Ok(_) => {},
         Err(error) => {
-            tracing::error!(%error, "could not open the window");
+            crate::logging::error!(%error, "could not open the window");
             cx.quit();
         },
     }

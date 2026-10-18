@@ -74,8 +74,11 @@ should Moltis run?**:
   HTTPS or an SSH tunnel. Nothing is installed locally, so you can use the app
   with a remote daemon only.
 
-Once the service is installed, the app starts it again without asking when it
-finds it stopped. The **Servers** screen (`⌘⇧S`, or click the server name at
+Once a service is installed, the app starts it again without asking when it
+finds it stopped. It starts the service as installed (`moltis service
+restart`), so a daemon you installed with Homebrew or cargo keeps its binary
+and options. The app only reinstalls a service that points at a copy of the
+app that was moved or deleted. The **Servers** screen (`⌘⇧S`, or click the server name at
 the bottom of the sidebar) lists:
 
 - **This computer**: the local daemon, run as a background service

@@ -82,7 +82,7 @@ impl ServersView {
                 this.browsing = None;
                 match result {
                     Some(Ok(daemons)) => this.nearby = daemons,
-                    Some(Err(error)) => tracing::debug!(%error, "mDNS browse failed"),
+                    Some(Err(error)) => crate::logging::debug!(%error, "mDNS browse failed"),
                     None => {},
                 }
                 cx.notify();

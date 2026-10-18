@@ -30,7 +30,7 @@ use {
 use moltis_client::ssh::SshTunnel;
 
 use crate::{
-    local_daemon::{self, ServiceCheck},
+    local_daemon::{self, AutoStart, ServiceCheck},
     runtime,
     servers::{ServerKind, ServerProfile},
     sessions::{Sessions, new_session_key},
@@ -509,6 +509,17 @@ impl Daemon {
                 if let Some(client) = self.client.take() {
                     client.shutdown();
                 }
+                // The local daemon may have written its CA since the profile
+                // was read: trust that before asking about a fingerprint.
+                if let Some(local) = self.profile.reloaded_local() {
+                    self.profile = local;
+                    cx.emit(DaemonEvent::ProfileChanged(self.profile.clone()));
+                    cx.spawn(async move |this, cx| {
+                        let _ = this.update(cx, |this, cx| this.connect(cx));
+                    })
+                    .detach();
+                    return;
+                }
                 self.probe_certificate(cx);
             },
             FailureKind::Unreachable if self.profile.is_local() && !self.connected_once => {
@@ -518,8 +529,11 @@ impl Daemon {
                         std::env::var_os("PATH"),
                         moltis_config::home_dir().as_deref(),
                     );
-                    let auto_start =
-                        moltis.is_some() && !self.auto_started && local_service_installed();
+                    let auto_start = if self.auto_started {
+                        None
+                    } else {
+                        installed_auto_start()
+                    };
                     self.set_phase(
                         Phase::NotRunning {
                             moltis,
@@ -528,9 +542,14 @@ impl Daemon {
                         },
                         cx,
                     );
-                    if auto_start {
+                    if let Some(auto_start) = auto_start {
                         self.auto_started = true;
-                        self.start_local_daemon(cx);
+                        match auto_start {
+                            AutoStart::Install => self.start_local_daemon(cx),
+                            AutoStart::Start(installed) => {
+                                self.start_installed_service(installed, cx);
+                            },
+                        }
                     }
                 }
             },
@@ -719,21 +738,40 @@ impl Daemon {
             return;
         };
         let moltis = moltis.clone();
+        self.run_service_job(move || local_daemon::install_service(&moltis), cx);
+    }
+
+    /// Start the service already installed here, as installed.
+    fn start_installed_service(&mut self, installed: PathBuf, cx: &mut Context<Self>) {
+        self.run_service_job(
+            move || local_daemon::start_installed_service(&installed),
+            cx,
+        );
+    }
+
+    /// Show "starting" on the not-running screen while `job` runs, then wait
+    /// for the daemon or show the job's error there.
+    fn run_service_job(
+        &mut self,
+        job: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let Phase::NotRunning { moltis, .. } = &self.phase else {
+            return;
+        };
         self.set_phase(
             Phase::NotRunning {
-                moltis: Some(moltis.clone()),
+                moltis: moltis.clone(),
                 starting: true,
                 error: None,
             },
             cx,
         );
-        let install = cx
-            .background_executor()
-            .spawn(async move { local_daemon::install_service(&moltis).map(|()| moltis) });
+        let job = cx.background_executor().spawn(async move { job() });
         cx.spawn(async move |this, cx| {
-            let result = install.await;
+            let result = job.await;
             let _ = this.update(cx, |this, cx| match result {
-                Ok(_) => this.poll_started_daemon(cx),
+                Ok(()) => this.poll_started_daemon(cx),
                 Err(error) => {
                     if let Phase::NotRunning { moltis, .. } = &this.phase {
                         let phase = Phase::NotRunning {
@@ -784,7 +822,7 @@ impl Daemon {
                 let Some(moltis) = bundled else {
                     return;
                 };
-                tracing::info!(?installed, "moltis service points elsewhere; reinstalling");
+                crate::logging::info!(?installed, "moltis service points elsewhere; reinstalling");
                 let install = cx
                     .background_executor()
                     .spawn(async move { local_daemon::install_service(&moltis) });
@@ -912,7 +950,7 @@ impl Daemon {
                 }
                 match identity {
                     Ok(identity) => this.identity = Some(identity),
-                    Err(error) => tracing::debug!(%error, "agent identity unavailable"),
+                    Err(error) => crate::logging::debug!(%error, "agent identity unavailable"),
                 }
                 cx.notify();
             });
@@ -985,7 +1023,7 @@ impl Daemon {
                         this.contexts.insert(key, context.token_usage);
                         cx.notify();
                     },
-                    Err(error) => tracing::debug!(%error, "session context unavailable"),
+                    Err(error) => crate::logging::debug!(%error, "session context unavailable"),
                 }
             });
         })
@@ -1216,12 +1254,13 @@ fn hostname() -> String {
         .unwrap_or_else(|| "this computer".into())
 }
 
-/// Whether `moltis service install` already ran on this computer: the user
-/// chose to run moltis here, so a stopped daemon is started without asking.
-fn local_service_installed() -> bool {
-    moltis_config::home_dir().is_some_and(|home| {
-        local_daemon::installed_service_binary(&home, &moltis_config::data_dir()).is_some()
-    })
+/// A service installed on this computer means the user chose to run moltis
+/// here, so a stopped daemon is started without asking.
+fn installed_auto_start() -> Option<AutoStart> {
+    let home = moltis_config::home_dir()?;
+    let installed = local_daemon::installed_service_binary(&home, &moltis_config::data_dir());
+    let bundled = local_daemon::bundled_daemon().map(|moltis| local_daemon::service_path(&moltis));
+    local_daemon::auto_start(installed.as_deref(), bundled.as_deref())
 }
 
 #[cfg(test)]
