@@ -1,3 +1,5 @@
+use moltis_channels::ChannelReplyTarget;
+
 use super::*;
 
 #[test]
@@ -692,33 +694,4 @@ async fn resolve_image_success_builds_multimodal_attachment() {
     assert!(media.voice_audio.is_none());
     assert_eq!(media.attachments[0].media_type, "image/jpeg");
     assert!(!media.attachments[0].data.is_empty());
-}
-
-#[test]
-fn dm_message_reply_target_forwards_direct_chat() {
-    let target = message_reply_target(
-        "bot",
-        serenity::all::ChannelId::new(42),
-        MessageId::new(7),
-        None,
-    );
-    assert!(target.direct_chat);
-    assert_eq!(target.channel_type, ChannelType::Discord);
-    assert_eq!(target.chat_id, "42");
-    assert_eq!(target.message_id.as_deref(), Some("7"));
-    assert!(!target.is_shared_chat());
-    assert_eq!(target.classify_chat().as_deref(), Some("direct"));
-}
-
-#[test]
-fn guild_message_reply_target_stays_shared() {
-    let target = message_reply_target(
-        "bot",
-        serenity::all::ChannelId::new(42),
-        MessageId::new(7),
-        Some(GuildId::new(9)),
-    );
-    assert!(!target.direct_chat);
-    assert!(target.is_shared_chat());
-    assert!(target.classify_chat().is_none());
 }
