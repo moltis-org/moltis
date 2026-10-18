@@ -51,6 +51,10 @@ const KEY_SOURCE_BY_PROVIDER: Record<string, KeySource> = {
 		url: "https://openrouter.ai/settings/keys",
 		label: "OpenRouter Settings",
 	},
+	requesty: {
+		url: "https://app.requesty.ai/api-keys",
+		label: "Requesty API Keys",
+	},
 	cerebras: {
 		url: "https://cloud.cerebras.ai/",
 		label: "Cerebras Cloud",
