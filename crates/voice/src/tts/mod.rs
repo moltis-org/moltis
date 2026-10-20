@@ -4,13 +4,14 @@ mod audio;
 mod coqui;
 mod elevenlabs;
 mod google;
+mod minimax;
 pub mod mock;
 mod openai;
 mod piper;
 
 pub use {
-    coqui::CoquiTts, elevenlabs::ElevenLabsTts, google::GoogleTts, mock::MockTts,
-    openai::OpenAiTts, piper::PiperTts,
+    coqui::CoquiTts, elevenlabs::ElevenLabsTts, google::GoogleTts, minimax::MiniMaxTts,
+    mock::MockTts, openai::OpenAiTts, piper::PiperTts,
 };
 
 use {

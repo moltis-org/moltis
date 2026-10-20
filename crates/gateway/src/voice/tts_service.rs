@@ -8,8 +8,9 @@ use {
 };
 
 use moltis_voice::{
-    AudioFormat, CoquiTts, ElevenLabsTts, GoogleTts, OpenAiTts, PiperTts, SynthesizeRequest,
-    TtsConfig, TtsProvider, TtsProviderId, parse_tts_directives, strip_ssml_tags,
+    AudioFormat, CoquiTts, ElevenLabsTts, GoogleTts, MiniMaxTts, OpenAiTts, PiperTts,
+    SynthesizeRequest, TtsConfig, TtsProvider, TtsProviderId, parse_tts_directives,
+    strip_ssml_tags,
 };
 
 use crate::services::{ServiceError, ServiceResult, TtsService};
@@ -65,6 +66,12 @@ impl LiveTtsService {
                 model: cfg.voice.tts.openai.model.clone(),
                 speed: None,
             },
+            minimax: moltis_voice::MiniMaxTtsConfig {
+                api_key: cfg.voice.tts.minimax.api_key.clone(),
+                base_url: cfg.voice.tts.minimax.base_url.clone(),
+                voice: cfg.voice.tts.minimax.voice.clone(),
+                model: cfg.voice.tts.minimax.model.clone(),
+            },
             google: moltis_voice::GoogleTtsConfig {
                 api_key: cfg.voice.tts.google.api_key.clone(),
                 voice: cfg.voice.tts.google.voice.clone(),
@@ -113,6 +120,14 @@ impl LiveTtsService {
                     None
                 }
             },
+            TtsProviderId::MiniMax => config.minimax.api_key.as_ref().map(|key| {
+                Box::new(MiniMaxTts::with_defaults(
+                    Some(key.clone()),
+                    Some(config.minimax.base_url.clone()),
+                    config.minimax.voice.clone(),
+                    Some(config.minimax.model.clone()),
+                )) as Box<dyn TtsProvider + Send + Sync>
+            }),
             TtsProviderId::Google => config.google.api_key.as_ref().map(|_| {
                 Box::new(GoogleTts::new(&config.google).with_model(config.google.model.clone()))
                     as Box<dyn TtsProvider + Send + Sync>
@@ -148,6 +163,7 @@ impl LiveTtsService {
                 TtsProviderId::OpenAi,
                 config.openai.api_key.is_some() || config.openai.base_url.is_some(),
             ),
+            (TtsProviderId::MiniMax, config.minimax.api_key.is_some()),
             (TtsProviderId::Google, config.google.api_key.is_some()),
             (TtsProviderId::Piper, config.piper.model_path.is_some()),
             (TtsProviderId::Coqui, true), // Always available if server running
@@ -564,8 +580,8 @@ mod tests {
         let providers = service.providers().await.unwrap();
 
         let providers_arr = providers.as_array().unwrap();
-        // 5 providers: elevenlabs, openai, google, piper, coqui
-        assert_eq!(providers_arr.len(), 5);
+        // 6 providers: elevenlabs, openai, minimax, google, piper, coqui
+        assert_eq!(providers_arr.len(), 6);
 
         let ids: Vec<_> = providers_arr
             .iter()
@@ -573,6 +589,7 @@ mod tests {
             .collect();
         assert!(ids.contains(&"elevenlabs"));
         assert!(ids.contains(&"openai"));
+        assert!(ids.contains(&"minimax"));
         assert!(ids.contains(&"google"));
         assert!(ids.contains(&"piper"));
         assert!(ids.contains(&"coqui"));

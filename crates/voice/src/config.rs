@@ -49,6 +49,9 @@ pub struct TtsConfig {
     /// OpenAI TTS settings.
     pub openai: OpenAiTtsConfig,
 
+    /// MiniMax TTS settings.
+    pub minimax: MiniMaxTtsConfig,
+
     /// Google Cloud TTS settings.
     pub google: GoogleTtsConfig,
 
@@ -68,6 +71,7 @@ impl Default for TtsConfig {
             max_text_length: 2000,
             elevenlabs: ElevenLabsConfig::default(),
             openai: OpenAiTtsConfig::default(),
+            minimax: MiniMaxTtsConfig::default(),
             google: GoogleTtsConfig::default(),
             piper: PiperTtsConfig::default(),
             coqui: CoquiTtsConfig::default(),
@@ -141,6 +145,40 @@ pub struct OpenAiTtsConfig {
 
     /// Speed (0.25 - 4.0, default 1.0).
     pub speed: Option<f32>,
+}
+
+/// MiniMax speech synthesis configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MiniMaxTtsConfig {
+    /// API key (from MINIMAX_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+
+    /// TTS endpoint, defaulting to the global API.
+    pub base_url: String,
+
+    /// Default voice ID.
+    pub voice: Option<String>,
+
+    /// Default speech model.
+    pub model: String,
+}
+
+impl Default for MiniMaxTtsConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            base_url: "https://api.minimax.io/v1/t2a_v2".into(),
+            voice: None,
+            model: "speech-2.8-hd".into(),
+        }
+    }
 }
 
 /// Google Cloud TTS provider configuration.
@@ -859,6 +897,7 @@ mod tests {
                     ..Default::default()
                 },
                 openai: OpenAiTtsConfig::default(),
+                minimax: MiniMaxTtsConfig::default(),
                 google: GoogleTtsConfig::default(),
                 piper: PiperTtsConfig::default(),
                 coqui: CoquiTtsConfig::default(),
