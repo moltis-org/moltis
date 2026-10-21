@@ -704,6 +704,14 @@ loopback_http = true                # Plain HTTP on loopback binds: http://local
 # the persona's profile/style/accent as voice direction. Other providers
 # use the persona's provider-specific bindings (voice_id, model overrides).
 
+# [voice.tts.voxcpm]
+# VoxCPM (OpenBMB) served through vLLM-Omni:
+#   vllm serve openbmb/VoxCPM2 --omni --port 8000
+# endpoint = "http://localhost:8000/v1"  # OpenAI-compatible speech base URL
+# model = "openbmb/VoxCPM2"              # Served model name
+# voice = "alice"                        # Registered speaker; omit for zero-shot
+# voice_design = true                    # Apply personas as a VoxCPM (…) text prefix
+
 # [voice.stt]
 # enabled = true
 # providers = []                        # UI allowlist (empty = show all)

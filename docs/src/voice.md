@@ -104,7 +104,7 @@ similarity_boost = 0.75
 [voice.tts.openai]
 # No api_key needed if OpenAI is configured as an LLM provider or OPENAI_API_KEY is set.
 # api_key = "sk-..."
-# base_url = "http://10.1.2.30:8003"  # Override for OpenAI-compatible servers (e.g. Chatterbox)
+# base_url = "http://10.1.2.30:8003"  # Override for OpenAI-compatible servers (e.g. Chatterbox, VoxCPM)
 voice = "alloy"  # alloy, echo, fable, onyx, nova, shimmer
 model = "tts-1"
 speed = 1.0
@@ -127,6 +127,12 @@ model_path = "~/.moltis/models/en_US-lessac-medium.onnx"  # required
 [voice.tts.coqui]
 endpoint = "http://localhost:5002"  # Coqui TTS server
 # model = "tts_models/en/ljspeech/tacotron2-DDC"  # optional
+
+[voice.tts.voxcpm]
+endpoint = "http://localhost:8000/v1"  # vLLM-Omni OpenAI-compatible speech API
+# model = "openbmb/VoxCPM2"            # served model name
+# voice = "alice"                      # registered speaker; omit for zero-shot
+# voice_design = true                  # personas as a VoxCPM text prefix
 ```
 
 ### Local TTS Provider Setup
@@ -191,6 +197,132 @@ the [`coqui-tts` PyPI package](https://pypi.org/project/coqui-tts/).
    ```
 
 Browse available models in the maintained fork's [standard model list](https://github.com/idiap/coqui-ai-TTS/blob/dev/TTS/.models.json).
+
+#### VoxCPM
+
+[VoxCPM](https://github.com/OpenBMB/VoxCPM) is OpenBMB's tokenizer-free TTS
+model, released under Apache-2.0. VoxCPM2 is a 2B-parameter model covering 30
+languages with 48 kHz output, natural-language **voice design**, and voice
+cloning from a short reference clip. A single 24 GB GPU is enough.
+
+Moltis talks to it through [vLLM-Omni](https://github.com/vllm-project/vllm-omni),
+which serves VoxCPM2 behind an OpenAI-compatible speech API.
+
+1. Install vLLM-Omni:
+   ```bash
+   uv pip install vllm==0.29.0 --torch-backend=auto
+   uv pip install setuptools_scm ninja
+   git clone https://github.com/vllm-project/vllm-omni.git && cd vllm-omni
+   uv pip install -e .
+   ```
+
+   vLLM-Omni tracks vLLM by major.minor, so the two versions must match;
+   pairing its `main` with an older vLLM fails at import time.
+   `setuptools_scm` is required by `pip install -e .`, and `ninja` by
+   flashinfer's JIT compilation.
+
+2. Start the server:
+   ```bash
+   vllm serve openbmb/VoxCPM2 --omni --port 8000
+   ```
+
+3. Configure in `moltis.toml`:
+   ```toml
+   [voice.tts]
+   provider = "voxcpm"
+
+   [voice.tts.voxcpm]
+   endpoint = "http://localhost:8000/v1"
+   model = "openbmb/VoxCPM2"
+   # voice = "alice"        # registered speaker; omit for zero-shot synthesis
+   # voice_design = true    # apply personas as a VoxCPM text prefix
+   ```
+
+Leave `voice` unset unless you have registered a speaker. VoxCPM validates the
+name against the speakers the server knows and rejects unknown ones, whereas
+omitting the field selects zero-shot synthesis.
+
+##### Voice personas
+
+VoxCPM is the first local provider that honors [voice personas](#voice-personas).
+It reads a voice description from a parenthesised prefix on the input text, so
+Moltis flattens the persona's rendered prompt into that prefix:
+
+```text
+(A wise British butler, Dry wit)Good evening.
+```
+
+Only the persona's field *values* are sent. The field labels and the
+`Persona:` name are stripped, because VoxCPM only responds to a plain
+description: measuring F0 against a live server showed that a surviving
+`Key:` label collapses the effect back to the no-prefix baseline, while the
+same words unlabelled shift pitch substantially.
+
+Set `voice_design = false` to send text through unchanged. The prefix is also
+skipped when the text already begins with its own `(...)` clause, so a
+`[[tts:...]]` directive can override the persona per message.
+
+**Write the persona for timbre, not just for character.** VoxCPM only shapes
+the voice from words that describe how it should *sound*. Measured against a
+live server, `"A wise British butler, Dry wit"` raised the median F0 from
+144.7 Hz to 191.1 Hz — a real change, but an arbitrary one, because none of
+those words says anything about the voice. Adding a single timbre cue steers
+it predictably:
+
+| Persona description | Median F0 |
+|---------------------|-----------|
+| *(no persona)* | 144.7 Hz |
+| A wise British butler, Dry wit | 191.1 Hz |
+| A **deep**, wise British butler, Dry wit | 127.5 Hz |
+| A **deep, elderly** British butler, dry and measured | 102.1 Hz |
+
+So put words like `deep`, `elderly`, `bright`, `breathy` or `resonant` in the
+persona's `profile` or `accent`. Traits such as "wise" or "dry wit" describe
+the character and leave the timbre to chance.
+
+##### Voice cloning
+
+Register a speaker with the server, then reference it by name:
+
+```bash
+curl -X POST http://localhost:8000/v1/audio/voices \
+  -F "audio_sample=@reference.wav" \
+  -F "name=alice" \
+  -F "consent=<consent-recording-id>" \
+  -F "ref_text=The exact transcript of the reference audio." \
+  -F "speaker_description=warm narrator"
+```
+
+`consent` is required by vLLM-Omni and records who authorised the use of this
+voice. `ref_text` is optional but improves quality: with it the server does
+in-context cloning, without it only a speaker embedding is extracted. The
+clip must be at least one second of clear speech; shorter audio is rejected
+with `Reference audio too short`.
+
+```toml
+[voice.tts.voxcpm]
+voice = "alice"
+```
+
+The provider implements `TtsProvider::voices()` against the server's
+`GET /v1/audio/voices` endpoint rather than hardcoding a list, so registered
+speakers are reported accurately once a caller surfaces them. (No RPC exposes
+voice listings today — the trait method is not yet consumed by the gateway.)
+For repeated speakers you can also precompute the
+prompt cache with vLLM-Omni's `precompute_custom_voice.py` and point
+`custom_voice_dir` at the output.
+
+> **Responsible use:** VoxCPM's cloning produces highly realistic speech.
+> OpenBMB's own guidance forbids using it for impersonation, fraud, or
+> disinformation, and recommends clearly marking AI-generated audio.
+
+##### Using the OpenAI provider instead
+
+Because vLLM-Omni's endpoint is OpenAI-compatible, `[voice.tts.openai]` with a
+`base_url` override also reaches VoxCPM. The dedicated provider is preferable:
+it keeps its own configuration section, lists the server's real voices, never
+forwards an `OPENAI_API_KEY` to a local server, and does not default `voice` to
+an OpenAI name that VoxCPM would reject.
 
 ### RPC Methods
 
@@ -355,6 +487,7 @@ voice "flair" per-message, a persona defines a stable spoken character.
 | Google Gemini TTS (`gemini-*`) | Full | Persona prompt as `system_instruction`; set `model = "gemini-2.5-flash-preview-tts"` |
 | ElevenLabs | Partial | Uses provider binding overrides (voice_id, stability) |
 | Google Cloud TTS v1 | Partial | Uses provider binding overrides (voice, speaking_rate, pitch) |
+| VoxCPM (`voxcpm`) | Full | Persona prompt rendered as a VoxCPM voice-design text prefix |
 | Piper / Coqui | None | Local providers ignore instructions |
 
 #### Agent Tool Integration
@@ -653,7 +786,8 @@ src/
 │   ├── openai.rs    # OpenAI TTS implementation
 │   ├── google.rs    # Google Cloud TTS implementation
 │   ├── piper.rs     # Piper local TTS implementation
-│   └── coqui.rs     # Coqui TTS server implementation
+│   ├── coqui.rs     # Coqui TTS server implementation
+│   └── voxcpm.rs    # VoxCPM via vLLM-Omni speech API
 └── stt/
     ├── mod.rs          # SttProvider trait, Transcript types
     ├── whisper.rs      # OpenAI Whisper implementation

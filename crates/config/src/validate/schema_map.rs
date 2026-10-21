@@ -801,6 +801,16 @@ pub(super) fn build_schema_map() -> KnownKeys {
                                 ("endpoint", Leaf),
                             ])),
                         ),
+                        (
+                            "voxcpm",
+                            Struct(HashMap::from([
+                                ("enabled", Leaf),
+                                ("endpoint", Leaf),
+                                ("model", Leaf),
+                                ("voice", Leaf),
+                                ("voice_design", Leaf),
+                            ])),
+                        ),
                     ])),
                 ),
                 (

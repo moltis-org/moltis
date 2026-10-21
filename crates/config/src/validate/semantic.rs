@@ -855,6 +855,7 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         "google-tts",
         "piper",
         "coqui",
+        "voxcpm",
     ];
     for (idx, provider) in config.voice.tts.providers.iter().enumerate() {
         if !valid_voice_tts_providers.contains(&provider.as_str()) {

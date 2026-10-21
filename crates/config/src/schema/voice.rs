@@ -35,6 +35,8 @@ pub struct VoiceTtsConfig {
     pub piper: VoicePiperTtsConfig,
     /// Coqui TTS (local server) settings.
     pub coqui: VoiceCoquiTtsConfig,
+    /// VoxCPM (local vLLM-Omni server) settings.
+    pub voxcpm: VoiceVoxCpmTtsConfig,
 }
 
 impl Default for VoiceTtsConfig {
@@ -48,6 +50,7 @@ impl Default for VoiceTtsConfig {
             google: VoiceGoogleTtsConfig::default(),
             piper: VoicePiperTtsConfig::default(),
             coqui: VoiceCoquiTtsConfig::default(),
+            voxcpm: VoiceVoxCpmTtsConfig::default(),
         }
     }
 }
@@ -222,6 +225,38 @@ impl Default for VoiceCoquiTtsConfig {
     }
 }
 
+/// VoxCPM TTS (local vLLM-Omni server) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceVoxCpmTtsConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// vLLM-Omni OpenAI-compatible speech base URL
+    /// (default: `http://localhost:8000/v1`).
+    pub endpoint: String,
+    /// Served model name (e.g. `openbmb/VoxCPM2`).
+    pub model: Option<String>,
+    /// Precomputed or uploaded speaker name. Leave unset for zero-shot
+    /// synthesis; VoxCPM rejects speaker names it does not know.
+    pub voice: Option<String>,
+    /// Render voice personas as a VoxCPM voice-design prefix on the input text.
+    #[serde(default = "default_true")]
+    pub voice_design: bool,
+}
+
+impl Default for VoiceVoxCpmTtsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            endpoint: "http://localhost:8000/v1".into(),
+            model: None,
+            voice: None,
+            voice_design: true,
+        }
+    }
+}
+
 /// Voice STT configuration for moltis.toml.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -291,6 +326,8 @@ pub enum VoiceTtsProvider {
     Piper,
     #[serde(rename = "coqui")]
     Coqui,
+    #[serde(rename = "voxcpm")]
+    VoxCpm,
 }
 
 impl VoiceTtsProvider {
@@ -302,6 +339,7 @@ impl VoiceTtsProvider {
             Self::Google => "google",
             Self::Piper => "piper",
             Self::Coqui => "coqui",
+            Self::VoxCpm => "voxcpm",
         }
     }
 
@@ -313,6 +351,7 @@ impl VoiceTtsProvider {
             "google" | "google-tts" => Some(Self::Google),
             "piper" => Some(Self::Piper),
             "coqui" => Some(Self::Coqui),
+            "voxcpm" => Some(Self::VoxCpm),
             _ => None,
         }
     }
@@ -326,6 +365,7 @@ impl VoiceTtsProvider {
             Self::Google => "Google Cloud TTS",
             Self::Piper => "Piper",
             Self::Coqui => "Coqui TTS",
+            Self::VoxCpm => "VoxCPM",
         }
     }
 
@@ -338,6 +378,7 @@ impl VoiceTtsProvider {
             Self::Google,
             Self::Piper,
             Self::Coqui,
+            Self::VoxCpm,
         ]
     }
 }

@@ -7,10 +7,11 @@ mod google;
 pub mod mock;
 mod openai;
 mod piper;
+mod voxcpm;
 
 pub use {
     coqui::CoquiTts, elevenlabs::ElevenLabsTts, google::GoogleTts, mock::MockTts,
-    openai::OpenAiTts, piper::PiperTts,
+    openai::OpenAiTts, piper::PiperTts, voxcpm::VoxCpmTts,
 };
 
 use {

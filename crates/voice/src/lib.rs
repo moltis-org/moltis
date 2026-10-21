@@ -13,7 +13,7 @@ pub use {
         GoogleSttConfig, GoogleTtsConfig, GroqSttConfig, MistralSttConfig, OpenAiTtsConfig,
         PiperTtsConfig, SherpaOnnxConfig, SttConfig, SttProviderId, TtsAutoMode, TtsConfig,
         TtsProviderId, VoiceConfig, VoicePersona, VoicePersonaPrompt, VoicePersonaProviderBinding,
-        VoxtralLocalConfig, WhisperCliConfig, WhisperConfig, WhisperLocalConfig,
+        VoxCpmTtsConfig, VoxtralLocalConfig, WhisperCliConfig, WhisperConfig, WhisperLocalConfig,
     },
     stt::{
         DeepgramStt, ElevenLabsStt, GoogleStt, GroqStt, MistralStt, SherpaOnnxStt, SttProvider,
@@ -21,7 +21,7 @@ pub use {
     },
     tts::{
         AudioFormat, AudioOutput, CoquiTts, ElevenLabsTts, GoogleTts, OpenAiTts, PiperTts,
-        SynthesizeRequest, TtsDirectives, TtsProvider, Voice, contains_ssml, parse_tts_directives,
-        sanitize_text_for_tts, strip_ssml_tags,
+        SynthesizeRequest, TtsDirectives, TtsProvider, Voice, VoxCpmTts, contains_ssml,
+        parse_tts_directives, sanitize_text_for_tts, strip_ssml_tags,
     },
 };

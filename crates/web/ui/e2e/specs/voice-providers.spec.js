@@ -100,6 +100,7 @@ test.describe("Voice provider visibility", () => {
 		expect(pageText).toContain("Google Cloud TTS");
 		expect(pageText).toContain("Piper");
 		expect(pageText).toContain("Coqui TTS");
+		expect(pageText).toContain("VoxCPM");
 	});
 });
 
@@ -130,6 +131,94 @@ test.describe("Local provider setup instructions", () => {
 		await expect(modal).toContainText(/vllm serve mistralai\/Voxtral/, {
 			timeout: 5_000,
 		});
+	});
+
+	test("voxcpm shows setup instructions", async ({ page }) => {
+		await openVoicePage(page);
+		await waitForProviderCards(page);
+		await openVoiceTab(page, "Text-to-Speech");
+
+		const card = providerCard(page, "VoxCPM");
+		await expect(card).toBeVisible();
+
+		await card.getByRole("button", { name: /configure/i }).click();
+		const modal = page.locator(".modal-box:visible").last();
+		await expect(modal).toContainText(/vllm serve openbmb\/VoxCPM2 --omni/, {
+			timeout: 5_000,
+		});
+	});
+});
+
+// ── VoxCPM provider settings ────────────────────────────────────────────────
+
+test.describe("VoxCPM provider", () => {
+	test("reports the default endpoint and zero-shot voice", async ({ page }) => {
+		const errors = watchPageErrors(page);
+		await openVoicePage(page);
+		await waitForProviderCards(page);
+
+		// Reset to documented defaults first so this assertion never depends on
+		// what another test in this file left behind.
+		await expectRpcOk(page, "voice.config.save_settings", {
+			provider: "voxcpm",
+			endpoint: "http://localhost:8000/v1",
+			model: null,
+			voice: null,
+			voiceDesign: true,
+		});
+
+		const result = await expectRpcOk(page, "voice.providers.all", {});
+		const voxcpm = (result?.payload?.tts || []).find((p) => p.id === "voxcpm");
+		expect(voxcpm).toBeTruthy();
+		expect(voxcpm.name).toBe("VoxCPM");
+		expect(voxcpm.category).toBe("local");
+		expect(voxcpm.settings.endpoint).toBe("http://localhost:8000/v1");
+		// No speaker configured means zero-shot synthesis, which is what
+		// VoxCPM does when `voice` is omitted from the request.
+		expect(voxcpm.settings.voice).toBeFalsy();
+		expect(voxcpm.settings.voiceDesign).toBe(true);
+
+		expect(errors).toEqual([]);
+	});
+
+	test("persists endpoint, model and voice settings", async ({ page }) => {
+		const errors = watchPageErrors(page);
+		await openVoicePage(page);
+		await waitForProviderCards(page);
+
+		await expectRpcOk(page, "voice.config.save_settings", {
+			provider: "voxcpm",
+			endpoint: "http://127.0.0.1:8123/v1",
+			model: "openbmb/VoxCPM2",
+			voice: "alice",
+			voiceDesign: false,
+		});
+
+		const result = await expectRpcOk(page, "voice.providers.all", {});
+		const voxcpm = (result?.payload?.tts || []).find((p) => p.id === "voxcpm");
+		expect(voxcpm.settings.endpoint).toBe("http://127.0.0.1:8123/v1");
+		expect(voxcpm.settings.model).toBe("openbmb/VoxCPM2");
+		expect(voxcpm.settings.voice).toBe("alice");
+		expect(voxcpm.settings.voiceDesign).toBe(false);
+
+		// Clearing the voice must return the provider to zero-shot rather than
+		// leaving a stale speaker name that VoxCPM would reject.
+		await expectRpcOk(page, "voice.config.save_settings", {
+			provider: "voxcpm",
+			endpoint: "http://localhost:8000/v1",
+			model: null,
+			voice: null,
+			voiceDesign: true,
+		});
+
+		const restored = await expectRpcOk(page, "voice.providers.all", {});
+		const reset = (restored?.payload?.tts || []).find((p) => p.id === "voxcpm");
+		expect(reset.settings.endpoint).toBe("http://localhost:8000/v1");
+		expect(reset.settings.voice).toBeFalsy();
+		expect(reset.settings.model).toBeFalsy();
+		expect(reset.settings.voiceDesign).toBe(true);
+
+		expect(errors).toEqual([]);
 	});
 });
 
