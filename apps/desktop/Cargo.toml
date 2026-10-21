@@ -27,6 +27,10 @@ version     = "0.1.0"
 name = "moltis-desktop"
 path = "src/main.rs"
 
+[[test]]
+name = "ca_distrust"
+path = "../../crates/client/tests/ca_distrust.rs"
+
 # Versions live in this workspace's own table (it is separate from the main
 # workspace); the package inherits them.
 [workspace.dependencies]
@@ -43,9 +47,12 @@ moltis-client   = { default-features = false, features = ["local"], path = "../.
 moltis-config   = { path = "../../crates/config" }
 moltis-protocol = { path = "../../crates/protocol" }
 pulldown-cmark  = { default-features = false, version = "0.13" }
+rcgen           = "0.13"
+rustls          = { features = ["ring"], version = "0.23" }
 secrecy         = { features = ["serde"], version = "0.8" }
 serde           = { features = ["derive"], version = "1" }
 serde_json      = "1"
+sha2            = "0.10"
 # Code block colouring: bundled grammars, pure-Rust regex engine, no themes
 # (colours come from the app theme).
 syntect              = { default-features = false, features = ["default-syntaxes", "parsing", "regex-fancy"], version = "5.3" }
@@ -83,6 +90,9 @@ uuid                 = { workspace = true }
 
 [dev-dependencies]
 gpui     = { features = ["test-support"], workspace = true }
+rcgen    = { features = ["x509-parser"], workspace = true }
+rustls   = { workspace = true }
+sha2     = { workspace = true }
 tempfile = { workspace = true }
 
 [features]

@@ -19,6 +19,28 @@ For marketplace-style skill/plugin hardening (trust gating, provenance pinning,
 drift re-trust, dependency install guards, kill switch, audit log), see
 [Third-Party Skills Security](skills-security.md).
 
+## Certificate trust updates
+
+Certificate-verification fixes and bundled root-store updates require new
+binaries. Keep both the Moltis daemon and Moltis Desktop current; they have
+separate dependency lockfiles. Also apply operating-system trust-store updates
+and refresh container images, since some integrations use native TLS libraries.
+
+For the October 2026 CA distrust incident (tracked by Go as CVE-2026-111943),
+the lockfiles include `rustls-webpki` 0.103.16, which rejects chains containing
+eight distrusted public keys, and `webpki-roots` / `webpki-root-certs` 1.0.10,
+which remove the emSign ECC Root CA – G3 trust anchor. Reissuing a certificate
+under a different issuer does not bypass the patched verifier's key blocklist.
+See the [verifier release](https://github.com/rustls/webpki/releases/tag/v/0.103.16)
+and [root-store release](https://github.com/rustls/webpki-roots/releases/tag/v/1.0.10).
+
+This does not establish uniform protection across every TLS backend. The older
+Rustls verifier used by Discord and the APNs courier has no equivalent key
+blocklist backport; its `webpki-roots` 0.26 compatibility crate does use the
+updated 1.0.10 root list. OS-native verification and OpenSSL-backed integrations
+depend on their own trust and revocation policies. Explicit desktop certificate
+pins remain a separate trust mechanism. These paths need separate verification.
+
 ## Command Execution Approval
 
 By default, Moltis requires explicit user approval before executing potentially

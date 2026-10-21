@@ -28,7 +28,7 @@ uuid                     = { workspace = true }
 
 [dev-dependencies]
 axum     = { workspace = true }
-rcgen    = { workspace = true }
+rcgen    = { features = ["x509-parser"], workspace = true }
 tempfile = { workspace = true }
 tokio    = { features = ["macros", "rt-multi-thread", "test-util"], workspace = true }
 
