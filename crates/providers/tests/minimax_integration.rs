@@ -388,8 +388,8 @@ async fn multi_turn_tool_use() {
     assert!(!text.is_empty(), "final response should not be empty");
 }
 
-/// Flash always returns separate reasoning. Replay it on the assistant tool
-/// turn, as the streaming agent loop does, before sending the tool result.
+/// Flash may return separate reasoning or call a tool directly. Replay any
+/// reasoning it provides, as the streaming agent loop does, on the next turn.
 #[tokio::test]
 #[ignore]
 async fn flash_streaming_multi_turn_tool_use() {
@@ -429,7 +429,6 @@ async fn flash_streaming_multi_turn_tool_use() {
         }
     }
     assert!(saw_done, "first turn must finish");
-    assert!(!reasoning.is_empty(), "Flash must emit reasoning");
     let (id, name, metadata) = call.expect("Flash should call get_weather");
     assert_eq!(name, "get_weather");
     let tool_call = ToolCall {
@@ -444,7 +443,7 @@ async fn flash_streaming_multi_turn_tool_use() {
         ChatMessage::Assistant {
             content: Some(text),
             tool_calls: vec![tool_call],
-            reasoning: Some(reasoning),
+            reasoning: (!reasoning.is_empty()).then_some(reasoning),
         },
         ChatMessage::tool(id, r#"{"temperature": 15, "condition": "cloudy"}"#),
     ];

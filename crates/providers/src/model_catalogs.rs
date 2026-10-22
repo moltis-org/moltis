@@ -219,9 +219,9 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         capabilities: OpenAiProviderCapabilities {
             supports_user_name: false,
             system_message_rewrite: SystemMessageRewriteStrategy::InlineIntoFirstUser,
-            // Flash always returns separate reasoning that must accompany
-            // assistant tool calls in subsequent turns.
-            reasoning_content_model_prefixes: &["minimax-m3.1-flash"],
+            // Flash can omit thinking on simple tool calls. Replay reasoning
+            // when present, without synthesizing it from visible text.
+            optional_reasoning_content_model_prefixes: &["minimax-m3.1-flash"],
             ..OpenAiProviderCapabilities::DEFAULT
         },
         ..OpenAiCompatDef::DEFAULT

@@ -311,6 +311,13 @@ impl OpenAiProvider {
         messages: &[ChatMessage],
     ) -> Vec<serde_json::Value> {
         let needs_reasoning_content = self.requires_reasoning_content_on_tool_messages();
+        let raw_model = raw_model_id(&self.model).to_ascii_lowercase();
+        let replays_optional_reasoning = self.reasoning_content_override != Some(false)
+            && self
+                .capabilities
+                .optional_reasoning_content_model_prefixes
+                .iter()
+                .any(|prefix| raw_model.starts_with(prefix));
         let needs_gemini_tool_call_extra_content = self.requires_gemini_tool_call_extra_content();
         let strip_name = !self.capabilities.supports_user_name;
         let mut remapped_tool_call_ids = HashMap::new();
@@ -371,6 +378,12 @@ impl OpenAiProvider {
                         )
                     });
                 value["tool_call_id"] = serde_json::Value::String(mapped_id);
+            }
+
+            if replays_optional_reasoning
+                && let Some(reasoning) = assistant_reasoning.filter(|text| !text.is_empty())
+            {
+                value["reasoning_content"] = serde_json::Value::String(reasoning.to_owned());
             }
 
             if needs_reasoning_content {
@@ -1199,7 +1212,7 @@ mod tests {
     }
 
     #[test]
-    fn minimax_flash_replays_tool_reasoning_without_affecting_m3() {
+    fn minimax_flash_replays_optional_tool_reasoning_without_affecting_m3() {
         let Some(definition) = crate::model_catalogs::OPENAI_COMPAT_PROVIDERS
             .iter()
             .find(|definition| definition.config_name == "minimax")
@@ -1207,7 +1220,7 @@ mod tests {
             panic!("MiniMax provider definition is missing");
         };
         let capabilities = definition.capabilities;
-        let messages = vec![ChatMessage::Assistant {
+        let mut messages = vec![ChatMessage::Assistant {
             content: Some("Checking the weather.".into()),
             tool_calls: vec![moltis_agents::model::ToolCall {
                 id: "call_minimax".into(),
@@ -1228,6 +1241,15 @@ mod tests {
         );
         assert_eq!(serialized[0]["content"], "Checking the weather.");
 
+        let disabled = provider("MiniMax-M3.1-Flash", "minimax", "https://api.minimax.io/v1")
+            .with_capabilities(capabilities)
+            .with_reasoning_content(false);
+        assert!(
+            disabled.serialize_messages_for_request(&messages)[0]
+                .get("reasoning_content")
+                .is_none()
+        );
+
         let m3 = provider("MiniMax-M3", "minimax", "https://api.minimax.io/v1")
             .with_capabilities(capabilities);
         assert!(
@@ -1235,6 +1257,17 @@ mod tests {
                 .get("reasoning_content")
                 .is_none()
         );
+
+        // Simple Flash tool calls may omit thinking; do not substitute visible
+        // assistant text for reasoning or fabricate an empty thinking field.
+        for missing in [None, Some(String::new())] {
+            if let ChatMessage::Assistant { reasoning, .. } = &mut messages[0] {
+                *reasoning = missing;
+            }
+            let serialized = flash.serialize_messages_for_request(&messages);
+            assert!(serialized[0].get("reasoning_content").is_none());
+            assert_eq!(serialized[0]["content"], "Checking the weather.");
+        }
     }
 
     /// Mistral provider must strip the `name` field from user messages.
