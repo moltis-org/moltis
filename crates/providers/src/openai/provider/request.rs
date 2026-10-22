@@ -958,6 +958,21 @@ mod tests {
     }
 
     #[test]
+    fn deepseek_flash_auto_detects_reasoning_content() {
+        // `deepseek-flash` is the current API id for DeepSeek-V4.1-Flash; it
+        // must be covered by the same reasoning_content replay path.
+        let p = provider("deepseek-flash", "deepseek", "https://api.deepseek.com")
+            .with_capabilities(OpenAiProviderCapabilities {
+                reasoning_content_model_prefixes: &["deepseek-v4", "deepseek-flash"],
+                ..OpenAiProviderCapabilities::DEFAULT
+            });
+        assert!(
+            p.requires_reasoning_content_on_tool_messages(),
+            "DeepSeek-V4.1-Flash (`deepseek-flash`) tool calls require reasoning_content replay"
+        );
+    }
+
+    #[test]
     fn deepseek_non_v4_does_not_auto_detect_reasoning_content() {
         let p = provider("deepseek-chat", "deepseek", "https://api.deepseek.com")
             .with_capabilities(OpenAiProviderCapabilities {

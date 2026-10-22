@@ -295,7 +295,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         models: DEEPSEEK_MODELS,
         capabilities: OpenAiProviderCapabilities {
             reasoning_effort_policy: ReasoningEffortPolicy::DeepSeek,
-            reasoning_content_model_prefixes: &["deepseek-v4"],
+            reasoning_content_model_prefixes: &["deepseek-v4", "deepseek-flash"],
             ..OpenAiProviderCapabilities::DEFAULT
         },
         ..OpenAiCompatDef::DEFAULT
@@ -503,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_preserves_reasoning_content_only_for_v4_tool_replay() {
+    fn deepseek_preserves_reasoning_content_only_for_thinking_models() {
         let deepseek = OPENAI_COMPAT_PROVIDERS
             .iter()
             .find(|d| d.config_name == "deepseek")
@@ -515,7 +515,8 @@ mod tests {
                 .default_reasoning_content_on_tool_messages
         );
         assert_eq!(deepseek.capabilities.reasoning_content_model_prefixes, &[
-            "deepseek-v4"
+            "deepseek-v4",
+            "deepseek-flash"
         ]);
     }
 
