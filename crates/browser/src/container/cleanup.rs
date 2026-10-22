@@ -1,5 +1,4 @@
 use std::{
-    fs::File,
     path::Path,
     process::Command,
     sync::{Mutex, OnceLock},
@@ -7,16 +6,16 @@ use std::{
 
 use tracing::{debug, warn};
 
-use super::ContainerBackend;
+use super::{ContainerBackend, profile_lock::ProfileLock};
 
 pub(super) fn cleanup_was_confirmed(stop_succeeded: bool, remove_succeeded: bool) -> bool {
     stop_succeeded || remove_succeeded
 }
 
 pub(super) fn profile_lock_to_quarantine(
-    profile_lock: Option<File>,
+    profile_lock: Option<ProfileLock>,
     cleanup_confirmed: bool,
-) -> Option<File> {
+) -> Option<ProfileLock> {
     if cleanup_confirmed {
         None
     } else {
@@ -25,12 +24,12 @@ pub(super) fn profile_lock_to_quarantine(
 }
 
 pub(super) fn quarantine_profile_lock(
-    profile_lock: File,
+    profile_lock: ProfileLock,
     backend: ContainerBackend,
     container_id: &str,
     profile_dir: Option<&Path>,
 ) {
-    static QUARANTINED_PROFILE_LOCKS: OnceLock<Mutex<Vec<File>>> = OnceLock::new();
+    static QUARANTINED_PROFILE_LOCKS: OnceLock<Mutex<Vec<ProfileLock>>> = OnceLock::new();
 
     warn!(
         container_id,

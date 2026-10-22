@@ -4,10 +4,10 @@
 //! best available option (Apple Container on macOS → Podman → Docker).
 
 mod cleanup;
+mod profile_lock;
 
 use std::{
     fmt::Display,
-    fs::{File, OpenOptions},
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::atomic::{AtomicBool, Ordering},
@@ -16,6 +16,7 @@ use std::{
 use {
     crate::{browserless, error::Error, types::BrowserlessApiVersion},
     cleanup::{profile_lock_to_quarantine, quarantine_profile_lock, stop_container_by_id},
+    profile_lock::ProfileLock,
     tracing::{debug, info, warn},
 };
 
@@ -278,36 +279,9 @@ fn remove_stale_profile_singletons(dir: &Path) {
     }
 }
 
-fn lock_profile_dir(dir: &Path) -> Result<File> {
-    let lock_path = dir.join(".moltis.lock");
-    let lock = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .truncate(false)
-        .write(true)
-        .open(&lock_path)
-        .with_context(|| format!("failed to open profile lock at {}", lock_path.display()))?;
-
-    lock.try_lock().map_err(|error| {
-        let message = match error {
-            std::fs::TryLockError::WouldBlock => format!(
-                "browser profile at {} is already in use by another Moltis browser container",
-                dir.display()
-            ),
-            std::fs::TryLockError::Error(error) => format!(
-                "failed to lock browser profile at {}: {error}",
-                dir.display()
-            ),
-        };
-        Error::LaunchFailed(message)
-    })?;
-
-    Ok(lock)
-}
-
-fn prepare_browserless_v2_profile(dir: &Path) -> Result<File> {
+fn prepare_browserless_v2_profile(dir: &Path) -> Result<ProfileLock> {
     ensure_profile_dir(dir);
-    let lock = lock_profile_dir(dir)?;
+    let lock = ProfileLock::acquire(dir)?;
     remove_stale_profile_singletons(dir);
     Ok(lock)
 }
@@ -364,7 +338,7 @@ pub struct BrowserContainer {
     /// Version-aware WebSocket URL, including Browserless v2 launch options.
     websocket_url: String,
     /// Exclusive profile lock held for the lifetime of a Browserless v2 container.
-    _profile_lock: Option<File>,
+    _profile_lock: Option<ProfileLock>,
     /// Whether the backend confirmed that this container stopped or was removed.
     cleanup_confirmed: AtomicBool,
     /// The image used.

@@ -336,6 +336,13 @@ For v2, Moltis sets `TIMEOUT` and `CONCURRENT` on the container and sends Chrome
 launch arguments in the Base64-encoded `launch` WebSocket query. Do not set
 those values manually.
 
+For persistent Browserless v2 profiles, Moltis holds an exclusive profile lock
+before removing stale Chrome singleton files. Once container cleanup is
+confirmed and the profile guard is released, the lock is explicitly unlocked,
+so descriptors briefly inherited by another process do not prevent reopening
+the profile. If cleanup cannot be confirmed, Moltis retains the lock until it
+exits to avoid reusing a profile that may still be active.
+
 Requirements:
 
 - Docker or Apple Container must be installed and running
