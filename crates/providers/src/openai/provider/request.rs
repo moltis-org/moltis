@@ -1198,6 +1198,45 @@ mod tests {
         assert_eq!(assistant_tool_message["content"], "");
     }
 
+    #[test]
+    fn minimax_flash_replays_tool_reasoning_without_affecting_m3() {
+        let Some(definition) = crate::model_catalogs::OPENAI_COMPAT_PROVIDERS
+            .iter()
+            .find(|definition| definition.config_name == "minimax")
+        else {
+            panic!("MiniMax provider definition is missing");
+        };
+        let capabilities = definition.capabilities;
+        let messages = vec![ChatMessage::Assistant {
+            content: Some("Checking the weather.".into()),
+            tool_calls: vec![moltis_agents::model::ToolCall {
+                id: "call_minimax".into(),
+                name: "get_weather".into(),
+                arguments: serde_json::json!({"location": "London"}),
+                argument_diagnostic: None,
+                metadata: None,
+            }],
+            reasoning: Some("I need the current weather from the tool.".into()),
+        }];
+
+        let flash = provider("MiniMax-M3.1-Flash", "minimax", "https://api.minimax.io/v1")
+            .with_capabilities(capabilities);
+        let serialized = flash.serialize_messages_for_request(&messages);
+        assert_eq!(
+            serialized[0]["reasoning_content"],
+            "I need the current weather from the tool."
+        );
+        assert_eq!(serialized[0]["content"], "Checking the weather.");
+
+        let m3 = provider("MiniMax-M3", "minimax", "https://api.minimax.io/v1")
+            .with_capabilities(capabilities);
+        assert!(
+            m3.serialize_messages_for_request(&messages)[0]
+                .get("reasoning_content")
+                .is_none()
+        );
+    }
+
     /// Mistral provider must strip the `name` field from user messages.
     #[test]
     fn mistral_provider_strips_user_name() {

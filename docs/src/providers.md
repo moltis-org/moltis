@@ -153,13 +153,16 @@ Gemini supports native tool calling, vision/multimodal inputs, streaming, and au
 ### MiniMax
 
 The built-in `minimax` provider uses the OpenAI-compatible chat completions
-API and includes `MiniMax-M3` and `MiniMax-M2.7` in the static model catalog.
+API and includes `MiniMax-M3.1-Flash` and `MiniMax-M3` in the static model catalog.
+Both have a 1M-token context window and support image input. MiniMax has retired
+the M2 API models, including their highspeed variants; update any pinned M2
+model IDs to one of these current models to avoid HTTP 404 errors.
 
 ```toml
 [providers.minimax]
 enabled = true
 api_key = "..."                         # Or set MINIMAX_API_KEY
-models = ["MiniMax-M3", "MiniMax-M2.7"]
+models = ["MiniMax-M3.1-Flash", "MiniMax-M3"]
 fetch_models = false
 base_url = "https://api.minimax.io/v1"  # Global endpoint
 # For China, use "https://api.minimaxi.com/v1".
@@ -172,7 +175,7 @@ Anthropic adapter when that protocol is required:
 [providers.anthropic]
 enabled = true
 api_key = "..."
-models = ["MiniMax-M3", "MiniMax-M2.7"]
+models = ["MiniMax-M3.1-Flash", "MiniMax-M3"]
 fetch_models = false
 base_url = "https://api.minimax.io/anthropic" # Global endpoint
 alias = "minimax-anthropic"

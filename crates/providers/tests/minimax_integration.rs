@@ -13,32 +13,27 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::HashSet;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use {
     futures::StreamExt,
     moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent, ToolCall},
-    moltis_providers::openai::OpenAiProvider,
+    moltis_config::schema::{ProviderEntry, ProvidersConfig},
+    moltis_providers::ProviderRegistry,
     secrecy::{ExposeSecret, Secret},
 };
 
 const MINIMAX_BASE_URL: &str = "https://api.minimax.io/v1";
-const TEST_MODEL: &str = "MiniMax-M2.7-highspeed";
-/// Non-highspeed model for tool calling tests (more reliable for function calling).
-const TOOL_MODEL: &str = "MiniMax-M2.7";
+const TEST_MODEL: &str = "MiniMax-M3.1-Flash";
+/// Exercise M3's non-streaming tool path as well as Flash's streaming path.
+const TOOL_MODEL: &str = "MiniMax-M3";
 
 /// Known MiniMax models we catalog. Keep in sync with `MINIMAX_MODELS` in
-/// `crates/providers/src/lib.rs`. If this list drifts, the
-/// `catalog_models_are_live` test will catch it.
-const KNOWN_MODELS: &[&str] = &[
-    "MiniMax-M2.7",
-    "MiniMax-M2.7-highspeed",
-    "MiniMax-M2.5",
-    "MiniMax-M2.5-highspeed",
-    "MiniMax-M2.1",
-    "MiniMax-M2.1-highspeed",
-    "MiniMax-M2",
-];
+/// `crates/providers/src/model_catalogs.rs`.
+const KNOWN_MODELS: &[&str] = &[TEST_MODEL, TOOL_MODEL];
 
 fn api_key() -> Secret<String> {
     let key = std::env::var("MINIMAX_API_KEY")
@@ -46,13 +41,36 @@ fn api_key() -> Secret<String> {
     Secret::new(key)
 }
 
-fn make_provider(model: &str) -> OpenAiProvider {
-    OpenAiProvider::new_with_name(
-        api_key(),
-        model.to_string(),
-        MINIMAX_BASE_URL.to_string(),
-        "minimax".to_string(),
-    )
+fn make_registry(key: Secret<String>, models: Vec<String>) -> ProviderRegistry {
+    let mut config = ProvidersConfig {
+        offered: vec!["minimax".into()],
+        ..ProvidersConfig::default()
+    };
+    config.providers.insert("minimax".into(), ProviderEntry {
+        api_key: Some(key),
+        base_url: Some(MINIMAX_BASE_URL.into()),
+        models,
+        ..ProviderEntry::default()
+    });
+    ProviderRegistry::from_config_with_static_catalogs(&config, &HashMap::new(), HashMap::new())
+}
+
+fn make_provider(model: &str) -> Arc<dyn LlmProvider> {
+    make_registry(api_key(), vec![model.into()])
+        .get(&format!("minimax::{model}"))
+        .expect("configured MiniMax model")
+}
+
+#[test]
+fn known_models_match_production_catalog() {
+    let registry = make_registry(Secret::new("test-only-key".into()), Vec::new());
+    let ids: HashSet<&str> = registry
+        .list_models()
+        .iter()
+        .filter(|model| model.provider == "minimax")
+        .map(|model| model.id.strip_prefix("minimax::").unwrap_or(&model.id))
+        .collect();
+    assert_eq!(ids, KNOWN_MODELS.iter().copied().collect());
 }
 
 /// Tool schema in moltis-internal flat format (name, description, parameters).
@@ -370,6 +388,87 @@ async fn multi_turn_tool_use() {
     assert!(!text.is_empty(), "final response should not be empty");
 }
 
+/// Flash always returns separate reasoning. Replay it on the assistant tool
+/// turn, as the streaming agent loop does, before sending the tool result.
+#[tokio::test]
+#[ignore]
+async fn flash_streaming_multi_turn_tool_use() {
+    let p = make_provider(TEST_MODEL);
+    let tools = vec![weather_tool()];
+    let prompt =
+        "What is the weather in London? Call get_weather exactly once, then report the result.";
+    let mut stream = p.stream_with_tools(vec![ChatMessage::user(prompt)], tools.clone());
+    let mut text = String::new();
+    let mut reasoning = String::new();
+    let mut arguments = String::new();
+    let mut call = None;
+    let mut saw_done = false;
+    while let Some(event) = stream.next().await {
+        match event {
+            StreamEvent::Delta(delta) => text.push_str(&delta),
+            StreamEvent::ReasoningDelta(delta) => reasoning.push_str(&delta),
+            StreamEvent::ToolCallStart {
+                id,
+                name,
+                index,
+                metadata,
+            } => {
+                assert_eq!(index, 0, "expected one weather lookup");
+                call = Some((id, name, metadata));
+            },
+            StreamEvent::ToolCallArgumentsDelta { index, delta } => {
+                assert_eq!(index, 0);
+                arguments.push_str(&delta);
+            },
+            StreamEvent::Done(_) => {
+                saw_done = true;
+                break;
+            },
+            StreamEvent::Error(error) => panic!("Flash first turn failed: {error}"),
+            _ => {},
+        }
+    }
+    assert!(saw_done, "first turn must finish");
+    assert!(!reasoning.is_empty(), "Flash must emit reasoning");
+    let (id, name, metadata) = call.expect("Flash should call get_weather");
+    assert_eq!(name, "get_weather");
+    let tool_call = ToolCall {
+        id: id.clone(),
+        name,
+        arguments: serde_json::from_str(&arguments).expect("valid tool arguments"),
+        argument_diagnostic: None,
+        metadata,
+    };
+    let messages = vec![
+        ChatMessage::user(prompt),
+        ChatMessage::Assistant {
+            content: Some(text),
+            tool_calls: vec![tool_call],
+            reasoning: Some(reasoning),
+        },
+        ChatMessage::tool(id, r#"{"temperature": 15, "condition": "cloudy"}"#),
+    ];
+    let mut stream = p.stream_with_tools(messages, tools);
+    let mut final_text = String::new();
+    let mut saw_done = false;
+    while let Some(event) = stream.next().await {
+        match event {
+            StreamEvent::Delta(delta) => final_text.push_str(&delta),
+            StreamEvent::Done(_) => {
+                saw_done = true;
+                break;
+            },
+            StreamEvent::Error(error) => panic!("Flash follow-up failed: {error}"),
+            _ => {},
+        }
+    }
+    assert!(saw_done, "follow-up must finish");
+    assert!(
+        final_text.contains("15"),
+        "must use the tool result: {final_text}"
+    );
+}
+
 // ── Probe ────────────────────────────────────────────────────────────────────
 
 /// Provider probe must succeed against the live API.
@@ -414,8 +513,7 @@ async fn stream_emits_delta_and_done() {
 // ── Model catalog validation ─────────────────────────────────────────────────
 
 /// Probe each model in our catalog and report which ones are alive.
-/// Fails if any model that used to work no longer does, or if we detect
-/// new models that aren't in the catalog.
+/// Fails if any catalog model is unreachable.
 #[tokio::test]
 #[ignore]
 async fn catalog_models_are_live() {
@@ -444,16 +542,9 @@ async fn catalog_models_are_live() {
     }
     eprintln!("===================================\n");
 
-    // At least the test model must be alive
     assert!(
-        alive.contains(&TEST_MODEL),
-        "{TEST_MODEL} should be reachable"
-    );
-
-    // Fail if more than half the catalog is dead — something is wrong
-    assert!(
-        dead.len() <= KNOWN_MODELS.len() / 2,
-        "too many catalog models are dead: {dead:?}"
+        dead.is_empty(),
+        "catalog contains unreachable models: {dead:?}"
     );
 }
 
@@ -497,7 +588,7 @@ async fn detect_new_models() {
         for m in &discovered {
             eprintln!("  -> {m}");
         }
-        eprintln!("Update MINIMAX_MODELS in crates/providers/src/lib.rs");
+        eprintln!("Update MINIMAX_MODELS in crates/providers/src/model_catalogs.rs");
         eprintln!("=====================================\n");
     }
 

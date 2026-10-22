@@ -87,6 +87,7 @@ const GENERIC_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
     ContextWindowFallback::Prefix("codestral", 256_000),
     ContextWindowFallback::Prefix("gemini-", 1_000_000),
     ContextWindowFallback::Exact("MiniMax-M3", 1_000_000),
+    ContextWindowFallback::Exact("MiniMax-M3.1-Flash", 1_000_000),
     ContextWindowFallback::Prefix("MiniMax-", 204_800),
     ContextWindowFallback::Prefix("gpt-4", 128_000),
     ContextWindowFallback::Prefix("gpt-5", 128_000),
@@ -277,6 +278,9 @@ pub fn supports_vision_for_model(model_id: &str) -> bool {
 /// that doesn't support it.
 pub fn supports_reasoning_for_model(model_id: &str) -> bool {
     let id = capability_model_id(model_id);
+    if id == "MiniMax-M3.1-Flash" {
+        return true;
+    }
     // Anthropic Claude Opus 4.5+ and Sonnet 4.5+
     if id.starts_with("claude-opus-4-5")
         || id.starts_with("claude-sonnet-4-5")
@@ -387,6 +391,18 @@ pub struct ModelInfo {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn minimax_flash_infers_context_vision_and_reasoning() {
+        for id in ["MiniMax-M3.1-Flash", "minimax::MiniMax-M3.1-Flash"] {
+            let capabilities = ModelCapabilities::infer(id);
+            assert_eq!(capabilities.context_window, 1_000_000);
+            assert!(capabilities.vision);
+            assert!(capabilities.tools);
+            assert!(capabilities.reasoning);
+        }
+        assert!(!supports_reasoning_for_model("MiniMax-M3"));
+    }
 
     #[test]
     fn context_window_for_known_models() {

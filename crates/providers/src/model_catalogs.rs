@@ -34,16 +34,10 @@ pub(crate) const CEREBRAS_MODELS: &[(&str, &str)] =
     &[("llama-4-scout-17b-16e-instruct", "Llama 4 Scout (Cerebras)")];
 
 /// Known MiniMax models.
-/// See: <https://platform.minimax.io/docs/api-reference/text-anthropic-api>
+/// See: <https://platform.minimax.io/docs/api-reference/text-openai-api>
 pub(crate) const MINIMAX_MODELS: &[(&str, &str)] = &[
+    ("MiniMax-M3.1-Flash", "MiniMax M3.1 Flash"),
     ("MiniMax-M3", "MiniMax M3"),
-    ("MiniMax-M2.7", "MiniMax M2.7"),
-    ("MiniMax-M2.7-highspeed", "MiniMax M2.7 Highspeed"),
-    ("MiniMax-M2.5", "MiniMax M2.5"),
-    ("MiniMax-M2.5-highspeed", "MiniMax M2.5 Highspeed"),
-    ("MiniMax-M2.1", "MiniMax M2.1"),
-    ("MiniMax-M2.1-highspeed", "MiniMax M2.1 Highspeed"),
-    ("MiniMax-M2", "MiniMax M2"),
 ];
 
 /// Known Z.AI (Zhipu) models.
@@ -225,6 +219,9 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         capabilities: OpenAiProviderCapabilities {
             supports_user_name: false,
             system_message_rewrite: SystemMessageRewriteStrategy::InlineIntoFirstUser,
+            // Flash always returns separate reasoning that must accompany
+            // assistant tool calls in subsequent turns.
+            reasoning_content_model_prefixes: &["minimax-m3.1-flash"],
             ..OpenAiProviderCapabilities::DEFAULT
         },
         ..OpenAiCompatDef::DEFAULT
@@ -420,9 +417,9 @@ mod tests {
 
     #[test]
     fn minimax_catalog_starts_with_target_models() {
-        assert_eq!(&MINIMAX_MODELS[..2], &[
+        assert_eq!(MINIMAX_MODELS, &[
+            ("MiniMax-M3.1-Flash", "MiniMax M3.1 Flash"),
             ("MiniMax-M3", "MiniMax M3"),
-            ("MiniMax-M2.7", "MiniMax M2.7"),
         ]);
     }
 

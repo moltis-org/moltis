@@ -164,7 +164,7 @@ loopback_http = true                # Plain HTTP on loopback binds: http://local
 # context_window = 1_000_000                   # Provider-scoped model override
 # For a MiniMax Anthropic-compatible endpoint, keep the `/anthropic` suffix:
 # base_url = "https://api.minimax.io/anthropic" # Use https://api.minimaxi.com/anthropic for China
-# models = ["MiniMax-M3", "MiniMax-M2.7"]
+# models = ["MiniMax-M3.1-Flash", "MiniMax-M3"]
 # alias = "minimax-anthropic"
 
 # ── OpenAI ────────────────────────────────────────────────────
@@ -181,7 +181,7 @@ loopback_http = true                # Plain HTTP on loopback binds: http://local
 # [providers.minimax]
 # enabled = true
 # api_key = "..."                             # Or set MINIMAX_API_KEY
-# models = ["MiniMax-M3", "MiniMax-M2.7"]
+# models = ["MiniMax-M3.1-Flash", "MiniMax-M3"]
 # fetch_models = false                         # MiniMax uses the static model catalog by default
 # base_url = "https://api.minimax.io/v1"     # OpenAI-compatible global endpoint
 # For China, use "https://api.minimaxi.com/v1".
