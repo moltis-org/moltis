@@ -227,6 +227,7 @@ for Podman, OrbStack, TLS trust, and persistence details.
 | Provider | Deploy |
 |----------|--------|
 | DigitalOcean | [![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/moltis-org/moltis/tree/main) |
+| RepoCloud | [![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/Moltis/) |
 
 **Fly.io** (CLI):
 
