@@ -118,6 +118,7 @@ impl LlmProvider for GenaiProvider {
         let usage = genai_usage_to_usage(self.input_token_accounting, &chat_res.usage);
 
         Ok(CompletionResponse {
+            reasoning: None,
             text,
             tool_calls: vec![],
             usage,

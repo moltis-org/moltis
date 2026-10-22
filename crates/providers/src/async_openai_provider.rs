@@ -184,6 +184,7 @@ impl LlmProvider for AsyncOpenAiProvider {
             .unwrap_or_default();
 
         Ok(CompletionResponse {
+            reasoning: None,
             text,
             tool_calls: vec![],
             usage,

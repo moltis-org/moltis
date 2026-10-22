@@ -452,6 +452,7 @@ impl LlmProvider for LocalGgufProvider {
         };
 
         Ok(CompletionResponse {
+            reasoning: None,
             text: display_text,
             tool_calls,
             usage: Usage {

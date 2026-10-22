@@ -67,6 +67,7 @@ impl LlmProvider for MockLlmProvider {
                 anyhow::bail!("401 Unauthorized: invalid API key")
             },
             None => Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("Hello from mock provider".into()),
                 tool_calls: vec![],
                 usage: Usage {
@@ -225,6 +226,7 @@ mod tests {
             _tools: &[serde_json::Value],
         ) -> anyhow::Result<CompletionResponse> {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("final answer".into()),
                 tool_calls: vec![],
                 usage: Usage::default(),

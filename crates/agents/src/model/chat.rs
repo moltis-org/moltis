@@ -1,4 +1,4 @@
-use super::types::ToolCall;
+use super::types::{CompletionResponse, ToolCall};
 
 // ── Typed chat messages ─────────────────────────────────────────────────────
 
@@ -26,6 +26,16 @@ pub enum ChatMessage {
         tool_call_id: String,
         content: String,
     },
+}
+
+impl From<&CompletionResponse> for ChatMessage {
+    fn from(response: &CompletionResponse) -> Self {
+        Self::Assistant {
+            content: response.text.clone(),
+            tool_calls: response.tool_calls.clone(),
+            reasoning: response.reasoning.clone(),
+        }
+    }
 }
 
 /// User message content: plain text or multimodal (text + images).

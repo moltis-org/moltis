@@ -855,6 +855,7 @@ impl LlmProvider for AnthropicProvider {
         }
 
         Ok(CompletionResponse {
+            reasoning: None,
             text,
             tool_calls,
             usage,

@@ -38,6 +38,7 @@ impl LlmProvider for NotifyProvider {
     ) -> anyhow::Result<CompletionResponse> {
         self.notify.notified().await;
         Ok(CompletionResponse {
+            reasoning: None,
             text: Some(self.response.clone()),
             tool_calls: vec![],
             usage: Usage::default(),
@@ -120,6 +121,7 @@ impl LlmProvider for MockProvider {
             .collect();
         *self.seen_tool_names.lock().unwrap() = tool_names;
         Ok(CompletionResponse {
+            reasoning: None,
             text: Some(self.response.clone()),
             tool_calls: vec![],
             usage: Usage {
@@ -811,6 +813,7 @@ async fn test_timeout_cancels_long_running_agent() {
         ) -> anyhow::Result<CompletionResponse> {
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("too late".into()),
                 tool_calls: vec![],
                 usage: Usage::default(),

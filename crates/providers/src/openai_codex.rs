@@ -607,6 +607,7 @@ impl LlmProvider for OpenAiCodexProvider {
         };
 
         Ok(CompletionResponse {
+            reasoning: None,
             text,
             tool_calls,
             usage: Usage::from_input_tokens(

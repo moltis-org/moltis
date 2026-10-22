@@ -1211,6 +1211,7 @@ pub fn parse_responses_completion(resp: &serde_json::Value) -> CompletionRespons
         .unwrap_or_default();
 
     CompletionResponse {
+        reasoning: None,
         text,
         tool_calls,
         usage,

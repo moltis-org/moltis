@@ -406,6 +406,7 @@ mod tests {
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if count == 0 {
                 Ok(CompletionResponse {
+                    reasoning: None,
                     text: None,
                     tool_calls: vec![ToolCall {
                         id: "call_1".into(),
@@ -425,6 +426,7 @@ mod tests {
                 })
             } else {
                 Ok(CompletionResponse {
+                    reasoning: None,
                     text: Some("NO_REPLY".into()),
                     tool_calls: vec![],
                     usage: Usage {

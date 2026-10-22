@@ -545,6 +545,7 @@ mod tests {
             _tools: &[serde_json::Value],
         ) -> anyhow::Result<CompletionResponse> {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("ok".into()),
                 tool_calls: vec![],
                 usage: Usage {
@@ -1043,6 +1044,7 @@ mod tests {
             _tools: &[serde_json::Value],
         ) -> anyhow::Result<CompletionResponse> {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("ok".into()),
                 tool_calls: vec![],
                 usage: Usage {

@@ -2,6 +2,8 @@
 #[derive(Debug)]
 pub struct CompletionResponse {
     pub text: Option<String>,
+    /// Provider reasoning kept separate from visible text for replay on later turns.
+    pub reasoning: Option<String>,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Usage,
 }

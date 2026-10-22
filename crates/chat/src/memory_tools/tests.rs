@@ -108,6 +108,7 @@ impl LlmProvider for ForgetPlannerProvider {
             .collect();
 
         Ok(CompletionResponse {
+            reasoning: None,
             text: Some(
                 json!({
                     "needs_confirmation": false,

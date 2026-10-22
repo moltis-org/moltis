@@ -158,6 +158,10 @@ Both have a 1M-token context window and support image input. MiniMax has retired
 the M2 API models, including their highspeed variants; update any pinned M2
 model IDs to one of these current models to avoid HTTP 404 errors.
 
+The built-in MiniMax provider preserves Flash reasoning across tool calls for
+both streaming chat and non-streaming spawned agents. Simple tool calls may
+omit reasoning; Moltis replays it only when the provider actually returns it.
+
 ```toml
 [providers.minimax]
 enabled = true

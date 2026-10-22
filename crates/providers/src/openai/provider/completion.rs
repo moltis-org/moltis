@@ -384,14 +384,16 @@ impl OpenAiProvider {
 
         let message = &resp["choices"][0]["message"];
 
-        let text = message["content"].as_str().and_then(|s| {
-            let (visible, _thinking) = strip_think_tags(s);
-            if visible.is_empty() {
-                None
-            } else {
-                Some(visible)
-            }
-        });
+        let (visible, thinking) = message["content"]
+            .as_str()
+            .map(strip_think_tags)
+            .unwrap_or_default();
+        let text = (!visible.is_empty()).then_some(visible);
+        let reasoning = message["reasoning_content"]
+            .as_str()
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+            .or_else(|| (!thinking.is_empty()).then_some(thinking));
         let mut tool_calls = parse_tool_calls(message);
         normalize_tool_call_arguments_from_schemas(&mut tool_calls, tools);
 
@@ -399,6 +401,7 @@ impl OpenAiProvider {
 
         Ok(CompletionResponse {
             text,
+            reasoning,
             tool_calls,
             usage,
         })
@@ -551,6 +554,7 @@ impl OpenAiProvider {
             .collect();
 
         Ok(CompletionResponse {
+            reasoning: None,
             text,
             tool_calls,
             usage: Usage::from_input_tokens(

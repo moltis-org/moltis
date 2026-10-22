@@ -189,6 +189,7 @@ mod tests {
                 Err(e) => anyhow::bail!(e.to_string()),
             };
             Ok(CompletionResponse {
+                reasoning: None,
                 text,
                 tool_calls: Vec::new(),
                 usage: Usage::default(),

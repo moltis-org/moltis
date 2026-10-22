@@ -222,6 +222,7 @@ mod tests {
     #[test]
     fn completion_to_stream_events_preserves_terminal_usage() {
         let completion = CompletionResponse {
+            reasoning: None,
             text: Some("hello".to_string()),
             tool_calls: Vec::new(),
             usage: Default::default(),

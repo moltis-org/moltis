@@ -584,7 +584,7 @@ pub async fn run_agent_loop_with_context_and_limits(
                     });
                 }
                 if !response_text.is_empty() {
-                    messages.push(ChatMessage::assistant(&response_text));
+                    messages.push(ChatMessage::from(&response));
                 }
                 messages.push(ChatMessage::user(AUTO_CONTINUE_NUDGE));
                 continue;
@@ -616,10 +616,7 @@ pub async fn run_agent_loop_with_context_and_limits(
         // it may be the actual answer (e.g. a table produced before a cleanup
         // tool call like `browser close`).
         record_answer_text(&mut last_answer_text, &response.text);
-        messages.push(ChatMessage::assistant_with_tools(
-            response.text.clone(),
-            response.tool_calls.clone(),
-        ));
+        messages.push(ChatMessage::from(&response));
 
         // Execute tool calls concurrently.
         total_tool_calls += response.tool_calls.len();

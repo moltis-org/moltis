@@ -582,6 +582,7 @@ pub mod gguf {
             };
 
             Ok(CompletionResponse {
+                reasoning: None,
                 text: display_text,
                 tool_calls,
                 usage: Usage {
@@ -995,6 +996,7 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
             let (text, input_tokens, output_tokens) = self.generate(&prompt, 4096).await?;
 
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some(text),
                 tool_calls: vec![],
                 usage: Usage {

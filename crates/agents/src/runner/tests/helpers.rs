@@ -131,6 +131,7 @@ impl LlmProvider for MockProvider {
         _tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         Ok(CompletionResponse {
+            reasoning: None,
             text: Some(self.response_text.clone()),
             tool_calls: vec![],
             usage: Usage {
@@ -178,6 +179,7 @@ impl LlmProvider for ToolCallingProvider {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if count == 0 {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: None,
                 tool_calls: vec![ToolCall {
                     id: "call_1".into(),
@@ -194,6 +196,7 @@ impl LlmProvider for ToolCallingProvider {
             })
         } else {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("Done!".into()),
                 tool_calls: vec![],
                 usage: Usage {
@@ -242,6 +245,7 @@ impl LlmProvider for TextToolCallingProvider {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if count == 0 {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("```tool_call\n{\"tool\": \"exec\", \"arguments\": {\"command\": \"echo hello\"}}\n```".into()),
                 tool_calls: vec![],
                 usage: Usage { input_tokens: 10, output_tokens: 20, ..Default::default() },
@@ -262,6 +266,7 @@ impl LlmProvider for TextToolCallingProvider {
                 "tool result should contain 'hello', got: {tool_content}"
             );
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("The command output: hello".into()),
                 tool_calls: vec![],
                 usage: Usage {
@@ -509,6 +514,7 @@ impl LlmProvider for MultiToolProvider {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if count == 0 {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: None,
                 tool_calls: self.tool_calls.clone(),
                 usage: Usage {
@@ -519,6 +525,7 @@ impl LlmProvider for MultiToolProvider {
             })
         } else {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("All done".into()),
                 tool_calls: vec![],
                 usage: Usage {
@@ -570,6 +577,7 @@ impl LlmProvider for PreemptiveOverflowProvider {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if count == 0 {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("reasoning ".repeat(80)),
                 tool_calls: vec![ToolCall {
                     id: "overflow_call".into(),
@@ -626,6 +634,7 @@ impl LlmProvider for VisionEnabledProvider {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if count == 0 {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: None,
                 tool_calls: vec![ToolCall {
                     id: "call_screenshot".into(),
@@ -660,6 +669,7 @@ impl LlmProvider for VisionEnabledProvider {
                 "tool result should not contain raw base64: {tool_content}"
             );
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("Screenshot processed successfully".into()),
                 tool_calls: vec![],
                 usage: Usage {

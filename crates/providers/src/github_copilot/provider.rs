@@ -799,6 +799,7 @@ fn stream_events_to_completion(events: Vec<StreamEvent>) -> CompletionResponse {
     };
 
     CompletionResponse {
+        reasoning: None,
         text,
         tool_calls,
         usage,
@@ -937,6 +938,7 @@ impl LlmProvider for GitHubCopilotProvider {
         let usage = parse_openai_compat_usage_from_payload(&resp).unwrap_or_default();
 
         Ok(CompletionResponse {
+            reasoning: None,
             text,
             tool_calls,
             usage,

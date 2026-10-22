@@ -291,6 +291,7 @@ impl LlmProvider for KimiCodeProvider {
         let usage = parse_openai_compat_usage_from_payload(&resp).unwrap_or_default();
 
         Ok(CompletionResponse {
+            reasoning: None,
             text,
             tool_calls,
             usage,
@@ -622,6 +623,7 @@ mod tests {
             let usage = parse_openai_compat_usage_from_payload(&resp).unwrap_or_default();
 
             Ok(CompletionResponse {
+                reasoning: None,
                 text,
                 tool_calls,
                 usage,

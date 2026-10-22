@@ -40,6 +40,7 @@ impl LlmProvider for NativeTextFunctionProvider {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if count == 0 {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some(
                     "<function=process>\n<parameter=action>\nstart\n</parameter>\n<parameter=command>\npwd\n</parameter>\n</function>\n</tool_call>"
                         .into(),
@@ -71,6 +72,7 @@ impl LlmProvider for NativeTextFunctionProvider {
                 "tool result should include command=pwd, got: {tool_content}"
             );
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("Process started for pwd".into()),
                 tool_calls: vec![],
                 usage: Usage {

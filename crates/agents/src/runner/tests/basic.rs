@@ -312,6 +312,7 @@ impl LlmProvider for RecordingMessagesProvider {
     ) -> Result<CompletionResponse> {
         *self.messages.lock().unwrap() = messages.to_vec();
         Ok(CompletionResponse {
+            reasoning: None,
             text: Some("ok".into()),
             tool_calls: vec![],
             usage: Usage::default(),
@@ -434,6 +435,7 @@ impl LlmProvider for StreamingUsageProvider {
         _tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         Ok(CompletionResponse {
+            reasoning: None,
             text: Some("unused".into()),
             tool_calls: vec![],
             usage: Usage::default(),
@@ -482,6 +484,7 @@ impl LlmProvider for StreamingChunksProvider {
         _tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         Ok(CompletionResponse {
+            reasoning: None,
             text: Some("unused".into()),
             tool_calls: vec![],
             usage: Usage::default(),
@@ -648,6 +651,7 @@ impl LlmProvider for NonStreamingUsageProvider {
 
         if count == 0 {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: None,
                 tool_calls: vec![ToolCall {
                     id: "call_usage_1".into(),
@@ -665,6 +669,7 @@ impl LlmProvider for NonStreamingUsageProvider {
             })
         } else {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("Done with cache.".into()),
                 tool_calls: vec![],
                 usage: Usage {
@@ -758,6 +763,7 @@ impl LlmProvider for ExecSimulatingProvider {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if count == 0 {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: None,
                 tool_calls: vec![ToolCall {
                     id: "call_exec_1".into(),
@@ -788,6 +794,7 @@ impl LlmProvider for ExecSimulatingProvider {
             assert!(stdout.contains("hello"));
             assert_eq!(parsed["result"]["exit_code"].as_i64().unwrap(), 0);
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some(format!("The output was: {}", stdout.trim())),
                 tool_calls: vec![],
                 usage: Usage {
@@ -890,6 +897,7 @@ impl LlmProvider for HookModifiedExecProvider {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if count == 0 {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: None,
                 tool_calls: vec![ToolCall {
                     id: "call_exec_hook_1".into(),
@@ -920,6 +928,7 @@ impl LlmProvider for HookModifiedExecProvider {
                 "invalid hook args must be rejected before exec runs"
             );
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("Hook rewrite was rejected.".into()),
                 tool_calls: vec![],
                 usage: Usage::default(),
@@ -1078,6 +1087,7 @@ impl LlmProvider for DirectCommandNoToolProvider {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if count == 0 {
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("I'll summarize the command output for you.".into()),
                 tool_calls: vec![],
                 usage: Usage {
@@ -1123,6 +1133,7 @@ impl LlmProvider for DirectCommandNoToolProvider {
                 "forced exec should append a tool result message"
             );
             Ok(CompletionResponse {
+                reasoning: None,
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: Usage {

@@ -468,6 +468,41 @@ async fn flash_streaming_multi_turn_tool_use() {
     );
 }
 
+/// Completion-based tool turns must preserve Flash reasoning just like streams.
+#[tokio::test]
+#[ignore]
+async fn flash_non_streaming_multi_turn_tool_use() {
+    let p = make_provider(TEST_MODEL);
+    let tools = vec![weather_tool()];
+    let mut messages = vec![ChatMessage::user(
+        "What is the weather in London? Use get_weather, then report the result.",
+    )];
+    let response = p
+        .complete(&messages, &tools)
+        .await
+        .expect("Flash tool turn");
+    assert!(
+        !response.tool_calls.is_empty(),
+        "Flash should call the tool"
+    );
+    messages.push(ChatMessage::from(&response));
+    for call in &response.tool_calls {
+        assert_eq!(call.name, "get_weather");
+        messages.push(ChatMessage::tool(
+            &call.id,
+            r#"{"temperature":15,"condition":"cloudy"}"#,
+        ));
+    }
+    let answer = p
+        .complete(&messages, &tools)
+        .await
+        .expect("Flash follow-up");
+    let text = answer
+        .text
+        .expect("Flash should answer with the tool result");
+    assert!(text.contains("15"), "must use the tool result: {text}");
+}
+
 // ── Probe ────────────────────────────────────────────────────────────────────
 
 /// Provider probe must succeed against the live API.
