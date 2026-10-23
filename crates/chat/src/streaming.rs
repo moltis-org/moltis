@@ -139,6 +139,7 @@ pub(crate) async fn run_streaming(
     active_partial_assistant: Option<Arc<RwLock<HashMap<String, ActiveAssistantDraft>>>>,
     terminal_runs: &Arc<RwLock<HashSet<String>>>,
     private_context: bool,
+    hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
 
@@ -246,8 +247,12 @@ pub(crate) async fn run_streaming(
     let mut server_retries_remaining: u8 = STREAM_SERVER_MAX_RETRIES;
     let mut rate_limit_retries_remaining: u8 = STREAM_RATE_LIMIT_MAX_RETRIES;
     let mut rate_limit_backoff_ms: Option<u64> = None;
-    let mut channel_stream_dispatcher =
-        ChannelStreamDispatcher::for_session(state, session_key, run_id).await;
+    let buffer_text = crate::message_lifecycle::buffers_text(hook_registry.as_deref());
+    let mut channel_stream_dispatcher = if buffer_text {
+        None
+    } else {
+        ChannelStreamDispatcher::for_session(state, session_key, run_id).await
+    };
 
     'attempts: loop {
         #[cfg(feature = "metrics")]
@@ -262,6 +267,9 @@ pub(crate) async fn run_streaming(
             match event {
                 StreamEvent::Delta(delta) => {
                     accumulated.push_str(&delta);
+                    if buffer_text {
+                        continue;
+                    }
                     if let Some(ref map) = active_partial_assistant
                         && let Some(draft) = map.write().await.get_mut(session_key)
                     {
@@ -285,6 +293,9 @@ pub(crate) async fn run_streaming(
                 },
                 StreamEvent::ReasoningDelta(delta) => {
                     accumulated_reasoning.push_str(&delta);
+                    if buffer_text {
+                        continue;
+                    }
                     if let Some(ref map) = active_partial_assistant
                         && let Some(draft) = map.write().await.get_mut(session_key)
                     {
@@ -397,6 +408,29 @@ pub(crate) async fn run_streaming(
                     }
 
                     let assistant_message_index = user_message_index + 1;
+                    if let Some(hooks) = hook_registry.as_deref()
+                        && let Err(error) = hooks
+                            .dispatch(&moltis_common::hooks::HookPayload::AgentEnd {
+                                session_key: session_key.into(),
+                                text: accumulated.clone(),
+                                iterations: 1,
+                                tool_calls: 0,
+                            })
+                            .await
+                    {
+                        warn!(%error, "AgentEnd hook failed");
+                    }
+                    accumulated = crate::message_lifecycle::prepare(
+                        hook_registry.as_deref(),
+                        state,
+                        session_key,
+                        run_id,
+                        accumulated,
+                        client_seq,
+                        terminal_runs,
+                    )
+                    .await?;
+                    let is_silent = accumulated.trim().is_empty();
 
                     // Generate & persist TTS audio for voice-medium web UI replies.
                     let mut audio_warning: Option<String> = None;

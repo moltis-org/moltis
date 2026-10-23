@@ -1182,6 +1182,7 @@ impl LiveChatService {
                         (!ephemeral).then(|| Arc::clone(&active_partial_assistant)),
                         &terminal_runs,
                         private_context,
+                        hook_registry.clone(),
                     )
                     .await
                 } else {
@@ -1203,7 +1204,7 @@ impl LiveChatService {
                         Some(&runtime_context),
                         user_message_index,
                         &discovered_skills,
-                        hook_registry,
+                        hook_registry.clone(),
                         accept_language.clone(),
                         conn_id.clone(),
                         (!ephemeral).then_some(&session_store),
@@ -1284,6 +1285,7 @@ impl LiveChatService {
             // a committed assistant message into an aborted run.
             if let Some(mut assistant_output) = assistant_text {
                 let final_payload = assistant_output.final_broadcast.take();
+                let sent_content = assistant_output.text.clone();
                 let assistant_msg = (!ephemeral).then(|| {
                     build_persisted_assistant_message(
                         assistant_output,
@@ -1318,6 +1320,12 @@ impl LiveChatService {
                         if let Some(payload) = final_payload {
                             broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
                         }
+                        crate::message_lifecycle::sent(
+                            hook_registry.as_deref(),
+                            &session_key_clone,
+                            sent_content,
+                        )
+                        .await;
                     },
                 )
                 .await;

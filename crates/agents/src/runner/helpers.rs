@@ -377,21 +377,37 @@ pub(crate) async fn dispatch_before_agent_start_hook(
     }
 }
 
-pub(crate) fn finish_agent_run(
+// Only successful loop completion reaches this helper. Errors carry no
+// AgentRunResult, so they must not synthesize AgentEnd totals.
+pub(crate) async fn finish_agent_run(
     final_text: String,
     iterations: usize,
     tool_calls_made: usize,
     usage_accumulator: &UsageAccumulator,
     raw_llm_responses: Vec<serde_json::Value>,
+    hook_registry: Option<&std::sync::Arc<HookRegistry>>,
+    session_key: &str,
 ) -> AgentRunResult {
-    AgentRunResult {
+    let result = AgentRunResult {
         text: clean_response(&final_text),
         iterations,
         tool_calls_made,
         usage: usage_accumulator.total(),
         request_usage: usage_accumulator.request(),
         raw_llm_responses,
+    };
+    if let Some(hooks) = hook_registry {
+        let payload = HookPayload::AgentEnd {
+            session_key: session_key.to_string(),
+            text: result.text.clone(),
+            iterations: result.iterations,
+            tool_calls: result.tool_calls_made,
+        };
+        if let Err(e) = hooks.dispatch(&payload).await {
+            warn!(error = %e, "AgentEnd hook dispatch failed");
+        }
     }
+    result
 }
 
 pub(crate) fn legacy_public_tool_alias(name: &str) -> Option<&str> {

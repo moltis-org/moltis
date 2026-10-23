@@ -43,7 +43,7 @@ These events run hooks sequentially. Hooks can modify the payload or block the a
 | `BeforeToolCall` | Before a tool executes | yes | yes |
 | `BeforeCompaction` | Before context compaction | yes | yes |
 | `MessageReceived` | When an inbound channel/UI message arrives | yes | yes |
-| `MessageSending` | Before sending a response | yes | yes |
+| `MessageSending` | Before publishing the final assistant response | yes | yes |
 | `ToolResultPersist` | When a tool result is persisted | yes | yes |
 
 For `MessageReceived`, `Block(reason)` aborts the turn — the user message is
@@ -62,12 +62,48 @@ These events run hooks in parallel for performance. They cannot modify or block.
 | `AfterToolCall` | After a tool completes |
 | `AfterCompaction` | After context is compacted |
 | `AgentEnd` | When agent loop completes |
-| `MessageSent` | After response is delivered |
+| `MessageSent` | After logical assistant response publication (not a transport receipt) |
 | `SessionStart` | When a new session begins |
 | `SessionEnd` | When a session ends |
 | `GatewayStart` | When Moltis starts |
 | `GatewayStop` | When Moltis shuts down |
 | `Command` | When a slash command is used |
+
+### Outbound Response Lifecycle
+
+For model-backed chat turns (with or without tools), `MessageSending` receives
+`session_key` and the final response `content`. `ModifyPayload` must return an
+object with a string `content` field. That text is used for the final web event,
+session history, channel replies, push notifications, and TTS. An empty rewrite
+is allowed and suppresses channel text and voice output. Malformed modifications
+and hook errors fail open, preserving the original text.
+
+When any `MessageSending` handler is registered, assistant text and reasoning
+previews are withheld, including reconnect drafts and channel text streaming.
+The response is published only after the hook approves it. Without subscribers,
+normal streaming is unchanged. Tool execution, tool status/results, and their
+side effects are not gated by this hook. `Block(reason)` reports a response-blocked
+error and suppresses the final assistant response, its history entry, and TTS;
+it does not undo tools already executed or tool records already persisted.
+Only response `content` is mutable here; reasoning and raw provider diagnostics
+are not rewritten. This hook is not a general-purpose diagnostic-data redactor.
+
+`MessageSent` runs once in the shared successful model-turn send path, after
+channel delivery attempts, the history persistence attempt (except ephemeral
+turns), and the final web broadcast. Its `content` is the approved final text.
+It denotes logical publication, **not** successful delivery to every transport:
+channel failures/timeouts and persistence failures are best-effort and may
+already have been logged, WebSocket broadcasts do not await client receipts,
+and push notifications may still be pending. It also runs for successful silent
+or ephemeral responses, but not blocked, failed, or aborted turns. Explicit
+`/sh` commands and other non-model command responses are outside this lifecycle.
+
+`AgentEnd` runs once on successful agent-loop completion, before `MessageSending`,
+with the generated final `text` (before outbound rewriting), `iterations`, and
+`tool_calls` totals. Both streaming and non-streaming tool runners dispatch it;
+no-tools chat streaming reports `iterations: 1` and `tool_calls: 0`. Failed,
+cancelled, or incomplete loops do not emit `AgentEnd`: its payload represents a
+completed result, not an error. A later outbound block does not undo `AgentEnd`.
 
 ## Prompt Injection Filtering
 

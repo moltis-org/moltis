@@ -761,7 +761,9 @@ pub async fn run_agent_loop_streaming_with_limits(
                 total_tool_calls,
                 &usage_accumulator,
                 raw_llm_responses,
-            ));
+                hook_registry.as_ref(),
+                &session_key_for_hooks,
+            ).await);
         }
 
         // Append assistant message with tool calls.
