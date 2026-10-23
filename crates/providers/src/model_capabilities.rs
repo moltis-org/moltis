@@ -96,6 +96,10 @@ const GENERIC_CONTEXT_WINDOW_FALLBACKS: &[ContextWindowFallback] = &[
     ContextWindowFallback::Prefix("kimi-k2.7-code", 256_000),
     ContextWindowFallback::Exact("kimi-k2.6", 256_000),
     ContextWindowFallback::Prefix("kimi-", 128_000),
+    ContextWindowFallback::Exact("deepseek-flash", 1_000_000),
+    ContextWindowFallback::Prefix("deepseek-v4", 1_000_000),
+    ContextWindowFallback::Prefix("glm-5.3", 1_000_000),
+    ContextWindowFallback::Exact("glm-5.2", 1_000_000),
     ContextWindowFallback::Prefix("glm-", 128_000),
     ContextWindowFallback::Prefix("qwen3", 128_000),
     ContextWindowFallback::Prefix("o3", 200_000),
@@ -245,6 +249,12 @@ pub fn supports_vision_for_model(model_id: &str) -> bool {
     let id = capability_model_id(model_id);
 
     // ── Known text-only models ──────────────────────────────────────
+    if id.starts_with("glm-5.3-flash") {
+        return true;
+    }
+    if id.starts_with("deepseek-v4-pro") {
+        return false;
+    }
     if id.starts_with("MiniMax-M2.7") {
         return false;
     }
@@ -279,6 +289,9 @@ pub fn supports_vision_for_model(model_id: &str) -> bool {
 pub fn supports_reasoning_for_model(model_id: &str) -> bool {
     let id = capability_model_id(model_id);
     if id == "MiniMax-M3.1-Flash" {
+        return true;
+    }
+    if id == "deepseek-flash" || id.starts_with("glm-5.3") || id == "glm-5.2" {
         return true;
     }
     // Anthropic Claude Opus 4.5+ and Sonnet 4.5+
@@ -391,6 +404,30 @@ pub struct ModelInfo {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_deepseek_and_zai_capabilities_match_documented_models() {
+        for model in [
+            "deepseek-flash",
+            "deepseek-v4-flash",
+            "deepseek-v4-pro",
+            "glm-5.3",
+            "glm-5.3-flash",
+            "glm-5.3-flashx",
+            "glm-5.2",
+        ] {
+            let capabilities = ModelCapabilities::infer(model);
+            assert_eq!(capabilities.context_window, 1_000_000, "{model}");
+            assert!(capabilities.reasoning, "{model}");
+            assert!(capabilities.tools, "{model}");
+        }
+        for model in ["deepseek-flash", "glm-5.3-flash", "glm-5.3-flashx"] {
+            assert!(supports_vision_for_model(model), "{model}");
+        }
+        for model in ["deepseek-v4-pro", "glm-5.3", "glm-5.2", "glm-4.5-flash"] {
+            assert!(!supports_vision_for_model(model), "{model}");
+        }
+    }
 
     #[test]
     fn minimax_flash_infers_context_vision_and_reasoning() {

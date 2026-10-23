@@ -5,7 +5,7 @@ use {futures::StreamExt, tokio_stream::Stream};
 use tracing::{debug, trace};
 
 use crate::{
-    http::{retry_after_ms_from_headers, with_retry_after_marker},
+    http::{format_transport_error, retry_after_ms_from_headers, with_retry_after_marker},
     openai_compat::{
         ResponsesStreamState, SseLineResult, StreamingToolState, finalize_responses_stream,
         finalize_stream, process_openai_sse_line, process_responses_sse_line,
@@ -65,7 +65,7 @@ impl OpenAiProvider {
                     r
                 }
                 Err(e) => {
-                    yield StreamEvent::Error(e.to_string());
+                    yield StreamEvent::Error(format_transport_error(e));
                     return;
                 }
             };
@@ -79,7 +79,7 @@ impl OpenAiProvider {
                 let chunk = match chunk {
                     Ok(c) => c,
                     Err(e) => {
-                        yield StreamEvent::Error(e.to_string());
+                        yield StreamEvent::Error(format_transport_error(e));
                         return;
                     }
                 };
@@ -198,7 +198,7 @@ impl OpenAiProvider {
                     r
                 }
                 Err(e) => {
-                    yield StreamEvent::Error(e.to_string());
+                    yield StreamEvent::Error(format_transport_error(e));
                     return;
                 }
             };
@@ -211,7 +211,7 @@ impl OpenAiProvider {
                 let chunk = match chunk {
                     Ok(c) => c,
                     Err(e) => {
-                        yield StreamEvent::Error(e.to_string());
+                        yield StreamEvent::Error(format_transport_error(e));
                         return;
                     }
                 };

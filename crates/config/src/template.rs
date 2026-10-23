@@ -214,9 +214,18 @@ loopback_http = true                # Plain HTTP on loopback binds: http://local
 # [providers.deepseek]
 # enabled = true
 # api_key = "..."                             # Or set DEEPSEEK_API_KEY env var
-# models = ["deepseek-chat"]
+# models = ["deepseek-flash", "deepseek-v4-pro"]
 # base_url = "https://api.deepseek.com"
 # alias = "deepseek"
+
+# ── Z.AI ──────────────────────────────────────────────────────
+# [providers.zai]
+# enabled = true
+# api_key = "..."                             # Or set Z_API_KEY
+# models = ["glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"]
+# base_url = "https://api.z.ai/api/paas/v4"
+# For a Coding Plan use [providers.zai-code], Z_CODE_API_KEY and
+# base_url = "https://api.z.ai/api/coding/paas/v4".
 
 # ── Fireworks ────────────────────────────────────────────────
 # [providers.fireworks]

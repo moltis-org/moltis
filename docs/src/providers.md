@@ -150,6 +150,48 @@ Gemini supports native tool calling, vision/multimodal inputs, streaming, and au
 1. Get an API key from [platform.openai.com](https://platform.openai.com/).
 2. Set `OPENAI_API_KEY` in your environment.
 
+### DeepSeek
+
+Use `deepseek-flash` for the current Flash model and `deepseek-v4-pro` for Pro:
+
+```toml
+[providers.deepseek]
+models = ["deepseek-flash", "deepseek-v4-pro"]
+# Set DEEPSEEK_API_KEY in the environment.
+```
+
+Both have a 1M-token context window. Flash supports images; Pro is text-only.
+DeepSeek still accepts `deepseek-v4-flash` as a legacy alias for the current
+Flash model. When reasoning effort is configured, Moltis explicitly enables
+thinking and maps minimal/low to `low`, medium/high/extra-high to `high`, and
+max to `max`. Reasoning is replayed on prior assistant turns, including answers
+without tool calls, when available. See the [model list](https://api-docs.deepseek.com/quick_start/pricing)
+and [thinking-mode guide](https://api-docs.deepseek.com/guides/thinking_mode).
+
+### Z.AI
+
+The static catalog includes GLM-5.3, GLM-5.3-Flash, GLM-5.3-FlashX, and GLM-5.2,
+alongside earlier supported models. These current models have 1M-token context
+windows; the GLM-5.3 Flash variants also support image input. GLM-4.5-Flash
+remains listed as a supported free model.
+
+```toml
+[providers.zai]
+models = ["glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"]
+# Set Z_API_KEY for the standard API.
+```
+
+Use the separate `zai-code` provider and `Z_CODE_API_KEY` for Coding Plan
+credentials. Model access depends on the endpoint and plan; FlashX is not
+currently included in the Coding Plan. GLM-5.3 requires thinking to stay enabled;
+Moltis maps configured effort to the supported `low`, `high`, and `max` levels
+and preserves returned reasoning. See [Z.AI pricing](https://docs.z.ai/guides/overview/pricing)
+and the [GLM-5.3 migration guide](https://docs.z.ai/guides/overview/migrate-to-glm-new).
+
+Streaming transport failures include timeout/connection flags and the underlying
+cause, with the request URL removed. These errors are distinct from HTTP model
+availability or authentication errors.
+
 ### MiniMax
 
 The built-in `minimax` provider uses the OpenAI-compatible chat completions

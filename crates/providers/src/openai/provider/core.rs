@@ -255,13 +255,15 @@ impl OpenAiProvider {
         use moltis_agents::model::ReasoningEffort;
         match self.capabilities.reasoning_effort_policy {
             ReasoningEffortPolicy::Unsupported => None,
-            ReasoningEffortPolicy::DeepSeek => self.reasoning_effort.map(|e| match e {
-                ReasoningEffort::Minimal
-                | ReasoningEffort::Low
-                | ReasoningEffort::Medium
-                | ReasoningEffort::High => "high",
-                ReasoningEffort::ExtraHigh | ReasoningEffort::Max => "max",
-            }),
+            ReasoningEffortPolicy::DeepSeek | ReasoningEffortPolicy::Zai => {
+                self.reasoning_effort.map(|e| match e {
+                    ReasoningEffort::Minimal | ReasoningEffort::Low => "low",
+                    ReasoningEffort::Medium
+                    | ReasoningEffort::High
+                    | ReasoningEffort::ExtraHigh => "high",
+                    ReasoningEffort::Max => "max",
+                })
+            },
             ReasoningEffortPolicy::KimiMax => self.reasoning_effort.map(|_| "max"),
             ReasoningEffortPolicy::OpenAi => self.reasoning_effort.map(|e| match e {
                 ReasoningEffort::Minimal => {
@@ -295,7 +297,7 @@ impl OpenAiProvider {
             body["reasoning_effort"] = serde_json::json!(effort);
             if matches!(
                 self.capabilities.reasoning_effort_policy,
-                ReasoningEffortPolicy::DeepSeek
+                ReasoningEffortPolicy::DeepSeek | ReasoningEffortPolicy::Zai
             ) {
                 body["thinking"] = serde_json::json!({ "type": "enabled" });
             }

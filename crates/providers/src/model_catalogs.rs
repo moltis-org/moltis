@@ -43,6 +43,10 @@ pub(crate) const MINIMAX_MODELS: &[(&str, &str)] = &[
 /// Known Z.AI (Zhipu) models.
 /// See: <https://docs.z.ai/api-reference/llm/chat-completion>
 pub(crate) const ZAI_MODELS: &[(&str, &str)] = &[
+    ("glm-5.3", "GLM-5.3"),
+    ("glm-5.3-flash", "GLM-5.3 Flash"),
+    ("glm-5.3-flashx", "GLM-5.3 FlashX"),
+    ("glm-5.2", "GLM-5.2"),
     ("glm-5", "GLM-5"),
     ("glm-4.7", "GLM-4.7"),
     ("glm-4.7-flash", "GLM-4.7 Flash"),
@@ -111,6 +115,7 @@ pub(crate) const DEEPINFRA_MODELS: &[(&str, &str)] = &[
 
 /// Known DeepSeek models.
 pub(crate) const DEEPSEEK_MODELS: &[(&str, &str)] = &[
+    ("deepseek-flash", "DeepSeek Flash"),
     ("deepseek-v4-flash", "DeepSeek V4 Flash"),
     ("deepseek-v4-pro", "DeepSeek V4 Pro"),
     ("deepseek-chat", "DeepSeek Chat"),
@@ -245,6 +250,11 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "Z_BASE_URL",
         default_base_url: "https://api.z.ai/api/paas/v4",
         models: ZAI_MODELS,
+        capabilities: OpenAiProviderCapabilities {
+            reasoning_effort_policy: ReasoningEffortPolicy::Zai,
+            optional_reasoning_content_model_prefixes: &["glm-5.3", "glm-5.2"],
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -253,6 +263,11 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "Z_CODE_BASE_URL",
         default_base_url: "https://api.z.ai/api/coding/paas/v4",
         models: ZAI_MODELS,
+        capabilities: OpenAiProviderCapabilities {
+            reasoning_effort_policy: ReasoningEffortPolicy::Zai,
+            optional_reasoning_content_model_prefixes: &["glm-5.3", "glm-5.2"],
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -295,7 +310,10 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         models: DEEPSEEK_MODELS,
         capabilities: OpenAiProviderCapabilities {
             reasoning_effort_policy: ReasoningEffortPolicy::DeepSeek,
-            reasoning_content_model_prefixes: &["deepseek-v4"],
+            reasoning_content_model_prefixes: &["deepseek-v4", "deepseek-flash"],
+            // Thinking with tools requires replay on all assistant turns,
+            // including preceding answers that did not call a tool.
+            optional_reasoning_content_model_prefixes: &["deepseek-v4", "deepseek-flash"],
             ..OpenAiProviderCapabilities::DEFAULT
         },
         ..OpenAiCompatDef::DEFAULT

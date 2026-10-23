@@ -971,10 +971,10 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_v4_reasoning_effort_enables_thinking_and_maps_top_levels_to_max() {
-        for effort in [
-            moltis_agents::model::ReasoningEffort::ExtraHigh,
-            moltis_agents::model::ReasoningEffort::Max,
+    fn deepseek_v4_reasoning_effort_enables_thinking_with_documented_mapping() {
+        for (effort, expected) in [
+            (moltis_agents::model::ReasoningEffort::ExtraHigh, "high"),
+            (moltis_agents::model::ReasoningEffort::Max, "max"),
         ] {
             let mut p = provider("deepseek-v4-pro", "deepseek", "https://api.deepseek.com")
                 .with_capabilities(OpenAiProviderCapabilities {
@@ -989,18 +989,18 @@ mod tests {
 
             p.apply_reasoning_effort_chat(&mut body);
 
-            assert_eq!(body["reasoning_effort"], "max");
+            assert_eq!(body["reasoning_effort"], expected);
             assert_eq!(body["thinking"], serde_json::json!({ "type": "enabled" }));
         }
     }
 
     #[test]
-    fn deepseek_v4_reasoning_effort_maps_lower_levels_to_high() {
-        for effort in [
-            moltis_agents::model::ReasoningEffort::Minimal,
-            moltis_agents::model::ReasoningEffort::Low,
-            moltis_agents::model::ReasoningEffort::Medium,
-            moltis_agents::model::ReasoningEffort::High,
+    fn deepseek_v4_reasoning_effort_maps_lower_levels_as_documented() {
+        for (effort, expected) in [
+            (moltis_agents::model::ReasoningEffort::Minimal, "low"),
+            (moltis_agents::model::ReasoningEffort::Low, "low"),
+            (moltis_agents::model::ReasoningEffort::Medium, "high"),
+            (moltis_agents::model::ReasoningEffort::High, "high"),
         ] {
             let mut p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com")
                 .with_capabilities(OpenAiProviderCapabilities {
@@ -1008,7 +1008,7 @@ mod tests {
                     ..OpenAiProviderCapabilities::DEFAULT
                 });
             p.reasoning_effort = Some(effort);
-            assert_eq!(p.reasoning_effort_str(), Some("high"));
+            assert_eq!(p.reasoning_effort_str(), Some(expected));
         }
     }
 

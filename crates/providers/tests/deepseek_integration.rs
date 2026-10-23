@@ -5,6 +5,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+#[path = "support/registered_provider.rs"]
+mod registered_provider;
+
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -13,16 +16,16 @@ use std::{
 use {
     futures::StreamExt,
     moltis_agents::model::{ChatMessage, LlmProvider, ReasoningEffort, StreamEvent, ToolCall},
-    moltis_providers::openai::OpenAiProvider,
     secrecy::{ExposeSecret, Secret},
 };
 
 const BASE_URL: &str = "https://api.deepseek.com";
 const TEST_MODEL: &str = "deepseek-chat";
 const REASONING_MODEL: &str = "deepseek-reasoner";
-const V4_REASONING_MODEL: &str = "deepseek-v4-flash";
+const V4_REASONING_MODEL: &str = "deepseek-flash";
 
 const KNOWN_MODELS: &[&str] = &[
+    "deepseek-flash",
     "deepseek-v4-flash",
     "deepseek-v4-pro",
     "deepseek-chat",
@@ -36,17 +39,12 @@ fn api_key() -> Secret<String> {
     )
 }
 
-fn make_provider(model: &str) -> OpenAiProvider {
-    OpenAiProvider::new_with_name(
-        api_key(),
-        model.to_string(),
-        BASE_URL.to_string(),
-        "deepseek".to_string(),
-    )
+fn make_provider(model: &str) -> Arc<dyn LlmProvider> {
+    registered_provider::registered_provider("deepseek", model, BASE_URL, api_key())
 }
 
 fn make_provider_with_reasoning(model: &str, effort: ReasoningEffort) -> Arc<dyn LlmProvider> {
-    Arc::new(make_provider(model))
+    make_provider(model)
         .with_reasoning_effort(effort)
         .expect("DeepSeek OpenAI-compatible provider should support reasoning_effort")
 }
@@ -191,13 +189,7 @@ async fn multi_turn_tool_use() {
         .complete(
             &[
                 ChatMessage::user("Weather in London? Use get_weather."),
-                ChatMessage::assistant_with_tools(r.text.clone(), vec![ToolCall {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
-                    argument_diagnostic: tc.argument_diagnostic.clone(),
-                    metadata: tc.metadata.clone(),
-                }]),
+                ChatMessage::from(&r),
                 ChatMessage::tool(&tc.id, r#"{"temperature": 15, "condition": "cloudy"}"#),
             ],
             &tools,
@@ -325,9 +317,8 @@ async fn v4_thinking_tool_call_replays_reasoning_content() {
     assert_eq!(tool_name, "get_weather");
     let arguments = tool_args_by_index
         .remove(&0)
-        .filter(|args| !args.trim().is_empty())
-        .map(|args| serde_json::from_str::<serde_json::Value>(&args).expect("tool args JSON"))
-        .unwrap_or_else(|| serde_json::json!({"location": "Lisbon"}));
+        .expect("tool call must contain arguments");
+    let arguments = serde_json::from_str::<serde_json::Value>(&arguments).expect("tool args JSON");
 
     let response = p
         .complete(
