@@ -2,7 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { t } from "../../i18n";
+import { t, useTranslation } from "../../i18n";
 import { detectPasskeyName } from "../../passkey-detect";
 import { targetValue } from "../../typed-events";
 import { copyToClipboard } from "../../ui";
@@ -12,6 +12,7 @@ import { bufferToBase64, ErrorPanel, ensureWsConnected } from "../shared";
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auth step handles passkey+password+code flows
 export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable: boolean }): VNode {
+	const { t: authT } = useTranslation("onboarding");
 	const [method, setMethod] = useState<string | null>(null); // null | "passkey" | "password"
 	const [password, setPassword] = useState("");
 	const [confirm, setConfirm] = useState("");
@@ -75,12 +76,12 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 				return;
 			}
 			if (password !== confirm) {
-				setError("Passwords do not match.");
+				setError(authT("auth.passwordsDoNotMatch"));
 				return;
 			}
 		}
 		if (codeRequired && setupCode.trim().length === 0) {
-			setError("Enter the setup code shown in the process log (stdout).");
+			setError(authT("auth.enterSetupCode"));
 			return;
 		}
 		setSaving(true);
@@ -107,7 +108,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 						.catch(() => onNext());
 				} else {
 					return r.text().then((txt: string) => {
-						setError(txt || "Setup failed");
+						setError(txt || authT("auth.setupFailed"));
 						setSaving(false);
 					});
 				}
@@ -121,7 +122,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 	function onPasskeyRegister(): void {
 		setError(null);
 		if (codeRequired && setupCode.trim().length === 0) {
-			setError("Enter the setup code shown in the process log (stdout).");
+			setError(authT("auth.enterSetupCode"));
 			return;
 		}
 		setSaving(true);
@@ -136,7 +137,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 				if (!r.ok)
 					return r
 						.text()
-						.then((txt: string) => Promise.reject(new Error(txt || "Failed to start passkey registration")));
+						.then((txt: string) => Promise.reject(new Error(txt || authT("auth.passkeyRegistrationFailed"))));
 				return r.json();
 			})
 			.then((data: { options: Record<string, unknown>; challenge_id: string }) => {
@@ -186,18 +187,21 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 					setPasskeyDone(true);
 				} else {
 					return r.text().then((txt: string) => {
-						setError(txt || "Passkey registration failed");
+						setError(txt || authT("auth.passkeyRegistrationError"));
 						setSaving(false);
 					});
 				}
 			})
 			.catch((err: Error & { name?: string }) => {
 				if (err.name === "NotAllowedError") {
-					setError("Passkey registration was cancelled.");
+					setError(authT("auth.passkeyRegistrationCancelled"));
 				} else {
-					let msg = err.message || "Passkey registration failed";
+					let msg = err.message || authT("auth.passkeyRegistrationError");
 					if (requestedRpId) {
-						msg += ` (RPID: "${requestedRpId}", current origin: "${location.origin}")`;
+						msg += t("settings:security.passkeyOriginDetails", {
+							rpId: requestedRpId,
+							origin: location.origin,
+						});
 					}
 					setError(msg);
 				}
@@ -213,7 +217,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 			return;
 		}
 		if (optPw !== optPwConfirm) {
-			setError("Passwords do not match.");
+			setError(authT("auth.passwordsDoNotMatch"));
 			return;
 		}
 		setOptPwSaving(true);
@@ -228,7 +232,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 					onNext();
 				} else {
 					return r.text().then((txt: string) => {
-						setError(txt || "Failed to set password");
+						setError(txt || authT("auth.failedToSetPassword"));
 						setOptPwSaving(false);
 					});
 				}
@@ -240,7 +244,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 	}
 
 	if (loading) {
-		return <div className="text-sm text-[var(--muted)]">Checking authentication{"\u2026"}</div>;
+		return <div className="text-sm text-[var(--muted)]">{authT("auth.checkingAuth")}</div>;
 	}
 
 	// Setup already complete (passkeys/password configured) — let user proceed.
@@ -250,7 +254,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">{t("onboarding:auth.secureYourInstance")}</h2>
 				<div className="flex items-center gap-2 text-sm text-[var(--accent)]">
 					<span className="icon icon-checkmark" />
-					Authentication is already configured.
+					{authT("auth.authenticationConfigured")}
 				</div>
 				<div className="flex flex-wrap items-center gap-3 mt-1">
 					<button
@@ -262,7 +266,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 							onNext();
 						}}
 					>
-						Next
+						{authT("auth.next")}
 					</button>
 				</div>
 			</div>
@@ -273,10 +277,10 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 	if (recoveryKey) {
 		return (
 			<div className="flex flex-col gap-4">
-				<h2 className="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+				<h2 className="text-lg font-medium text-[var(--text-strong)]">{authT("auth.secureYourInstance")}</h2>
 				<div className="flex items-center gap-2 text-sm text-[var(--accent)]">
 					<span className="icon icon-checkmark" />
-					Password set and vault initialized
+					{authT("auth.passwordSetVaultInitialized")}
 				</div>
 				<div
 					style={{
@@ -288,7 +292,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 					}}
 				>
 					<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "8px" }}>
-						Recovery key
+						{authT("auth.recoveryKey")}
 					</div>
 					<code
 						className="select-all break-all"
@@ -307,28 +311,23 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 							type="button"
 							className="provider-btn provider-btn-secondary"
 							onClick={() => {
-								copyToClipboard(
-									recoveryKey ?? "",
-									"",
-									"Could not copy — please select and copy the key manually.",
-								).then((ok) => {
+								copyToClipboard(recoveryKey ?? "", "", authT("auth.copyRecoveryFailed")).then((ok) => {
 									if (!ok) return;
 									setRecoveryCopied(true);
 									setTimeout(() => setRecoveryCopied(false), 2000);
 								});
 							}}
 						>
-							{recoveryCopied ? "Copied!" : "Copy"}
+							{recoveryCopied ? t("common:actions.copied") : t("common:actions.copy")}
 						</button>
 					</div>
 				</div>
 				<div className="text-xs" style={{ color: "var(--error)", maxWidth: "600px" }}>
-					Save this recovery key in a safe place. It will not be shown again. You need it to unlock the vault if you
-					forget your password.
+					{authT("auth.recoveryKeyWarning")}
 				</div>
 				<div className="flex flex-wrap items-center gap-3 mt-1">
 					<button type="button" className="provider-btn" onClick={onNext}>
-						Continue
+						{t("common:actions.continue")}
 					</button>
 				</div>
 			</div>
@@ -338,10 +337,10 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 	const passkeyDisabledReason = webauthnAvailable
 		? browserSupportsWebauthn
 			? isIpAddress
-				? "Requires domain name"
+				? authT("auth.passkeyDisabledDomain")
 				: null
-			: "Browser not supported"
-		: "Not available on this server";
+			: authT("auth.passkeyDisabledBrowser")
+		: authT("auth.passkeyDisabledServer");
 
 	const originsHint =
 		passkeyOrigins.length > 1 ? passkeyOrigins.map((o) => o.replace(/^https?:\/\//, "")).join(", ") : null;
@@ -353,15 +352,13 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">{t("onboarding:auth.secureYourInstance")}</h2>
 				<div className="flex items-center gap-2 text-sm text-[var(--accent)]">
 					<span className="icon icon-checkmark" />
-					Passkey registered successfully!
+					{authT("auth.passkeyRegistered")}
 				</div>
-				<p className="text-xs text-[var(--muted)] leading-relaxed">
-					Optionally set a password as a fallback for when passkeys aren't available.
-				</p>
+				<p className="text-xs text-[var(--muted)] leading-relaxed">{authT("auth.optionalPasswordAfterPasskey")}</p>
 				<form onSubmit={onOptionalPassword} className="flex flex-col gap-3">
 					<div>
 						<label htmlFor="onboarding-passkey-password" className="text-xs text-[var(--muted)] mb-1 block">
-							Password
+							{authT("auth.passwordLabel")}
 						</label>
 						<input
 							id="onboarding-passkey-password"
@@ -377,7 +374,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 					</div>
 					<div>
 						<label htmlFor="onboarding-passkey-password-confirm" className="text-xs text-[var(--muted)] mb-1 block">
-							Confirm password
+							{authT("auth.confirmPassword")}
 						</label>
 						<input
 							id="onboarding-passkey-password-confirm"
@@ -387,13 +384,13 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 							className="provider-key-input w-full"
 							value={optPwConfirm}
 							onInput={(e) => setOptPwConfirm(targetValue(e))}
-							placeholder="Repeat password"
+							placeholder={authT("auth.confirmPasswordPlaceholder")}
 						/>
 					</div>
 					{error && <ErrorPanel message={error} />}
 					<div className="flex flex-wrap items-center gap-3 mt-1">
 						<button type="submit" className="provider-btn" disabled={optPwSaving}>
-							{optPwSaving ? "Setting\u2026" : "Set password & continue"}
+							{optPwSaving ? authT("auth.setting") : authT("auth.setPasswordAndContinue")}
 						</button>
 						<button
 							type="button"
@@ -403,7 +400,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 								onNext();
 							}}
 						>
-							Skip
+							{authT("auth.skip")}
 						</button>
 					</div>
 				</form>
@@ -416,14 +413,12 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 		<div className="flex flex-col gap-4">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">{t("onboarding:auth.secureYourInstance")}</h2>
 			<p className="text-xs text-[var(--muted)] leading-relaxed">
-				{localhostOnly
-					? "Choose how to secure your instance, or skip for now. Setting a password also enables the encryption vault, which protects API keys and secrets stored in the database."
-					: "Choose how to secure your instance."}
+				{localhostOnly ? authT("auth.chooseHowToSecureWithVault") : authT("auth.chooseHowToSecureRequired")}
 			</p>
 
 			{codeRequired && (
 				<div>
-					<label className="text-xs text-[var(--muted)] mb-1 block">Setup code</label>
+					<label className="text-xs text-[var(--muted)] mb-1 block">{authT("auth.setupCode")}</label>
 					<input
 						type="text"
 						className="provider-key-input w-full"
@@ -435,8 +430,8 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 					/>
 					<div className="text-xs text-[var(--muted)] mt-1">
 						{launchSetupCode && setupCode === launchSetupCode
-							? "Filled in from the link moltis opened."
-							: "Find this code in the moltis process log (stdout)."}
+							? authT("auth.setupCodePrefilledHint")
+							: authT("auth.setupCodeHint")}
 					</div>
 				</div>
 			)}
@@ -447,41 +442,39 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 					onClick={passkeyEnabled ? () => setMethod("passkey") : undefined}
 				>
 					<div className="flex flex-wrap items-center justify-between gap-2">
-						<span className="text-sm font-medium text-[var(--text)]">Passkey</span>
+						<span className="text-sm font-medium text-[var(--text)]">{authT("auth.passkey")}</span>
 						<div className="flex flex-wrap gap-2 justify-end">
-							{passkeyEnabled ? <span className="recommended-badge">Recommended</span> : null}
+							{passkeyEnabled ? <span className="recommended-badge">{authT("auth.recommended")}</span> : null}
 							{passkeyDisabledReason ? <span className="tier-badge">{passkeyDisabledReason}</span> : null}
 						</div>
 					</div>
-					<div className="text-xs text-[var(--muted)] mt-1">Use Touch ID, Face ID, or a security key</div>
+					<div className="text-xs text-[var(--muted)] mt-1">{authT("auth.usePasskey")}</div>
 				</div>
 				<div
 					className={`backend-card ${method === "password" ? "selected" : ""}`}
 					onClick={() => setMethod("password")}
 				>
 					<div className="flex flex-wrap items-center justify-between gap-2">
-						<span className="text-sm font-medium text-[var(--text)]">Password</span>
+						<span className="text-sm font-medium text-[var(--text)]">{authT("auth.passwordLabel")}</span>
 					</div>
-					<div className="text-xs text-[var(--muted)] mt-1">
-						Set a password and enable the encryption vault for stored secrets
-					</div>
+					<div className="text-xs text-[var(--muted)] mt-1">{authT("auth.passwordVaultDescription")}</div>
 				</div>
 			</div>
 
 			{method === "passkey" && (
 				<div className="flex flex-col gap-3">
 					<div>
-						<label className="text-xs text-[var(--muted)] mb-1 block">Passkey name</label>
+						<label className="text-xs text-[var(--muted)] mb-1 block">{authT("auth.passkeyName")}</label>
 						<input
 							type="text"
 							className="provider-key-input w-full"
 							value={passkeyName}
 							onInput={(e) => setPasskeyName(targetValue(e))}
-							placeholder="e.g. MacBook Touch ID (optional)"
+							placeholder={authT("auth.passkeyNamePlaceholder")}
 						/>
 					</div>
 					{originsHint && (
-						<div className="text-xs text-[var(--muted)]">Passkeys will work when visiting: {originsHint}</div>
+						<div className="text-xs text-[var(--muted)]">{authT("auth.passkeyOrigins", { origins: originsHint })}</div>
 					)}
 					{error && <ErrorPanel message={error} />}
 					<div className="flex flex-wrap items-center gap-3 mt-1">
@@ -492,7 +485,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 							disabled={saving}
 							onClick={onPasskeyRegister}
 						>
-							{saving ? "Registering\u2026" : "Register passkey"}
+							{saving ? authT("auth.registering") : authT("auth.registerPasskey")}
 						</button>
 						{skippable ? (
 							<button
@@ -511,7 +504,8 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 				<form onSubmit={onPasswordSubmit} className="flex flex-col gap-3">
 					<div>
 						<label htmlFor="onboarding-password" className="text-xs text-[var(--muted)] mb-1 block">
-							Password{localhostOnly ? "" : " *"}
+							{authT("auth.passwordLabel")}
+							{localhostOnly ? "" : " *"}
 						</label>
 						<input
 							id="onboarding-password"
@@ -521,13 +515,13 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 							className="provider-key-input w-full"
 							value={password}
 							onInput={(e) => setPassword(targetValue(e))}
-							placeholder={localhostOnly ? "Optional on localhost" : "At least 12 characters"}
+							placeholder={localhostOnly ? authT("auth.optionalOnLocalhost") : "At least 12 characters"}
 							autofocus
 						/>
 					</div>
 					<div>
 						<label htmlFor="onboarding-password-confirm" className="text-xs text-[var(--muted)] mb-1 block">
-							Confirm password
+							{authT("auth.confirmPassword")}
 						</label>
 						<input
 							id="onboarding-password-confirm"
@@ -537,13 +531,17 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 							className="provider-key-input w-full"
 							value={confirm}
 							onInput={(e) => setConfirm(targetValue(e))}
-							placeholder="Repeat password"
+							placeholder={authT("auth.confirmPasswordPlaceholder")}
 						/>
 					</div>
 					{error && <ErrorPanel message={error} />}
 					<div className="flex flex-wrap items-center gap-3 mt-1">
 						<button key={`pw-${saving}`} type="submit" className="provider-btn" disabled={saving}>
-							{saving ? "Setting up\u2026" : localhostOnly && !password ? "Skip" : "Set password"}
+							{saving
+								? authT("auth.settingUp")
+								: localhostOnly && !password
+									? authT("auth.skip")
+									: authT("auth.setPassword")}
 						</button>
 						{skippable ? (
 							<button

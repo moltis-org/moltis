@@ -250,6 +250,44 @@ test.describe("Authentication", () => {
 
 		await expectPageContentMounted(page);
 		await expect(page.getByRole("heading", { name: "Authentication" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Passkeys", exact: true })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "API Keys", exact: true })).toBeVisible();
+		for (const token of ["api_key", "auth", "connect"]) {
+			await expect(page.locator("p code").getByText(token, { exact: true })).toBeVisible();
+		}
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("removing authentication requires confirmation and can be cancelled", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.route("**/api/auth/status", (route) =>
+			route.fulfill({
+				json: {
+					authenticated: true,
+					setup_required: false,
+					auth_disabled: false,
+					localhost_only: true,
+					has_password: true,
+					has_passkeys: false,
+					setup_complete: true,
+				},
+			}),
+		);
+		await page.goto("/settings/security");
+		await expectPageContentMounted(page);
+		await expect(page.getByRole("heading", { name: "Danger Zone", exact: true })).toBeVisible();
+		await expect(
+			page.getByText(
+				"If you know what you're doing, you can fully disable authentication. Anyone with network access will be able to access moltis and your computer. This removes your password, all passkeys, all API keys, and all sessions.",
+				{ exact: true },
+			),
+		).toBeVisible();
+		await page.getByRole("button", { name: "Remove all authentication", exact: true }).click();
+		await expect(page.getByText("Are you sure? This cannot be undone.", { exact: true })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Yes, remove all auth", exact: true })).toBeVisible();
+		await page.getByRole("button", { name: "Cancel", exact: true }).click();
+		await expect(page.getByRole("button", { name: "Remove all authentication", exact: true })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Yes, remove all auth", exact: true })).toHaveCount(0);
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -400,7 +438,26 @@ test.describe("Authentication", () => {
 		await expect(page.getByText("Vault initialized — save this recovery key", { exact: true })).toBeVisible();
 		await expect(page.locator("code.select-all")).toContainText("test-recovery-key-1234");
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/settings/security");
-		await page.getByRole("button", { name: "Continue to sign in", exact: true }).click();
+		await expect(page.getByRole("button", { name: "Continue to sign in", exact: true })).toBeVisible();
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const i18n = await import(`${prefix}js/i18n.js`);
+			await i18n.setLocale("fr");
+		});
+		await expect(page.getByRole("heading", { name: "Authentification", exact: true })).toBeVisible();
+		await expect(
+			page.getByText("Coffre-fort initialisé : conservez cette clé de récupération", { exact: true }),
+		).toBeVisible();
+		await expect(
+			page.getByText(
+				"Cette clé ne sera plus affichée. Vous en aurez besoin pour déverrouiller le coffre-fort si vous oubliez votre mot de passe.",
+				{ exact: true },
+			),
+		).toBeVisible();
+		await expect(page.locator("code.select-all")).toContainText("test-recovery-key-1234");
+		await page.getByRole("button", { name: "Continuer vers la connexion", exact: true }).click();
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/login");
 		expect(pageErrors).toEqual([]);
 	});

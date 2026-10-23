@@ -42,6 +42,8 @@ test.describe("i18n", () => {
 		expect(translated.sessionGreeting).toBe("Hello, Sam!");
 		// Default locale should be English (or start with "en").
 		expect(translated.locale).toMatch(/^en/);
+		await expect(page.locator("#modelComboBtn")).toHaveAttribute("title", "Select model or ACP agent");
+		await expect(page.getByRole("button", { name: "Share", exact: true })).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -140,6 +142,27 @@ test.describe("i18n", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("API key instructions preserve protocol identifiers across locales", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/settings/security");
+		await expect(page.getByRole("heading", { name: "API Keys", exact: true })).toBeVisible();
+
+		for (const locale of ["en", "fr", "zh", "zh-TW"]) {
+			await page.evaluate(async (nextLocale) => {
+				const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+				const appUrl = new URL(appScript.src, window.location.origin);
+				const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+				const i18n = await import(`${prefix}js/i18n.js`);
+				await i18n.setLocale(nextLocale);
+			}, locale);
+			await expect(page.locator("html")).toHaveAttribute("lang", locale);
+			for (const token of ["api_key", "auth", "connect"]) {
+				await expect(page.locator("p code").getByText(token, { exact: true }), `${locale}: ${token}`).toBeVisible();
+			}
+		}
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("settings language selector persists and clears locale preference", async ({ page }) => {
 		const pageErrors = await navigateAndWait(page, "/settings/profile");
 
@@ -194,6 +217,34 @@ test.describe("i18n", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("French model and session controls update when switching locales", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/chats/main");
+		await expect(page.locator("#modelComboBtn")).toHaveAttribute("title", "Select model or ACP agent");
+		await expect(page.getByRole("button", { name: "Save as Markdown", exact: true })).toBeVisible();
+
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const i18n = await import(`${prefix}js/i18n.js`);
+			await i18n.setLocale("fr");
+		});
+		await expect(page.locator("html")).toHaveAttribute("lang", "fr");
+		await expect(page.locator("#modelComboBtn")).toHaveAttribute("title", "Sélectionner un modèle ou un agent ACP");
+		await expect(page.getByRole("button", { name: "Enregistrer au format Markdown", exact: true })).toBeVisible();
+
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const i18n = await import(`${prefix}js/i18n.js`);
+			await i18n.setLocale("en");
+		});
+		await expect(page.locator("#modelComboBtn")).toHaveAttribute("title", "Select model or ACP agent");
+		await expect(page.getByRole("button", { name: "Save as Markdown", exact: true })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("zh-TW locale loads Traditional Chinese strings", async ({ page }) => {
 		const pageErrors = await navigateAndWait(page, "/chats/main");
 
@@ -222,6 +273,18 @@ test.describe("i18n", () => {
 		expect(translated.cancel).toBe("取消");
 		expect(translated.locale).toBe("zh-TW");
 
+		await expect(page.locator("#modelComboBtn")).toHaveAttribute("title", "選擇模型或 ACP 助理");
+		await expect(page.getByRole("button", { name: "分享", exact: true })).toBeVisible();
+
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const i18n = await import(`${prefix}js/i18n.js`);
+			await i18n.setLocale("en");
+		});
+		await expect(page.locator("#modelComboBtn")).toHaveAttribute("title", "Select model or ACP agent");
+		await expect(page.getByRole("button", { name: "Share", exact: true })).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 

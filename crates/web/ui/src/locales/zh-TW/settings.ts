@@ -84,6 +84,7 @@ export default {
 	// ── Security section ─────────────────────────────────────
 	security: {
 		title: "安全性",
+		authentication: "身分驗證",
 		authDisabled: "身分驗證已停用",
 		authDisabledWarning: "任何能連到 Moltis 的人，都能控制 Moltis 和這台電腦。請設定密碼以保護伺服器。",
 		setupAuth: "設定身分驗證",
@@ -108,6 +109,11 @@ export default {
 		passwordsDoNotMatch: "密碼不一致。",
 		passwordChanged: "密碼已變更。",
 		passwordSet: "密碼已設定。",
+		passwordSetSignIn: "密碼已設定。請先儲存復原金鑰，再繼續登入。",
+		vaultRecoveryKey: "保險庫已啟用，請儲存這組復原金鑰",
+		copyRecoveryFailed: "無法複製。請手動選取並複製金鑰。",
+		continueToSignIn: "繼續登入",
+		recoveryKeyWarning: "這組金鑰不會再次顯示。若忘記密碼，需使用此金鑰解鎖保險庫。",
 		// Passkeys
 		passkeys: "通行金鑰",
 		passkeyOrigins: "通行金鑰可在以下網址使用：{{origins}}",
@@ -117,10 +123,15 @@ export default {
 		passkeyAdded: "通行金鑰已新增。",
 		failedToAddPasskey: "新增通行金鑰失敗",
 		passkeyRequiresDomain: "通行金鑰需要網域名稱。請使用 localhost 而非 {{hostname}}",
+		passkeyOriginDetails: "（RPID：「{{rpId}}」，目前來源：「{{origin}}」）",
+		passkeyHostUpdateNeeded: "需要更新通行金鑰：",
+		passkeyHostUpdateWarning: "偵測到新主機（{{hosts}}）。請先在該主機上以密碼登入，再註冊新的通行金鑰。",
 		// API keys
 		apiKeys: "API 金鑰",
 		apiKeysDescription:
 			"API 金鑰用於驗證透過 WebSocket 協定連線至 Moltis 的外部工具和腳本。請在連線交握的 auth 物件中，將金鑰作為 api_key 欄位傳入。",
+		apiKeysProtocolDescription:
+			"API 金鑰用於驗證透過 WebSocket 協定連線至 Moltis 的外部工具和腳本。請在 connect 交握的 auth 物件中，將金鑰作為 api_key 欄位傳入。",
 		apiKeyCopyWarning: "請立即複製此金鑰，之後將不再顯示。",
 		fullAccess: "完整存取",
 		revoke: "撤銷",

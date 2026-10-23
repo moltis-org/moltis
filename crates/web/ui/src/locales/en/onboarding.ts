@@ -17,11 +17,16 @@ export default {
 	// ── Auth step ────────────────────────────────────────────
 	auth: {
 		secureYourInstance: "Secure your instance",
+		authenticationConfigured: "Authentication is already configured.",
+		next: "Next",
 		chooseHowToSecure: "Choose how to secure your instance, or skip for now.",
+		chooseHowToSecureWithVault:
+			"Choose how to secure your instance, or skip for now. Setting a password also enables the encryption vault, which protects API keys and secrets stored in the database.",
 		chooseHowToSecureRequired: "Choose how to secure your instance.",
 		setupCode: "Setup code",
 		setupCodePlaceholder: "6-digit code from terminal",
 		setupCodeHint: "Find this code in the moltis process log (stdout).",
+		setupCodePrefilledHint: "Filled in from the link moltis opened.",
 		enterSetupCode: "Enter the setup code shown in the process log (stdout).",
 		setupFailed: "Setup failed",
 		passkey: "Passkey",
@@ -37,6 +42,13 @@ export default {
 		passkeyRegistrationError: "Passkey registration failed",
 		passkeyRegistrationCancelled: "Passkey registration was cancelled.",
 		optionalPasswordAfterPasskey: "Optionally set a password as a fallback for when passkeys aren't available.",
+		passwordVaultDescription: "Set a password and enable the encryption vault for stored secrets",
+		passwordSetVaultInitialized: "Password set and vault initialized",
+		recoveryKey: "Recovery key",
+		copyRecoveryFailed: "Could not copy \u2014 please select and copy the key manually.",
+		recoveryKeyWarning:
+			"Save this recovery key in a safe place. It will not be shown again. You need it to unlock the vault if you forget your password.",
+		skip: "Skip",
 		passwordLabel: "Password",
 		passwordPlaceholder: "At least 12 characters",
 		optionalOnLocalhost: "Optional on localhost",

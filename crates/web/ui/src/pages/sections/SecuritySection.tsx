@@ -4,6 +4,7 @@ import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { DangerZone, EmptyState, ListItem, Loading } from "../../components/forms";
 import { refresh as refreshGon } from "../../gon";
+import { t as translate, useTranslation } from "../../i18n";
 import { detectPasskeyName } from "../../passkey-detect";
 import { targetValue } from "../../typed-events";
 import { copyToClipboard } from "../../ui";
@@ -43,6 +44,7 @@ interface AkScopes {
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Large component managing auth, passwords, passkeys, and API keys
 export function SecuritySection(): VNode {
+	const { t } = useTranslation("settings");
 	const [authDisabled, setAuthDisabled] = useState(false);
 	const [localhostOnly, setLocalhostOnly] = useState(false);
 	const [hasPassword, setHasPassword] = useState(true);
@@ -175,7 +177,7 @@ export function SecuritySection(): VNode {
 			return;
 		}
 		if (newPw !== confirmPw) {
-			setPwErr("Passwords do not match.");
+			setPwErr(t("security.passwordsDoNotMatch"));
 			return;
 		}
 		setPwSaving(true);
@@ -191,9 +193,9 @@ export function SecuritySection(): VNode {
 		})
 			.then((r) => {
 				if (!r.ok) {
-					return r.text().then((t) => {
+					return r.text().then((responseText) => {
 						clearPasswordChangedRedirectDeferral();
-						setPwErr(t);
+						setPwErr(responseText);
 						setPwSaving(false);
 						setPwAwaitingReauth(false);
 						rerender();
@@ -202,7 +204,7 @@ export function SecuritySection(): VNode {
 
 				return r.json().then((data: { recovery_key?: string }) => {
 					const hasRecoveryKey = !!data.recovery_key;
-					setPwMsg(hasPassword ? "Password changed." : "Password set.");
+					setPwMsg(hasPassword ? t("security.passwordChanged") : t("security.passwordSet"));
 					setCurPw("");
 					setNewPw("");
 					setConfirmPw("");
@@ -216,7 +218,7 @@ export function SecuritySection(): VNode {
 					return reloadIfAuthNowRequiresLogin({ reload: !hasRecoveryKey }).then((requiresLoginOrReloaded) => {
 						if (hasRecoveryKey && requiresLoginOrReloaded) {
 							setPwAwaitingReauth(true);
-							setPwMsg("Password set. Save the recovery key, then continue to sign in.");
+							setPwMsg(t("security.passwordSetSignIn"));
 							setPwSaving(false);
 							rerender();
 							return;
@@ -241,7 +243,7 @@ export function SecuritySection(): VNode {
 	function onAddPasskey(): void {
 		setPkMsg(null);
 		if (/^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) || location.hostname.startsWith("[")) {
-			setPkMsg(`Passkeys require a domain name. Use localhost instead of ${location.hostname}`);
+			setPkMsg(t("security.passkeyRequiresDomain", { hostname: location.hostname }));
 			rerender();
 			return;
 		}
@@ -290,22 +292,22 @@ export function SecuritySection(): VNode {
 								setSetupComplete(true);
 								setAuthDisabled(false);
 								return refreshPasskeyHostStatus().then(() => {
-									setPkMsg("Passkey added.");
+									setPkMsg(t("security.passkeyAdded"));
 									notifyAuthStatusChanged();
 									rerender();
 								});
 							});
 					});
 				}
-				return r.text().then((t) => {
-					setPkMsg(t);
+				return r.text().then((responseText) => {
+					setPkMsg(responseText);
 					rerender();
 				});
 			})
 			.catch((err: Error) => {
-				let msg = err.message || "Failed to add passkey";
+				let msg = err.message || t("security.failedToAddPasskey");
 				if (requestedRpId) {
-					msg += ` (RPID: "${requestedRpId}", current origin: "${location.origin}")`;
+					msg += t("security.passkeyOriginDetails", { rpId: requestedRpId, origin: location.origin });
 				}
 				setPkMsg(msg);
 				rerender();
@@ -421,8 +423,8 @@ export function SecuritySection(): VNode {
 				if (r.ok) {
 					window.location.reload();
 				} else {
-					return r.text().then((t) => {
-						setPwErr(t);
+					return r.text().then((responseText) => {
+						setPwErr(responseText);
 						setResetConfirm(false);
 						setResetBusy(false);
 						rerender();
@@ -440,7 +442,7 @@ export function SecuritySection(): VNode {
 	if (authLoading) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<h2 className="text-lg font-medium text-[var(--text-strong)]">Authentication</h2>
+				<h2 className="text-lg font-medium text-[var(--text-strong)]">{t("security.authentication")}</h2>
 				<Loading />
 			</div>
 		);
@@ -449,7 +451,7 @@ export function SecuritySection(): VNode {
 	if (authDisabled && !localhostOnly) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<h2 className="text-lg font-medium text-[var(--text-strong)]">Authentication</h2>
+				<h2 className="text-lg font-medium text-[var(--text-strong)]">{t("security.authentication")}</h2>
 				<div
 					style={{
 						maxWidth: "600px",
@@ -459,9 +461,9 @@ export function SecuritySection(): VNode {
 						background: "color-mix(in srgb, var(--error) 5%, transparent)",
 					}}
 				>
-					<strong style={{ color: "var(--error)" }}>Authentication is disabled</strong>
+					<strong style={{ color: "var(--error)" }}>{t("security.authDisabled")}</strong>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "8px 0 0" }}>
-						Anyone with network access can control moltis and your computer. Set up a password to protect your instance.
+						{t("security.authDisabledWarning")}
 					</p>
 					<button
 						type="button"
@@ -471,7 +473,7 @@ export function SecuritySection(): VNode {
 							window.location.assign("/onboarding");
 						}}
 					>
-						Set up authentication
+						{t("security.setupAuth")}
 					</button>
 				</div>
 			</div>
@@ -480,7 +482,7 @@ export function SecuritySection(): VNode {
 
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 className="text-lg font-medium text-[var(--text-strong)]">Authentication</h2>
+			<h2 className="text-lg font-medium text-[var(--text-strong)]">{t("security.authentication")}</h2>
 
 			{authDisabled && localhostOnly ? (
 				<div
@@ -492,34 +494,31 @@ export function SecuritySection(): VNode {
 						background: "color-mix(in srgb, var(--error) 5%, transparent)",
 					}}
 				>
-					<strong style={{ color: "var(--error)" }}>Authentication is disabled</strong>
+					<strong style={{ color: "var(--error)" }}>{t("security.authDisabled")}</strong>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "8px 0 0" }}>
-						Localhost-only access is safe, but localhost bypass is active. Until you add a password or passkey, this
-						browser has full access and Sign out has no effect. Add credentials below to require login on localhost and
-						before exposing Moltis to your network.
+						{t("security.localhostBypassWarning")}
 					</p>
 				</div>
 			) : null}
 
 			{localhostOnly && !hasPassword && !hasPasskeys && !authDisabled ? (
 				<div className="alert-info-text max-w-form">
-					<span className="alert-label-info">Note: </span>
-					Localhost bypass is active. Until you add a password or passkey, this browser has full access and Sign out has
-					no effect. Add credentials to require login on localhost and before exposing Moltis to your network.
+					<span className="alert-label-info">{t("security.note")}</span>
+					{t("security.localhostBypassNote")}
 				</div>
 			) : null}
 
 			{/* Password */}
 			<div style={{ maxWidth: "600px" }}>
 				<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-					{hasPassword ? "Change Password" : "Set Password"}
+					{hasPassword ? t("security.changePassword") : t("security.setPasswordTitle")}
 				</h3>
 				<form onSubmit={onChangePw}>
 					<div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "10px" }}>
 						{hasPassword ? (
 							<div>
 								<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
-									Current password
+									{t("security.currentPassword")}
 								</div>
 								<input
 									type="password"
@@ -532,7 +531,7 @@ export function SecuritySection(): VNode {
 						) : null}
 						<div>
 							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
-								{hasPassword ? "New password" : "Password"}
+								{hasPassword ? t("security.newPassword") : t("security.passwordLabel")}
 							</div>
 							<input
 								type="password"
@@ -545,7 +544,7 @@ export function SecuritySection(): VNode {
 						</div>
 						<div>
 							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
-								Confirm {hasPassword ? "new " : ""}password
+								{hasPassword ? t("security.confirmNewPassword") : t("security.confirmPassword")}
 							</div>
 							<input
 								type="password"
@@ -560,11 +559,11 @@ export function SecuritySection(): VNode {
 						<button type="submit" className="provider-btn" disabled={pwSaving}>
 							{pwSaving
 								? hasPassword
-									? "Changing\u2026"
-									: "Setting\u2026"
+									? t("security.changing")
+									: t("security.settingPassword")
 								: hasPassword
-									? "Change password"
-									: "Set password"}
+									? t("security.changePasswordBtn")
+									: t("security.setPasswordBtn")}
 						</button>
 						{pwMsg ? (
 							<span className="text-xs" style={{ color: "var(--accent)" }}>
@@ -589,7 +588,7 @@ export function SecuritySection(): VNode {
 						}}
 					>
 						<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
-							Vault initialized {"\u2014"} save this recovery key
+							{t("security.vaultRecoveryKey")}
 						</div>
 						<code
 							className="select-all break-all"
@@ -608,11 +607,7 @@ export function SecuritySection(): VNode {
 								type="button"
 								className="provider-btn provider-btn-secondary"
 								onClick={() => {
-									copyToClipboard(
-										pwRecoveryKey ?? "",
-										"",
-										"Could not copy — please select and copy the key manually.",
-									).then((ok) => {
+									copyToClipboard(pwRecoveryKey ?? "", "", t("security.copyRecoveryFailed")).then((ok) => {
 										if (!ok) return;
 										setPwRecoveryCopied(true);
 										rerender();
@@ -623,7 +618,7 @@ export function SecuritySection(): VNode {
 									});
 								}}
 							>
-								{pwRecoveryCopied ? "Copied!" : "Copy"}
+								{pwRecoveryCopied ? translate("common:actions.copied") : translate("common:actions.copy")}
 							</button>
 							{pwAwaitingReauth ? (
 								<button
@@ -634,12 +629,12 @@ export function SecuritySection(): VNode {
 										window.location.assign("/login");
 									}}
 								>
-									Continue to sign in
+									{t("security.continueToSignIn")}
 								</button>
 							) : null}
 						</div>
 						<div className="text-xs" style={{ color: "var(--error)", marginTop: "8px" }}>
-							This key will not be shown again. You need it to unlock the vault if you forget your password.
+							{t("security.recoveryKeyWarning")}
 						</div>
 					</div>
 				) : null}
@@ -648,18 +643,19 @@ export function SecuritySection(): VNode {
 			{/* Passkeys */}
 			<div style={{ maxWidth: "600px", borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
 				<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-					Passkeys
+					{t("security.passkeys")}
 				</h3>
 				{passkeyOrigins.length > 1 && (
 					<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "8px" }}>
-						Passkeys will work when visiting: {passkeyOrigins.map((o) => o.replace(/^https?:\/\//, "")).join(", ")}
+						{t("security.passkeyOrigins", {
+							origins: passkeyOrigins.map((o) => o.replace(/^https?:\/\//, "")).join(", "),
+						})}
 					</div>
 				)}
 				{hasPasskeys && passkeyHostUpdateHosts.length > 0 ? (
 					<div className="alert-warning-text max-w-form" style={{ marginBottom: "8px" }}>
-						<span className="alert-label-warning">Passkey update needed: </span>
-						New host detected ({passkeyHostUpdateHosts.join(", ")}). Sign in with your password on that host, then
-						register a new passkey there.
+						<span className="alert-label-warning">{t("security.passkeyHostUpdateNeeded")}</span>
+						{t("security.passkeyHostUpdateWarning", { hosts: passkeyHostUpdateHosts.join(", ") })}
 					</div>
 				) : null}
 				{pkLoading ? (
@@ -686,14 +682,14 @@ export function SecuritySection(): VNode {
 													style={{ flex: 1 }}
 												/>
 												<button type="submit" className="provider-btn provider-btn-sm">
-													Save
+													{translate("common:actions.save")}
 												</button>
 												<button
 													type="button"
 													className="provider-btn provider-btn-sm provider-btn-secondary"
 													onClick={onCancelRename}
 												>
-													Cancel
+													{translate("common:actions.cancel")}
 												</button>
 											</form>
 										</div>
@@ -708,14 +704,14 @@ export function SecuritySection(): VNode {
 													className="provider-btn provider-btn-sm provider-btn-secondary"
 													onClick={() => onStartRename(pk.id, pk.name)}
 												>
-													Rename
+													{translate("common:actions.rename")}
 												</button>,
 												<button
 													key="remove"
 													className="provider-btn provider-btn-sm provider-btn-danger"
 													onClick={() => onRemovePasskey(pk.id)}
 												>
-													Remove
+													{translate("common:actions.remove")}
 												</button>,
 											]}
 										/>
@@ -723,7 +719,7 @@ export function SecuritySection(): VNode {
 								)}
 							</div>
 						) : (
-							<EmptyState message="No passkeys registered." />
+							<EmptyState message={t("security.noPasskeys")} />
 						)}
 						<div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
 							<input
@@ -731,11 +727,11 @@ export function SecuritySection(): VNode {
 								className="provider-key-input"
 								value={pkName}
 								onInput={(e: Event) => setPkName(targetValue(e))}
-								placeholder="Passkey name (e.g. MacBook Touch ID)"
+								placeholder={t("security.passkeyNamePlaceholder")}
 								style={{ flex: 1 }}
 							/>
 							<button type="button" className="provider-btn" onClick={onAddPasskey}>
-								Add passkey
+								{t("security.addPasskey")}
 							</button>
 						</div>
 						{pkMsg ? (
@@ -750,13 +746,20 @@ export function SecuritySection(): VNode {
 			{/* API Keys */}
 			<div style={{ maxWidth: "600px", borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
 				<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "4px" }}>
-					API Keys
+					{t("security.apiKeys")}
 				</h3>
 				<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: "0 0 12px" }}>
-					API keys authenticate external tools and scripts connecting to moltis over the WebSocket protocol. Pass the
-					key as the <code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>api_key</code> field in the{" "}
-					<code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>auth</code> object of the{" "}
-					<code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>connect</code> handshake.
+					{t("security.apiKeysProtocolDescription")
+						.split(/(\b(?:api_key|auth|connect)\b)/g)
+						.map((part, index) =>
+							part === "api_key" || part === "auth" || part === "connect" ? (
+								<code key={`${part}-${index}`} style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>
+									{part}
+								</code>
+							) : (
+								part
+							),
+						)}
 				</p>
 				{akLoading ? (
 					<Loading />
@@ -773,7 +776,7 @@ export function SecuritySection(): VNode {
 								}}
 							>
 								<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
-									Copy this key now. It won't be shown again.
+									{t("security.apiKeyCopyWarning")}
 								</div>
 								<code
 									style={{
@@ -802,20 +805,20 @@ export function SecuritySection(): VNode {
 												{ak.scopes ? (
 													<span style={{ color: "var(--accent)" }}>{ak.scopes.join(", ")}</span>
 												) : (
-													<span style={{ color: "var(--accent)" }}>Full access</span>
+													<span style={{ color: "var(--accent)" }}>{t("security.fullAccess")}</span>
 												)}
 											</span>
 										}
 										actions={
 											<button className="provider-btn provider-btn-danger" onClick={() => onRevokeApiKey(ak.id)}>
-												Revoke
+												{t("security.revoke")}
 											</button>
 										}
 									/>
 								))}
 							</div>
 						) : (
-							<EmptyState message="No API keys." />
+							<EmptyState message={t("security.noApiKeys")} />
 						)}
 						<div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
 							<div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -824,7 +827,7 @@ export function SecuritySection(): VNode {
 									className="provider-key-input"
 									value={akLabel}
 									onInput={(e: Event) => setAkLabel(targetValue(e))}
-									placeholder="Key label (e.g. CLI tool)"
+									placeholder={t("security.apiKeyLabelPlaceholder")}
 									style={{ flex: 1 }}
 								/>
 							</div>
@@ -838,13 +841,13 @@ export function SecuritySection(): VNode {
 											rerender();
 										}}
 									/>
-									<span className="text-xs text-[var(--text)]">Full access (all permissions)</span>
+									<span className="text-xs text-[var(--text)]">{t("security.fullAccessAll")}</span>
 								</label>
 							</div>
 							{akFullAccess ? null : (
 								<div style={{ paddingLeft: "20px", display: "flex", flexDirection: "column", gap: "6px" }}>
 									<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "2px" }}>
-										Select permissions:
+										{t("security.selectPermissions")}
 									</div>
 									<label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
 										<input
@@ -852,8 +855,8 @@ export function SecuritySection(): VNode {
 											checked={akScopes["operator.read"]}
 											onChange={() => toggleScope("operator.read")}
 										/>
-										<span className="text-xs text-[var(--text)]">operator.read</span>
-										<span className="text-xs text-[var(--muted)]">{"\u2014"} View data and status</span>
+										<span className="text-xs text-[var(--text)]">{t("security.scopeOperatorRead")}</span>
+										<span className="text-xs text-[var(--muted)]">{t("security.scopeOperatorReadDesc")}</span>
 									</label>
 									<label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
 										<input
@@ -861,8 +864,8 @@ export function SecuritySection(): VNode {
 											checked={akScopes["operator.write"]}
 											onChange={() => toggleScope("operator.write")}
 										/>
-										<span className="text-xs text-[var(--text)]">operator.write</span>
-										<span className="text-xs text-[var(--muted)]">{"\u2014"} Create, update, delete</span>
+										<span className="text-xs text-[var(--text)]">{t("security.scopeOperatorWrite")}</span>
+										<span className="text-xs text-[var(--muted)]">{t("security.scopeOperatorWriteDesc")}</span>
 									</label>
 									<label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
 										<input
@@ -870,8 +873,8 @@ export function SecuritySection(): VNode {
 											checked={akScopes["operator.approvals"]}
 											onChange={() => toggleScope("operator.approvals")}
 										/>
-										<span className="text-xs text-[var(--text)]">operator.approvals</span>
-										<span className="text-xs text-[var(--muted)]">{"\u2014"} Handle exec approvals</span>
+										<span className="text-xs text-[var(--text)]">{t("security.scopeOperatorApprovals")}</span>
+										<span className="text-xs text-[var(--muted)]">{t("security.scopeOperatorApprovalsDesc")}</span>
 									</label>
 									<label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
 										<input
@@ -879,8 +882,8 @@ export function SecuritySection(): VNode {
 											checked={akScopes["operator.pairing"]}
 											onChange={() => toggleScope("operator.pairing")}
 										/>
-										<span className="text-xs text-[var(--text)]">operator.pairing</span>
-										<span className="text-xs text-[var(--muted)]">{"\u2014"} Device/node pairing</span>
+										<span className="text-xs text-[var(--text)]">{t("security.scopeOperatorPairing")}</span>
+										<span className="text-xs text-[var(--muted)]">{t("security.scopeOperatorPairingDesc")}</span>
 									</label>
 								</div>
 							)}
@@ -891,7 +894,7 @@ export function SecuritySection(): VNode {
 									onClick={onCreateApiKey}
 									disabled={!(akLabel.trim() && (akFullAccess || Object.values(akScopes).some((v) => v)))}
 								>
-									Generate key
+									{t("security.generateKey")}
 								</button>
 							</div>
 						</div>
@@ -901,7 +904,7 @@ export function SecuritySection(): VNode {
 
 			{/* Danger zone (only when auth has been set up) */}
 			{setupComplete ? (
-				<DangerZone>
+				<DangerZone title={t("security.dangerZone")}>
 					<div
 						style={{
 							padding: "12px 16px",
@@ -911,17 +914,15 @@ export function SecuritySection(): VNode {
 						}}
 					>
 						<strong className="text-sm" style={{ color: "var(--text-strong)" }}>
-							Remove all authentication
+							{t("security.removeAllAuth")}
 						</strong>
 						<p className="text-xs text-[var(--muted)]" style={{ margin: "6px 0 0" }}>
-							If you know what you're doing, you can fully disable authentication. Anyone with network access will be
-							able to access moltis and your computer. This removes your password, all passkeys, all API keys, and all
-							sessions.
+							{t("security.removeAllAuthWarning")}
 						</p>
 						{resetConfirm ? (
 							<div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "10px" }}>
 								<span className="text-xs" style={{ color: "var(--error)" }}>
-									Are you sure? This cannot be undone.
+									{t("security.removeAllAuthConfirm")}
 								</span>
 								<button
 									type="button"
@@ -929,7 +930,7 @@ export function SecuritySection(): VNode {
 									disabled={resetBusy}
 									onClick={onResetAuth}
 								>
-									{resetBusy ? "Removing\u2026" : "Yes, remove all auth"}
+									{resetBusy ? t("security.removing") : t("security.yesRemoveAllAuth")}
 								</button>
 								<button
 									type="button"
@@ -939,7 +940,7 @@ export function SecuritySection(): VNode {
 										rerender();
 									}}
 								>
-									Cancel
+									{translate("common:actions.cancel")}
 								</button>
 							</div>
 						) : (
@@ -949,7 +950,7 @@ export function SecuritySection(): VNode {
 								style={{ marginTop: "10px" }}
 								onClick={onResetAuth}
 							>
-								Remove all authentication
+								{t("security.removeAllAuth")}
 							</button>
 						)}
 					</div>

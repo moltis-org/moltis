@@ -53,6 +53,20 @@ export default {
 	reasoningHigh: "Élevé",
 	reasoningExtraHigh: "Très élevé",
 	reasoningMax: "Maximum",
+	modelSelector: {
+		restoringSession: "Restauration de la session",
+		switchingBackend: "Changement du moteur de conversation",
+		selectModelOrAgent: "Sélectionner un modèle ou un agent ACP",
+		unavailable: "{{name}} (indisponible)",
+		agentUnavailable: "{{name}} est indisponible",
+		usingAgent: "Utilisation de {{name}}",
+		acpAgent: "Agent ACP",
+		selectAcpAgent: "Sélectionner un agent ACP",
+		selectAcpFailed: "Échec de la sélection de l'agent ACP",
+		saveModelFailed: "Échec de l'enregistrement du modèle de la session",
+		switchModelFailed: "Échec du passage au modèle sélectionné",
+		supportsReasoning: "Prend en charge le raisonnement",
+	},
 
 	// ── Debug panel ──────────────────────────────────────────
 	debugTooltip: "Show context debug info",

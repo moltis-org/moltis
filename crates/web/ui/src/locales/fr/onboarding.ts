@@ -17,11 +17,16 @@ export default {
 	// ── Auth step ────────────────────────────────────────────
 	auth: {
 		secureYourInstance: "Secure your instance",
+		authenticationConfigured: "L'authentification est déjà configurée.",
+		next: "Suivant",
 		chooseHowToSecure: "Choose how to secure your instance, or skip for now.",
+		chooseHowToSecureWithVault:
+			"Choisissez comment sécuriser votre instance, ou ignorez cette étape pour le moment. Définir un mot de passe active également le coffre-fort chiffré, qui protège les clés API et les secrets stockés dans la base de données.",
 		chooseHowToSecureRequired: "Choose how to secure your instance.",
 		setupCode: "Setup code",
 		setupCodePlaceholder: "6-digit code from terminal",
 		setupCodeHint: "Find this code in the moltis process log (stdout).",
+		setupCodePrefilledHint: "Prérempli à partir du lien ouvert par moltis.",
 		enterSetupCode: "Enter the setup code shown in the process log (stdout).",
 		setupFailed: "Setup failed",
 		passkey: "Passkey",
@@ -37,6 +42,13 @@ export default {
 		passkeyRegistrationError: "Passkey registration failed",
 		passkeyRegistrationCancelled: "Passkey registration was cancelled.",
 		optionalPasswordAfterPasskey: "Optionally set a password as a fallback for when passkeys aren't available.",
+		passwordVaultDescription: "Définir un mot de passe et activer le coffre-fort chiffré pour les secrets stockés",
+		passwordSetVaultInitialized: "Mot de passe défini et coffre-fort initialisé",
+		recoveryKey: "Clé de récupération",
+		copyRecoveryFailed: "Échec de la copie : veuillez sélectionner et copier la clé manuellement.",
+		recoveryKeyWarning:
+			"Conservez cette clé de récupération en lieu sûr. Elle ne sera plus affichée. Vous en aurez besoin pour déverrouiller le coffre-fort si vous oubliez votre mot de passe.",
+		skip: "Ignorer",
 		passwordLabel: "Password",
 		passwordPlaceholder: "At least 12 characters",
 		optionalOnLocalhost: "Optional on localhost",

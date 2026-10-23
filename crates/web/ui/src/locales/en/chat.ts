@@ -53,6 +53,20 @@ export default {
 	reasoningHigh: "High",
 	reasoningExtraHigh: "Extra High",
 	reasoningMax: "Max",
+	modelSelector: {
+		restoringSession: "Restoring session",
+		switchingBackend: "Switching chat backend",
+		selectModelOrAgent: "Select model or ACP agent",
+		unavailable: "{{name}} (unavailable)",
+		agentUnavailable: "{{name}} is unavailable",
+		usingAgent: "Using {{name}}",
+		acpAgent: "ACP agent",
+		selectAcpAgent: "Select an ACP agent",
+		selectAcpFailed: "Failed to select ACP agent",
+		saveModelFailed: "Failed to save session model",
+		switchModelFailed: "Failed to switch to the selected model",
+		supportsReasoning: "Supports reasoning",
+	},
 
 	// ── Debug panel ──────────────────────────────────────────
 	debugTooltip: "Show context debug info",

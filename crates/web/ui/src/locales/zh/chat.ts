@@ -53,6 +53,20 @@ export default {
 	reasoningHigh: "高",
 	reasoningExtraHigh: "极高",
 	reasoningMax: "最高（Max）",
+	modelSelector: {
+		restoringSession: "正在恢复会话",
+		switchingBackend: "正在切换聊天后端",
+		selectModelOrAgent: "选择模型或 ACP 代理",
+		unavailable: "{{name}}（不可用）",
+		agentUnavailable: "{{name}} 不可用",
+		usingAgent: "正在使用 {{name}}",
+		acpAgent: "ACP 代理",
+		selectAcpAgent: "选择 ACP 代理",
+		selectAcpFailed: "选择 ACP 代理失败",
+		saveModelFailed: "保存会话模型失败",
+		switchModelFailed: "切换到所选模型失败",
+		supportsReasoning: "支持推理",
+	},
 
 	// ── Debug panel ──────────────────────────────────────────
 	debugTooltip: "显示上下文调试信息",

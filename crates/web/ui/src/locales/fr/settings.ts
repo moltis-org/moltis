@@ -86,6 +86,7 @@ export default {
 	// ── Security section ─────────────────────────────────────
 	security: {
 		title: "Security",
+		authentication: "Authentification",
 		authDisabled: "Authentication is disabled",
 		authDisabledWarning:
 			"Anyone with network access can control moltis and your computer. Set up a password to protect your instance.",
@@ -111,6 +112,12 @@ export default {
 		passwordsDoNotMatch: "Passwords do not match.",
 		passwordChanged: "Password changed.",
 		passwordSet: "Password set.",
+		passwordSetSignIn: "Mot de passe défini. Conservez la clé de récupération, puis connectez-vous.",
+		vaultRecoveryKey: "Coffre-fort initialisé : conservez cette clé de récupération",
+		copyRecoveryFailed: "Échec de la copie : veuillez sélectionner et copier la clé manuellement.",
+		continueToSignIn: "Continuer vers la connexion",
+		recoveryKeyWarning:
+			"Cette clé ne sera plus affichée. Vous en aurez besoin pour déverrouiller le coffre-fort si vous oubliez votre mot de passe.",
 		// Passkeys
 		passkeys: "Passkeys",
 		passkeyOrigins: "Passkeys will work when visiting: {{origins}}",
@@ -120,10 +127,16 @@ export default {
 		passkeyAdded: "Passkey added.",
 		failedToAddPasskey: "Failed to add passkey",
 		passkeyRequiresDomain: "Passkeys require a domain name. Use localhost instead of {{hostname}}",
+		passkeyOriginDetails: ' (RPID : "{{rpId}}", origine actuelle : "{{origin}}")',
+		passkeyHostUpdateNeeded: "Mise à jour de la clé d'accès nécessaire : ",
+		passkeyHostUpdateWarning:
+			"Nouvel hôte détecté ({{hosts}}). Connectez-vous avec votre mot de passe sur cet hôte, puis enregistrez-y une nouvelle clé d'accès.",
 		// API keys
 		apiKeys: "API Keys",
 		apiKeysDescription:
 			"API keys authenticate external tools and scripts connecting to moltis over the WebSocket protocol. Pass the key as the api_key field in the auth object of the connect handshake.",
+		apiKeysProtocolDescription:
+			"Les clés API authentifient les outils et scripts externes qui se connectent à moltis via le protocole WebSocket. Transmettez la clé dans le champ api_key de l'objet auth de la requête de connexion connect.",
 		apiKeyCopyWarning: "Copy this key now. It won't be shown again.",
 		fullAccess: "Full access",
 		revoke: "Revoke",

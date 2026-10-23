@@ -84,6 +84,7 @@ export default {
 	// ── Security section ─────────────────────────────────────
 	security: {
 		title: "安全",
+		authentication: "身份验证",
 		authDisabled: "身份验证已禁用",
 		authDisabledWarning: "任何具有网络访问权限的人都可以控制 moltis 和您的计算机。请设置密码来保护您的实例。",
 		setupAuth: "设置身份验证",
@@ -108,6 +109,11 @@ export default {
 		passwordsDoNotMatch: "两次输入的密码不一致。",
 		passwordChanged: "密码已修改。",
 		passwordSet: "密码已设置。",
+		passwordSetSignIn: "密码已设置。请保存恢复密钥，然后继续登录。",
+		vaultRecoveryKey: "保险库已初始化，请保存此恢复密钥",
+		copyRecoveryFailed: "无法复制，请手动选择并复制密钥。",
+		continueToSignIn: "继续登录",
+		recoveryKeyWarning: "此密钥不会再次显示。忘记密码时，需要使用它解锁保险库。",
 		// Passkeys
 		passkeys: "通行密钥",
 		passkeyOrigins: "通行密钥在访问以下地址时有效：{{origins}}",
@@ -117,10 +123,15 @@ export default {
 		passkeyAdded: "通行密钥已添加。",
 		failedToAddPasskey: "添加通行密钥失败",
 		passkeyRequiresDomain: "通行密钥需要域名。请使用 localhost 代替 {{hostname}}",
+		passkeyOriginDetails: '（RPID："{{rpId}}"，当前来源："{{origin}}"）',
+		passkeyHostUpdateNeeded: "需要更新通行密钥：",
+		passkeyHostUpdateWarning: "检测到新主机（{{hosts}}）。请在该主机上使用密码登录，然后重新注册通行密钥。",
 		// API keys
 		apiKeys: "API 密钥",
 		apiKeysDescription:
 			"API 密钥用于验证通过 WebSocket 协议连接到 moltis 的外部工具和脚本。在连接握手的 auth 对象中将密钥作为 api_key 字段传递。",
+		apiKeysProtocolDescription:
+			"API 密钥用于验证通过 WebSocket 协议连接到 moltis 的外部工具和脚本。在 connect 握手的 auth 对象中将密钥作为 api_key 字段传递。",
 		apiKeyCopyWarning: "请立即复制此密钥，之后将不再显示。",
 		fullAccess: "完全访问",
 		revoke: "撤销",

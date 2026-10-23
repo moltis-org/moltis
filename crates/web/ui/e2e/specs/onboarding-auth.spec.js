@@ -26,9 +26,11 @@ async function detectOnboardingStep(page) {
 	const headingText = ((await currentHeading.textContent()) || "").trim();
 
 	if (headingText === "Secure your instance") return "auth";
+	if (/^(Import Your Data|Import from OpenClaw)$/.test(headingText)) return "import";
 	if (headingText === "Set up your identity") return "identity";
 	if (/^(Add LLMs|Add providers)$/.test(headingText)) return "providers";
 	if (headingText === "Voice (optional)") return "voice";
+	if (headingText === "Bundled Skills") return "skills";
 	if (headingText === "Remote Access") return "remote-access";
 	if (headingText === "Connect a Channel") return "channel";
 	if (headingText === "Setup Summary") return "summary";
@@ -36,30 +38,47 @@ async function detectOnboardingStep(page) {
 }
 
 async function waitForStableStep(page) {
-	await expect.poll(() => detectOnboardingStep(page), { timeout: 10_000 }).not.toBe("pending");
-	return detectOnboardingStep(page);
+	let step = "pending";
+	await expect
+		.poll(
+			async () => {
+				step = await detectOnboardingStep(page);
+				return step;
+			},
+			{ timeout: 10_000 },
+		)
+		.not.toBe("pending");
+	return step;
 }
 
 async function advanceToIdentityStep(page) {
-	for (let i = 0; i < 6; i++) {
-		const step = await detectOnboardingStep(page);
+	for (let i = 0; i < 8; i++) {
+		const step = await waitForStableStep(page);
 		if (step === "identity" || step === "chats" || step === "summary") return step;
 		if (step === "auth") {
 			await completePasswordAuthStep(page);
-			continue;
+		} else {
+			expect(["import", "providers", "voice", "skills", "remote-access", "channel"]).toContain(step);
+			const advanced =
+				(await clickFirstVisibleButton(page, { name: /skip for now/i })) ||
+				(await clickFirstVisibleButton(page, { name: /continue/i }));
+			expect(advanced).toBe(true);
 		}
-		if (step === "providers" || step === "voice" || step === "remote-access" || step === "channel") {
-			if (await clickFirstVisibleButton(page, { name: /skip for now/i })) continue;
-			if (await clickFirstVisibleButton(page, { name: /continue/i })) continue;
-		}
-		break;
+		await expect.poll(() => detectOnboardingStep(page)).not.toBe(step);
 	}
-	return detectOnboardingStep(page);
+	return waitForStableStep(page);
 }
 
 async function dismissRecoveryKeyIfShown(page) {
 	const recoveryHeading = page.getByText("Password set and vault initialized", { exact: true });
 	if (await isVisible(recoveryHeading)) {
+		await expect(page.getByText("Recovery key", { exact: true })).toBeVisible();
+		await expect(
+			page.getByText(
+				"Save this recovery key in a safe place. It will not be shown again. You need it to unlock the vault if you forget your password.",
+				{ exact: true },
+			),
+		).toBeVisible();
 		const codeBlock = page.locator(".onboarding-card code");
 		await codeBlock.waitFor({ state: "visible", timeout: 3_000 }).catch(() => {});
 
@@ -104,34 +123,38 @@ async function dismissRecoveryKeyIfShown(page) {
 }
 
 async function completePasswordAuthStep(page) {
-	if (await clickFirstVisibleButton(page, { name: /^Next$/ })) return true;
+	if (await clickFirstVisibleButton(page, { name: /^Next$/ })) {
+		await expect.poll(() => detectOnboardingStep(page)).not.toBe("auth");
+		return true;
+	}
 
 	const setupCodeInput = page.getByPlaceholder("Code from the moltis terminal");
-	if (await isVisible(setupCodeInput)) {
-		await setupCodeInput.fill("123456");
-
-		const passwordCard = page.locator(".backend-card").filter({ hasText: "Password" }).first();
-		if (await isVisible(passwordCard)) {
-			await passwordCard.click({ timeout: 1_500 }).catch(() => {});
-		}
-	}
+	await expect(setupCodeInput).toBeVisible();
+	await expect(page.getByText("Setup code", { exact: true })).toBeVisible();
+	await expect(page.getByText("Find this code in the moltis process log (stdout).", { exact: true })).toBeVisible();
+	await expect(
+		page.getByText("Set a password and enable the encryption vault for stored secrets", { exact: true }),
+	).toBeVisible();
+	await setupCodeInput.fill("123456");
+	await page.locator(".backend-card").filter({ hasText: "Password" }).first().click();
 
 	const inputs = page.locator(".onboarding-card input[type='password']");
-	if ((await inputs.count()) >= 2) {
-		await inputs.first().fill("testpassword1");
-		await inputs.nth(1).fill("testpassword1");
-
-		if (await clickFirstVisibleButton(page, { name: /^Set password(?: & continue)?$/ })) {
-			// After password setup, a recovery key interstitial may appear
-			await page.waitForTimeout(500);
-			await dismissRecoveryKeyIfShown(page);
-			return true;
-		}
-		if (await clickFirstVisibleButton(page, { name: /^Skip$/ })) return true;
+	await expect(inputs).toHaveCount(2);
+	await inputs.first().fill("testpassword1");
+	await inputs.nth(1).fill("testpassword1");
+	const setupResponsePromise = page.waitForResponse(
+		(response) => response.url().endsWith("/api/auth/setup") && response.request().method() === "POST",
+	);
+	await page.getByRole("button", { name: "Set password", exact: true }).click();
+	const setupResponse = await setupResponsePromise;
+	expect(setupResponse.ok()).toBeTruthy();
+	const data = await setupResponse.json();
+	if (data.recovery_key) {
+		await expect(page.getByText("Password set and vault initialized", { exact: true })).toBeVisible();
+		await dismissRecoveryKeyIfShown(page);
 	}
-
-	if (await clickFirstVisibleButton(page, { name: /skip for now/i })) return true;
-	return false;
+	await expect.poll(() => detectOnboardingStep(page)).not.toBe("auth");
+	return true;
 }
 
 async function completeIdentityStep(page) {
@@ -170,6 +193,27 @@ test.describe("Onboarding with forced auth (remote)", () => {
 		await expect(page.getByPlaceholder("Code from the moltis terminal")).toHaveValue("123456");
 		await expect(page.getByText("Filled in from the link moltis opened.", { exact: true })).toBeVisible();
 		expect(new URL(page.url()).hash).toBe("");
+
+		await page.evaluate(() => {
+			localStorage.setItem("moltis-locale", "fr");
+			window.history.replaceState(window.history.state, "", "#setup=123456");
+		});
+		await page.reload();
+		await expect(page.getByText("Prérempli à partir du lien ouvert par moltis.", { exact: true })).toBeVisible();
+		expect(new URL(page.url()).hash).toBe("");
+
+		await page.evaluate(() => {
+			localStorage.setItem("moltis-locale", "zh");
+			// Preserve the launch fragment without triggering in-page navigation.
+			window.history.replaceState(window.history.state, "", "#setup=123456");
+		});
+		await page.reload();
+		const setupCodeInput = page.getByPlaceholder("Code from the moltis terminal");
+		await expect(setupCodeInput).toHaveValue("123456");
+		await expect(page.getByText("已从 moltis 打开的链接中填入设置码。", { exact: true })).toBeVisible();
+		expect(new URL(page.url()).hash).toBe("");
+		await setupCodeInput.fill("654321");
+		await expect(page.getByText("在 moltis 进程日志 (stdout) 中查找此码。", { exact: true })).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -214,11 +258,18 @@ test.describe("Onboarding with forced auth (remote)", () => {
 
 		if (step !== "identity") {
 			step = await advanceToIdentityStep(page);
-			if (step !== "identity") {
-				expect(pageErrors).toEqual([]);
-				return;
-			}
 		}
+		expect(step).toBe("identity");
+		await expect
+			.poll(() =>
+				page
+					.evaluate(() => {
+						const state = window.__moltis_state;
+						return state?.connected === true && state.ws?.readyState === WebSocket.OPEN;
+					})
+					.catch(() => false),
+			)
+			.toBe(true);
 
 		// Fill identity and save — proves WS is connected (uses sendRpc)
 		await completeIdentityStep(page);

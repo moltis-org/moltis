@@ -8,6 +8,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preac
 import { onEvent } from "../events";
 import * as gon from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
+import { t, useTranslation } from "../i18n";
 import {
 	channelBindingLabel,
 	clearActiveSession,
@@ -94,11 +95,11 @@ function isSshTargetNode(node: NodeInfo | null): boolean {
 }
 
 function nodeOptionLabel(node: NodeInfo | null): string {
-	if (!node) return "Local";
+	if (!node) return t("sessions:header.local");
 	if (node.displayName) return node.displayName;
 	if (isSshTargetNode(node)) {
 		const target = String(node.nodeId || "").replace(/^ssh:/, "");
-		return `SSH: ${target}`;
+		return t("sessions:header.sshTarget", { target });
 	}
 	return node.nodeId;
 }
@@ -107,7 +108,7 @@ async function copyShareUrl(url: string, visibility: string): Promise<void> {
 	try {
 		if (navigator.clipboard?.writeText) {
 			await navigator.clipboard.writeText(url);
-			showToast("Share link copied", "success");
+			showToast(t("sessions:share.linkCopied"), "success");
 			return;
 		}
 	} catch (_err) {
@@ -135,6 +136,7 @@ export function SessionHeader({
 	onBeforeArchive = null,
 	onBeforeDelete = null,
 }: SessionHeaderProps = {}): VNode {
+	const { t: sessionT } = useTranslation("sessions");
 	const session = sessionStore.activeSession.value;
 	const sessionDataVersion = session?.dataVersion.value || 0;
 	const currentKey = sessionStore.activeSessionKey.value;
@@ -255,7 +257,7 @@ export function SessionHeader({
 		sendRpc<{ label?: string }>("sessions.generate_title", { key: currentKey })
 			.then((res) => {
 				if (!res?.ok) {
-					showToast(res?.error?.message || "Failed to auto-generate title", "error");
+					showToast(res?.error?.message || sessionT("header.generateTitleFailed"), "error");
 					return;
 				}
 				fetchSessions();
@@ -290,14 +292,14 @@ export function SessionHeader({
 				const err = res?.error?.message || (typeof res?.error === "string" ? String(res.error) : "") || "";
 				if (res && !res.ok && typeof err === "string" && err.indexOf("uncommitted changes") !== -1) {
 					fetchSessions();
-					confirmDialog("Worktree has uncommitted changes. Force delete?").then((yes) => {
+					confirmDialog(sessionT("header.deleteWorktreeConfirm")).then((yes) => {
 						if (!yes) return;
 						runDelete(true);
 					});
 					return;
 				}
 				if (res && !res.ok) {
-					showToast(err || "Failed to delete session", "error");
+					showToast(err || sessionT("header.deleteFailed"), "error");
 					fetchSessions();
 					return;
 				}
@@ -307,7 +309,7 @@ export function SessionHeader({
 		};
 		const isUnmodifiedFork = currentSession && currentSession.forkPoint != null && msgCount <= currentSession.forkPoint;
 		if (msgCount > 0 && !isUnmodifiedFork) {
-			confirmDialog("Delete this session?").then((yes) => {
+			confirmDialog(sessionT("header.deleteConfirm")).then((yes) => {
 				if (yes) runDelete(false);
 			});
 		} else {
@@ -331,7 +333,7 @@ export function SessionHeader({
 		sendRpc("chat.abort", params)
 			.then((res) => {
 				if (!res?.ok) {
-					showToast((res?.error as { message?: string })?.message || "Failed to stop response", "error");
+					showToast((res?.error as { message?: string })?.message || sessionT("header.stopFailed"), "error");
 					return;
 				}
 				setSessionActiveRunId(currentKey, null);
@@ -346,7 +348,7 @@ export function SessionHeader({
 		async (visibility: string) => {
 			const res = await sendRpc<SharePayload>("sessions.share.create", { key: currentKey, visibility });
 			if (!(res?.ok && res.payload?.path)) {
-				showToast((res?.error as { message?: string })?.message || "Failed to create share link", "error");
+				showToast((res?.error as { message?: string })?.message || sessionT("share.createFailed"), "error");
 				return;
 			}
 
@@ -358,7 +360,7 @@ export function SessionHeader({
 			await copyShareUrl(url, visibility);
 
 			if (visibility === "private") {
-				showToast("Private link includes a key, share it only with trusted people", "success");
+				showToast(sessionT("share.privateNotice"), "success");
 			}
 		},
 		[currentKey],
@@ -378,9 +380,9 @@ export function SessionHeader({
 		if (savingMarkdown) return;
 		setSavingMarkdown(true);
 		saveSessionAsMarkdown(currentKey, fullName)
-			.then(() => showToast("Session saved as Markdown", "success"))
+			.then(() => showToast(sessionT("header.markdownSaved"), "success"))
 			.catch((error: unknown) => {
-				const message = error instanceof Error ? error.message : "Failed to save session as Markdown";
+				const message = error instanceof Error ? error.message : sessionT("header.markdownSaveFailed");
 				showToast(message, "error");
 			})
 			.finally(() => setSavingMarkdown(false));
@@ -394,7 +396,7 @@ export function SessionHeader({
 		const nextArchived = !session.archived;
 		sendRpc("sessions.patch", { key: currentKey, archived: nextArchived }).then((res) => {
 			if (!res?.ok) {
-				showToast((res?.error as { message?: string })?.message || "Failed to update archive state", "error");
+				showToast((res?.error as { message?: string })?.message || sessionT("header.archiveFailed"), "error");
 				return;
 			}
 			if (session) {
@@ -423,13 +425,13 @@ export function SessionHeader({
 		sendRpc("sessions.patch", { key: currentKey, channelBinding: null })
 			.then((res) => {
 				if (!res?.ok) {
-					showToast((res?.error as { message?: string })?.message || "Failed to release channel", "error");
+					showToast((res?.error as { message?: string })?.message || sessionT("header.releaseFailed"), "error");
 					return;
 				}
 				showToast(
 					boundChannelLabel
-						? `Released from ${boundChannelLabel}. Tools and private context are available here again.`
-						: "Released from its channel. Tools and private context are available here again.",
+						? sessionT("header.releasedFromNamedChannel", { channel: boundChannelLabel })
+						: sessionT("header.releasedFromChannel"),
 					"success",
 				);
 				fetchSessions();
@@ -449,7 +451,7 @@ export function SessionHeader({
 			})
 				.then((res) => {
 					if (!res?.ok) {
-						showToast((res?.error as { message?: string })?.message || "Failed to switch agent", "error");
+						showToast((res?.error as { message?: string })?.message || sessionT("header.agentSwitchFailed"), "error");
 						return;
 					}
 					const currentSession = sessionStore.getByKey(currentKey);
@@ -476,7 +478,7 @@ export function SessionHeader({
 			})
 				.then((res) => {
 					if (!res?.ok) {
-						showToast((res?.error as { message?: string })?.message || "Failed to switch node", "error");
+						showToast((res?.error as { message?: string })?.message || sessionT("header.nodeSwitchFailed"), "error");
 						return;
 					}
 					if (session) {
@@ -496,7 +498,7 @@ export function SessionHeader({
 	const hasCurrentAgentOption = agentOptions.some((agent) => agent.id === agentSelectValue);
 	let agentSelectOptions: SelectOption[] = agentOptions.map((agent) => {
 		const prefix = agent.emoji ? `${agent.emoji} ` : "";
-		const suffix = agent.id === defaultAgentId ? " (default)" : "";
+		const suffix = agent.id === defaultAgentId ? sessionT("header.defaultAgentSuffix") : "";
 		return {
 			value: agent.id,
 			label: `${prefix}${agent.name}${suffix}`,
@@ -506,7 +508,7 @@ export function SessionHeader({
 		agentSelectOptions = [
 			{
 				value: agentSelectValue,
-				label: switchingAgent ? "Switching\u2026" : `agent:${agentSelectValue}`,
+				label: switchingAgent ? sessionT("header.switching") : `agent:${agentSelectValue}`,
 			},
 			...agentSelectOptions,
 		];
@@ -517,7 +519,7 @@ export function SessionHeader({
 	const shouldShowNodePicker = !isCron && (nodeOptions.length > 0 || Boolean(currentNodeId));
 	const hasCurrentNodeOption = currentNodeId === "" || nodeOptions.some((node) => node.nodeId === currentNodeId);
 	let nodeSelectOptions: SelectOption[] = [
-		{ value: "", label: "Local" },
+		{ value: "", label: sessionT("header.local") },
 		...nodeOptions.map((node) => ({
 			value: node.nodeId,
 			label: nodeOptionLabel(node),
@@ -528,7 +530,7 @@ export function SessionHeader({
 		nodeSelectOptions = [
 			{
 				value: currentNodeId,
-				label: switchingNode ? "Switching\u2026" : fallbackLabel,
+				label: switchingNode ? sessionT("header.switching") : fallbackLabel,
 			},
 			...nodeSelectOptions,
 		];
@@ -555,7 +557,7 @@ export function SessionHeader({
 			<span
 				className="chat-session-name min-w-0 truncate"
 				style={nameStyle}
-				title={canRename ? "Click to rename" : ""}
+				title={canRename ? sessionT("header.renameTooltip") : ""}
 				onClick={startRename}
 			>
 				{displayName}
@@ -564,17 +566,22 @@ export function SessionHeader({
 
 	const renameCta = showName && showRenameButton && canRename && !renaming && (
 		<div className="flex items-center gap-1">
-			<button type="button" className={actionButtonClass} onClick={startRename} title="Rename session">
-				Rename
+			<button
+				type="button"
+				className={actionButtonClass}
+				onClick={startRename}
+				title={sessionT("header.renameSessionTooltip")}
+			>
+				{t("common:actions.rename")}
 			</button>
 			<button
 				type="button"
 				className={actionButtonClass}
 				onClick={onGenerateTitle}
 				disabled={generatingTitle}
-				title="Auto-generate title from conversation"
+				title={sessionT("header.generateTitleTooltip")}
 			>
-				{generatingTitle ? "..." : "Auto-title"}
+				{generatingTitle ? "..." : sessionT("header.autoTitle")}
 			</button>
 		</div>
 	);
@@ -593,7 +600,7 @@ export function SessionHeader({
 						options={agentSelectOptions}
 						value={agentSelectValue}
 						onChange={onAgentChange}
-						placeholder="Session agent"
+						placeholder={sessionT("header.sessionAgent")}
 						searchable={false}
 						allowEmpty={false}
 						fullWidth={false}
@@ -605,7 +612,7 @@ export function SessionHeader({
 						options={nodeSelectOptions}
 						value={currentNodeId}
 						onChange={onNodeChange}
-						placeholder="Session node"
+						placeholder={sessionT("header.sessionNode")}
 						searchable={false}
 						allowEmpty={false}
 						fullWidth={false}
@@ -618,9 +625,9 @@ export function SessionHeader({
 					<button
 						className={actionButtonClass}
 						onClick={onArchive}
-						title={session?.archived ? "Unarchive session" : "Archive session"}
+						title={session?.archived ? sessionT("header.unarchiveTooltip") : sessionT("header.archiveTooltip")}
 					>
-						{session?.archived ? "Unarchive" : "Archive"}
+						{session?.archived ? sessionT("header.unarchive") : sessionT("header.archive")}
 					</button>
 				)}
 				{canUnbindChannel && (
@@ -631,31 +638,31 @@ export function SessionHeader({
 						data-testid="session-unbind-channel"
 						title={
 							boundChannelLabel
-								? `Attached to ${boundChannelLabel}. Runs without tools or private context until released.`
-								: "Attached to a channel. Runs without tools or private context until released."
+								? sessionT("header.attachedToNamedChannel", { channel: boundChannelLabel })
+								: sessionT("header.attachedToChannel")
 						}
 					>
-						{unbinding ? "Releasing…" : "Release channel"}
+						{unbinding ? sessionT("header.releasing") : sessionT("header.releaseChannel")}
 					</button>
 				)}
 				{showFork && !isCron && (
 					<button
 						className={`${actionButtonClass} inline-flex items-center gap-1.5`}
 						onClick={onFork}
-						title="Fork session"
+						title={sessionT("header.forkTooltip")}
 					>
 						<span className="icon icon-sm icon-layers shrink-0" />
-						Fork
+						{sessionT("header.fork")}
 					</button>
 				)}
 				{showShare && !isCron && (
 					<button
 						className={`${actionButtonClass} inline-flex items-center gap-1.5`}
 						onClick={onShare}
-						title="Share snapshot"
+						title={sessionT("header.shareTooltip")}
 					>
 						<span className="icon icon-sm icon-share shrink-0" />
-						Share
+						{sessionT("header.share")}
 					</button>
 				)}
 				{showSaveMarkdown && (
@@ -663,34 +670,44 @@ export function SessionHeader({
 						type="button"
 						className={`${actionButtonClass} inline-flex items-center gap-1.5`}
 						onClick={onSaveMarkdown}
-						title="Save as Markdown"
-						aria-label="Save as Markdown"
+						title={sessionT("header.saveMarkdownTooltip")}
+						aria-label={sessionT("header.saveMarkdownTooltip")}
 						aria-busy={savingMarkdown}
 						disabled={savingMarkdown}
 					>
 						<span className="icon icon-sm icon-document shrink-0" />
-						<span className="hidden md:inline">Save .md</span>
+						<span className="hidden md:inline">{sessionT("header.saveMarkdownLabel")}</span>
 					</button>
 				)}
 				{showDelete && (
 					<button
 						className={`${actionButtonClass} chat-session-btn-danger inline-flex items-center gap-1.5`}
 						onClick={onDelete}
-						title="Delete session"
+						title={sessionT("header.deleteTooltip")}
 						style={{ background: "var(--error)", borderColor: "var(--error)", color: "#fff" }}
 					>
 						<span className="icon icon-sm icon-x-circle shrink-0" />
-						Delete
+						{sessionT("header.delete")}
 					</button>
 				)}
 				{showStop && canStop && (
-					<button className={actionButtonClass} onClick={onStop} title="Stop generation" disabled={stopping}>
-						{stopping ? "Stopping\u2026" : "Stop"}
+					<button
+						className={actionButtonClass}
+						onClick={onStop}
+						title={sessionT("header.stopTooltip")}
+						disabled={stopping}
+					>
+						{stopping ? sessionT("header.stopping") : t("common:actions.stop")}
 					</button>
 				)}
 				{showClear && isMain && (
-					<button className={actionButtonClass} onClick={onClear} title="Clear session" disabled={clearing}>
-						{clearing ? "Clearing\u2026" : "Clear"}
+					<button
+						className={actionButtonClass}
+						onClick={onClear}
+						title={sessionT("header.clearTooltip")}
+						disabled={clearing}
+					>
+						{clearing ? sessionT("header.clearing") : sessionT("header.clear")}
 					</button>
 				)}
 			</div>

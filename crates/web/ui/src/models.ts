@@ -35,7 +35,7 @@ function activeExternalAgent(): ExternalAgentInfo | null {
 	return externalAgents.find((agent) => agent.kind === kind) || null;
 }
 
-export function updateModelComboAvailability(): void {
+export function updateModelComboAvailability(autoBindAcp = true): void {
 	if (!(S.modelComboBtn && S.modelComboLabel)) return;
 	const sessionKey = sessionStore.activeSessionKey.value;
 	const switchingBackend = switchingBackendSessions.has(sessionKey);
@@ -49,22 +49,24 @@ export function updateModelComboAvailability(): void {
 	(S.modelComboBtn as HTMLButtonElement).disabled = disabled;
 	S.modelComboBtn.setAttribute("aria-disabled", disabled ? "true" : "false");
 	S.modelComboBtn.title = restoring
-		? "Restoring session"
+		? t("chat:modelSelector.restoringSession")
 		: switchingBackend
-			? "Switching chat backend"
-			: "Select model or ACP agent";
+			? t("chat:modelSelector.switchingBackend")
+			: t("chat:modelSelector.selectModelOrAgent");
 	if (disabled) closeModelDropdown();
 	if (externalKind) {
 		const label = externalAgent?.name || externalKind;
 		const unavailable = externalAgent?.installed === false;
-		S.modelComboLabel.textContent = unavailable ? `${label} (unavailable)` : label;
-		S.modelComboLabel.title = unavailable ? `${label} is unavailable` : `Using ${label}`;
+		S.modelComboLabel.textContent = unavailable ? t("chat:modelSelector.unavailable", { name: label }) : label;
+		S.modelComboLabel.title = unavailable
+			? t("chat:modelSelector.agentUnavailable", { name: label })
+			: t("chat:modelSelector.usingAgent", { name: label });
 		return;
 	}
 	const model = modelStore.selectedModel.value;
 	if (model) updateModelComboLabel(model);
 	else updateAcpOnlyModelComboLabel();
-	maybeAutoBindAcp();
+	if (autoBindAcp) maybeAutoBindAcp();
 }
 
 function fetchAcpAgents(): Promise<ExternalAgentInfo[] | null> {
@@ -80,8 +82,8 @@ function fetchAcpAgents(): Promise<ExternalAgentInfo[] | null> {
 
 function updateAcpOnlyModelComboLabel(): void {
 	if (!(S.modelComboLabel && modelStore.models.value.length === 0 && selectableAcpAgents().length > 0)) return;
-	S.modelComboLabel.textContent = "ACP agent";
-	S.modelComboLabel.title = "Select an ACP agent";
+	S.modelComboLabel.textContent = t("chat:modelSelector.acpAgent");
+	S.modelComboLabel.title = t("chat:modelSelector.selectAcpAgent");
 }
 
 function setExternalAgentKind(sessionKey: string, kind: string | null): void {
@@ -161,7 +163,7 @@ async function bindAcpAgent(agent: ExternalAgentInfo, notifyFailure = true): Pro
 	try {
 		const res = await sendRpc("external_agents.bind", { sessionKey, kind: agent.kind });
 		if (!res?.ok) {
-			if (notifyFailure) showToast(res?.error?.message || "Failed to select ACP agent", "error");
+			if (notifyFailure) showToast(res?.error?.message || t("chat:modelSelector.selectAcpFailed"), "error");
 			return false;
 		}
 		setExternalAgentKind(sessionKey, agent.kind);
@@ -169,7 +171,7 @@ async function bindAcpAgent(agent: ExternalAgentInfo, notifyFailure = true): Pro
 		closeModelDropdown();
 		return true;
 	} catch {
-		if (notifyFailure) showToast("Failed to select ACP agent", "error");
+		if (notifyFailure) showToast(t("chat:modelSelector.selectAcpFailed"), "error");
 		return false;
 	} finally {
 		switchingBackendSessions.delete(sessionKey);
@@ -191,9 +193,9 @@ export function setSessionModel(sessionKey: string, modelId: string): void {
 	};
 	void sendRpc("sessions.patch", { key: sessionKey, model: modelId })
 		.then((res) => {
-			if (!res?.ok) rollback(res?.error?.message || "Failed to save session model");
+			if (!res?.ok) rollback(res?.error?.message || t("chat:modelSelector.saveModelFailed"));
 		})
-		.catch(() => rollback("Failed to save session model"));
+		.catch(() => rollback(t("chat:modelSelector.saveModelFailed")));
 }
 
 export interface ModelLabelInfo {
@@ -268,7 +270,7 @@ export function selectModel(m: ModelInfo): void {
 	void sendRpc("external_agents.unbind", { sessionKey })
 		.then((res) => {
 			if (!res?.ok) {
-				showToast(res?.error?.message || "Failed to switch to the selected model", "error");
+				showToast(res?.error?.message || t("chat:modelSelector.switchModelFailed"), "error");
 				return;
 			}
 			setExternalAgentKind(sessionKey, null);
@@ -280,7 +282,7 @@ export function selectModel(m: ModelInfo): void {
 			}
 		})
 		.catch(() => {
-			showToast("Failed to switch to the selected model", "error");
+			showToast(t("chat:modelSelector.switchModelFailed"), "error");
 		})
 		.finally(() => {
 			switchingBackendSessions.delete(sessionKey);
@@ -334,7 +336,7 @@ function buildModelItem(m: ModelInfo, currentId: string): HTMLDivElement {
 	if (m.supportsReasoning) {
 		const brainIcon = document.createElement("span");
 		brainIcon.className = "icon icon-xs icon-brain";
-		brainIcon.title = "Supports reasoning";
+		brainIcon.title = t("chat:modelSelector.supportsReasoning");
 		brainIcon.style.cssText = "opacity:0.5;flex-shrink:0;";
 		meta.appendChild(brainIcon);
 	}
@@ -369,7 +371,7 @@ function buildAcpItem(agent: ExternalAgentInfo, currentKind: string): HTMLDivEle
 	meta.className = "model-item-meta";
 	const provider = document.createElement("span");
 	provider.className = "model-item-provider";
-	provider.textContent = "ACP agent";
+	provider.textContent = t("chat:modelSelector.acpAgent");
 	meta.appendChild(provider);
 	el.appendChild(meta);
 	el.addEventListener("click", () => void bindAcpAgent(agent));
@@ -389,7 +391,14 @@ export function renderModelList(query: string): void {
 	const allModels = modelStore.models.value;
 	const acpAgents = selectableAcpAgents().filter((agent) => {
 		const name = agent.name.toLowerCase();
-		return !q || name.includes(q) || agent.kind.toLowerCase().includes(q) || "acp agent".includes(q);
+		return (
+			!q ||
+			name.includes(q) ||
+			agent.kind.toLowerCase().includes(q) ||
+			// Keep the English alias searchable in every locale.
+			"acp agent".includes(q) ||
+			t("chat:modelSelector.acpAgent").toLowerCase().includes(q)
+		);
 	});
 	const filtered = allModels.filter((m) => {
 		// Hide @reasoning-* virtual variants — the reasoning toggle handles these.
@@ -488,6 +497,7 @@ document.addEventListener("click", (e: MouseEvent) => {
 });
 
 window.addEventListener("moltis:locale-changed", () => {
+	updateModelComboAvailability(false);
 	if (S.modelDropdown && !S.modelDropdown.classList.contains("hidden")) {
 		const query = S.modelSearchInput ? (S.modelSearchInput as HTMLInputElement).value.trim() : "";
 		renderModelList(query);

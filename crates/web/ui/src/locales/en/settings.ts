@@ -86,6 +86,7 @@ export default {
 	// ── Security section ─────────────────────────────────────
 	security: {
 		title: "Security",
+		authentication: "Authentication",
 		authDisabled: "Authentication is disabled",
 		authDisabledWarning:
 			"Anyone with network access can control moltis and your computer. Set up a password to protect your instance.",
@@ -111,6 +112,12 @@ export default {
 		passwordsDoNotMatch: "Passwords do not match.",
 		passwordChanged: "Password changed.",
 		passwordSet: "Password set.",
+		passwordSetSignIn: "Password set. Save the recovery key, then continue to sign in.",
+		vaultRecoveryKey: "Vault initialized \u2014 save this recovery key",
+		copyRecoveryFailed: "Could not copy \u2014 please select and copy the key manually.",
+		continueToSignIn: "Continue to sign in",
+		recoveryKeyWarning:
+			"This key will not be shown again. You need it to unlock the vault if you forget your password.",
 		// Passkeys
 		passkeys: "Passkeys",
 		passkeyOrigins: "Passkeys will work when visiting: {{origins}}",
@@ -120,9 +127,15 @@ export default {
 		passkeyAdded: "Passkey added.",
 		failedToAddPasskey: "Failed to add passkey",
 		passkeyRequiresDomain: "Passkeys require a domain name. Use localhost instead of {{hostname}}",
+		passkeyOriginDetails: ' (RPID: "{{rpId}}", current origin: "{{origin}}")',
+		passkeyHostUpdateNeeded: "Passkey update needed: ",
+		passkeyHostUpdateWarning:
+			"New host detected ({{hosts}}). Sign in with your password on that host, then register a new passkey there.",
 		// API keys
 		apiKeys: "API Keys",
 		apiKeysDescription:
+			"API keys authenticate external tools and scripts connecting to moltis over the WebSocket protocol. Pass the key as the api_key field in the auth object of the connect handshake.",
+		apiKeysProtocolDescription:
 			"API keys authenticate external tools and scripts connecting to moltis over the WebSocket protocol. Pass the key as the api_key field in the auth object of the connect handshake.",
 		apiKeyCopyWarning: "Copy this key now. It won't be shown again.",
 		fullAccess: "Full access",
