@@ -184,18 +184,16 @@ async fn multi_turn_tool_use() {
         .await
         .expect("first turn");
     assert!(!r.tool_calls.is_empty(), "should call tool");
-    let tc = &r.tool_calls[0];
-    let r2 = p
-        .complete(
-            &[
-                ChatMessage::user("Weather in London? Use get_weather."),
-                ChatMessage::from(&r),
-                ChatMessage::tool(&tc.id, r#"{"temperature": 15, "condition": "cloudy"}"#),
-            ],
-            &tools,
-        )
-        .await
-        .expect("second turn");
+    let mut messages = vec![
+        ChatMessage::user("Weather in London? Use get_weather."),
+        ChatMessage::from(&r),
+    ];
+    messages.extend(
+        r.tool_calls.iter().map(|call| {
+            ChatMessage::tool(&call.id, r#"{"temperature": 15, "condition": "cloudy"}"#)
+        }),
+    );
+    let r2 = p.complete(&messages, &tools).await.expect("second turn");
     assert!(r2.text.is_some(), "should have text after tool result");
 }
 
@@ -271,9 +269,12 @@ async fn reasoner_streams_reasoning_separately() {
 async fn v4_thinking_tool_call_replays_reasoning_content() {
     let p = make_provider_with_reasoning(V4_REASONING_MODEL, ReasoningEffort::High);
     let tools = vec![weather_tool()];
-    let user = ChatMessage::user("Use get_weather for Lisbon, then answer with the condition.");
+    let user = ChatMessage::user(
+        "Use get_weather exactly once for Lisbon, then answer with the condition.",
+    );
     let mut stream = p.stream_with_tools(vec![user.clone()], tools.clone());
     let mut reasoning = String::new();
+    let mut wire_reasoning = String::new();
     let mut visible = String::new();
     let mut tool_id: Option<String> = None;
     let mut tool_name: Option<String> = None;
@@ -282,11 +283,17 @@ async fn v4_thinking_tool_call_replays_reasoning_content() {
 
     while let Some(event) = stream.next().await {
         match event {
+            StreamEvent::ProviderRaw(event) => {
+                if let Some(delta) = event["choices"][0]["delta"]["reasoning_content"].as_str() {
+                    wire_reasoning.push_str(delta);
+                }
+            },
             StreamEvent::ReasoningDelta(delta) => reasoning.push_str(&delta),
             StreamEvent::Delta(delta) => visible.push_str(&delta),
             StreamEvent::ToolCallStart {
                 id, name, index, ..
             } => {
+                assert_eq!(index, 0, "expected one weather lookup");
                 tool_id = Some(id);
                 tool_name = Some(name);
                 tool_args_by_index.entry(index).or_default();
@@ -307,9 +314,12 @@ async fn v4_thinking_tool_call_replays_reasoning_content() {
     }
 
     assert!(saw_done, "first thinking tool-call stream must emit Done");
-    assert!(
-        !reasoning.trim().is_empty(),
-        "DeepSeek V4 thinking tool call must emit reasoning_content; visible={visible:?}"
+    // Simple tool calls may have no reasoning tokens even in thinking mode.
+    // Verify lossless parsing of whatever the API actually returned, rather
+    // than requiring a particular amount of model-generated explanation.
+    assert_eq!(
+        reasoning, wire_reasoning,
+        "reasoning deltas must be preserved"
     );
 
     let tool_id = tool_id.expect("DeepSeek V4 thinking should start a tool call");

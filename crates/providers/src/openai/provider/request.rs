@@ -396,7 +396,6 @@ impl OpenAiProvider {
 
                 if is_assistant && has_tool_calls {
                     let reasoning_content = assistant_reasoning
-                        .filter(|reasoning| !reasoning.trim().is_empty())
                         .map(str::to_string)
                         .or_else(|| {
                             value
@@ -1160,6 +1159,29 @@ mod tests {
             assistant_msg.get("reasoning_content").is_some(),
             "assistant tool-call message must have reasoning_content, got: {assistant_msg}"
         );
+    }
+
+    #[test]
+    fn deepseek_explicit_empty_reasoning_is_not_replaced_by_visible_text() {
+        let p = provider("deepseek-flash", "deepseek", "https://api.deepseek.com")
+            .with_capabilities(OpenAiProviderCapabilities {
+                reasoning_content_model_prefixes: &["deepseek-flash"],
+                ..OpenAiProviderCapabilities::DEFAULT
+            });
+        let messages = [ChatMessage::Assistant {
+            content: Some("Checking weather".into()),
+            reasoning: Some(String::new()),
+            tool_calls: vec![moltis_agents::model::ToolCall {
+                id: "call_weather".into(),
+                name: "get_weather".into(),
+                arguments: serde_json::json!({"location":"Lisbon"}),
+                argument_diagnostic: None,
+                metadata: None,
+            }],
+        }];
+        let serialized = p.serialize_messages_for_request(&messages);
+        assert_eq!(serialized[0]["reasoning_content"], "");
+        assert_eq!(serialized[0]["content"], "Checking weather");
     }
 
     #[test]
