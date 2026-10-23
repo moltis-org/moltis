@@ -235,9 +235,9 @@ The adapter appends `/v1/messages` to the configured base URL. Keep the
 
 NEAR AI Cloud exposes an OpenAI-compatible chat completions API with a public
 model catalog that includes TEE and attestation metadata.
-The API accepts OpenAI-compatible tool schemas, but the public model catalog does
-not currently expose per-model tool capability metadata. Moltis therefore does
-not mark auto-discovered NEAR AI Cloud models as tool-capable.
+The API accepts OpenAI-compatible tool schemas. Moltis currently keeps tool and
+reasoning capabilities disabled for auto-discovered NEAR AI Cloud models pending
+validation of the catalog's feature metadata against the adapter.
 
 1. Get an API key from [cloud.near.ai](https://cloud.near.ai/).
 2. Set `NEARAI_API_KEY` in your environment.
@@ -246,10 +246,14 @@ not mark auto-discovered NEAR AI Cloud models as tool-capable.
 ```toml
 [providers.nearai]
 enabled = true
-models = ["zai-org/GLM-5.1-FP8"]
+models = ["z-ai/glm-5.3-flash"]
 # api_key = "..."                    # Or set NEARAI_API_KEY
 # base_url = "https://cloud-api.near.ai/v1"
 ```
+
+Use the canonical `modelId` from the catalog when choosing a preferred model.
+For example, `zai-org/GLM-5.1-FP8` remains a completion alias for
+`z-ai/glm-5.3-flash`, but is no longer a separate model in discovery results.
 
 ### OpenAI Codex
 

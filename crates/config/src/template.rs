@@ -262,7 +262,7 @@ loopback_http = true                # Plain HTTP on loopback binds: http://local
 # [providers.nearai]
 # enabled = true
 # api_key = "..."                             # Or set NEARAI_API_KEY env var
-# models = ["zai-org/GLM-5.1-FP8"]           # Optional preferred models
+# models = ["z-ai/glm-5.3-flash"]            # Optional preferred models
 # fetch_models = true                          # Discover models from NEAR AI Cloud
 # base_url = "https://cloud-api.near.ai/v1"
 # alias = "nearai"

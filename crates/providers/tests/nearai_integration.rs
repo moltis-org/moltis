@@ -5,15 +5,20 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+#[path = "support/registered_provider.rs"]
+mod registered_provider;
+
 use {
     futures::StreamExt,
     moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent},
-    moltis_providers::{nearai, openai::OpenAiProvider},
+    moltis_providers::nearai,
     secrecy::Secret,
+    std::sync::Arc,
 };
 
 const BASE_URL: &str = "https://cloud-api.near.ai/v1";
-const DEFAULT_TEST_MODEL: &str = "zai-org/GLM-5.1-FP8";
+// The catalog lists canonical IDs; GLM-5.1-FP8 remains a completion alias only.
+const DEFAULT_TEST_MODEL: &str = "z-ai/glm-5.3-flash";
 
 fn api_key() -> Secret<String> {
     Secret::new(
@@ -25,13 +30,8 @@ fn test_model() -> String {
     std::env::var("NEARAI_TEST_MODEL").unwrap_or_else(|_| DEFAULT_TEST_MODEL.to_string())
 }
 
-fn make_provider() -> OpenAiProvider {
-    OpenAiProvider::new_with_name(
-        api_key(),
-        test_model(),
-        BASE_URL.to_string(),
-        "nearai".to_string(),
-    )
+fn make_provider() -> Arc<dyn LlmProvider> {
+    registered_provider::registered_provider("nearai", &test_model(), BASE_URL, api_key())
 }
 
 #[tokio::test]
@@ -43,11 +43,14 @@ async fn model_catalog_discovers_chat_models() {
 
     assert!(
         models.iter().any(|model| model.id == DEFAULT_TEST_MODEL),
-        "{DEFAULT_TEST_MODEL} should be present in the NEAR AI catalog"
+        "{DEFAULT_TEST_MODEL} should be present in the NEAR AI catalog: {:?}",
+        models.iter().map(|model| &model.id).collect::<Vec<_>>()
     );
     assert!(
-        models.iter().all(|model| model.capabilities.is_some()),
-        "NEAR AI catalog entries should carry provider capabilities"
+        models.iter().all(|model| model
+            .capabilities
+            .is_some_and(|capabilities| capabilities.text_generation)),
+        "NEAR AI chat catalog entries should carry text-generation capabilities"
     );
 }
 

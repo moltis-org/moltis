@@ -230,6 +230,39 @@ mod tests {
     }
 
     #[test]
+    fn discovers_canonical_glm_model_without_expanding_aliases() {
+        // NEAR AI keeps older completion IDs as aliases in metadata, rather
+        // than separate catalog entries. Discovery must retain the canonical ID.
+        let payload = r#"{
+            "models": [{
+                "modelId": "z-ai/glm-5.3-flash",
+                "metadata": {
+                    "verifiable": true,
+                    "attestationSupported": true,
+                    "modelDisplayName": "GLM 5.3 Flash",
+                    "aliases": ["zai-org/GLM-5.1-FP8", "glm-latest"],
+                    "architecture": {
+                        "inputModalities": ["text", "image"],
+                        "outputModalities": ["text"]
+                    }
+                }
+            }],
+            "limit": 100,
+            "offset": 0,
+            "total": 1
+        }"#;
+
+        let models = parse_models_payload(payload).expect("payload parses");
+        assert_eq!(models.len(), 1, "aliases must not become duplicate choices");
+        assert_eq!(models[0].id, "z-ai/glm-5.3-flash");
+        assert_eq!(models[0].display_name, "GLM 5.3 Flash");
+        assert!(models[0].recommended);
+        let capabilities = models[0].capabilities.expect("capabilities");
+        assert!(capabilities.text_generation);
+        assert!(capabilities.vision);
+    }
+
+    #[test]
     fn parses_and_filters_nearai_catalog() {
         let payload = r#"{
             "models": [
