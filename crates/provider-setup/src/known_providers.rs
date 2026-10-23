@@ -158,6 +158,16 @@ pub fn known_providers() -> Vec<KnownProvider> {
             local_only: false,
         },
         KnownProvider {
+            name: "tsubasa",
+            display_name: "Tsubasa",
+            auth_type: AuthType::ApiKey,
+            env_key: Some("TSUBASA_API_KEY"),
+            default_base_url: Some("https://api.tsubasa.sh/v1"),
+            requires_model: false,
+            key_optional: false,
+            local_only: false,
+        },
+        KnownProvider {
             name: "openrouter",
             display_name: "OpenRouter",
             auth_type: AuthType::ApiKey,
@@ -439,6 +449,7 @@ mod tests {
     fn new_api_key_providers_have_correct_env_keys() {
         let expected = [
             ("mistral", "MISTRAL_API_KEY"),
+            ("tsubasa", "TSUBASA_API_KEY"),
             ("openrouter", "OPENROUTER_API_KEY"),
             ("cerebras", "CEREBRAS_API_KEY"),
             ("minimax", "MINIMAX_API_KEY"),

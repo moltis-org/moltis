@@ -145,9 +145,14 @@ loopback_http = true                # Plain HTTP on loopback binds: http://local
 # All available providers (canonical list in schema/providers.rs):
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepinfra",
 #   "deepseek", "fireworks", "mistral", "openrouter", "cerebras", "minimax",
-#   "moonshot", "zai", "zai-code", "venice", "nearai", "alibaba-coding",
+#   "moonshot", "zai", "zai-code", "venice", "nearai", "alibaba-coding", "tsubasa",
 #   "ollama", "lmstudio", "local-llm", "openai-codex",
 #   "github-copilot", "kimi-code"
+
+# [providers.tsubasa]
+# enabled = true
+# models = ["tsubasa-fast", "tsubasa-pro"]
+# Set TSUBASA_API_KEY in the environment. Both models have a 32,768-token context.
 
 # ── Anthropic (Claude) ────────────────────────────────────────
 # [providers.anthropic]
