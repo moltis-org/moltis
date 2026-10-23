@@ -391,7 +391,6 @@ impl OpenAiProvider {
         let text = (!visible.is_empty()).then_some(visible);
         let reasoning = message["reasoning_content"]
             .as_str()
-            .filter(|text| !text.is_empty())
             .map(str::to_owned)
             .or_else(|| (!thinking.is_empty()).then_some(thinking));
         let mut tool_calls = parse_tool_calls(message);

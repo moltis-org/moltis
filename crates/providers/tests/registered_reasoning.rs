@@ -18,7 +18,7 @@ async fn capture(
     Json(body): Json<Value>,
 ) -> Json<Value> {
     requests.lock().unwrap().push(body);
-    Json(json!({"choices": [{"message": {"content": "ok"}}], "usage": {}}))
+    Json(json!({"choices": [{"message": {"content": "ok", "reasoning_content": ""}}], "usage": {}}))
 }
 
 async fn assert_request(provider_name: &str, model: &str, effort: ReasoningEffort, expected: &str) {
@@ -58,7 +58,12 @@ async fn assert_request(provider_name: &str, model: &str, effort: ReasoningEffor
         },
         ChatMessage::tool("call_weather", "sunny"),
     ];
-    provider.complete(&messages, &[json!({"name":"get_weather", "description":"Get weather", "parameters":{"type":"object","properties":{}}})]).await.unwrap();
+    let response = provider.complete(&messages, &[json!({"name":"get_weather", "description":"Get weather", "parameters":{"type":"object","properties":{}}})]).await.unwrap();
+    assert_eq!(
+        response.reasoning.as_deref(),
+        Some(""),
+        "preserve explicitly empty provider reasoning"
+    );
     server.abort();
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
