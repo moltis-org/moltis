@@ -225,7 +225,7 @@ loopback_http = true                # Plain HTTP on loopback binds: http://local
 # models = ["glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"]
 # base_url = "https://api.z.ai/api/paas/v4"
 # For a Coding Plan use [providers.zai-code], Z_CODE_API_KEY and
-# base_url = "https://api.z.ai/api/coding/paas/v4".
+# base_url = "https://api.z.ai/api/coding/paas/v4"
 
 # ── Fireworks ────────────────────────────────────────────────
 # [providers.fireworks]
