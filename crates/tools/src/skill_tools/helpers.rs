@@ -63,17 +63,39 @@ fn yaml_quote(s: &str) -> String {
     format!("\"{escaped}\"")
 }
 
-pub(super) fn build_skill_md(
+/// Reject characters that cannot be written as a single-line YAML scalar.
+///
+/// YAML refuses most control characters even inside double quotes, and a line
+/// break would fold into a space, so the value would not read back as given.
+pub(super) fn check_frontmatter_value(field: &str, value: &str) -> crate::Result<()> {
+    if let Some(c) = value
+        .chars()
+        .find(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{feff}'))
+    {
+        return Err(Error::message(format!(
+            "{field} must be a single line without control characters (found {c:?})"
+        )));
+    }
+    Ok(())
+}
+
+/// Build SKILL.md content with every frontmatter value quoted, so that it
+/// parses back exactly as given.
+pub(crate) fn build_skill_md(
     name: &str,
     description: &str,
     body: &str,
     allowed_tools: &[String],
 ) -> String {
-    let mut frontmatter = format!("---\nname: {name}\ndescription: {description}\n");
+    let mut frontmatter = format!(
+        "---\nname: {}\ndescription: {}\n",
+        yaml_quote(name),
+        yaml_quote(description)
+    );
     if !allowed_tools.is_empty() {
         frontmatter.push_str("allowed_tools:\n");
         for tool in allowed_tools {
-            frontmatter.push_str(&format!("  - {tool}\n"));
+            frontmatter.push_str(&format!("  - {}\n", yaml_quote(tool)));
         }
     }
     frontmatter.push_str("---\n\n");
@@ -82,6 +104,42 @@ pub(super) fn build_skill_md(
         frontmatter.push('\n');
     }
     frontmatter
+}
+
+/// Build SKILL.md content and confirm skill discovery will load it with the
+/// same name, description and allowed tools. Returns an error instead of
+/// content that discovery would skip or misread.
+pub(super) fn build_checked_skill_md(
+    skill_dir: &Path,
+    name: &str,
+    description: &str,
+    body: &str,
+    allowed_tools: &[String],
+) -> crate::Result<String> {
+    check_frontmatter_value("description", description)?;
+    for tool in allowed_tools {
+        check_frontmatter_value("allowed_tools entry", tool)?;
+    }
+    let content = build_skill_md(name, description, body, allowed_tools);
+    let meta = parse_for_discovery(&content, skill_dir)?;
+    if meta.name != name || meta.description != description || meta.allowed_tools != allowed_tools {
+        return Err(Error::message(
+            "SKILL.md frontmatter would not read back as written; refusing to write it",
+        ));
+    }
+    Ok(content)
+}
+
+/// Parse SKILL.md content the way skill discovery does.
+pub(super) fn parse_for_discovery(
+    content: &str,
+    skill_dir: &Path,
+) -> crate::Result<moltis_skills::types::SkillMetadata> {
+    moltis_skills::parse::parse_metadata(content, skill_dir).map_err(|e| {
+        Error::message(format!(
+            "refusing to write a SKILL.md that skill discovery cannot load: {e}"
+        ))
+    })
 }
 
 // ── Skill I/O ───────────────────────────────────────────────

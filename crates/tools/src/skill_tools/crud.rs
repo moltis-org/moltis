@@ -13,7 +13,7 @@ use {
 use moltis_metrics::{counter, labels, skills as skills_metrics};
 
 use {
-    super::helpers::{build_skill_md, write_skill},
+    super::helpers::{build_checked_skill_md, write_skill},
     crate::{checkpoints::CheckpointManager, error::Error},
 };
 
@@ -123,11 +123,11 @@ impl AgentTool for CreateSkillTool {
             .into());
         }
 
+        let content = build_checked_skill_md(&skill_dir, name, description, body, &allowed_tools)?;
         let checkpoint = self
             .checkpoints
             .checkpoint_path(&skill_dir, "create_skill")
             .await?;
-        let content = build_skill_md(name, description, body, &allowed_tools);
         write_skill(&skill_dir, &content).await?;
 
         if let Some(ref store) = self.usage_store {
@@ -249,11 +249,11 @@ impl AgentTool for UpdateSkillTool {
             .into());
         }
 
+        let content = build_checked_skill_md(&skill_dir, name, description, body, &allowed_tools)?;
         let checkpoint = self
             .checkpoints
             .checkpoint_path(&skill_dir, "update_skill")
             .await?;
-        let content = build_skill_md(name, description, body, &allowed_tools);
         write_skill(&skill_dir, &content).await?;
 
         if let Some(ref store) = self.usage_store {

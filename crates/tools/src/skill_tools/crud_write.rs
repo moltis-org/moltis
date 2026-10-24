@@ -20,7 +20,7 @@ async fn test_create_skill() {
     let skill_md = tmp.path().join("skills/my-skill/SKILL.md");
     assert!(skill_md.exists());
     let content = std::fs::read_to_string(&skill_md).unwrap();
-    assert!(content.contains("name: my-skill"));
+    assert!(content.contains("name: \"my-skill\""));
     assert!(content.contains("Do something useful."));
 }
 
@@ -107,7 +107,7 @@ async fn test_update_skill() {
     assert!(result["checkpointId"].as_str().is_some());
 
     let content = std::fs::read_to_string(tmp.path().join("skills/my-skill/SKILL.md")).unwrap();
-    assert!(content.contains("description: updated"));
+    assert!(content.contains("description: \"updated\""));
     assert!(content.contains("new body"));
 }
 
@@ -403,7 +403,7 @@ async fn test_update_skill_checkpoint_can_restore_previous_state() {
     checkpoints.restore(checkpoint_id).await.unwrap();
 
     let content = std::fs::read_to_string(tmp.path().join("skills/my-skill/SKILL.md")).unwrap();
-    assert!(content.contains("description: original"));
+    assert!(content.contains("description: \"original\""));
     assert!(content.contains("original body"));
 }
 
@@ -527,8 +527,8 @@ async fn test_patch_skill_single_patch() {
     assert!(content.contains("Do X"));
     assert!(content.contains("Do Z"));
     // Frontmatter should be preserved.
-    assert!(content.contains("name: my-skill"));
-    assert!(content.contains("description: A test skill"));
+    assert!(content.contains("name: \"my-skill\""));
+    assert!(content.contains("description: \"A test skill\""));
 }
 
 #[tokio::test]
@@ -892,5 +892,193 @@ async fn test_write_skill_files_rollback_on_error() {
     assert!(
         !tmp.path().join("skills/my-skill/first.txt").exists(),
         "first.txt should be rolled back after batch failure"
+    );
+}
+
+// ── SKILL.md frontmatter round-trip (#1292) ─────────────────
+
+fn parse_back(content: &str) -> moltis_skills::types::SkillMetadata {
+    moltis_skills::parse::parse_metadata(content, Path::new("/tmp/skills/x"))
+        .unwrap_or_else(|e| panic!("discovery could not parse:\n{content}\nerror: {e}"))
+}
+
+#[test]
+fn test_build_skill_md_round_trips_yaml_special_values() {
+    let descriptions = [
+        "Formats a line like \"status: 3 done\"",
+        "has a # comment marker",
+        "&anchor-looking",
+        "!tag-looking",
+        "- starts like a list item",
+        "* star",
+        "| literal",
+        "> folded",
+        "\"starts with a quote",
+        "'single quoted'",
+        "[not, a, list]",
+        "{not: a map}",
+        "%directive",
+        "@at",
+        "`backtick`",
+        "back\\slash and \\\" escaped quote",
+        "",
+        "  leading and trailing spaces  ",
+        "true",
+        "123",
+        "null",
+        "~",
+        "---",
+        "unicode: caf\u{e9} \u{65e5}\u{672c}",
+    ];
+    let names = ["my-skill", "null", "123", "true", "ns:skill"];
+    let tools: Vec<String> = ["*", "123", "True", "null", "[x]", "Bash(git:*)", "a b"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    for name in names {
+        for description in descriptions {
+            let content = build_skill_md(name, description, "Body.", &tools);
+            let meta = parse_back(&content);
+            assert_eq!(meta.name, name, "{content}");
+            assert_eq!(meta.description, description, "{content}");
+            assert_eq!(meta.allowed_tools, tools, "{content}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_create_skill_with_colon_description_is_discoverable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tool = CreateSkillTool::new(tmp.path().to_path_buf());
+    let description = "Formats a line like \"status: 3 done\" # not a comment";
+
+    tool.execute(json!({
+        "name": "repro",
+        "description": description,
+        "body": "Body.",
+        "allowed_tools": ["*", "123", "True"]
+    }))
+    .await
+    .unwrap();
+
+    let content = std::fs::read_to_string(tmp.path().join("skills/repro/SKILL.md")).unwrap();
+    let meta = parse_back(&content);
+    assert_eq!(meta.name, "repro");
+    assert_eq!(meta.description, description);
+    assert_eq!(meta.allowed_tools, vec!["*", "123", "True"]);
+}
+
+#[tokio::test]
+async fn test_create_skill_refuses_unparseable_values_without_writing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tool = CreateSkillTool::new(tmp.path().to_path_buf());
+
+    let cases = [
+        json!({ "name": "multi-line", "description": "first\nsecond", "body": "b" }),
+        json!({ "name": "carriage", "description": "first\rsecond", "body": "b" }),
+        json!({ "name": "nul-byte", "description": "a\u{0}b", "body": "b" }),
+        json!({ "name": "next-line", "description": "a\u{85}b", "body": "b" }),
+        json!({ "name": "line-sep", "description": "a\u{2028}b", "body": "b" }),
+        json!({
+            "name": "bad-tool",
+            "description": "fine",
+            "body": "b",
+            "allowed_tools": ["ok", "bad\ntool"]
+        }),
+    ];
+    for params in cases {
+        let name = params["name"].as_str().unwrap().to_string();
+        let err = tool.execute(params).await.unwrap_err().to_string();
+        assert!(err.contains("single line"), "{name}: {err}");
+        assert!(
+            !tmp.path().join("skills").join(&name).exists(),
+            "{name}: nothing should be written"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_update_skill_refuses_unparseable_description_and_keeps_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let create = CreateSkillTool::new(tmp.path().to_path_buf());
+    let update = UpdateSkillTool::new(tmp.path().to_path_buf());
+
+    create
+        .execute(json!({ "name": "my-skill", "description": "original", "body": "b" }))
+        .await
+        .unwrap();
+    let path = tmp.path().join("skills/my-skill/SKILL.md");
+    let before = std::fs::read_to_string(&path).unwrap();
+
+    let result = update
+        .execute(json!({ "name": "my-skill", "description": "two\nlines", "body": "new" }))
+        .await;
+    assert!(result.is_err());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+
+    update
+        .execute(json!({ "name": "my-skill", "description": "now: with colon", "body": "new" }))
+        .await
+        .unwrap();
+    let meta = parse_back(&std::fs::read_to_string(&path).unwrap());
+    assert_eq!(meta.description, "now: with colon");
+}
+
+#[tokio::test]
+async fn test_patch_skill_description_round_trips_or_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    let create = CreateSkillTool::new(tmp.path().to_path_buf());
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+
+    create
+        .execute(json!({ "name": "my-skill", "description": "old", "body": "Hello world" }))
+        .await
+        .unwrap();
+    let path = tmp.path().join("skills/my-skill/SKILL.md");
+
+    patch
+        .execute(json!({
+            "name": "my-skill",
+            "patches": [{ "find": "Hello", "replace": "Goodbye" }],
+            "description": "- status: 3 # done"
+        }))
+        .await
+        .unwrap();
+    let meta = parse_back(&std::fs::read_to_string(&path).unwrap());
+    assert_eq!(meta.description, "- status: 3 # done");
+
+    let before = std::fs::read_to_string(&path).unwrap();
+    let result = patch
+        .execute(json!({
+            "name": "my-skill",
+            "patches": [{ "find": "Goodbye", "replace": "Hi" }],
+            "description": "two\nlines"
+        }))
+        .await;
+    assert!(result.is_err());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn test_patch_skill_description_errors_when_field_cannot_be_replaced() {
+    let tmp = tempfile::tempdir().unwrap();
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+    let skill_dir = tmp.path().join("skills/my-skill");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let original = "---\nname: my-skill\n---\n\nHello world\n";
+    std::fs::write(skill_dir.join("SKILL.md"), original).unwrap();
+
+    let result = patch
+        .execute(json!({
+            "name": "my-skill",
+            "patches": [{ "find": "Hello", "replace": "Goodbye" }],
+            "description": "new desc"
+        }))
+        .await;
+    assert!(result.is_err());
+    assert_eq!(
+        std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap(),
+        original
     );
 }

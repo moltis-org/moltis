@@ -25,7 +25,7 @@ const MAX_SKILL_BODY_BYTES: usize = 256 * 1024;
 
 // Re-export internal helpers for test modules.
 #[cfg(test)]
-pub(crate) use helpers::{split_frontmatter_body, update_frontmatter_description};
+pub(crate) use helpers::{build_skill_md, split_frontmatter_body, update_frontmatter_description};
 
 #[cfg(test)]
 mod tests;

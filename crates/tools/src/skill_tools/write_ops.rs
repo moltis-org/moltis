@@ -16,8 +16,9 @@ use {
     super::{
         MAX_SIDECAR_FILES_PER_CALL,
         helpers::{
-            audit_sidecar_file_write, split_frontmatter_body, update_frontmatter_description,
-            validate_sidecar_files, write_sidecar_files,
+            audit_sidecar_file_write, check_frontmatter_value, parse_for_discovery,
+            split_frontmatter_body, update_frontmatter_description, validate_sidecar_files,
+            write_sidecar_files,
         },
     },
     crate::{checkpoints::CheckpointManager, error::Error},
@@ -314,8 +315,18 @@ impl AgentTool for PatchSkillTool {
         }
 
         let final_content = if let Some(desc) = new_description {
+            check_frontmatter_value("description", desc)?;
             let updated_fm = update_frontmatter_description(frontmatter_block, desc);
-            format!("{updated_fm}{patched_body}")
+            let content = format!("{updated_fm}{patched_body}");
+            let meta = parse_for_discovery(&content, &skill_dir)?;
+            if meta.description != desc {
+                return Err(Error::message(
+                    "the new description would not read back as written; SKILL.md \
+                     frontmatter needs a single-line `description:` field to replace",
+                )
+                .into());
+            }
+            content
         } else {
             format!("{frontmatter_block}{patched_body}")
         };
