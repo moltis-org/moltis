@@ -851,6 +851,7 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         "elevenlabs",
         "openai",
         "openai-tts",
+        "minimax",
         "google",
         "google-tts",
         "piper",

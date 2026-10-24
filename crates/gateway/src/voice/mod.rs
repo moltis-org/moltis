@@ -68,6 +68,11 @@ pub(crate) fn merge_voice_keys(cfg: &mut moltis_config::MoltisConfig) {
         }
     }
 
+    // MiniMax TTS
+    if let Some(key) = store.load("voice-minimax") {
+        cfg.voice.tts.minimax.api_key = Some(Secret::new(key));
+    }
+
     // Whisper STT (voice-specific OpenAI key for STT only)
     if let Some(key) = store.load("voice-whisper") {
         cfg.voice.stt.whisper.api_key = Some(Secret::new(key));
@@ -98,6 +103,7 @@ pub(crate) fn voice_key_store_name(provider: &str) -> String {
     match provider {
         "elevenlabs" | "elevenlabs-stt" => "voice-elevenlabs".to_string(),
         "openai" | "openai-tts" => "voice-openai".to_string(),
+        "minimax" => "voice-minimax".to_string(),
         "google" | "google-tts" => "voice-google".to_string(),
         "whisper" => "voice-whisper".to_string(),
         "groq" => "voice-groq".to_string(),
@@ -129,6 +135,11 @@ pub(crate) fn migrate_voice_keys_to_key_store(config: &moltis_config::MoltisConf
         (
             "voice-openai",
             config.voice.tts.openai.api_key.as_ref(),
+            None,
+        ),
+        (
+            "voice-minimax",
+            config.voice.tts.minimax.api_key.as_ref(),
             None,
         ),
         (
@@ -190,6 +201,9 @@ pub(crate) fn migrate_voice_keys_to_key_store(config: &moltis_config::MoltisConf
                 },
                 "voice-openai" => {
                     cfg.voice.tts.openai.api_key = None;
+                },
+                "voice-minimax" => {
+                    cfg.voice.tts.minimax.api_key = None;
                 },
                 "voice-google" => {
                     cfg.voice.tts.google.api_key = None;
@@ -410,6 +424,7 @@ mod tests {
         assert_eq!(voice_key_store_name("elevenlabs-stt"), "voice-elevenlabs");
         assert_eq!(voice_key_store_name("openai"), "voice-openai");
         assert_eq!(voice_key_store_name("openai-tts"), "voice-openai");
+        assert_eq!(voice_key_store_name("minimax"), "voice-minimax");
         assert_eq!(voice_key_store_name("google"), "voice-google");
         assert_eq!(voice_key_store_name("google-tts"), "voice-google");
         assert_eq!(voice_key_store_name("whisper"), "voice-whisper");

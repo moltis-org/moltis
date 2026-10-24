@@ -29,6 +29,8 @@ pub struct VoiceTtsConfig {
     pub elevenlabs: VoiceElevenLabsConfig,
     /// OpenAI TTS settings.
     pub openai: VoiceOpenAiConfig,
+    /// MiniMax TTS settings.
+    pub minimax: VoiceMiniMaxTtsConfig,
     /// Google Cloud TTS settings.
     pub google: VoiceGoogleTtsConfig,
     /// Piper (local) settings.
@@ -45,6 +47,7 @@ impl Default for VoiceTtsConfig {
             providers: Vec::new(),
             elevenlabs: VoiceElevenLabsConfig::default(),
             openai: VoiceOpenAiConfig::default(),
+            minimax: VoiceMiniMaxTtsConfig::default(),
             google: VoiceGoogleTtsConfig::default(),
             piper: VoicePiperTtsConfig::default(),
             coqui: VoiceCoquiTtsConfig::default(),
@@ -115,6 +118,41 @@ impl Default for VoiceOpenAiConfig {
             base_url: None,
             voice: None,
             model: None,
+        }
+    }
+}
+
+/// MiniMax speech synthesis settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceMiniMaxTtsConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// API key (from MINIMAX_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// TTS endpoint, defaulting to the global API; use the China endpoint when needed.
+    pub base_url: String,
+    /// Default voice ID.
+    pub voice: Option<String>,
+    /// Default speech model.
+    pub model: String,
+}
+
+impl Default for VoiceMiniMaxTtsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_key: None,
+            base_url: "https://api.minimax.io/v1/t2a_v2".into(),
+            voice: None,
+            model: "speech-2.8-hd".into(),
         }
     }
 }
@@ -285,6 +323,8 @@ pub enum VoiceTtsProvider {
     ElevenLabs,
     #[serde(rename = "openai")]
     OpenAi,
+    #[serde(rename = "minimax")]
+    MiniMax,
     #[serde(rename = "google")]
     Google,
     #[serde(rename = "piper")]
@@ -299,6 +339,7 @@ impl VoiceTtsProvider {
         match self {
             Self::ElevenLabs => "elevenlabs",
             Self::OpenAi => "openai",
+            Self::MiniMax => "minimax",
             Self::Google => "google",
             Self::Piper => "piper",
             Self::Coqui => "coqui",
@@ -310,6 +351,7 @@ impl VoiceTtsProvider {
         match s {
             "elevenlabs" => Some(Self::ElevenLabs),
             "openai" | "openai-tts" => Some(Self::OpenAi),
+            "minimax" => Some(Self::MiniMax),
             "google" | "google-tts" => Some(Self::Google),
             "piper" => Some(Self::Piper),
             "coqui" => Some(Self::Coqui),
@@ -323,6 +365,7 @@ impl VoiceTtsProvider {
         match self {
             Self::ElevenLabs => "ElevenLabs",
             Self::OpenAi => "OpenAI TTS",
+            Self::MiniMax => "MiniMax TTS",
             Self::Google => "Google Cloud TTS",
             Self::Piper => "Piper",
             Self::Coqui => "Coqui TTS",
@@ -335,6 +378,7 @@ impl VoiceTtsProvider {
         &[
             Self::ElevenLabs,
             Self::OpenAi,
+            Self::MiniMax,
             Self::Google,
             Self::Piper,
             Self::Coqui,

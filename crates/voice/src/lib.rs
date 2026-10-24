@@ -10,18 +10,19 @@ pub mod tts;
 pub use {
     config::{
         CoquiTtsConfig, DeepgramConfig, ElevenLabsConfig, ElevenLabsSttConfig, FallbackPolicy,
-        GoogleSttConfig, GoogleTtsConfig, GroqSttConfig, MistralSttConfig, OpenAiTtsConfig,
-        PiperTtsConfig, SherpaOnnxConfig, SttConfig, SttProviderId, TtsAutoMode, TtsConfig,
-        TtsProviderId, VoiceConfig, VoicePersona, VoicePersonaPrompt, VoicePersonaProviderBinding,
-        VoxtralLocalConfig, WhisperCliConfig, WhisperConfig, WhisperLocalConfig,
+        GoogleSttConfig, GoogleTtsConfig, GroqSttConfig, MiniMaxTtsConfig, MistralSttConfig,
+        OpenAiTtsConfig, PiperTtsConfig, SherpaOnnxConfig, SttConfig, SttProviderId, TtsAutoMode,
+        TtsConfig, TtsProviderId, VoiceConfig, VoicePersona, VoicePersonaPrompt,
+        VoicePersonaProviderBinding, VoxtralLocalConfig, WhisperCliConfig, WhisperConfig,
+        WhisperLocalConfig,
     },
     stt::{
         DeepgramStt, ElevenLabsStt, GoogleStt, GroqStt, MistralStt, SherpaOnnxStt, SttProvider,
         TranscribeRequest, Transcript, VoxtralLocalStt, WhisperCliStt, WhisperLocalStt, WhisperStt,
     },
     tts::{
-        AudioFormat, AudioOutput, CoquiTts, ElevenLabsTts, GoogleTts, OpenAiTts, PiperTts,
-        SynthesizeRequest, TtsDirectives, TtsProvider, Voice, contains_ssml, parse_tts_directives,
-        sanitize_text_for_tts, strip_ssml_tags,
+        AudioFormat, AudioOutput, CoquiTts, ElevenLabsTts, GoogleTts, MiniMaxTts, OpenAiTts,
+        PiperTts, SynthesizeRequest, TtsDirectives, TtsProvider, Voice, contains_ssml,
+        parse_tts_directives, sanitize_text_for_tts, strip_ssml_tags,
     },
 };

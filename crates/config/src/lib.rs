@@ -66,8 +66,8 @@ pub use {
         OtlpSettings, PresetMemoryConfig, PresetToolPolicy, PromptMemoryMode, ResolvedIdentity,
         SessionAccessPolicyConfig, SessionExportMode, Timezone, ToolMode, ToolPolicyConfig,
         ToolRegistryMode, UserProfile, UserProfileWriteMode, VoiceConfig, VoiceElevenLabsConfig,
-        VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig, VoiceTtsProvider,
-        VoiceWhisperConfig, VoiceWhisperLocalConfig, WireApi, parse_byte_size,
+        VoiceMiniMaxTtsConfig, VoiceOpenAiConfig, VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig,
+        VoiceTtsProvider, VoiceWhisperConfig, VoiceWhisperLocalConfig, WireApi, parse_byte_size,
     },
     validate::{Diagnostic, Severity, ValidationResult},
 };

@@ -143,6 +143,7 @@ pub(super) fn check_voxtral_compatibility(
 pub(super) enum VoiceProviderId {
     Elevenlabs,
     OpenaiTts,
+    Minimax,
     GoogleTts,
     Piper,
     Coqui,
@@ -183,6 +184,15 @@ impl VoiceProviderId {
                 key_placeholder: Some("sk-..."),
                 key_url: Some("https://platform.openai.com/api-keys"),
                 key_url_label: Some("platform.openai.com/api-keys"),
+                hint: None,
+            },
+            Self::Minimax => VoiceProviderMeta {
+                description: "MiniMax speech synthesis with regional API endpoints",
+                key_placeholder: Some("API key"),
+                key_url: Some(
+                    "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+                ),
+                key_url_label: Some("platform.minimaxi.com"),
                 hint: None,
             },
             Self::GoogleTts => VoiceProviderMeta {
@@ -289,6 +299,7 @@ impl VoiceProviderId {
         match id {
             "elevenlabs" => Some(Self::Elevenlabs),
             "openai" | "openai-tts" => Some(Self::OpenaiTts),
+            "minimax" => Some(Self::Minimax),
             "google" | "google-tts" => Some(Self::GoogleTts),
             "piper" => Some(Self::Piper),
             "coqui" => Some(Self::Coqui),
@@ -387,6 +398,7 @@ pub(super) async fn detect_voice_providers(
     // Check for API keys from environment variables
     let env_openai_key = std::env::var("OPENAI_API_KEY").ok();
     let env_elevenlabs_key = std::env::var("ELEVENLABS_API_KEY").ok();
+    let env_minimax_key = std::env::var("MINIMAX_API_KEY").ok();
     let env_google_key = std::env::var("GOOGLE_API_KEY")
         .or_else(|_| std::env::var("GOOGLE_CLOUD_API_KEY"))
         .ok();
@@ -482,6 +494,24 @@ pub(super) async fn detect_voice_providers(
             key_source(
                 config.voice.tts.google.api_key.is_some(),
                 env_google_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            VoiceProviderId::Minimax,
+            "MiniMax",
+            "tts",
+            "cloud",
+            config.voice.tts.minimax.api_key.is_some() || env_minimax_key.is_some(),
+            config.voice.tts.minimax.enabled
+                && config.voice.tts.enabled
+                && (config.voice.tts.minimax.api_key.is_some() || env_minimax_key.is_some()),
+            tts_pref == Some(moltis_config::VoiceTtsProvider::MiniMax),
+            key_source(
+                config.voice.tts.minimax.api_key.is_some(),
+                env_minimax_key.is_some(),
                 false,
             ),
             None,
@@ -788,6 +818,27 @@ fn enrich_voice_provider(
                 config.voice.tts.openai.model.clone(),
             ),
         ),
+        VoiceProviderId::Minimax => (
+            serde_json::json!({
+                "voiceId": true,
+                "modelChoices": [
+                    "speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo",
+                    "speech-02-hd", "speech-02-turbo", "speech-01-hd", "speech-01-turbo"
+                ],
+                "baseUrl": true,
+                "customVoice": true,
+                "customModel": true,
+            }),
+            serde_json::json!({
+                "baseUrl": config.voice.tts.minimax.base_url,
+                "voice": config.voice.tts.minimax.voice,
+                "model": config.voice.tts.minimax.model,
+            }),
+            format_voice_summary(
+                config.voice.tts.minimax.voice.clone(),
+                Some(config.voice.tts.minimax.model.clone()),
+            ),
+        ),
         VoiceProviderId::Whisper => (
             serde_json::json!({
                 "baseUrl": true,
@@ -1079,6 +1130,17 @@ pub(super) fn apply_voice_provider_settings(
                 cfg.voice.tts.openai.model = Some(model);
             }
         },
+        "minimax" => {
+            if let Some(base_url) = get_string("baseUrl") {
+                cfg.voice.tts.minimax.base_url = base_url;
+            }
+            if let Some(voice) = get_string("voice") {
+                cfg.voice.tts.minimax.voice = Some(voice);
+            }
+            if let Some(model) = get_string("model") {
+                cfg.voice.tts.minimax.model = model;
+            }
+        },
         "whisper" => {
             if let Some(base_url) = get_nullable_string("baseUrl") {
                 cfg.voice.stt.whisper.base_url = base_url;
@@ -1207,6 +1269,7 @@ pub(super) fn toggle_voice_provider(
             match config_provider {
                 "elevenlabs" => cfg.voice.tts.elevenlabs.enabled = enabled,
                 "openai" => cfg.voice.tts.openai.enabled = enabled,
+                "minimax" => cfg.voice.tts.minimax.enabled = enabled,
                 "google" => cfg.voice.tts.google.enabled = enabled,
                 "piper" => cfg.voice.tts.piper.enabled = enabled,
                 "coqui" => cfg.voice.tts.coqui.enabled = enabled,
