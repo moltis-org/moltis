@@ -669,6 +669,9 @@ pub async fn prepare_gateway_core_with_profile(
     if let Err(e) = agent_persona_store.ensure_main_row().await {
         tracing::warn!(error = %e, "failed to ensure main agent DB row");
     }
+    if let Err(e) = agent_persona_store.sync_default_agent_id_marker().await {
+        tracing::warn!(error = %e, "failed to sync default_agent_id marker");
+    }
 
     #[cfg(feature = "voice")]
     let voice_persona_store = Arc::new(crate::voice_persona::VoicePersonaStore::new(

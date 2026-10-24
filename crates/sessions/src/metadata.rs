@@ -787,6 +787,26 @@ impl SqliteSessionMetadata {
         Ok(())
     }
 
+    /// Persist `agent_id` without bumping `updated_at` or `version`.
+    ///
+    /// Used when backfilling NULL agent bindings during list so sidebar sort
+    /// order (by conversation activity) stays unchanged.
+    pub async fn set_agent_id_preserving_activity(
+        &self,
+        key: &str,
+        agent_id: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query("UPDATE sessions SET agent_id = ? WHERE key = ?")
+            .bind(agent_id)
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
+        Ok(())
+    }
+
     /// Assign (or clear) a session mode.
     pub async fn set_mode_id(&self, key: &str, mode_id: Option<&str>) -> Result<()> {
         let now = now_ms() as i64;

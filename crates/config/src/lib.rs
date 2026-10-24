@@ -32,9 +32,10 @@ pub use {
     bind::is_loopback_bind,
     error::{Error, Result},
     loader::{
-        DEFAULT_SOUL, LoadedWorkspaceMarkdown, WorkspaceMarkdownSource, agent_workspace_dir,
-        agents_path, apply_env_overrides, boot_path, clear_config_dir, clear_data_dir,
-        clear_share_dir, compact_config, config_dir, data_dir, discover_and_load,
+        DEFAULT_SOUL, LoadedWorkspaceMarkdown, TestDataDirGuard, TestDataDirRestore,
+        WorkspaceMarkdownSource, agent_workspace_dir, agents_path, apply_env_overrides,
+        boot_path, clear_config_dir, clear_data_dir, clear_share_dir, compact_config,
+        config_dir, data_dir, data_dir_override, discover_and_load,
         discover_and_load_readonly, discover_and_load_readonly_without_agent_defs,
         extract_yaml_frontmatter, find_or_default_config_path, find_user_global_config_file,
         guidelines_path, heartbeat_path, home_dir, identity_path, initialize_config,

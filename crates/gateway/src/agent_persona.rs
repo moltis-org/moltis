@@ -169,6 +169,18 @@ impl AgentPersonaStore {
         Self { pool }
     }
 
+    /// Persist a sync-readable marker for chat prompt fallbacks.
+    fn write_default_agent_id_marker(id: &str) {
+        let path = moltis_config::data_dir().join("default_agent_id");
+        if let Err(error) = std::fs::write(&path, id) {
+            tracing::warn!(
+                %error,
+                path = %path.display(),
+                "failed to persist default_agent_id marker"
+            );
+        }
+    }
+
     /// Return the current default agent ID.
     ///
     /// If no explicit default row is set, this falls back to `"main"`.
@@ -179,6 +191,13 @@ impl AgentPersonaStore {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.unwrap_or_else(|| "main".to_string()))
+    }
+
+    /// Sync the chat-facing default marker from the DB (call once at startup).
+    pub async fn sync_default_agent_id_marker(&self) -> Result<String> {
+        let id = self.default_id().await?;
+        Self::write_default_agent_id_marker(&id);
+        Ok(id)
     }
 
     /// Set the default agent ID.
@@ -203,6 +222,7 @@ impl AgentPersonaStore {
         }
 
         tx.commit().await?;
+        Self::write_default_agent_id_marker(id);
         Ok(id.to_string())
     }
 

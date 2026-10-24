@@ -344,7 +344,27 @@ impl SessionService for LiveSessionService {
 
         let mut entries: Vec<Value> = Vec::with_capacity(all.len());
         for mut e in all {
-            let agent_id = self.resolve_agent_id_for_entry(&e, false).await;
+            // Persist default when agent_id is NULL — do not fake default_id in the
+            // response while leaving the row unbound (that lied to New Chat clients).
+            let agent_id = if e
+                .agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                let fallback = self.default_agent_id().await;
+                // Backfill without bumping updated_at/version — listing must not
+                // reorder chats or return a version that no longer matches storage.
+                let _ = self
+                    .metadata
+                    .set_agent_id_preserving_activity(&e.key, Some(&fallback))
+                    .await;
+                e.agent_id = Some(fallback.clone());
+                fallback
+            } else {
+                self.resolve_agent_id_for_entry(&e, true).await
+            };
             // Check if this session is the active one for its channel binding.
             let active_channel = is_current_channel_session(&self.metadata, &e).await;
 

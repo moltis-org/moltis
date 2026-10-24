@@ -39,6 +39,52 @@ async fn prepare_chat_send_params(ctx: &MethodContext) -> serde_json::Value {
             params["_timezone"] = serde_json::json!(tz);
         }
     }
+    drop(registry);
+
+    // Ensure the target session has a persisted agent_id (runtime default)
+    // before chat.send builds the prompt — never leave NULL → hardcoded "main".
+    // Ephemeral/throwaway questions deliberately skip session writes in chat;
+    // do not create or bind saved sessions for them here either.
+    let ephemeral = params
+        .get("_ephemeral")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !ephemeral {
+        let session_key = params
+            .get("_session_key")
+            .or_else(|| params.get("sessionKey"))
+            .or_else(|| params.get("session_key"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        let session_key = match session_key {
+            Some(key) => Some(key),
+            None => active_session_key_for_ctx(ctx).await,
+        };
+        if let Some(session_key) = session_key
+            && let Some(ref metadata) = ctx.state.services.session_metadata
+        {
+            let _ = metadata.upsert(&session_key, None).await;
+            let needs_bind = metadata
+                .get(&session_key)
+                .await
+                .map(|entry| {
+                    entry
+                        .agent_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .is_none()
+                })
+                .unwrap_or(true);
+            if needs_bind {
+                let default_id = default_agent_id_for_ctx(ctx).await;
+                let _ = metadata.set_agent_id(&session_key, Some(&default_id)).await;
+            }
+        }
+    }
+
     params
 }
 
@@ -899,16 +945,21 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                 // Resolve first (auto-creates session if needed), then
                 // persist project_id so the entry exists when we patch.
+                // New Chat must bind the runtime default agent, not inherit the
+                // previous session's agent. Explicit fork (`sessions.fork`) and
+                // callers that pass `inherit_agent_from` keep inheritance.
                 let mut resolve_params = serde_json::json!({
                     "key": key,
                     "include_history": include_history,
                 });
-                if !was_existing_session
-                    && let Some(previous_key) = previous_active_key
-                        .as_deref()
-                        .filter(|previous_key| *previous_key != key)
+                if let Some(inherit_from) = ctx
+                    .params
+                    .get("inherit_agent_from")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
                 {
-                    resolve_params["inherit_agent_from"] = serde_json::json!(previous_key);
+                    resolve_params["inherit_agent_from"] = serde_json::json!(inherit_from);
                 }
                 let result = ctx
                     .state

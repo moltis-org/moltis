@@ -77,9 +77,25 @@ pub(crate) fn prompt_memory_status(
     }
 }
 
+/// Runtime default agent id for prompt fallbacks.
+///
+/// Prefer the marker written by `agents.set_default` / startup sync. Hardcoded
+/// `"main"` is only the last resort when no default has been persisted yet.
+pub(crate) fn runtime_default_agent_id() -> String {
+    let path = moltis_config::data_dir().join("default_agent_id");
+    if let Ok(raw) = std::fs::read_to_string(&path) {
+        let id = raw.trim();
+        if !id.is_empty() {
+            return id.to_string();
+        }
+    }
+    "main".to_string()
+}
+
 pub(crate) fn resolve_prompt_agent_id(session_entry: Option<&SessionEntry>) -> String {
+    let fallback = runtime_default_agent_id();
     let Some(entry) = session_entry else {
-        return "main".to_string();
+        return fallback;
     };
     let Some(agent_id) = entry
         .agent_id
@@ -87,7 +103,7 @@ pub(crate) fn resolve_prompt_agent_id(session_entry: Option<&SessionEntry>) -> S
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return "main".to_string();
+        return fallback;
     };
     if moltis_config::agent_workspace_dir(agent_id).exists() {
         return agent_id.to_string();
@@ -95,9 +111,10 @@ pub(crate) fn resolve_prompt_agent_id(session_entry: Option<&SessionEntry>) -> S
     warn!(
         session = %entry.key,
         agent_id,
-        "session references unknown agent workspace, falling back to main prompt persona"
+        fallback = %fallback,
+        "session references unknown agent workspace, falling back to default prompt persona"
     );
-    "main".to_string()
+    fallback
 }
 
 pub(crate) fn resolve_prompt_mode_context(
@@ -799,5 +816,49 @@ mod tests {
         assert_eq!(context["_channel"]["account_id"], "main");
         assert_eq!(context["_channel"]["chat_id"], "-100123");
         assert_eq!(context["_channel"]["outbound_to"], "-100123:42");
+    }
+
+    #[test]
+    fn resolve_prompt_agent_id_falls_back_to_runtime_default_not_hardcoded_main() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Shared guard: serializes with other data-dir tests and restores prior override.
+        let _guard = moltis_config::TestDataDirGuard::set(tmp.path().to_path_buf());
+        std::fs::write(tmp.path().join("default_agent_id"), "content-writer").unwrap();
+
+        assert_eq!(runtime_default_agent_id(), "content-writer");
+        assert_eq!(resolve_prompt_agent_id(None), "content-writer");
+
+        let entry = SessionEntry {
+            id: "1".into(),
+            key: "agent:main:dashboard:new".into(),
+            label: None,
+            model: None,
+            created_at: 0,
+            updated_at: 0,
+            message_count: 0,
+            last_seen_message_count: 0,
+            project_id: None,
+            archived: false,
+            worktree_branch: None,
+            sandbox_enabled: None,
+            sandbox_image: None,
+            sandbox_backend: None,
+            channel_binding: None,
+            parent_session_key: None,
+            fork_point: None,
+            mcp_disabled: None,
+            preview: None,
+            agent_id: None,
+            mode_id: None,
+            node_id: None,
+            external_agent_kind: None,
+            external_session_id: None,
+            version: 0,
+        };
+        assert_eq!(
+            resolve_prompt_agent_id(Some(&entry)),
+            "content-writer",
+            "NULL session agent_id must use default_id, not hardcoded main"
+        );
     }
 }

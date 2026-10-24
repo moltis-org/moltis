@@ -17,14 +17,6 @@ use {
 const KEYWORDS: [&str; 4] = ["dark", "spicy", "duplicate", "forget"];
 static DATA_DIR_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-struct DataDirGuard;
-
-impl Drop for DataDirGuard {
-    fn drop(&mut self) {
-        moltis_config::clear_data_dir();
-    }
-}
-
 struct MockEmbedder;
 
 #[async_trait]
@@ -159,9 +151,10 @@ async fn setup_agent_memory(
     moltis_memory::runtime::DynMemoryRuntime,
     TempDir,
     std::path::PathBuf,
+    moltis_config::TestDataDirRestore,
 ) {
     let tmp = TempDir::new().unwrap();
-    moltis_config::set_data_dir(tmp.path().to_path_buf());
+    let restore = moltis_config::TestDataDirRestore::set(tmp.path().to_path_buf());
 
     let workspace = moltis_config::agent_workspace_dir(agent_id);
     std::fs::create_dir_all(workspace.join("memory")).unwrap();
@@ -187,14 +180,13 @@ async fn setup_agent_memory(
         Box::new(MockEmbedder),
     ));
     manager.sync().await.unwrap();
-    (manager, tmp, memory_path)
+    (manager, tmp, memory_path, restore)
 }
 
 #[tokio::test]
 async fn memory_forget_deletes_selected_scoped_chunk() {
     let _lock = DATA_DIR_TEST_LOCK.lock().await;
-    let _guard = DataDirGuard;
-    let (manager, _tmp, memory_path) = setup_agent_memory(
+    let (manager, _tmp, memory_path, _restore) = setup_agent_memory(
         "writer",
         "Color preference dark mode\nFood preference spicy food\n",
         4,
@@ -242,8 +234,7 @@ async fn memory_forget_deletes_selected_scoped_chunk() {
 #[tokio::test]
 async fn memory_forget_refuses_ambiguous_exact_text() {
     let _lock = DATA_DIR_TEST_LOCK.lock().await;
-    let _guard = DataDirGuard;
-    let (manager, _tmp, memory_path) = setup_agent_memory(
+    let (manager, _tmp, memory_path, _restore) = setup_agent_memory(
         "writer",
         "duplicate memory line\nduplicate memory line\n",
         4,
@@ -286,8 +277,7 @@ fn count_exact_occurrences_accepts_line_ending_variants() {
 #[tokio::test]
 async fn memory_forget_reports_unreadable_files_as_issues() {
     let _lock = DATA_DIR_TEST_LOCK.lock().await;
-    let _guard = DataDirGuard;
-    let (manager, _tmp, memory_path) =
+    let (manager, _tmp, memory_path, _restore) =
         setup_agent_memory("writer", "Color preference dark mode\n", 4).await;
 
     let mut registry = ToolRegistry::new();
