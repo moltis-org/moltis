@@ -574,13 +574,18 @@ pub struct AgentPreset {
     pub model: Option<String>,
     /// Tool policy for this preset (allow/deny specific tools).
     pub tools: PresetToolPolicy,
-    /// Restrict sub-agent to delegation/session/task tools only.
+    /// Restrict this agent to delegation/session/task tools only.
+    ///
+    /// Applies to spawned sub-agents and to direct chat / channel turns for the
+    /// same preset, so coordinator-style agents behave consistently in both modes.
     #[serde(default)]
     pub delegate_only: bool,
     /// Per-turn tool visibility and provider tool-choice controls.
     #[serde(default, skip_serializing_if = "AgentToolControls::is_empty")]
     pub tool_controls: AgentToolControls,
-    /// Optional extra instructions appended to sub-agent system prompt.
+    /// Optional extra instructions appended to the agent system prompt.
+    ///
+    /// Applied for spawned sub-agents and for direct chat / channel turns.
     pub system_prompt_suffix: Option<String>,
     /// Maximum iterations for agent loop.
     pub max_iterations: Option<u64>,

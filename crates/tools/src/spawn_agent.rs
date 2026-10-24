@@ -43,8 +43,11 @@ const MAX_SPAWN_DEPTH: u64 = 3;
 /// Tool parameter injected via `tool_context` to track nesting depth.
 const SPAWN_DEPTH_KEY: &str = "_spawn_depth";
 
-/// Minimal delegate-only toolset for coordinator-style sub-agents.
-const DELEGATE_TOOLS: &[&str] = &[
+/// Minimal delegate-only toolset for coordinator-style agents.
+///
+/// Shared by `spawn_agent` and direct-chat `delegate_only` filtering so both
+/// modes keep the same allowlist.
+pub const DELEGATE_ONLY_TOOLS: &[&str] = &[
     "spawn_agent",
     "spawn_status",
     "spawn_result",
@@ -144,7 +147,7 @@ impl SpawnAgentTool {
         delegate_only: bool,
     ) -> ToolRegistry {
         let mut sub_tools = if delegate_only {
-            let allowed: HashSet<&str> = DELEGATE_TOOLS.iter().copied().collect();
+            let allowed: HashSet<&str> = DELEGATE_ONLY_TOOLS.iter().copied().collect();
             self.tool_registry
                 .clone_allowed_by(|name| allowed.contains(name))
         } else if !allow_tools.is_empty() {
@@ -296,7 +299,27 @@ fn load_memory_from_dir(dir: &std::path::Path, max_lines: usize) -> Option<Strin
     Some(lines.join("\n"))
 }
 
+/// Cap a workspace file the same way direct-chat prompt building does.
+fn cap_workspace_file_text(text: &str, label: &str, max_chars: usize) -> String {
+    let original_chars = text.chars().count();
+    if original_chars <= max_chars {
+        return text.to_string();
+    }
+    let taken: String = text.chars().take(max_chars).collect();
+    tracing::warn!(
+        file = label,
+        original_chars,
+        limit = max_chars,
+        "workspace file truncated for prompt size"
+    );
+    format!("{taken}...\n*({label} truncated for prompt size.)*\n")
+}
+
 /// Build the system prompt for a sub-agent, incorporating preset customizations.
+///
+/// When `preset_name` is set, also loads the target agent's workspace persona
+/// (`IDENTITY.md` / `SOUL.md` / `AGENTS.md` / `GUIDELINES.md`) so spawn matches
+/// direct-chat behaviour for Soul / Guidelines / Role (via AGENTS.md markers).
 fn build_sub_agent_prompt(
     task: &str,
     context: &str,
@@ -305,18 +328,31 @@ fn build_sub_agent_prompt(
 ) -> String {
     let mut prompt = String::new();
 
-    // Add preset identity if available.
-    if let Some(p) = preset {
-        if let Some(ref name) = p.identity.name {
-            prompt.push_str(&format!("You are {name}"));
-            if let Some(ref emoji) = p.identity.emoji {
-                prompt.push_str(&format!(" ({emoji})"));
-            }
-            prompt.push_str(". ");
+    // Prefer workspace identity for the target agent; fall back to preset fields.
+    let workspace_identity =
+        preset_name.and_then(|name| moltis_config::load_identity_for_agent(name));
+    let identity_name = workspace_identity
+        .as_ref()
+        .and_then(|id| id.name.as_deref())
+        .or_else(|| preset.and_then(|p| p.identity.name.as_deref()));
+    let identity_emoji = workspace_identity
+        .as_ref()
+        .and_then(|id| id.emoji.as_deref())
+        .or_else(|| preset.and_then(|p| p.identity.emoji.as_deref()));
+    let identity_theme = workspace_identity
+        .as_ref()
+        .and_then(|id| id.theme.as_deref())
+        .or_else(|| preset.and_then(|p| p.identity.theme.as_deref()));
+
+    if let Some(name) = identity_name {
+        prompt.push_str(&format!("You are {name}"));
+        if let Some(emoji) = identity_emoji {
+            prompt.push_str(&format!(" ({emoji})"));
         }
-        if let Some(ref theme) = p.identity.theme {
-            prompt.push_str(&format!("Your style is {theme}. "));
-        }
+        prompt.push_str(". ");
+    }
+    if let Some(theme) = identity_theme {
+        prompt.push_str(&format!("Your style is {theme}. "));
     }
 
     // Add base instruction.
@@ -329,6 +365,43 @@ fn build_sub_agent_prompt(
         moltis_config::managed_files_dir().display(),
         crate::sandbox::SANDBOX_FILES_DIR,
     ));
+
+    // Inject target workspace persona (Soul / Guidelines / Role markers).
+    // Cap AGENTS.md the same way direct chat does (`chat.workspace_file_max_chars`).
+    let workspace_file_max_chars = moltis_config::discover_and_load()
+        .chat
+        .workspace_file_max_chars
+        .max(1);
+    if let Some(name) = preset_name {
+        if let Some(soul) = moltis_config::load_soul_for_agent(name)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            prompt.push_str("## Soul\n\n");
+            prompt.push_str(&soul);
+            prompt.push_str("\n\n");
+        }
+        if let Some(agents_md) = moltis_config::load_agents_md_for_agent(name)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            prompt.push_str("## Workspace (AGENTS.md)\n\n");
+            prompt.push_str(&cap_workspace_file_text(
+                &agents_md,
+                "AGENTS.md",
+                workspace_file_max_chars,
+            ));
+            prompt.push_str("\n\n");
+        }
+        if let Some(guidelines) = moltis_config::load_guidelines_md_for_agent(name)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            prompt.push_str("## Guidelines\n\n");
+            prompt.push_str(&guidelines);
+            prompt.push_str("\n\n");
+        }
+    }
 
     // Inject persistent memory if configured.
     if let Some(p) = preset
@@ -349,7 +422,7 @@ fn build_sub_agent_prompt(
         prompt.push_str(&format!("\n\nContext: {context}"));
     }
 
-    // Add preset system prompt suffix.
+    // Add preset system prompt suffix (Role / composite Layer-A content).
     if let Some(extra) = preset
         .and_then(|p| p.system_prompt_suffix.as_ref())
         .map(|s| s.trim())

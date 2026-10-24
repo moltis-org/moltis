@@ -52,8 +52,8 @@ use crate::{
     message::apply_voice_reply_suffix,
     models::DisabledModelsStore,
     prompt::{
-        apply_runtime_tool_filters, build_policy_context, build_tool_context,
-        prompt_build_limits_from_config,
+        append_preset_system_prompt_suffix, apply_runtime_tool_filters, build_policy_context,
+        build_tool_context, prompt_build_limits_from_config,
     },
     runtime::ChatRuntime,
     service::{
@@ -296,6 +296,14 @@ pub(crate) async fn run_with_tools(
             guidelines_text,
         )
         .prompt
+    };
+
+    // Apply preset system_prompt_suffix (Role / Layer-A composite) in private
+    // direct chat only — shared channels must not receive private agent body.
+    let system_prompt = if private_context {
+        append_preset_system_prompt_suffix(system_prompt, &persona.config, agent_id)
+    } else {
+        system_prompt
     };
 
     // Layer 1: instruct the LLM to write speech-friendly output when voice is active.

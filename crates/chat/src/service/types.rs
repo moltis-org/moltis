@@ -733,23 +733,27 @@ impl LiveChatService {
         Some((partial_value, message_index))
     }
 
-    /// Resolve a provider from session metadata, history, or first registered.
+    /// Resolve a provider from session metadata, preset, history, or first registered.
     pub(in crate::service) async fn resolve_provider(
         &self,
         session_key: &str,
         history: &[Value],
     ) -> error::Result<Arc<dyn moltis_agents::model::LlmProvider>> {
         let reg = self.providers.read().await;
-        let session_model = self
-            .session_metadata
-            .get(session_key)
-            .await
-            .and_then(|e| e.model.clone());
+        let session_entry = self.session_metadata.get(session_key).await;
+        let session_model = session_entry.as_ref().and_then(|e| e.model.clone());
+        let preset_model = crate::prompt::resolve_preset_model_for_session(session_entry.as_ref());
         let history_model = history
             .iter()
             .rev()
             .find_map(|m| m.get("model").and_then(|v| v.as_str()).map(String::from));
-        let model_id = session_model.or(history_model);
+        let model_id = crate::prompt::resolve_chat_model_id(
+            None,
+            session_model.as_deref(),
+            preset_model.as_deref(),
+        )
+        .map(str::to_owned)
+        .or(history_model);
 
         model_id
             .and_then(|id| reg.get(&id))

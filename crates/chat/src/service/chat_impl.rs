@@ -38,9 +38,10 @@ use crate::{
     compaction_run,
     memory_tools::AgentScopedMemoryWriter,
     prompt::{
-        apply_request_runtime_context, apply_runtime_tool_filters, build_policy_context,
-        build_prompt_runtime_context, clear_prompt_memory_snapshot, discover_skills_if_enabled,
-        filter_skills_for_agent, load_prompt_persona_for_agent, load_prompt_persona_for_session,
+        append_preset_system_prompt_suffix, apply_request_runtime_context,
+        apply_runtime_tool_filters, build_policy_context, build_prompt_runtime_context,
+        clear_prompt_memory_snapshot, discover_skills_if_enabled, filter_skills_for_agent,
+        load_prompt_persona_for_agent, load_prompt_persona_for_session,
         prompt_build_limits_from_config, resolve_prompt_agent_id, resolve_prompt_mode_context,
     },
     types::*,
@@ -924,7 +925,11 @@ impl ChatService for LiveChatService {
 
         let truncated = prompt_build.metadata.truncated();
         let workspace_files = prompt_build.metadata.workspace_files.clone();
-        let system_prompt = prompt_build.prompt;
+        let system_prompt = append_preset_system_prompt_suffix(
+            prompt_build.prompt,
+            &persona.config,
+            &raw_prompt_agent_id,
+        );
         let char_count = system_prompt.len();
 
         Ok(serde_json::json!({
@@ -1064,7 +1069,11 @@ impl ChatService for LiveChatService {
 
         let truncated = prompt_build.metadata.truncated();
         let workspace_files = prompt_build.metadata.workspace_files.clone();
-        let system_prompt = prompt_build.prompt;
+        let system_prompt = append_preset_system_prompt_suffix(
+            prompt_build.prompt,
+            &persona.config,
+            &full_ctx_agent_id,
+        );
         let system_prompt_chars = system_prompt.len();
 
         // Keep raw assistant outputs (including provider/model/token metadata)

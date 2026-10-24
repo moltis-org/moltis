@@ -2,12 +2,47 @@ use {
     super::*,
     moltis_agents::model::{ChatMessage, CompletionResponse, StreamEvent, Usage},
     moltis_config::schema::{AgentIdentity, PresetToolPolicy},
-    std::{pin::Pin, sync::Mutex},
+    std::{
+        path::PathBuf,
+        pin::Pin,
+        sync::{Mutex, MutexGuard},
+    },
     tokio::sync::Notify,
     tokio_stream::Stream,
 };
 
 use crate::spawn_agent_tasks::{SpawnCancelTool, SpawnResultTool, SpawnStatusTool};
+
+/// Process-wide data-dir override for tests that touch workspace files.
+struct TestDataDirState {
+    path: Option<PathBuf>,
+}
+
+/// Serialize tests that override the process-wide data directory.
+/// The mutex guards the override path itself (not a void sentinel).
+static DATA_DIR_TEST_LOCK: Mutex<TestDataDirState> = Mutex::new(TestDataDirState { path: None });
+
+struct DataDirOverrideGuard {
+    _lock: MutexGuard<'static, TestDataDirState>,
+}
+
+impl DataDirOverrideGuard {
+    fn acquire(path: PathBuf) -> Self {
+        let mut lock = DATA_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        moltis_config::set_data_dir(path.clone());
+        lock.path = Some(path);
+        Self { _lock: lock }
+    }
+}
+
+impl Drop for DataDirOverrideGuard {
+    fn drop(&mut self) {
+        self._lock.path = None;
+        moltis_config::clear_data_dir();
+    }
+}
 
 /// Mock provider that returns a fixed response.
 struct MockProvider {
@@ -732,14 +767,92 @@ fn test_identity_injected_into_system_prompt() {
 }
 
 #[test]
+fn test_workspace_persona_injected_into_system_prompt() {
+    let dir = tempfile::tempdir().unwrap();
+    let _guard = DataDirOverrideGuard::acquire(dir.path().to_path_buf());
+
+    let workspace = moltis_config::agent_workspace_dir("research");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(
+        workspace.join("SOUL.md"),
+        "SOUL_MARKER_PARITY_7F3A — be curious.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("AGENTS.md"),
+        "<!-- mion:role -->\nROLE_MARKER_PARITY_7F3A\n<!-- /mion:role -->\nGUIDE_MARKER_PARITY_7F3A\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("GUIDELINES.md"),
+        "Extra guidelines body for spawn parity.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("IDENTITY.md"),
+        "---\nname: Research Bot\nemoji: 🔬\ntheme: precise\n---\n",
+    )
+    .unwrap();
+
+    let preset = AgentPreset {
+        identity: AgentIdentity {
+            name: Some("fallback-name".into()),
+            emoji: None,
+            theme: None,
+        },
+        system_prompt_suffix: Some("SUFFIX_MARKER_PARITY_7F3A".into()),
+        ..Default::default()
+    };
+
+    let prompt = build_sub_agent_prompt("summarize findings", "", Some(&preset), Some("research"));
+
+    assert!(prompt.contains("You are Research Bot (🔬)"));
+    assert!(prompt.contains("Your style is precise"));
+    assert!(prompt.contains("## Soul"));
+    assert!(prompt.contains("SOUL_MARKER_PARITY_7F3A"));
+    assert!(prompt.contains("## Workspace (AGENTS.md)"));
+    assert!(prompt.contains("ROLE_MARKER_PARITY_7F3A"));
+    assert!(prompt.contains("GUIDE_MARKER_PARITY_7F3A"));
+    assert!(prompt.contains("## Guidelines"));
+    assert!(prompt.contains("Extra guidelines body for spawn parity."));
+    assert!(prompt.contains("SUFFIX_MARKER_PARITY_7F3A"));
+    assert!(!prompt.contains("fallback-name"));
+}
+
+#[test]
+fn test_workspace_agents_md_respects_size_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let _guard = DataDirOverrideGuard::acquire(dir.path().to_path_buf());
+
+    let workspace = moltis_config::agent_workspace_dir("bulky");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let max = moltis_config::discover_and_load()
+        .chat
+        .workspace_file_max_chars
+        .max(1);
+    let huge = "X".repeat(max + 64);
+    std::fs::write(workspace.join("AGENTS.md"), &huge).unwrap();
+
+    let prompt = build_sub_agent_prompt("trim guides", "", None, Some("bulky"));
+    assert!(prompt.contains("## Workspace (AGENTS.md)"));
+    assert!(prompt.contains("AGENTS.md truncated for prompt size"));
+    assert!(prompt.contains(&"X".repeat(32)));
+    assert!(!prompt.contains(&huge));
+}
+
+#[test]
 fn test_no_identity_uses_default_prompt() {
+    let _lock = DATA_DIR_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let managed_files = moltis_config::managed_files_dir().display().to_string();
     let prompt = build_sub_agent_prompt("do work", "", None, None);
 
     assert!(prompt.contains("You are a sub-agent"));
     assert!(prompt.contains("Task: do work"));
     assert!(prompt.contains("Managed Files: use $MOLTIS_FILES_DIR"));
     assert!(prompt.contains(crate::sandbox::SANDBOX_FILES_DIR));
-    assert!(prompt.contains(&moltis_config::managed_files_dir().display().to_string()));
+    assert!(prompt.contains(&managed_files));
     assert!(!prompt.contains("Context:"));
 }
 
