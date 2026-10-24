@@ -416,7 +416,7 @@ impl AgentTool for SpawnAgentTool {
                 "active_tools": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Optional per-turn whitelist of tool names visible to the sub-agent. Overrides preset tool_controls.active_tools."
+                    "description": "Optional non-empty per-turn whitelist of tool names visible to the sub-agent. Empty arrays leave preset tool_controls.active_tools unchanged."
                 },
                 "tool_choice": {
                     "type": "object",
@@ -475,7 +475,11 @@ impl AgentTool for SpawnAgentTool {
             .as_ref()
             .map(|p| p.tool_controls.clone())
             .unwrap_or_default();
-        if params.get("active_tools").is_some() {
+        if let Some(active_tools) = params.get("active_tools")
+            && !active_tools
+                .as_array()
+                .is_some_and(|items| items.is_empty())
+        {
             tool_controls.active_tools = Some(string_array_param(&params, "active_tools")?);
         }
         if let Some(value) = params.get("tool_choice") {

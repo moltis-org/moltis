@@ -1,7 +1,7 @@
 use {
     super::*,
     moltis_agents::model::{ChatMessage, CompletionResponse, StreamEvent, Usage},
-    moltis_config::schema::{AgentIdentity, PresetToolPolicy},
+    moltis_config::schema::{AgentIdentity, AgentToolControls, PresetToolPolicy},
     std::{pin::Pin, sync::Mutex},
     tokio::sync::Notify,
     tokio_stream::Stream,
@@ -518,6 +518,101 @@ async fn test_null_optional_array_params_are_treated_as_absent() {
         "task_list".to_string(),
         "web_fetch".to_string(),
     ]);
+}
+
+#[tokio::test]
+async fn test_empty_active_tools_preserves_preset_and_non_empty_override_stays_scoped() {
+    let (provider, seen_tool_names) = MockProvider::with_capture("done", "mock");
+    let preset = AgentPreset {
+        tools: PresetToolPolicy {
+            allow: vec![
+                "exec".to_string(),
+                "web_fetch".to_string(),
+                "task_list".to_string(),
+            ],
+            deny: vec!["web_fetch".to_string()],
+        },
+        tool_controls: AgentToolControls {
+            active_tools: Some(vec!["exec".to_string()]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let spawn_tool = SpawnAgentTool::new(
+        make_empty_provider_registry(),
+        provider,
+        registry_with_tools(&["spawn_agent", "exec", "web_fetch", "task_list", "browser"]),
+    )
+    .with_agents_config(agents_config_with_presets(None, &[("qa", preset)]));
+
+    let result = spawn_tool
+        .execute(serde_json::json!({
+            "task": "inspect a page",
+            "preset": "qa",
+            "active_tools": [],
+            "allow_tools": [],
+            "deny_tools": [],
+            "model": null,
+            "nonblocking": false,
+            "tool_choice": { "type": "auto", "name": null },
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(result["text"], "done");
+    let mut seen = seen_tool_names.lock().unwrap().clone();
+    seen.sort();
+    assert_eq!(seen, vec!["exec".to_string()]);
+
+    let result = spawn_tool
+        .execute(serde_json::json!({
+            "task": "inspect a page",
+            "preset": "qa",
+            "active_tools": ["task_list", "web_fetch", "browser"],
+            "allow_tools": [],
+            "deny_tools": [],
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(result["text"], "done");
+    let mut seen = seen_tool_names.lock().unwrap().clone();
+    seen.sort();
+    assert_eq!(seen, vec!["task_list".to_string()]);
+}
+
+#[tokio::test]
+async fn test_empty_active_tools_does_not_clear_explicit_empty_preset_control() {
+    let (provider, seen_tool_names) = MockProvider::with_capture("done", "mock");
+    let preset = AgentPreset {
+        tools: PresetToolPolicy {
+            allow: vec!["exec".to_string()],
+            ..Default::default()
+        },
+        tool_controls: AgentToolControls {
+            active_tools: Some(Vec::new()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let spawn_tool = SpawnAgentTool::new(
+        make_empty_provider_registry(),
+        provider,
+        registry_with_tools(&["spawn_agent", "exec"]),
+    )
+    .with_agents_config(agents_config_with_presets(None, &[("disabled", preset)]));
+
+    let result = spawn_tool
+        .execute(serde_json::json!({
+            "task": "run without tools",
+            "preset": "disabled",
+            "active_tools": [],
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(result["text"], "done");
+    assert!(seen_tool_names.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

@@ -94,7 +94,12 @@ LLMs. These controls apply **per agent run** (not per iteration within a run)
 and are available on agent presets, `spawn_agent`, and `cron` `agentTurn`
 payloads.
 
-- `active_tools` filters the tool schemas visible to the agent.
+- `active_tools` filters the tool schemas visible to the agent. For `spawn_agent`,
+  an omitted or empty per-call list preserves the selected preset's
+  `tool_controls.active_tools`; a non-empty list replaces it for that run. The
+  final tool set is still constrained by the preset's `tools.allow` and
+  `tools.deny` policy. A preset can explicitly set `active_tools = []` to run
+  without tools, and an empty per-call list does not clear that setting.
 - `tool_choice` controls provider-level tool selection:
   - `auto` — model decides (default).
   - `any` — model must call some tool but chooses which one.
