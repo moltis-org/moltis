@@ -1419,6 +1419,10 @@ impl LiveChatService {
                 LiveChatService::wait_for_event_forwarder(&active_event_forwarders, &run_id_clone)
                     .await;
 
+            // Silent or interrupted streams may finish without delivery. Retire
+            // their destinations while this turn still owns the session permit.
+            let _ = state.drain_channel_replies(&session_key_clone).await;
+
             active_runs.write().await.remove(&run_id_clone);
             let mut runs_by_session = active_runs_by_session.write().await;
             if runs_by_session.get(&session_key_clone) == Some(&run_id_clone) {

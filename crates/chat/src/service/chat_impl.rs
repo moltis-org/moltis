@@ -162,6 +162,13 @@ impl ChatService for LiveChatService {
             .await
             .map_err(|_| ServiceError::message("session semaphore closed during abort"))?;
 
+        // Retire pending targets while abort cleanup owns the session permit.
+        // Forwarder cancellation has a bounded wait, not a stop guarantee.
+        let _ = self
+            .state
+            .drain_channel_replies(&resolved_session_key)
+            .await;
+
         self.state
             .finalize_active_channel_acks(
                 &resolved_run_id,
