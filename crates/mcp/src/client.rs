@@ -1,9 +1,17 @@
 //! MCP client: manages the protocol handshake and tool interactions with a single MCP server.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use {
     secrecy::Secret,
+    tokio::sync::RwLock,
     tracing::{debug, info, warn},
 };
 
@@ -22,8 +30,9 @@ use crate::{
     traits::{McpClientTrait, McpTransport},
     transport::{StdioLaunchOptions, StdioTransport},
     types::{
-        ClientCapabilities, ClientInfo, InitializeParams, InitializeResult, McpToolDef,
-        McpTransportError, PROTOCOL_VERSION, ToolsCallParams, ToolsCallResult, ToolsListResult,
+        ClientCapabilities, ClientInfo, InitializeParams, InitializeResult, JsonRpcResponse,
+        McpToolDef, McpTransportError, PROTOCOL_VERSION, ToolsCallParams, ToolsCallResult,
+        ToolsListResult,
     },
 };
 
@@ -47,6 +56,23 @@ pub struct McpClient {
     state: McpClientState,
     server_info: Option<InitializeResult>,
     tools: Vec<McpToolDef>,
+    session_recovery: SessionRecovery,
+}
+
+struct SessionRecovery {
+    gate: RwLock<()>,
+    generation: AtomicU64,
+    last_attempt: AtomicU64,
+}
+
+impl Default for SessionRecovery {
+    fn default() -> Self {
+        Self {
+            gate: RwLock::new(()),
+            generation: AtomicU64::new(0),
+            last_attempt: AtomicU64::new(u64::MAX),
+        }
+    }
 }
 
 impl McpClient {
@@ -88,6 +114,7 @@ impl McpClient {
             state: McpClientState::Connected,
             server_info: None,
             tools: Vec::new(),
+            session_recovery: SessionRecovery::default(),
         };
 
         if let Err(e) = client.initialize().await {
@@ -125,6 +152,7 @@ impl McpClient {
             state: McpClientState::Connected,
             server_info: None,
             tools: Vec::new(),
+            session_recovery: SessionRecovery::default(),
         };
 
         if let Err(e) = client.initialize().await {
@@ -156,6 +184,7 @@ impl McpClient {
             state: McpClientState::Connected,
             server_info: None,
             tools: Vec::new(),
+            session_recovery: SessionRecovery::default(),
         };
 
         if let Err(e) = client.initialize().await {
@@ -194,6 +223,7 @@ impl McpClient {
             state: McpClientState::Connected,
             server_info: None,
             tools: Vec::new(),
+            session_recovery: SessionRecovery::default(),
         };
 
         if let Err(e) = client.initialize().await {
@@ -231,6 +261,7 @@ impl McpClient {
             state: McpClientState::Connected,
             server_info: None,
             tools: Vec::new(),
+            session_recovery: SessionRecovery::default(),
         };
 
         if let Err(e) = client.initialize().await {
@@ -249,6 +280,19 @@ impl McpClient {
     }
 
     async fn initialize(&mut self) -> Result<()> {
+        let result = self.initialize_transport().await?;
+        self.server_info = Some(result);
+
+        // Send `initialized` notification to complete handshake.
+        self.transport
+            .notify("notifications/initialized", None)
+            .await?;
+        self.state = McpClientState::Ready;
+
+        Ok(())
+    }
+
+    async fn initialize_transport(&self) -> Result<InitializeResult> {
         let params = InitializeParams {
             protocol_version: PROTOCOL_VERSION.into(),
             capabilities: ClientCapabilities::default(),
@@ -282,13 +326,53 @@ impl McpClient {
             "MCP server initialized"
         );
 
-        self.server_info = Some(result);
+        Ok(result)
+    }
 
-        // Send `initialized` notification to complete handshake.
+    async fn request_with_session_recovery(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<JsonRpcResponse> {
+        let generation;
+        let result;
+        {
+            let _gate = self.session_recovery.gate.read().await;
+            generation = self.session_recovery.generation.load(Ordering::Acquire);
+            result = self.transport.request(method, params.clone()).await;
+        }
+
+        match result {
+            Err(Error::Transport(McpTransportError::SessionLost)) => {
+                self.recover_session(generation).await?;
+                let _gate = self.session_recovery.gate.read().await;
+                self.transport.request(method, params).await
+            },
+            result => result,
+        }
+    }
+
+    async fn recover_session(&self, generation: u64) -> Result<()> {
+        let _gate = self.session_recovery.gate.write().await;
+        if self.session_recovery.generation.load(Ordering::Acquire) != generation {
+            return Ok(());
+        }
+        if self.session_recovery.last_attempt.load(Ordering::Acquire) == generation {
+            // Another task already attempted recovery for this generation. Do
+            // not report success or retry indefinitely; surface the typed loss.
+            return Err(McpTransportError::SessionLost.into());
+        }
+
+        self.session_recovery
+            .last_attempt
+            .store(generation, Ordering::Release);
+        self.initialize_transport().await?;
         self.transport
             .notify("notifications/initialized", None)
             .await?;
-        self.state = McpClientState::Ready;
+        self.session_recovery
+            .generation
+            .store(generation.wrapping_add(1), Ordering::Release);
 
         Ok(())
     }
@@ -321,7 +405,9 @@ impl McpClientTrait for McpClient {
     async fn list_tools(&mut self) -> Result<&[McpToolDef]> {
         self.ensure_ready()?;
 
-        let resp = self.transport.request("tools/list", None).await?;
+        let resp = self
+            .request_with_session_recovery("tools/list", None)
+            .await?;
         let mut result: ToolsListResult =
             serde_json::from_value(resp.result.context("tools/list returned no result")?)?;
         result
@@ -350,8 +436,7 @@ impl McpClientTrait for McpClient {
         };
 
         let result = self
-            .transport
-            .request("tools/call", Some(serde_json::to_value(&params)?))
+            .request_with_session_recovery("tools/call", Some(serde_json::to_value(&params)?))
             .await;
 
         match result {
@@ -413,7 +498,12 @@ impl McpClientTrait for McpClient {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::sync::Arc};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+
+    use super::*;
 
     use {
         async_trait::async_trait,
@@ -424,6 +514,103 @@ mod tests {
 
     struct StubTransport {
         result: Value,
+    }
+
+    struct SessionRecoveryTransport {
+        initialize_calls: AtomicUsize,
+        tool_calls: AtomicUsize,
+        initial_losses: AtomicUsize,
+        session_ready: AtomicBool,
+        recovery_succeeds: bool,
+        notify_fails: AtomicBool,
+        initial_loss_barrier: tokio::sync::Barrier,
+    }
+
+    impl SessionRecoveryTransport {
+        fn new(recovery_barrier: usize, recovery_succeeds: bool) -> Self {
+            Self {
+                initialize_calls: AtomicUsize::new(0),
+                tool_calls: AtomicUsize::new(0),
+                initial_losses: AtomicUsize::new(0),
+                session_ready: AtomicBool::new(false),
+                recovery_succeeds,
+                notify_fails: AtomicBool::new(false),
+                initial_loss_barrier: tokio::sync::Barrier::new(recovery_barrier),
+            }
+        }
+
+        fn fail_recovery_notification(&self) {
+            self.notify_fails.store(true, Ordering::SeqCst);
+        }
+
+        fn response(result: Value) -> JsonRpcResponse {
+            JsonRpcResponse {
+                jsonrpc: "2.0".into(),
+                id: json!(1),
+                result: Some(result),
+                error: None,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl McpTransport for SessionRecoveryTransport {
+        async fn request(&self, method: &str, _params: Option<Value>) -> Result<JsonRpcResponse> {
+            match method {
+                "initialize" => {
+                    self.initialize_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(Self::response(json!({
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "serverInfo": {"name": "test"}
+                    })))
+                },
+                "tools/call" => {
+                    self.tool_calls.fetch_add(1, Ordering::SeqCst);
+                    if !self.session_ready.load(Ordering::SeqCst) {
+                        let loss = self.initial_losses.fetch_add(1, Ordering::SeqCst);
+                        if loss < 2 {
+                            self.initial_loss_barrier.wait().await;
+                        }
+                        Err(McpTransportError::SessionLost.into())
+                    } else {
+                        Ok(Self::response(json!({
+                            "content": [],
+                            "isError": false
+                        })))
+                    }
+                },
+                _ => Ok(Self::response(json!({}))),
+            }
+        }
+
+        async fn notify(&self, method: &str, _params: Option<Value>) -> Result<()> {
+            if method == "notifications/initialized" {
+                if self.notify_fails.load(Ordering::SeqCst) {
+                    return Err(McpTransportError::SessionLost.into());
+                }
+                self.session_ready
+                    .store(self.recovery_succeeds, Ordering::SeqCst);
+            }
+            Ok(())
+        }
+
+        async fn is_alive(&self) -> bool {
+            true
+        }
+
+        async fn kill(&self) {}
+    }
+
+    fn session_recovery_client(transport: Arc<SessionRecoveryTransport>) -> McpClient {
+        McpClient {
+            server_name: "test".into(),
+            transport,
+            state: McpClientState::Ready,
+            server_info: None,
+            tools: Vec::new(),
+            session_recovery: SessionRecovery::default(),
+        }
     }
 
     #[async_trait]
@@ -476,10 +663,115 @@ mod tests {
             state: McpClientState::Ready,
             server_info: None,
             tools: Vec::new(),
+            session_recovery: SessionRecovery::default(),
         };
 
         let tools = client.list_tools().await.unwrap();
         let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "mu", "zeta"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_concurrent_session_loss_reinitializes_once() {
+        let transport = Arc::new(SessionRecoveryTransport::new(2, true));
+        let client = Arc::new(RwLock::new(session_recovery_client(Arc::clone(&transport))));
+
+        let first = {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move { client.read().await.call_tool("first", json!({})).await })
+        };
+        let second = {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move { client.read().await.call_tool("second", json!({})).await })
+        };
+
+        first.await.unwrap().unwrap();
+        second.await.unwrap().unwrap();
+
+        assert_eq!(transport.initialize_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(transport.tool_calls.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn test_session_recovery_failure_is_attempted_once() {
+        let transport = Arc::new(SessionRecoveryTransport::new(1, false));
+        let client = session_recovery_client(Arc::clone(&transport));
+
+        let result = client.call_tool("test", json!({})).await;
+
+        assert!(matches!(
+            result,
+            Err(Error::Transport(McpTransportError::SessionLost))
+        ));
+        assert_eq!(transport.initialize_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(transport.tool_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_concurrent_session_recovery_failure_is_deduplicated() {
+        let transport = Arc::new(SessionRecoveryTransport::new(2, false));
+        transport.fail_recovery_notification();
+        let client = Arc::new(RwLock::new(session_recovery_client(Arc::clone(&transport))));
+
+        let first = {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move { client.read().await.call_tool("first", json!({})).await })
+        };
+        let second = {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move { client.read().await.call_tool("second", json!({})).await })
+        };
+
+        let first = first.await.expect("first task");
+        let second = second.await.expect("second task");
+        assert!(matches!(
+            first,
+            Err(Error::Transport(McpTransportError::SessionLost))
+        ));
+        assert!(matches!(
+            second,
+            Err(Error::Transport(McpTransportError::SessionLost))
+        ));
+        assert_eq!(transport.initialize_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(transport.tool_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_session_recovery_notification_failure_is_bounded_per_generation() {
+        let transport = Arc::new(SessionRecoveryTransport::new(1, true));
+        transport.fail_recovery_notification();
+        let client = session_recovery_client(Arc::clone(&transport));
+
+        let first = client.call_tool("test", json!({})).await;
+        let second = client.call_tool("test-again", json!({})).await;
+
+        assert!(matches!(
+            first,
+            Err(Error::Transport(McpTransportError::SessionLost))
+        ));
+        assert!(matches!(
+            second,
+            Err(Error::Transport(McpTransportError::SessionLost))
+        ));
+        assert_eq!(transport.initialize_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(transport.tool_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_session_recovery_state_is_isolated_per_client() {
+        let first_transport = Arc::new(SessionRecoveryTransport::new(1, true));
+        let second_transport = Arc::new(SessionRecoveryTransport::new(1, true));
+        let first = session_recovery_client(Arc::clone(&first_transport));
+        let second = session_recovery_client(Arc::clone(&second_transport));
+
+        let (first_result, second_result) = tokio::join!(
+            first.call_tool("first", json!({})),
+            second.call_tool("second", json!({})),
+        );
+
+        first_result.unwrap();
+        second_result.unwrap();
+        assert_eq!(first_transport.initialize_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second_transport.initialize_calls.load(Ordering::SeqCst), 1);
     }
 }

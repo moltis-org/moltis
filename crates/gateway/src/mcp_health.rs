@@ -24,6 +24,25 @@ struct RestartState {
     last_attempt: Instant,
 }
 
+fn auth_requires_user_action(auth_state: Option<moltis_mcp::McpAuthState>) -> bool {
+    matches!(
+        auth_state,
+        Some(moltis_mcp::McpAuthState::AwaitingBrowser | moltis_mcp::McpAuthState::Failed)
+    )
+}
+
+fn restartable(state: &str, enabled: bool, auth_requires_user_action: bool) -> bool {
+    enabled && state == "dead" && !auth_requires_user_action
+}
+
+fn restart_budget_available(count: u32) -> bool {
+    count < MAX_RESTART_ATTEMPTS
+}
+
+fn restart_backoff(count: u32) -> Duration {
+    std::cmp::min(BASE_BACKOFF * 2u32.saturating_pow(count), MAX_BACKOFF)
+}
+
 /// Run the health monitor loop. Checks all MCP servers periodically,
 /// broadcasts status changes, and auto-restarts dead servers with backoff.
 pub async fn run_health_monitor(state: Arc<GatewayState>, mcp: Arc<LiveMcpService>) {
@@ -40,59 +59,56 @@ pub async fn run_health_monitor(state: Arc<GatewayState>, mcp: Arc<LiveMcpServic
             let prev = prev_states.get(&s.name).map(String::as_str);
             if prev != Some(&s.state) {
                 changed = true;
+            }
 
-                // Auto-restart: if a server was previously running and is now dead.
-                // Skip restart if the server is in the middle of OAuth authentication.
-                let awaiting_auth = s.auth_state == Some(moltis_mcp::McpAuthState::AwaitingBrowser);
-                if prev == Some("running") && s.state == "dead" && s.enabled && !awaiting_auth {
-                    let rs = restart_states
-                        .entry(s.name.clone())
-                        .or_insert(RestartState {
-                            count: 0,
-                            last_attempt: Instant::now() - MAX_BACKOFF,
-                        });
+            // Auto-restart dead servers, including servers whose first start
+            // failed. OAuth that needs a user action cannot be fixed by retrying.
+            let requires_user_action = auth_requires_user_action(s.auth_state);
+            if restartable(&s.state, s.enabled, requires_user_action) {
+                let rs = restart_states
+                    .entry(s.name.clone())
+                    .or_insert(RestartState {
+                        count: 0,
+                        last_attempt: Instant::now() - MAX_BACKOFF,
+                    });
 
-                    if rs.count < MAX_RESTART_ATTEMPTS {
-                        let backoff = std::cmp::min(
-                            BASE_BACKOFF * 2u32.saturating_pow(rs.count),
-                            MAX_BACKOFF,
-                        );
-                        if rs.last_attempt.elapsed() >= backoff {
-                            info!(
-                                server = %s.name,
-                                attempt = rs.count + 1,
-                                "auto-restarting dead MCP server"
-                            );
-                            rs.count += 1;
-                            rs.last_attempt = Instant::now();
-
-                            match mcp.manager().restart_server(&s.name).await {
-                                Ok(()) => {
-                                    mcp.sync_tools_if_ready().await;
-                                    info!(server = %s.name, "MCP server auto-restarted");
-                                },
-                                Err(e) => {
-                                    warn!(
-                                        server = %s.name,
-                                        error = %e,
-                                        "MCP auto-restart failed"
-                                    );
-                                },
-                            }
-                        }
-                    } else if rs.count == MAX_RESTART_ATTEMPTS {
-                        warn!(
+                if restart_budget_available(rs.count) {
+                    let backoff = restart_backoff(rs.count);
+                    if rs.last_attempt.elapsed() >= backoff {
+                        info!(
                             server = %s.name,
-                            "MCP server exceeded max restart attempts, giving up"
+                            attempt = rs.count + 1,
+                            "auto-restarting dead MCP server"
                         );
-                        rs.count += 1; // prevent repeating this warning
-                    }
-                }
+                        rs.count += 1;
+                        rs.last_attempt = Instant::now();
 
-                // Reset restart counter when a server comes back to running
-                if s.state == "running" {
-                    restart_states.remove(&s.name);
+                        match mcp.manager().restart_server(&s.name).await {
+                            Ok(()) => {
+                                mcp.sync_tools_if_ready().await;
+                                info!(server = %s.name, "MCP server auto-restarted");
+                            },
+                            Err(e) => {
+                                warn!(
+                                    server = %s.name,
+                                    error = %e,
+                                    "MCP auto-restart failed"
+                                );
+                            },
+                        }
+                    }
+                } else if rs.count == MAX_RESTART_ATTEMPTS {
+                    warn!(
+                        server = %s.name,
+                        "MCP server exceeded max restart attempts, giving up"
+                    );
+                    rs.count += 1; // prevent repeating this warning
                 }
+            }
+
+            // Reset restart counter when a server comes back to running
+            if s.state == "running" {
+                restart_states.remove(&s.name);
             }
             prev_states.insert(s.name.clone(), s.state.clone());
         }
@@ -116,7 +132,7 @@ mod tests {
     fn test_backoff_calculation() {
         // Verify backoff growth: 5, 10, 20, 40, 80 (capped at 300)
         for i in 0..MAX_RESTART_ATTEMPTS {
-            let backoff = std::cmp::min(BASE_BACKOFF * 2u32.saturating_pow(i), MAX_BACKOFF);
+            let backoff = restart_backoff(i);
             assert!(backoff >= BASE_BACKOFF);
             assert!(backoff <= MAX_BACKOFF);
         }
@@ -124,7 +140,51 @@ mod tests {
 
     #[test]
     fn test_max_backoff_cap() {
-        let backoff = std::cmp::min(BASE_BACKOFF * 2u32.saturating_pow(10), MAX_BACKOFF);
+        let backoff = restart_backoff(10);
         assert_eq!(backoff, MAX_BACKOFF);
+    }
+
+    #[test]
+    fn test_startup_failure_is_restartable() {
+        assert!(restartable("dead", true, false));
+    }
+
+    #[test]
+    fn test_stopped_server_is_not_restartable() {
+        assert!(!restartable("stopped", true, false));
+    }
+
+    #[test]
+    fn test_oauth_failure_is_not_restartable() {
+        assert!(!restartable("dead", true, true));
+    }
+
+    #[test]
+    fn test_auth_states_requiring_user_action_are_not_auto_retried() {
+        assert!(auth_requires_user_action(Some(
+            moltis_mcp::McpAuthState::AwaitingBrowser
+        )));
+        assert!(auth_requires_user_action(Some(
+            moltis_mcp::McpAuthState::Failed
+        )));
+        assert!(!auth_requires_user_action(Some(
+            moltis_mcp::McpAuthState::Authenticated
+        )));
+        assert!(!auth_requires_user_action(None));
+    }
+
+    #[test]
+    fn test_restart_limit() {
+        assert!(restart_budget_available(MAX_RESTART_ATTEMPTS - 1));
+        assert!(!restart_budget_available(MAX_RESTART_ATTEMPTS));
+    }
+
+    #[test]
+    fn test_restart_backoff_schedule() {
+        assert_eq!(restart_backoff(0), Duration::from_secs(5));
+        assert_eq!(restart_backoff(1), Duration::from_secs(10));
+        assert_eq!(restart_backoff(2), Duration::from_secs(20));
+        assert_eq!(restart_backoff(3), Duration::from_secs(40));
+        assert_eq!(restart_backoff(4), Duration::from_secs(80));
     }
 }
