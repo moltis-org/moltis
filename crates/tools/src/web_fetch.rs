@@ -161,7 +161,8 @@ impl WebFetchTool {
 
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
-            .redirect(reqwest::redirect::Policy::none()); // Manual redirect handling.
+            .redirect(reqwest::redirect::Policy::none()) // Manual redirect handling.
+            .default_headers(moltis_common::http_client::build_default_headers());
         // Prefer the sandbox proxy when set, otherwise fall through to the
         // upstream proxy (if configured).
         let upstream = moltis_common::http_client::upstream_proxy_url();
@@ -793,5 +794,33 @@ mod tests {
         let cfg = WebFetchConfig::default();
         let tool = WebFetchTool::from_config(&cfg).unwrap();
         assert!(tool.proxy_url.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_web_fetch_sends_default_user_agent() {
+        let mut server = mockito::Server::new_async().await;
+        let expected_ua = moltis_common::http_client::default_user_agent();
+        let mock = server
+            .mock("GET", "/test-ua")
+            .match_header("user-agent", expected_ua.as_str())
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body("ok")
+            .create_async()
+            .await;
+
+        let mut tool = default_tool();
+        tool.ssrf_allowlist = vec!["127.0.0.0/8".parse().unwrap(), "::1/128".parse().unwrap()];
+
+        let url = format!("{}/test-ua", server.url());
+        let result = tool
+            .execute(serde_json::json!({
+                "url": url,
+            }))
+            .await
+            .expect("fetch should succeed");
+
+        mock.assert_async().await;
+        assert_eq!(result["content"], "ok");
     }
 }
