@@ -8,7 +8,7 @@ version.workspace    = true
 anyhow                = { workspace = true }
 async-trait           = { workspace = true }
 base64                = { workspace = true }
-chrono                = { features = ["serde"], optional = true, workspace = true }
+chrono                = { features = ["serde"], workspace = true }
 chrono-tz             = { workspace = true }
 futures               = { workspace = true }
 html2text             = { workspace = true }
@@ -47,9 +47,9 @@ bundled-skills     = ["moltis-skills/bundled-skills"]
 llm-compaction     = []
 local-llm          = []
 metrics            = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
-push-notifications = ["dep:chrono"]
+push-notifications = []
 telegram           = ["dep:moltis-telegram"]
-web-ui             = ["dep:chrono"]
+web-ui             = []
 
 default = ["llm-compaction"]
 

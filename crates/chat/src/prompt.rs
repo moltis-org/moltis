@@ -22,7 +22,8 @@ use crate::{
     types::{
         PromptMemoryStatus, PromptPersona, default_user_prompt_timezone, detect_host_sudo_access,
         detect_runtime_shell, memory_style_allows_prompt, normalized_iana_timezone,
-        prompt_sandbox_no_network_state, refresh_runtime_prompt_time, server_prompt_timezone,
+        prompt_now_for_timezone, prompt_sandbox_no_network_state, prompt_today_for_timezone,
+        refresh_runtime_prompt_time, server_prompt_timezone,
     },
 };
 
@@ -475,7 +476,8 @@ pub(crate) async fn build_prompt_runtime_context(
 
     let configured_timezone = state
         .sandbox_router()
-        .and_then(|r| r.config().timezone.clone());
+        .and_then(|r| r.config().timezone.clone())
+        .or_else(default_user_prompt_timezone);
     let timezone = Some(server_prompt_timezone(configured_timezone.as_deref()));
 
     let location = state
@@ -490,7 +492,8 @@ pub(crate) async fn build_prompt_runtime_context(
         os: Some(std::env::consts::OS.to_string()),
         arch: Some(std::env::consts::ARCH.to_string()),
         shell: detect_runtime_shell(),
-        time: None,
+        time: Some(prompt_now_for_timezone(timezone.as_deref())),
+        today: Some(prompt_today_for_timezone(timezone.as_deref())),
         provider: Some(provider.name().to_string()),
         model: Some(provider.id().to_string()),
         session_key: Some(session_key.to_string()),
@@ -799,5 +802,48 @@ mod tests {
         assert_eq!(context["_channel"]["account_id"], "main");
         assert_eq!(context["_channel"]["chat_id"], "-100123");
         assert_eq!(context["_channel"]["outbound_to"], "-100123:42");
+    }
+
+    #[test]
+    fn refresh_runtime_prompt_time_sets_time_and_today() {
+        let mut host = PromptHostRuntimeContext {
+            timezone: Some("UTC".to_string()),
+            ..Default::default()
+        };
+        refresh_runtime_prompt_time(&mut host);
+        assert!(host.time.as_deref().is_some_and(|value| !value.is_empty()));
+        assert!(host.today.as_deref().is_some_and(|value| value.len() == 10));
+    }
+
+    #[test]
+    fn prompt_time_and_today_for_timezone_formats_correctly() {
+        let time = prompt_now_for_timezone(Some("Australia/Sydney"));
+        assert!(!time.is_empty());
+        assert!(time.contains(' '));
+
+        let today = prompt_today_for_timezone(Some("Australia/Sydney"));
+        assert_eq!(today.len(), 10);
+        assert_eq!(today.chars().filter(|&c| c == '-').count(), 2);
+    }
+
+    #[test]
+    fn apply_request_runtime_context_updates_timezone_and_refreshes_time() {
+        let params = serde_json::json!({
+            "_accept_language": "en-US,en;q=0.9",
+            "_remote_ip": "203.0.113.10",
+            "_timezone": "America/New_York",
+        });
+
+        let mut host = PromptHostRuntimeContext {
+            timezone: Some("server-local".to_string()),
+            ..Default::default()
+        };
+        apply_request_runtime_context(&mut host, &params);
+
+        assert_eq!(host.accept_language.as_deref(), Some("en-US,en;q=0.9"));
+        assert_eq!(host.remote_ip.as_deref(), Some("203.0.113.10"));
+        assert_eq!(host.timezone.as_deref(), Some("America/New_York"));
+        assert!(host.time.as_deref().is_some_and(|value| !value.is_empty()));
+        assert!(host.today.as_deref().is_some_and(|value| value.len() == 10));
     }
 }

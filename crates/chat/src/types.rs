@@ -1199,58 +1199,31 @@ pub(crate) fn server_prompt_timezone(configured_timezone: Option<&str>) -> Strin
 }
 
 pub(crate) fn prompt_now_for_timezone(timezone: Option<&str>) -> String {
-    #[cfg(any(feature = "web-ui", feature = "push-notifications"))]
-    {
-        use chrono::{Local, Utc};
+    use chrono::{Local, Utc};
 
-        let trimmed_timezone = timezone.map(str::trim).filter(|value| !value.is_empty());
+    let trimmed_timezone = timezone.map(str::trim).filter(|value| !value.is_empty());
 
-        if let Some(tz) = trimmed_timezone.and_then(|name| name.parse::<chrono_tz::Tz>().ok()) {
-            return Utc::now()
-                .with_timezone(&tz)
-                .format("%Y-%m-%d %H:%M:%S %Z")
-                .to_string();
-        }
-
-        // Fallback to server local clock when timezone is unknown/non-IANA.
-        Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string()
+    if let Some(tz) = trimmed_timezone.and_then(|name| name.parse::<chrono_tz::Tz>().ok()) {
+        return Utc::now()
+            .with_timezone(&tz)
+            .format("%Y-%m-%d %H:%M:%S %Z")
+            .to_string();
     }
 
-    #[cfg(not(any(feature = "web-ui", feature = "push-notifications")))]
-    {
-        let unix_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let tz = timezone.unwrap_or("server-local");
-        format!("unix={unix_secs} {tz}")
-    }
+    // Fallback to server local clock when timezone is unknown/non-IANA.
+    Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string()
 }
 
 pub(crate) fn prompt_today_for_timezone(timezone: Option<&str>) -> String {
-    #[cfg(any(feature = "web-ui", feature = "push-notifications"))]
-    {
-        use chrono::{Local, Utc};
+    use chrono::{Local, Utc};
 
-        let trimmed_timezone = timezone.map(str::trim).filter(|value| !value.is_empty());
+    let trimmed_timezone = timezone.map(str::trim).filter(|value| !value.is_empty());
 
-        if let Some(tz) = trimmed_timezone.and_then(|name| name.parse::<chrono_tz::Tz>().ok()) {
-            return Utc::now().with_timezone(&tz).format("%Y-%m-%d").to_string();
-        }
-
-        Local::now().format("%Y-%m-%d").to_string()
+    if let Some(tz) = trimmed_timezone.and_then(|name| name.parse::<chrono_tz::Tz>().ok()) {
+        return Utc::now().with_timezone(&tz).format("%Y-%m-%d").to_string();
     }
 
-    #[cfg(not(any(feature = "web-ui", feature = "push-notifications")))]
-    {
-        let _ = timezone;
-        let unix_days = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            / 86_400;
-        format!("unix-day={unix_days}")
-    }
+    Local::now().format("%Y-%m-%d").to_string()
 }
 
 pub(crate) fn refresh_runtime_prompt_time(
