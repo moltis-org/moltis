@@ -136,7 +136,14 @@ pub fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
 
             let all_prop_names: Vec<serde_json::Value> =
                 props.keys().map(|name| serde_json::json!(name)).collect();
-            obj.insert("required".to_string(), serde_json::json!(all_prop_names));
+            // Emit `required` only when there is at least one property.
+            // An empty `required` alongside empty `properties` is rejected by
+            // Groq ("'required' present but 'properties' is missing").
+            if all_prop_names.is_empty() {
+                obj.remove("required");
+            } else {
+                obj.insert("required".to_string(), serde_json::json!(all_prop_names));
+            }
 
             for key in props.keys() {
                 if !originally_required.contains(key) {
@@ -145,7 +152,9 @@ pub fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
             }
         } else {
             obj.insert("properties".to_string(), serde_json::json!({}));
-            obj.insert("required".to_string(), serde_json::json!([]));
+            // No properties: no `required`. An empty `required` array is
+            // rejected by Groq alongside empty `properties`.
+            obj.remove("required");
         }
     }
 

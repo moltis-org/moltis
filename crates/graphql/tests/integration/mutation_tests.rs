@@ -230,3 +230,69 @@ async fn cron_run_reports_recorded_failure() {
     let data = response.data.into_json().expect("json");
     assert_eq!(data["cron"]["run"]["ok"], false);
 }
+
+/// Runs `mutation` against a service that replies `reply` and returns `{ ok }`.
+async fn mutation_ok(
+    method: &str,
+    reply: serde_json::Value,
+    mutation: &str,
+) -> async_graphql::Response {
+    let mock = MockDispatch::new();
+    mock.set_response(method, reply);
+    let (schema, _) = build_test_schema(mock.clone());
+    schema.execute(Request::new(mutation)).await
+}
+
+#[tokio::test]
+async fn chat_abort_reports_success_from_the_abort_reply() {
+    // chat.abort answers with what it aborted, not an `{ ok }` envelope.
+    let res = mutation_ok(
+        "chat.abort",
+        json!({"aborted": true, "runId": "run-1"}),
+        r#"mutation { chat { abort(sessionKey: "s1") { ok } } }"#,
+    )
+    .await;
+    assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    assert_eq!(res.data.into_json().unwrap()["chat"]["abort"]["ok"], true);
+}
+
+#[tokio::test]
+async fn chat_cancel_queued_reports_success_from_the_count() {
+    let res = mutation_ok(
+        "chat.cancel_queued",
+        json!({"cleared": 2}),
+        r#"mutation { chat { cancelQueued(sessionKey: "s1") { ok } } }"#,
+    )
+    .await;
+    assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    assert_eq!(
+        res.data.into_json().unwrap()["chat"]["cancelQueued"]["ok"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn explicit_ok_false_envelope_is_kept() {
+    let res = mutation_ok(
+        "chat.send",
+        json!({"ok": false}),
+        r#"mutation { chat { send(message: "hi", sessionKey: "s1") { ok } } }"#,
+    )
+    .await;
+    assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    assert_eq!(res.data.into_json().unwrap()["chat"]["send"]["ok"], false);
+}
+
+#[tokio::test]
+async fn non_boolean_ok_is_rejected() {
+    let res = mutation_ok(
+        "chat.send",
+        json!({"ok": "yes"}),
+        r#"mutation { chat { send(message: "hi", sessionKey: "s1") { ok } } }"#,
+    )
+    .await;
+    assert!(
+        !res.errors.is_empty(),
+        "a malformed envelope must not read as success"
+    );
+}

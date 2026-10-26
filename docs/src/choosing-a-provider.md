@@ -24,7 +24,7 @@ supported by Moltis so you can pick the best fit for your use case.
 | **OpenAI** | GPT-5.6 Sol, Terra, Luna, GPT-4.1, o3, o4-mini | Full | Yes | 128K-1.05M | $$ / Subscription | Fast | Widest ecosystem, GPT-5.6 quality, reasoning models |
 | **Google Gemini** | Gemini 2.5 Pro, 2.5 Flash | Full | Yes | 1M | $ | Fast | Competitive pricing |
 | **DeepSeek** | V3, R1 | Full | Yes | 128K | $ | Medium | Excellent quality-to-price ratio |
-| **Groq** | Llama 3, Mixtral, Gemma | Partial | Yes | 128K | $ | Very fast | Speed-optimized hardware inference |
+| **Groq** | GPT-OSS 120B/20B, Qwen 3.8 27B, Compound | Full (not Compound) | Yes | 128K | $ | Very fast | Speed-optimized hardware inference; free tier caps tokens per minute |
 | **xAI** | Grok 3, Grok 3 Mini | Yes | Yes | 128K | $$ | Fast | Strong reasoning capabilities |
 | **Mistral** | Mistral Large, Medium | Full | Yes | 128K | $$ | Fast | European provider, multilingual |
 | **OpenRouter** | Any (aggregator) | Varies | Yes | Varies | Varies | Varies | Access 100+ models with one key |
