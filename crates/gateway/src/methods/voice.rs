@@ -1,142 +1,13 @@
+mod detect;
+
 use std::time::Duration;
 
 use moltis_config::VoiceSttProvider;
 
-/// Check if Python 3.10+ is available.
-pub(super) async fn check_python_version() -> serde_json::Value {
-    // Try python3 first, then python
-    for cmd in &["python3", "python"] {
-        if let Ok(output) = tokio::process::Command::new(cmd)
-            .arg("--version")
-            .output()
-            .await
-            && output.status.success()
-        {
-            let version_str = String::from_utf8_lossy(&output.stdout);
-            // Parse "Python 3.11.0" format
-            if let Some(version) = version_str.strip_prefix("Python ") {
-                let version = version.trim();
-                // Check if version is 3.10+
-                let parts: Vec<&str> = version.split('.').collect();
-                if parts.len() >= 2
-                    && let (Ok(major), Ok(minor)) =
-                        (parts[0].parse::<u32>(), parts[1].parse::<u32>())
-                {
-                    let sufficient = major > 3 || (major == 3 && minor >= 10);
-                    return serde_json::json!({
-                        "available": true,
-                        "version": version,
-                        "sufficient": sufficient,
-                    });
-                }
-                return serde_json::json!({
-                    "available": true,
-                    "version": version,
-                    "sufficient": false,
-                });
-            }
-        }
-    }
-    serde_json::json!({
-        "available": false,
-        "version": null,
-        "sufficient": false,
-    })
-}
-
-/// Check CUDA availability via nvidia-smi.
-pub(super) async fn check_cuda_availability() -> serde_json::Value {
-    // Check if nvidia-smi is available
-    if let Ok(output) = tokio::process::Command::new("nvidia-smi")
-        .arg("--query-gpu=name,memory.total")
-        .arg("--format=csv,noheader,nounits")
-        .output()
-        .await
-        && output.status.success()
-    {
-        let info = String::from_utf8_lossy(&output.stdout);
-        let lines: Vec<&str> = info.trim().lines().collect();
-        if let Some(first_gpu) = lines.first() {
-            let parts: Vec<&str> = first_gpu.split(", ").collect();
-            if parts.len() >= 2 {
-                let gpu_name = parts[0].trim();
-                let memory_mb: u64 = parts[1].trim().parse().unwrap_or(0);
-                // vLLM needs ~9.5GB, recommend 10GB minimum
-                let sufficient = memory_mb >= 10000;
-                return serde_json::json!({
-                    "available": true,
-                    "gpu_name": gpu_name,
-                    "memory_mb": memory_mb,
-                    "sufficient": sufficient,
-                });
-            }
-        }
-        return serde_json::json!({
-            "available": true,
-            "gpu_name": null,
-            "memory_mb": null,
-            "sufficient": false,
-        });
-    }
-    serde_json::json!({
-        "available": false,
-        "gpu_name": null,
-        "memory_mb": null,
-        "sufficient": false,
-    })
-}
-
-/// Check if the system meets Voxtral Local requirements.
-pub(super) fn check_voxtral_compatibility(
-    os: &str,
-    arch: &str,
-    python: &serde_json::Value,
-    cuda: &serde_json::Value,
-) -> (bool, Vec<String>) {
-    let mut reasons = Vec::new();
-
-    // vLLM primarily supports Linux
-    let os_ok = os == "linux";
-    if !os_ok {
-        if os == "macos" {
-            reasons.push("vLLM has limited macOS support. Linux is recommended.".into());
-        } else if os == "windows" {
-            reasons.push("vLLM requires WSL2 on Windows.".into());
-        }
-    }
-
-    // Architecture check
-    let arch_ok = arch == "x86_64";
-    if !arch_ok && arch == "aarch64" {
-        reasons.push("ARM64 has limited CUDA/vLLM support.".into());
-    }
-
-    // Python check
-    let python_ok = python["sufficient"].as_bool().unwrap_or(false);
-    if !python["available"].as_bool().unwrap_or(false) {
-        reasons.push("Python is not installed. Install Python 3.10+.".into());
-    } else if !python_ok {
-        let ver = python["version"].as_str().unwrap_or("unknown");
-        reasons.push(format!("Python {} is too old. Python 3.10+ required.", ver));
-    }
-
-    // CUDA check
-    let cuda_ok = cuda["sufficient"].as_bool().unwrap_or(false);
-    if !cuda["available"].as_bool().unwrap_or(false) {
-        reasons.push("No NVIDIA GPU detected. CUDA GPU with 10GB+ VRAM required.".into());
-    } else if !cuda_ok {
-        let mem = cuda["memory_mb"].as_u64().unwrap_or(0);
-        reasons.push(format!(
-            "GPU has {}MB VRAM. 10GB+ recommended for Voxtral.",
-            mem
-        ));
-    }
-
-    // Overall compatibility
-    let compatible = os_ok && arch_ok && python_ok && cuda_ok;
-
-    (compatible, reasons)
-}
+use detect::{check_binary_available, check_coqui_server, check_vllm_server, check_voxcpm_server};
+pub(super) use detect::{
+    check_cuda_availability, check_python_version, check_voxtral_compatibility,
+};
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -146,6 +17,7 @@ pub(super) enum VoiceProviderId {
     GoogleTts,
     Piper,
     Coqui,
+    Voxcpm,
     Whisper,
     Groq,
     Deepgram,
@@ -205,6 +77,15 @@ impl VoiceProviderId {
                 key_url: None,
                 key_url_label: None,
                 hint: None,
+            },
+            Self::Voxcpm => VoiceProviderMeta {
+                description: "OpenBMB's tokenizer-free TTS: 30 languages, 48kHz, voice design and cloning",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: Some(
+                    "Served through vLLM-Omni. Leave the voice unset for zero-shot synthesis; VoxCPM rejects speaker names it has not been given.",
+                ),
             },
             // STT Cloud
             Self::Whisper => VoiceProviderMeta {
@@ -292,6 +173,7 @@ impl VoiceProviderId {
             "google" | "google-tts" => Some(Self::GoogleTts),
             "piper" => Some(Self::Piper),
             "coqui" => Some(Self::Coqui),
+            "voxcpm" => Some(Self::Voxcpm),
             _ => None,
         }
     }
@@ -419,6 +301,7 @@ pub(super) async fn detect_voice_providers(
     let piper_available = check_binary_available("piper").await;
     let sherpa_onnx_available = check_binary_available("sherpa-onnx-offline").await;
     let coqui_server_running = check_coqui_server(&config.voice.tts.coqui.endpoint).await;
+    let voxcpm_server_running = check_voxcpm_server(&config.voice.tts.voxcpm.endpoint).await;
     let tts_server_binary = check_binary_available("tts-server").await;
 
     // Build TTS providers list
@@ -526,6 +409,24 @@ pub(super) async fn detect_voice_providers(
                 Some("server not running")
             } else {
                 None
+            },
+        ),
+        build_provider_info(
+            VoiceProviderId::Voxcpm,
+            "VoxCPM",
+            "tts",
+            "local",
+            voxcpm_server_running,
+            config.voice.tts.voxcpm.enabled && config.voice.tts.enabled && voxcpm_server_running,
+            tts_pref == Some(moltis_config::VoiceTtsProvider::VoxCpm),
+            None,
+            None,
+            if voxcpm_server_running {
+                None
+            } else {
+                Some(
+                    "server not running - start with: vllm serve openbmb/VoxCPM2 --omni --port 8000",
+                )
             },
         ),
     ];
@@ -853,6 +754,30 @@ fn enrich_voice_provider(
                 config.voice.tts.coqui.language.clone(),
             ),
         ),
+        VoiceProviderId::Voxcpm => (
+            serde_json::json!({
+                "customVoice": true,
+                "customModel": true,
+                "endpoint": true,
+                "voiceDesign": true,
+            }),
+            serde_json::json!({
+                "endpoint": config.voice.tts.voxcpm.endpoint,
+                "model": config.voice.tts.voxcpm.model,
+                "voice": config.voice.tts.voxcpm.voice,
+                "voiceDesign": config.voice.tts.voxcpm.voice_design,
+            }),
+            format_voice_summary(
+                config
+                    .voice
+                    .tts
+                    .voxcpm
+                    .voice
+                    .clone()
+                    .or_else(|| Some("zero-shot".to_string())),
+                config.voice.tts.voxcpm.model.clone(),
+            ),
+        ),
         VoiceProviderId::Piper => (
             serde_json::json!({
                 "speakerId": true,
@@ -1079,6 +1004,25 @@ pub(super) fn apply_voice_provider_settings(
                 cfg.voice.tts.openai.model = Some(model);
             }
         },
+        "voxcpm" => {
+            if let Some(endpoint) = get_string("endpoint") {
+                cfg.voice.tts.voxcpm.endpoint = endpoint;
+            }
+            // `model` and `voice` are nullable: clearing the voice is how a
+            // user goes back to zero-shot synthesis.
+            if let Some(model) = get_nullable_string("model") {
+                cfg.voice.tts.voxcpm.model = model;
+            }
+            if let Some(voice) = get_nullable_string("voice") {
+                cfg.voice.tts.voxcpm.voice = voice;
+            }
+            if let Some(voice_design) = params
+                .get("voiceDesign")
+                .and_then(serde_json::Value::as_bool)
+            {
+                cfg.voice.tts.voxcpm.voice_design = voice_design;
+            }
+        },
         "whisper" => {
             if let Some(base_url) = get_nullable_string("baseUrl") {
                 cfg.voice.stt.whisper.base_url = base_url;
@@ -1145,52 +1089,6 @@ pub(super) fn apply_voice_provider_settings(
     }
 }
 
-async fn check_binary_available(name: &str) -> Option<String> {
-    // Try to find the binary in PATH
-    if let Ok(output) = tokio::process::Command::new("which")
-        .arg(name)
-        .output()
-        .await
-        && output.status.success()
-    {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Some(path);
-        }
-    }
-    None
-}
-
-/// Check if Coqui TTS server is running.
-async fn check_coqui_server(endpoint: &str) -> bool {
-    // Try to connect to the server's health endpoint
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .unwrap_or_default();
-
-    // Coqui TTS server responds to GET /
-    if let Ok(resp) = client.get(endpoint).send().await {
-        return resp.status().is_success();
-    }
-    false
-}
-
-/// Check if vLLM server is running (for Voxtral local).
-async fn check_vllm_server(endpoint: &str) -> bool {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .unwrap_or_default();
-
-    // vLLM exposes /health endpoint
-    let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
-    if let Ok(resp) = client.get(&health_url).send().await {
-        return resp.status().is_success();
-    }
-    false
-}
-
 /// Toggle a voice provider on/off by updating the config file.
 pub(super) fn toggle_voice_provider(
     provider: &str,
@@ -1210,6 +1108,7 @@ pub(super) fn toggle_voice_provider(
                 "google" => cfg.voice.tts.google.enabled = enabled,
                 "piper" => cfg.voice.tts.piper.enabled = enabled,
                 "coqui" => cfg.voice.tts.coqui.enabled = enabled,
+                "voxcpm" => cfg.voice.tts.voxcpm.enabled = enabled,
                 _ => {},
             }
             if !enabled

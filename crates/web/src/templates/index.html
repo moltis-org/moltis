@@ -300,6 +300,31 @@ endpoint = "http://localhost:5002"</code>
   Browse available models: <a href="https://github.com/coqui-ai/TTS#available-models" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">coqui-ai/TTS</a>
 </div>
 
+<div id="voice-voxcpm-instructions" class="text-xs leading-relaxed text-[var(--muted)]" style="display:none;">
+  <strong>Install vLLM-Omni:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">uv pip install vllm==0.29.0 --torch-backend=auto
+uv pip install setuptools_scm ninja
+git clone https://github.com/vllm-project/vllm-omni.git &amp;&amp; cd vllm-omni
+uv pip install -e .</code>
+  <strong>Start the server:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">vllm serve openbmb/VoxCPM2 --omni --port 8000</code>
+  A single 24GB GPU is enough for the 2B model.<br /><br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.tts]
+provider = "voxcpm"
+
+[voice.tts.voxcpm]
+endpoint = "http://localhost:8000/v1"
+model = "openbmb/VoxCPM2"</code>
+  <br />
+  Leave <code class="font-mono text-xs">voice</code> unset for zero-shot synthesis. To clone a voice,
+  register it with <code class="font-mono text-xs">POST /v1/audio/voices</code> and set
+  <code class="font-mono text-xs">voice</code> to that name.<br /><br />
+  Model card: <a href="https://huggingface.co/openbmb/VoxCPM2" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">openbmb/VoxCPM2</a>
+  &middot; <a href="https://github.com/OpenBMB/VoxCPM" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">OpenBMB/VoxCPM</a> (Apache-2.0)
+</div>
+
 <div id="voice-voxtral-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
   <div data-voxtral-requirements></div>
   <strong>Requirements:</strong> Linux, Python 3.10+, CUDA GPU with 10GB+ VRAM<br /><br />

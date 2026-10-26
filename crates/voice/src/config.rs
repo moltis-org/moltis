@@ -57,6 +57,9 @@ pub struct TtsConfig {
 
     /// Coqui TTS (local) settings.
     pub coqui: CoquiTtsConfig,
+
+    /// VoxCPM (local vLLM-Omni server) settings.
+    pub voxcpm: VoxCpmTtsConfig,
 }
 
 impl Default for TtsConfig {
@@ -71,6 +74,7 @@ impl Default for TtsConfig {
             google: GoogleTtsConfig::default(),
             piper: PiperTtsConfig::default(),
             coqui: CoquiTtsConfig::default(),
+            voxcpm: VoxCpmTtsConfig::default(),
         }
     }
 }
@@ -221,6 +225,36 @@ impl Default for CoquiTtsConfig {
             model: None,
             speaker: None,
             language: None,
+        }
+    }
+}
+
+/// VoxCPM TTS (local vLLM-Omni server) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoxCpmTtsConfig {
+    /// vLLM-Omni OpenAI-compatible speech base URL
+    /// (default: `http://localhost:8000/v1`).
+    pub endpoint: String,
+
+    /// Served model name (e.g. `openbmb/VoxCPM2`).
+    pub model: Option<String>,
+
+    /// Precomputed or uploaded speaker name. Leave unset for zero-shot
+    /// synthesis; VoxCPM rejects speaker names it does not know.
+    pub voice: Option<String>,
+
+    /// Render voice personas as a VoxCPM voice-design prefix on the input text.
+    pub voice_design: bool,
+}
+
+impl Default for VoxCpmTtsConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:8000/v1".into(),
+            model: None,
+            voice: None,
+            voice_design: true,
         }
     }
 }
@@ -862,6 +896,7 @@ mod tests {
                 google: GoogleTtsConfig::default(),
                 piper: PiperTtsConfig::default(),
                 coqui: CoquiTtsConfig::default(),
+                voxcpm: VoxCpmTtsConfig::default(),
             },
             stt: SttConfig::default(),
         };

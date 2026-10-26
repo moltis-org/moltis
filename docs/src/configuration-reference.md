@@ -972,6 +972,7 @@ context_window = 1_000_000
 | `google` | `VoiceGoogleTtsConfig` | (see below) | Google Cloud TTS settings |
 | `piper` | `VoicePiperTtsConfig` | (see below) | Piper (local) settings |
 | `coqui` | `VoiceCoquiTtsConfig` | (see below) | Coqui TTS (local server) settings |
+| `voxcpm` | `VoiceVoxCpmTtsConfig` | (see below) | VoxCPM (local vLLM-Omni server) settings |
 
 
 ### `voice.tts.elevenlabs`
@@ -1033,6 +1034,18 @@ context_window = 1_000_000
 | `model` | optional string | `null` | Model name to use (if server supports multiple models) |
 | `speaker` | optional string | `null` | Speaker name or ID for multi-speaker models |
 | `language` | optional string | `null` | Language code for multilingual models |
+
+### `voice.tts.voxcpm`
+
+**Struct:** `VoiceVoxCpmTtsConfig`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `true` | Whether this provider is enabled |
+| `endpoint` | string | `"http://localhost:8000/v1"` | vLLM-Omni OpenAI-compatible speech base URL |
+| `model` | optional string | `null` | Served model name (e.g. `openbmb/VoxCPM2`) |
+| `voice` | optional string | `null` | Registered speaker name. Omit for zero-shot synthesis |
+| `voice_design` | bool | `true` | Render voice personas as a VoxCPM voice-design prefix on the input text |
 
 ---
 

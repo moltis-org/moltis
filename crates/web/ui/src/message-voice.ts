@@ -51,6 +51,7 @@ function formatTtsProviderLabel(provider: string): string {
 		google: "Google Cloud TTS",
 		piper: "Piper",
 		coqui: "Coqui TTS",
+		voxcpm: "VoxCPM",
 	};
 	return labels[provider] || provider;
 }

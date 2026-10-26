@@ -391,6 +391,7 @@ function LocalProviderInstructions({ providerId, voxtralReqs }: LocalProviderIns
 			"sherpa-onnx": "voice-sherpa-onnx-instructions",
 			piper: "voice-piper-instructions",
 			coqui: "voice-coqui-instructions",
+			voxcpm: "voice-voxcpm-instructions",
 			"voxtral-local": "voice-voxtral-instructions",
 		};
 
