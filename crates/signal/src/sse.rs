@@ -7,34 +7,41 @@ pub struct SseEvent {
     pub id: Option<String>,
 }
 
+/// Incremental SSE parser.
+///
+/// Input is buffered as raw bytes and only complete lines are decoded. Network
+/// chunks can split a multi-byte UTF-8 character (such as an emoji) in two, so
+/// decoding each chunk on its own would corrupt it. A `\n` byte never occurs
+/// inside a multi-byte UTF-8 sequence, so splitting on it is always safe.
 #[derive(Debug, Default)]
 pub struct SseParser {
-    buffer: String,
+    buffer: Vec<u8>,
     current: SseEvent,
 }
 
 impl SseParser {
-    pub fn push(&mut self, chunk: &str) -> Vec<SseEvent> {
-        self.buffer.push_str(chunk);
+    pub fn push(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
+        self.buffer.extend_from_slice(chunk);
         let mut events = Vec::new();
 
-        while let Some(line_end) = self.buffer.find('\n') {
-            let mut line = self.buffer[..line_end].to_string();
-            self.buffer.drain(..=line_end);
-            if line.ends_with('\r') {
-                line.pop();
-            }
+        let mut consumed = 0;
+        while let Some(offset) = self.buffer[consumed..].iter().position(|&b| b == b'\n') {
+            let line_end = consumed + offset;
+            let line = decode_line(&self.buffer[consumed..line_end]);
+            consumed = line_end + 1;
             if let Some(event) = self.consume_line(&line) {
                 events.push(event);
             }
         }
+        self.buffer.drain(..consumed);
 
         events
     }
 
     pub fn finish(&mut self) -> Option<SseEvent> {
         if !self.buffer.is_empty() {
-            let line = std::mem::take(&mut self.buffer);
+            let bytes = std::mem::take(&mut self.buffer);
+            let line = decode_line(&bytes);
             let _ = self.consume_line(&line);
         }
         self.flush()
@@ -79,6 +86,12 @@ impl SseParser {
     }
 }
 
+/// Decode one complete line, dropping a trailing `\r` from CRLF endings.
+fn decode_line(bytes: &[u8]) -> String {
+    let bytes = bytes.strip_suffix(b"\r").unwrap_or(bytes);
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::sse::SseParser;
@@ -86,7 +99,7 @@ mod tests {
     #[test]
     fn parses_multiline_data_events() {
         let mut parser = SseParser::default();
-        let events = parser.push("id: 1\nevent: message\ndata: {\"a\":\ndata: 1}\n\n");
+        let events = parser.push(b"id: 1\nevent: message\ndata: {\"a\":\ndata: 1}\n\n");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].id.as_deref(), Some("1"));
         assert_eq!(events[0].event.as_deref(), Some("message"));
@@ -96,9 +109,55 @@ mod tests {
     #[test]
     fn ignores_comments_and_handles_chunks() {
         let mut parser = SseParser::default();
-        assert!(parser.push(": keepalive\ndata: hel").is_empty());
-        let events = parser.push("lo\n\n");
+        assert!(parser.push(b": keepalive\ndata: hel").is_empty());
+        let events = parser.push(b"lo\n\n");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].data.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn keeps_multibyte_characters_split_across_chunks() {
+        // 👍 is four bytes in UTF-8. Split it between two network chunks.
+        let payload = "data: {\"emoji\":\"\u{1F44D}\"}\n\n".as_bytes();
+        let emoji_start = payload
+            .iter()
+            .position(|&b| b == 0xF0)
+            .unwrap_or_default();
+        let (first, second) = payload.split_at(emoji_start + 2);
+
+        let mut parser = SseParser::default();
+        assert!(parser.push(first).is_empty());
+        let events = parser.push(second);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data.as_deref(), Some("{\"emoji\":\"\u{1F44D}\"}"));
+    }
+
+    #[test]
+    fn handles_one_byte_chunks() {
+        let payload = "event: message\r\ndata: h\u{e9}llo \u{1F600}\r\n\r\n".as_bytes();
+        let mut parser = SseParser::default();
+        let events: Vec<_> = payload
+            .iter()
+            .flat_map(|byte| parser.push(std::slice::from_ref(byte)))
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event.as_deref(), Some("message"));
+        assert_eq!(events[0].data.as_deref(), Some("h\u{e9}llo \u{1F600}"));
+    }
+
+    #[test]
+    fn replaces_invalid_utf8_without_dropping_the_event() {
+        let mut parser = SseParser::default();
+        let events = parser.push(b"data: ok\xFFok\n\n");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data.as_deref(), Some("ok\u{FFFD}ok"));
+    }
+
+    #[test]
+    fn finish_flushes_a_trailing_unterminated_line() {
+        let mut parser = SseParser::default();
+        assert!(parser.push(b"data: tail\r").is_empty());
+        let event = parser.finish();
+        assert_eq!(event.and_then(|e| e.data).as_deref(), Some("tail"));
     }
 }
