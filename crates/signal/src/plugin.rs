@@ -307,8 +307,7 @@ async fn run_event_loop(
                             };
                             match next {
                                 Ok(chunk) => {
-                                    let text = String::from_utf8_lossy(&chunk);
-                                    for event in parser.push(&text) {
+                                    for event in parser.push(&chunk) {
                                         if let Some(data) = event.data {
                                             handle_sse_data(&data, &client, &config, &otp, &account_id, &event_sink).await;
                                         }
