@@ -21,6 +21,7 @@ use {
 use crate::exec::EnvVarProvider;
 
 mod brave;
+mod keenable;
 
 /// Cached search result with expiry.
 struct CacheEntry {
@@ -64,6 +65,17 @@ enum SearchProvider {
     Firecrawl {
         base_url: String,
     },
+    Keenable {
+        base_url: String,
+    },
+}
+
+impl SearchProvider {
+    /// Keenable answers without a key (the key only lifts rate limits), so it
+    /// never needs the DuckDuckGo fallback.
+    fn requires_api_key(&self) -> bool {
+        !matches!(self, Self::Keenable { .. })
+    }
 }
 
 fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
@@ -210,6 +222,25 @@ impl WebSearchTool {
                 warn!("search provider 'firecrawl' selected but the firecrawl feature is disabled");
                 None
             },
+            // Keenable works without an API key, so the tool always registers.
+            ConfigSearchProvider::Keenable => {
+                let api_key = config
+                    .api_key
+                    .as_ref()
+                    .map(|s| s.expose_secret().clone())
+                    .or_else(|| env_value_with_overrides(env_overrides, "KEENABLE_API_KEY"))
+                    .unwrap_or_default();
+                Some(Self::new(
+                    SearchProvider::Keenable {
+                        base_url: keenable::BASE_URL.into(),
+                    },
+                    Secret::new(api_key),
+                    config.max_results,
+                    Duration::from_secs(config.timeout_seconds),
+                    Duration::from_secs(config.cache_ttl_minutes * 60),
+                    config.duckduckgo_fallback,
+                ))
+            },
         }
     }
 
@@ -320,6 +351,7 @@ impl WebSearchTool {
             SearchProvider::Perplexity { .. } => &["PERPLEXITY_API_KEY", "OPENROUTER_API_KEY"],
             #[cfg(feature = "firecrawl")]
             SearchProvider::Firecrawl { .. } => &["FIRECRAWL_API_KEY"],
+            SearchProvider::Keenable { .. } => &["KEENABLE_API_KEY"],
         }
     }
 
@@ -843,7 +875,10 @@ impl AgentTool for WebSearchTool {
         // straight to the DuckDuckGo fallback. This avoids a pointless
         // round-trip that always returns an error and prevents the LLM from
         // retrying repeatedly.
-        let result = if self.fallback_enabled && api_key.is_empty() {
+        let result = if self.fallback_enabled
+            && api_key.is_empty()
+            && self.provider.requires_api_key()
+        {
             warn!(
                 provider = ?self.provider,
                 "search API key not configured, using DuckDuckGo directly"
@@ -882,6 +917,17 @@ impl AgentTool for WebSearchTool {
                         )
                         .await?
                     }
+                },
+                SearchProvider::Keenable { base_url } => {
+                    keenable::search(
+                        crate::shared_http_client(),
+                        base_url,
+                        &api_key,
+                        query,
+                        count,
+                        self.timeout,
+                    )
+                    .await?
                 },
             }
         };

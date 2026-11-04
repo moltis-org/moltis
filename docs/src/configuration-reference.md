@@ -514,8 +514,8 @@ Default `tool_overrides` entries:
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | enabled | bool | `true` | Enable the web search tool. |
-| provider | string (enum) | `"brave"` | Search provider. One of: `brave`, `perplexity`, `firecrawl`. |
-| api_key | optional string | — | API key (overrides `BRAVE_API_KEY` env var). |
+| provider | string (enum) | `"brave"` | Search provider. One of: `brave`, `perplexity`, `firecrawl`, `keenable`. |
+| api_key | optional string | — | API key (overrides `BRAVE_API_KEY` env var). Optional for `keenable` (overrides `KEENABLE_API_KEY`). |
 | max_results | integer | `5` | Maximum number of results to return (1–10). |
 | timeout_seconds | integer | `30` | HTTP request timeout in seconds. |
 | cache_ttl_minutes | integer | `15` | In-memory cache TTL in minutes (0 to disable). |

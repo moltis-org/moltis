@@ -197,7 +197,7 @@ Configure the built-in `web_search` tool:
 ```toml
 [tools.web.search]
 enabled = true
-provider = "brave"               # "brave" or "perplexity"
+provider = "brave"               # "brave", "perplexity", or "keenable"
 max_results = 5                  # 1-10
 timeout_seconds = 30
 cache_ttl_minutes = 15
@@ -214,6 +214,9 @@ If no search API key is configured:
 
 - with `duckduckgo_fallback = false` (default), Moltis returns a clear hint to set `BRAVE_API_KEY` or `PERPLEXITY_API_KEY`
 - with `duckduckgo_fallback = true`, Moltis attempts DuckDuckGo HTML search, which may hit CAPTCHA/rate limits
+
+`provider = "keenable"` needs no API key: Moltis calls Keenable's public search endpoint.
+Set `KEENABLE_API_KEY` (or `api_key`) only to raise the keyless rate limits.
 
 ## Skills
 
