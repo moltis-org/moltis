@@ -509,12 +509,13 @@ loopback_http = true                # Plain HTTP on loopback binds: http://local
 
 # [tools.web.search]
 # enabled = true                    # Enable web search tool
-# provider = "brave"                # "brave" or "perplexity"
+# provider = "brave"                # "brave", "perplexity", or "keenable"
 # max_results = 5                   # Number of results to return (1-10)
 # timeout_seconds = 30              # HTTP request timeout
 # cache_ttl_minutes = 15            # Cache results (0 = no cache)
 # duckduckgo_fallback = false       # Enable DDG fallback without API keys
 # api_key = "..."                   # Brave API key (or set BRAVE_API_KEY env var)
+#                                   # Keenable works without a key; KEENABLE_API_KEY raises limits
 
 # [tools.web.search.perplexity]
 # api_key = "..."                   # Or set PERPLEXITY_API_KEY env var

@@ -282,6 +282,7 @@ pub enum SearchProvider {
     Brave,
     Perplexity,
     Firecrawl,
+    Keenable,
 }
 
 /// Web search tool configuration.

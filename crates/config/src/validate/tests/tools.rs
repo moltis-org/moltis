@@ -279,6 +279,24 @@ lightpanda_path = "/usr/local/bin/lightpanda"
 }
 
 #[test]
+fn keenable_search_provider_accepted_without_key() {
+    let toml = r#"
+[tools.web.search]
+provider = "keenable"
+"#;
+    let result = validate_toml_str(toml);
+    let search = result
+        .diagnostics
+        .iter()
+        .find(|d| d.path.starts_with("tools.web.search"));
+    assert!(
+        !result.has_errors() && search.is_none(),
+        "keenable should be a valid search provider without a key, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn tools_agent_max_iterations_must_be_positive() {
     let toml = r#"
 [tools]
