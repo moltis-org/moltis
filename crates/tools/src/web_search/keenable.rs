@@ -134,11 +134,43 @@ fn parse_results(body: SearchResponse) -> Vec<SearchResult> {
 /// Collapse whitespace runs (snippets keep the page's line breaks) and cap the
 /// length at a char boundary.
 fn compact_snippet(text: &str) -> String {
-    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    match compact.char_indices().nth(MAX_SNIPPET_CHARS) {
-        Some((end, _)) => format!("{}...", &compact[..end]),
-        None => compact,
+    const ELLIPSIS: &str = "...";
+    let mut out = String::new();
+    let mut char_count = 0usize;
+    let mut first = true;
+    let mut truncated = false;
+
+    for word in text.split_whitespace() {
+        if !first {
+            if char_count >= MAX_SNIPPET_CHARS {
+                truncated = true;
+                break;
+            }
+            if char_count + 1 > MAX_SNIPPET_CHARS {
+                truncated = true;
+                break;
+            }
+            out.push(' ');
+            char_count += 1;
+        }
+        first = false;
+
+        let word_len = word.chars().count();
+        if char_count + word_len <= MAX_SNIPPET_CHARS {
+            out.push_str(word);
+            char_count += word_len;
+        } else {
+            let room = MAX_SNIPPET_CHARS - char_count;
+            out.extend(word.chars().take(room));
+            truncated = true;
+            break;
+        }
     }
+
+    if truncated {
+        out.push_str(ELLIPSIS);
+    }
+    out
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
