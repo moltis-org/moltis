@@ -148,6 +148,16 @@ pub fn known_providers() -> Vec<KnownProvider> {
             local_only: false,
         },
         KnownProvider {
+            name: "runcrate",
+            display_name: "Runcrate",
+            auth_type: AuthType::ApiKey,
+            env_key: Some("RUNCRATE_API_KEY"),
+            default_base_url: Some("https://api.runcrate.ai/v1"),
+            requires_model: false,
+            key_optional: false,
+            local_only: false,
+        },
+        KnownProvider {
             name: "mistral",
             display_name: "Mistral",
             auth_type: AuthType::ApiKey,
@@ -374,6 +384,7 @@ mod tests {
         assert!(names.contains(&"mistral"), "missing mistral");
         assert!(names.contains(&"openrouter"), "missing openrouter");
         assert!(names.contains(&"cerebras"), "missing cerebras");
+        assert!(names.contains(&"runcrate"), "missing runcrate");
         assert!(names.contains(&"minimax"), "missing minimax");
         assert!(names.contains(&"moonshot"), "missing moonshot");
         assert!(names.contains(&"zai"), "missing zai");
@@ -440,6 +451,7 @@ mod tests {
         let expected = [
             ("mistral", "MISTRAL_API_KEY"),
             ("openrouter", "OPENROUTER_API_KEY"),
+            ("runcrate", "RUNCRATE_API_KEY"),
             ("cerebras", "CEREBRAS_API_KEY"),
             ("minimax", "MINIMAX_API_KEY"),
             ("moonshot", "MOONSHOT_API_KEY"),

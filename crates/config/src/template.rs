@@ -144,9 +144,9 @@ loopback_http = true                # Plain HTTP on loopback binds: http://local
 # show_legacy_models = true         # Show models older than 1 year in the chat model selector (they always appear in Settings)
 # All available providers (canonical list in schema/providers.rs):
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepinfra",
-#   "deepseek", "fireworks", "mistral", "openrouter", "cerebras", "minimax",
-#   "moonshot", "zai", "zai-code", "venice", "nearai", "alibaba-coding",
-#   "ollama", "lmstudio", "local-llm", "openai-codex",
+#   "deepseek", "fireworks", "mistral", "openrouter", "runcrate", "cerebras",
+#   "minimax", "moonshot", "zai", "zai-code", "venice", "nearai",
+#   "alibaba-coding", "ollama", "lmstudio", "local-llm", "openai-codex",
 #   "github-copilot", "kimi-code"
 
 # ── Anthropic (Claude) ────────────────────────────────────────
@@ -209,6 +209,14 @@ loopback_http = true                # Plain HTTP on loopback binds: http://local
 # models = ["meta-llama/Llama-4-Maverick-17B-128E-Instruct"]
 # base_url = "https://api.deepinfra.com/v1/openai"
 # alias = "deepinfra"
+
+# ── Runcrate ──────────────────────────────────────────────────
+# [providers.runcrate]
+# enabled = true
+# api_key = "..."                             # Or set RUNCRATE_API_KEY env var
+# models = ["deepseek-ai/DeepSeek-V4.1-Flash"]
+# base_url = "https://api.runcrate.ai/v1"
+# alias = "runcrate"
 
 # ── DeepSeek ──────────────────────────────────────────────────
 # [providers.deepseek]
