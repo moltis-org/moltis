@@ -21,6 +21,7 @@ Configure providers through the web UI or directly in configuration files.
 | **MiniMax** | `minimax` | `MINIMAX_API_KEY` | Streaming, tools, M3 vision |
 | **Moonshot (Kimi)** | `moonshot` | `MOONSHOT_API_KEY` | Streaming, tools, model discovery |
 | **Fireworks** | `fireworks` | `FIREWORKS_API_KEY` | Streaming, tools, model discovery |
+| **Runcrate** | `runcrate` | `RUNCRATE_API_KEY` | Streaming, tools, model discovery |
 | **Venice** | `venice` | `VENICE_API_KEY` | Streaming, tools, model discovery |
 | **NEAR AI Cloud** | `nearai` | `NEARAI_API_KEY` | Streaming, TEE-aware model discovery |
 | **Z.AI (Zhipu)** | `zai` | `Z_API_KEY` | Streaming, tools, model discovery |

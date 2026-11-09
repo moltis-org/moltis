@@ -113,6 +113,17 @@ pub(crate) const DEEPINFRA_MODELS: &[(&str, &str)] = &[
     ("google/gemma-3-27b-it", "Gemma 3 27B"),
 ];
 
+/// Known Runcrate models. The full list is at <https://api.runcrate.ai/v1/models>.
+pub(crate) const RUNCRATE_MODELS: &[(&str, &str)] = &[
+    ("deepseek-ai/DeepSeek-V4.1-Flash", "DeepSeek V4.1 Flash"),
+    (
+        "Qwen/Qwen3-235B-A22B-Instruct-2507",
+        "Qwen3 235B A22B Instruct",
+    ),
+    ("moonshotai/Kimi-K3", "Kimi K3"),
+    ("zai-org/GLM-5.3", "GLM 5.3"),
+];
+
 /// Known DeepSeek models.
 pub(crate) const DEEPSEEK_MODELS: &[(&str, &str)] = &[
     ("deepseek-flash", "DeepSeek Flash"),
@@ -303,6 +314,14 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
+        config_name: "runcrate",
+        env_key: "RUNCRATE_API_KEY",
+        env_base_url_key: "RUNCRATE_BASE_URL",
+        default_base_url: "https://api.runcrate.ai/v1",
+        models: RUNCRATE_MODELS,
+        ..OpenAiCompatDef::DEFAULT
+    },
+    OpenAiCompatDef {
         config_name: "deepseek",
         env_key: "DEEPSEEK_API_KEY",
         env_base_url_key: "DEEPSEEK_BASE_URL",
@@ -399,6 +418,7 @@ mod tests {
         assert!(!ZAI_MODELS.is_empty());
         assert!(!FIREWORKS_MODELS.is_empty());
         assert!(!DEEPINFRA_MODELS.is_empty());
+        assert!(!RUNCRATE_MODELS.is_empty());
         assert!(!MOONSHOT_MODELS.is_empty());
         assert!(!GEMINI_MODELS.is_empty());
     }
@@ -420,6 +440,7 @@ mod tests {
             MISTRAL_MODELS,
             CEREBRAS_MODELS,
             DEEPINFRA_MODELS,
+            RUNCRATE_MODELS,
             MINIMAX_MODELS,
             ZAI_MODELS,
             FIREWORKS_MODELS,
@@ -581,6 +602,20 @@ mod tests {
             nearai.capabilities.reasoning_effort_policy,
             ReasoningEffortPolicy::Unsupported
         );
+    }
+
+    #[test]
+    fn runcrate_provider_exists() {
+        let runcrate = OPENAI_COMPAT_PROVIDERS
+            .iter()
+            .find(|d| d.config_name == "runcrate")
+            .expect("runcrate entry must exist");
+        assert_eq!(runcrate.env_key, "RUNCRATE_API_KEY");
+        assert_eq!(runcrate.env_base_url_key, "RUNCRATE_BASE_URL");
+        assert_eq!(runcrate.default_base_url, "https://api.runcrate.ai/v1");
+        assert!(runcrate.requires_api_key);
+        assert!(!runcrate.local_only);
+        assert!(runcrate.supports_model_discovery);
     }
 
     #[test]
