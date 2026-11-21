@@ -216,6 +216,8 @@ serde_json      = "1"
 # Error handling
 anyhow    = "1"
 thiserror = "2"
+# LLM spend caps
+llm-budget = { default-features = false, version = "0.10.0" }
 # OpenSSL (vendored for cross-compilation)
 openssl = { features = ["vendored"], version = "0.10" }
 # Logging

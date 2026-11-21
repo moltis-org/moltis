@@ -13,6 +13,7 @@ async-stream    = { workspace = true }
 async-trait     = { workspace = true }
 futures         = { workspace = true }
 include_dir     = { workspace = true }
+llm-budget      = { workspace = true }
 moltis-common        = { workspace = true }
 moltis-observability = { workspace = true }
 moltis-config   = { workspace = true }

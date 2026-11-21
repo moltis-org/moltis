@@ -362,6 +362,16 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             message: "tools.agent_max_iterations must be at least 1".into(),
         });
     }
+    if let Some(limit) = config.tools.agent_max_cost_usd
+        && !(limit.is_finite() && limit > 0.0)
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: "tools.agent_max_cost_usd".into(),
+            message: "tools.agent_max_cost_usd must be a positive number of USD".into(),
+        });
+    }
     for (name, preset) in &config.agents.presets {
         if preset.max_iterations == Some(0) {
             diagnostics.push(Diagnostic {

@@ -725,3 +725,86 @@ pub(crate) fn apply_loop_detector_intervention(
         },
     }
 }
+
+// ── USD cost cap ────────────────────────────────────────────────────────
+
+/// Per-run USD spend cap (`tools.agent_max_cost_usd`), enforced with
+/// [`llm_budget`].
+///
+/// `agent_max_iterations` bounds how many provider calls a run makes, not
+/// what they cost: 25 iterations against a long context on a frontier model
+/// can cost far more than 25 against a small one. The gate prices each
+/// request's reported usage (fresh input, cache reads, cache writes, output)
+/// on the run's model and refuses the next provider call once the cap is
+/// spent. A model with no known price is refused before the first call,
+/// because a cap that books $0 for unpriced calls enforces nothing.
+pub(crate) struct RunCostGate {
+    budget: llm_budget::AgentBudget,
+    model: String,
+}
+
+impl RunCostGate {
+    /// Build the gate for a run. Returns `Ok(None)` when no cap is set.
+    pub(crate) fn from_limit(
+        max_cost_usd: Option<f64>,
+        model: &str,
+    ) -> Result<Option<Self>, AgentRunError> {
+        let Some(limit) = max_cost_usd else {
+            return Ok(None);
+        };
+        let budget = llm_budget::AgentBudget::builder("agent-run", limit)
+            .build()
+            .map_err(|e| {
+                AgentRunError::Other(anyhow::anyhow!("invalid tools.agent_max_cost_usd: {e}"))
+            })?;
+        let probe = llm_budget::Usage::new(1, 1);
+        let status = budget.price_status(model, &probe);
+        if status != llm_budget::PriceStatus::Exact {
+            return Err(AgentRunError::Other(anyhow::anyhow!(
+                "tools.agent_max_cost_usd is set but model '{model}' has no known price ({}); \
+                 refusing to run uncapped",
+                status.as_str()
+            )));
+        }
+        Ok(Some(Self {
+            budget,
+            model: model.to_string(),
+        }))
+    }
+
+    /// Refuse the next provider call when the cap is already spent.
+    pub(crate) fn check_before_call(&self) -> Result<(), AgentRunError> {
+        if self.budget.is_exhausted() {
+            warn!(
+                spent_usd = self.budget.spent_usd(),
+                limit_usd = self.budget.limit_usd(),
+                "agent run reached tools.agent_max_cost_usd"
+            );
+            return Err(AgentRunError::Other(anyhow::anyhow!(
+                "agent run exceeded cost budget (spent ${:.4} of ${:.4})",
+                self.budget.spent_usd(),
+                self.budget.limit_usd()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Book one request's provider-reported usage.
+    pub(crate) fn record(&self, usage: &Usage) -> Result<(), AgentRunError> {
+        let priced = llm_budget::Usage::from_parts(
+            u64::from(usage.input_tokens),
+            u64::from(usage.cache_read_tokens),
+            u64::from(usage.cache_write_tokens),
+            u64::from(usage.output_tokens),
+        );
+        self.budget
+            .record(&self.model, &priced)
+            .map(|_| ())
+            .map_err(|e| AgentRunError::Other(anyhow::anyhow!("cost budget: {e}")))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn spent_usd(&self) -> f64 {
+        self.budget.spent_usd()
+    }
+}

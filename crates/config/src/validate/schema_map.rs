@@ -237,6 +237,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ),
             ("agent_timeout_secs", Leaf),
             ("agent_max_iterations", Leaf),
+            ("agent_max_cost_usd", Leaf),
             ("agent_max_auto_continues", Leaf),
             ("agent_auto_continue_min_tool_calls", Leaf),
             ("max_tool_result_bytes", Leaf),
