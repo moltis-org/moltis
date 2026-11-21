@@ -31,7 +31,7 @@ use crate::{
 
 use super::{
     AUTO_CONTINUE_NUDGE, AgentLoopLimits, AgentRunError, AgentRunResult,
-    MALFORMED_TOOL_RETRY_PROMPT, OnEvent, RunnerEvent, UsageAccumulator,
+    MALFORMED_TOOL_RETRY_PROMPT, OnEvent, RunCostGate, RunnerEvent, UsageAccumulator,
     apply_before_llm_call_modify_payload, apply_loop_detector_intervention,
     channel_binding_from_tool_context, dispatch_after_llm_call_hook,
     dispatch_before_agent_start_hook, empty_tool_name_retry_prompt,
@@ -177,6 +177,7 @@ pub async fn run_agent_loop_streaming_with_limits(
     let mut iterations = 0;
     let mut total_tool_calls = 0;
     let mut usage_accumulator = UsageAccumulator::default();
+    let cost_gate = RunCostGate::from_limit(config.tools.agent_max_cost_usd, provider.id())?;
     let mut server_retries_remaining: u8 = 1;
     let mut rate_limit_retries_remaining: u8 = RATE_LIMIT_MAX_RETRIES;
     let mut rate_limit_backoff_ms: Option<u64> = None;
@@ -210,6 +211,9 @@ pub async fn run_agent_loop_streaming_with_limits(
                 "agent loop exceeded max iterations ({})",
                 max_iterations
             )));
+        }
+        if let Some(gate) = cost_gate.as_ref() {
+            gate.check_before_call()?;
         }
 
         // Re-compute schemas each iteration so activated tools appear immediately.
@@ -573,6 +577,9 @@ pub async fn run_agent_loop_streaming_with_limits(
         }
 
         usage_accumulator.record_request(request_usage.clone());
+        if let Some(gate) = cost_gate.as_ref() {
+            gate.record(&request_usage)?;
+        }
 
         // Finalize tool call arguments from accumulated strings.
         // Use stream_idx_to_vec_pos to map streaming indices (which may not

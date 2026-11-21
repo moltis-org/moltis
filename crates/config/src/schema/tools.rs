@@ -24,6 +24,11 @@ pub struct ToolsConfig {
     /// Maximum number of agent loop iterations before aborting. Default 25.
     #[serde(default = "default_agent_max_iterations")]
     pub agent_max_iterations: usize,
+    /// Maximum USD spend for a single agent run, priced from the provider's
+    /// reported token usage on the run's model. `None` (default) = no cap.
+    /// When set, a model with no known price is refused instead of run uncapped.
+    #[serde(default)]
+    pub agent_max_cost_usd: Option<f64>,
     /// Maximum auto-continue nudges when the model stops mid-task (0 = disabled). Default 2.
     #[serde(default = "default_agent_max_auto_continues")]
     pub agent_max_auto_continues: usize,
@@ -75,6 +80,7 @@ impl Default for ToolsConfig {
             fs: FsToolsConfig::default(),
             agent_timeout_secs: default_agent_timeout_secs(),
             agent_max_iterations: default_agent_max_iterations(),
+            agent_max_cost_usd: None,
             agent_max_auto_continues: default_agent_max_auto_continues(),
             agent_auto_continue_min_tool_calls: default_agent_auto_continue_min_tool_calls(),
             max_tool_result_bytes: default_max_tool_result_bytes(),
