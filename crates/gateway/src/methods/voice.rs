@@ -151,6 +151,7 @@ pub(super) enum VoiceProviderId {
     Deepgram,
     Google,
     Mistral,
+    Gemini,
     ElevenlabsStt,
     VoxtralLocal,
     WhisperLocal,
@@ -244,6 +245,13 @@ impl VoiceProviderId {
                 key_url_label: Some("console.mistral.ai"),
                 hint: None,
             },
+            Self::Gemini => VoiceProviderMeta {
+                description: "Gemini's dedicated transcription model, 85+ languages auto-detected",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://aistudio.google.com/apikey"),
+                key_url_label: Some("aistudio.google.com"),
+                hint: Some("Uses a Google AI Studio key, the same one as the Gemini LLM provider."),
+            },
             Self::ElevenlabsStt => VoiceProviderMeta {
                 description: "90+ languages, word timestamps. Same API key as ElevenLabs TTS",
                 key_placeholder: Some("API key"),
@@ -303,6 +311,7 @@ impl VoiceProviderId {
             "deepgram" => Some(Self::Deepgram),
             "google" => Some(Self::Google),
             "mistral" => Some(Self::Mistral),
+            "gemini" => Some(Self::Gemini),
             "elevenlabs" | "elevenlabs-stt" => Some(Self::ElevenlabsStt),
             "voxtral-local" => Some(Self::VoxtralLocal),
             "whisper-local" => Some(Self::WhisperLocal),
@@ -393,6 +402,9 @@ pub(super) async fn detect_voice_providers(
     let env_groq_key = std::env::var("GROQ_API_KEY").ok();
     let env_deepgram_key = std::env::var("DEEPGRAM_API_KEY").ok();
     let env_mistral_key = std::env::var("MISTRAL_API_KEY").ok();
+    let env_gemini_key = std::env::var("GEMINI_API_KEY")
+        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+        .ok();
 
     // Check for API keys from LLM providers config
     let llm_openai_key = config
@@ -406,6 +418,7 @@ pub(super) async fn detect_voice_providers(
         .get("groq")
         .and_then(|p| p.api_key.as_ref())
         .map(|k| k.expose_secret().to_string());
+    let llm_gemini_key = crate::voice::gemini_llm_key(config).is_some();
     let _llm_deepseek_key = config
         .providers
         .get("deepseek")
@@ -620,6 +633,22 @@ pub(super) async fn detect_voice_providers(
                 config.voice.stt.mistral.api_key.is_some(),
                 env_mistral_key.is_some(),
                 false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            VoiceProviderId::Gemini,
+            "Google Gemini",
+            "stt",
+            "cloud",
+            crate::voice::resolve_gemini_key(config).is_some(),
+            config.voice.stt.gemini.enabled && config.voice.stt.enabled,
+            false,
+            key_source(
+                config.voice.stt.gemini.api_key.is_some(),
+                env_gemini_key.is_some(),
+                llm_gemini_key,
             ),
             None,
             None,
@@ -1228,6 +1257,7 @@ pub(super) fn toggle_voice_provider(
                 "deepgram" => cfg.voice.stt.deepgram.enabled = enabled,
                 "google" => cfg.voice.stt.google.enabled = enabled,
                 "mistral" => cfg.voice.stt.mistral.enabled = enabled,
+                "gemini" => cfg.voice.stt.gemini.enabled = enabled,
                 "elevenlabs" | "elevenlabs-stt" => {
                     cfg.voice.stt.elevenlabs.enabled = enabled;
                 },

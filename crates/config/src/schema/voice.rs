@@ -242,6 +242,8 @@ pub struct VoiceSttConfig {
     pub google: VoiceGoogleSttConfig,
     /// Mistral AI (Voxtral Transcribe) settings.
     pub mistral: VoiceMistralSttConfig,
+    /// Google Gemini transcription settings.
+    pub gemini: VoiceGeminiSttConfig,
     /// ElevenLabs Scribe settings.
     pub elevenlabs: VoiceElevenLabsSttConfig,
     /// Voxtral local (vLLM server) settings.
@@ -265,6 +267,7 @@ impl Default for VoiceSttConfig {
             deepgram: VoiceDeepgramConfig::default(),
             google: VoiceGoogleSttConfig::default(),
             mistral: VoiceMistralSttConfig::default(),
+            gemini: VoiceGeminiSttConfig::default(),
             elevenlabs: VoiceElevenLabsSttConfig::default(),
             voxtral_local: VoiceVoxtralLocalConfig::default(),
             whisper_local: VoiceWhisperLocalConfig::default(),
@@ -365,6 +368,8 @@ pub enum VoiceSttProvider {
     Google,
     #[serde(rename = "mistral")]
     Mistral,
+    #[serde(rename = "gemini")]
+    Gemini,
     #[serde(rename = "elevenlabs-stt", alias = "elevenlabs")]
     ElevenLabs,
     #[serde(rename = "voxtral-local")]
@@ -386,6 +391,7 @@ impl VoiceSttProvider {
             Self::Deepgram => "deepgram",
             Self::Google => "google",
             Self::Mistral => "mistral",
+            Self::Gemini => "gemini",
             Self::ElevenLabs => "elevenlabs-stt",
             Self::VoxtralLocal => "voxtral-local",
             Self::WhisperLocal => "whisper-local",
@@ -402,6 +408,7 @@ impl VoiceSttProvider {
             "deepgram" => Some(Self::Deepgram),
             "google" => Some(Self::Google),
             "mistral" => Some(Self::Mistral),
+            "gemini" => Some(Self::Gemini),
             "elevenlabs" | "elevenlabs-stt" => Some(Self::ElevenLabs),
             "voxtral-local" => Some(Self::VoxtralLocal),
             "whisper-local" => Some(Self::WhisperLocal),
@@ -420,6 +427,7 @@ impl VoiceSttProvider {
             Self::Deepgram => "Deepgram",
             Self::Google => "Google Cloud",
             Self::Mistral => "Mistral AI",
+            Self::Gemini => "Google Gemini",
             Self::VoxtralLocal => "Voxtral (Local)",
             Self::WhisperLocal => "Whisper (Local)",
             Self::WhisperCli => "whisper.cpp",
@@ -437,6 +445,7 @@ impl VoiceSttProvider {
             Self::Deepgram,
             Self::Google,
             Self::Mistral,
+            Self::Gemini,
             Self::VoxtralLocal,
             Self::WhisperLocal,
             Self::WhisperCli,
@@ -611,6 +620,38 @@ pub struct VoiceMistralSttConfig {
 }
 
 impl Default for VoiceMistralSttConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_key: None,
+            model: None,
+            language: None,
+        }
+    }
+}
+
+/// Google Gemini transcription configuration (Google AI Studio key).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceGeminiSttConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// API key (from GEMINI_API_KEY / GOOGLE_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Model to use (e.g., "gemini-3.5-transcribe").
+    pub model: Option<String>,
+    /// BCP-47 language hint (e.g., "fr-FR"). Auto-detected when unset.
+    pub language: Option<String>,
+}
+
+impl Default for VoiceGeminiSttConfig {
     fn default() -> Self {
         Self {
             enabled: true,

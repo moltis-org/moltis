@@ -722,6 +722,11 @@ loopback_http = true                # Plain HTTP on loopback binds: http://local
 # model = "whisper-large-v3"            # Model name (server-specific)
 # language = "en"                       # Optional ISO 639-1 hint
 
+# [voice.stt.gemini]
+# api_key = "..."                       # Or GEMINI_API_KEY / GOOGLE_API_KEY / providers.gemini
+# model = "gemini-3.5-transcribe"       # Gemini's dedicated transcription model
+# language = "fr-FR"                    # Optional BCP-47 hint, auto-detected when unset
+
 # ══════════════════════════════════════════════════════════════════════════════
 # NGROK
 # ══════════════════════════════════════════════════════════════════════════════

@@ -108,6 +108,7 @@
   - [`voice.stt.deepgram`](#voicesttdeepgram)
   - [`voice.stt.google`](#voicesttgoogle)
   - [`voice.stt.mistral`](#voicesttmistral)
+  - [`voice.stt.gemini`](#voicesttgemini)
   - [`voice.stt.elevenlabs`](#voicesttelevenlabs)
   - [`voice.stt.voxtral_local`](#voicesttvoxtral-local)
   - [`voice.stt.whisper_cli`](#voicesttwhisper-cli)
@@ -1049,13 +1050,14 @@ context_window = 1_000_000
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `true` | Enable STT globally |
-| `provider` | optional enum: `whisper`, `groq`, `deepgram`, `google`, `mistral`, `elevenlabs-stt`, `voxtral-local`, `whisper-cli`, `sherpa-onnx` | `null` | Active provider. `null` auto-selects the first configured provider. Values: `"whisper"`, `"groq"`, `"deepgram"`, `"google"`, `"mistral"`, `"elevenlabs-stt"`, `"voxtral-local"`, `"whisper-cli"`, `"sherpa-onnx"` |
+| `provider` | optional enum: `whisper`, `groq`, `deepgram`, `google`, `mistral`, `gemini`, `elevenlabs-stt`, `voxtral-local`, `whisper-cli`, `sherpa-onnx` | `null` | Active provider. `null` auto-selects the first configured provider. Values: `"whisper"`, `"groq"`, `"deepgram"`, `"google"`, `"mistral"`, `"gemini"`, `"elevenlabs-stt"`, `"voxtral-local"`, `"whisper-cli"`, `"sherpa-onnx"` |
 | `providers` | array of string | `[]` | Provider IDs to list in the UI. Empty means list all |
 | `whisper` | `VoiceWhisperConfig` | (see below) | OpenAI Whisper settings |
 | `groq` | `VoiceGroqSttConfig` | (see below) | Groq (Whisper-compatible) settings |
 | `deepgram` | `VoiceDeepgramConfig` | (see below) | Deepgram settings |
 | `google` | `VoiceGoogleSttConfig` | (see below) | Google Cloud Speech-to-Text settings |
 | `mistral` | `VoiceMistralSttConfig` | (see below) | Mistral AI (Voxtral Transcribe) settings |
+| `gemini` | `VoiceGeminiSttConfig` | (see below) | Google Gemini transcription settings |
 | `elevenlabs` | `VoiceElevenLabsSttConfig` | (see below) | ElevenLabs Scribe settings |
 | `voxtral_local` | `VoiceVoxtralLocalConfig` | (see below) | Voxtral local (vLLM server) settings |
 | `whisper_cli` | `VoiceWhisperCliConfig` | (see below) | whisper-cli (whisper.cpp) settings |
@@ -1118,6 +1120,17 @@ context_window = 1_000_000
 | `api_key` | optional secret string | `null` | API key (from `MISTRAL_API_KEY` env or config) |
 | `model` | optional string | `null` | Model to use (e.g. `"voxtral-mini-latest"`) |
 | `language` | optional string | `null` | Language hint (ISO 639-1 code) |
+
+
+### `voice.stt.gemini`
+
+**Struct:** `VoiceGeminiSttConfig`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `api_key` | optional secret string | `null` | Google AI Studio API key. Falls back to `GEMINI_API_KEY`, `GOOGLE_API_KEY`, then the Gemini LLM provider key (`providers.gemini.api_key` or the key saved in LLM settings) |
+| `model` | optional string | `null` | Model to use (default `"gemini-3.5-transcribe"`) |
+| `language` | optional string | `null` | BCP-47 language hint (e.g. `"fr-FR"`). Unset auto-detects the spoken language |
 
 
 ### `voice.stt.elevenlabs`

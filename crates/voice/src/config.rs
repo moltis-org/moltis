@@ -252,7 +252,7 @@ pub struct SttConfig {
     /// Enable STT globally.
     pub enabled: bool,
 
-    /// Default provider: "whisper", "groq", "deepgram", "google", "mistral", "voxtral-local", "whisper-cli", "sherpa-onnx", "elevenlabs".
+    /// Default provider: "whisper", "groq", "deepgram", "google", "mistral", "gemini", "voxtral-local", "whisper-cli", "sherpa-onnx", "elevenlabs".
     pub provider: String,
 
     /// OpenAI Whisper settings.
@@ -269,6 +269,9 @@ pub struct SttConfig {
 
     /// Mistral AI (Voxtral) settings.
     pub mistral: MistralSttConfig,
+
+    /// Google Gemini transcription settings.
+    pub gemini: GeminiSttConfig,
 
     /// Voxtral local (vLLM) settings.
     pub voxtral_local: VoxtralLocalConfig,
@@ -296,6 +299,7 @@ impl Default for SttConfig {
             deepgram: DeepgramConfig::default(),
             google: GoogleSttConfig::default(),
             mistral: MistralSttConfig::default(),
+            gemini: GeminiSttConfig::default(),
             voxtral_local: VoxtralLocalConfig::default(),
             whisper_local: WhisperLocalConfig::default(),
             whisper_cli: WhisperCliConfig::default(),
@@ -412,6 +416,26 @@ pub struct MistralSttConfig {
     pub model: Option<String>,
 
     /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+/// Google Gemini transcription configuration (Google AI Studio key).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GeminiSttConfig {
+    /// API key (from GEMINI_API_KEY / GOOGLE_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+
+    /// Model to use (e.g., "gemini-3.5-transcribe").
+    pub model: Option<String>,
+
+    /// BCP-47 language hint (e.g., "fr-FR"). Auto-detected when unset.
     pub language: Option<String>,
 }
 

@@ -79,6 +79,7 @@ test.describe("Voice provider visibility", () => {
 		expect(pageText).toContain("Deepgram");
 		expect(pageText).toContain("Google Cloud STT");
 		expect(pageText).toContain("Mistral");
+		expect(pageText).toContain("Google Gemini");
 		expect(pageText).toContain("ElevenLabs Scribe");
 
 		// Local STT

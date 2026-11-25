@@ -9,14 +9,16 @@ use {
 };
 
 use moltis_voice::{
-    AudioFormat, DeepgramStt, ElevenLabsStt, GoogleStt, GroqStt, MistralStt, SherpaOnnxStt,
-    SttProvider, SttProviderId, TranscribeRequest, VoxtralLocalStt, WhisperCliStt, WhisperLocalStt,
-    WhisperStt,
+    AudioFormat, DeepgramStt, ElevenLabsStt, GeminiStt, GoogleStt, GroqStt, MistralStt,
+    SherpaOnnxStt, SttProvider, SttProviderId, TranscribeRequest, VoxtralLocalStt, WhisperCliStt,
+    WhisperLocalStt, WhisperStt,
 };
 
 use crate::services::{ServiceResult, SttService};
 
-use super::{load_voice_config, resolve_openai_key, resolve_openai_whisper_base_url};
+use super::{
+    load_voice_config, resolve_gemini_key, resolve_openai_key, resolve_openai_whisper_base_url,
+};
 
 /// Live STT service that delegates to voice providers.
 /// Reads fresh config on each operation to pick up changes.
@@ -189,6 +191,13 @@ impl LiveSttService {
                         cfg.voice.stt.mistral.language.clone(),
                     )) as Box<dyn SttProvider + Send + Sync>
                 }),
+            SttProviderId::Gemini => resolve_gemini_key(&cfg).map(|key| {
+                Box::new(GeminiStt::with_options(
+                    Some(key),
+                    cfg.voice.stt.gemini.model.clone(),
+                    cfg.voice.stt.gemini.language.clone(),
+                )) as Box<dyn SttProvider + Send + Sync>
+            }),
             SttProviderId::VoxtralLocal => {
                 let provider = VoxtralLocalStt::with_options(
                     Some(cfg.voice.stt.voxtral_local.endpoint.clone()),
@@ -298,6 +307,7 @@ impl LiveSttService {
                 cfg.voice.stt.mistral.api_key.is_some()
                     || Self::env_secret("MISTRAL_API_KEY").is_some(),
             ),
+            (SttProviderId::Gemini, resolve_gemini_key(&cfg).is_some()),
             (
                 SttProviderId::VoxtralLocal,
                 VoxtralLocalStt::with_options(
@@ -607,8 +617,8 @@ endpoint = "http://127.0.0.1:9001/"
         let providers = service.providers().await.unwrap();
 
         let providers_arr = providers.as_array().unwrap();
-        // 6 cloud providers + 4 local providers.
-        assert_eq!(providers_arr.len(), 10);
+        // 7 cloud providers + 4 local providers.
+        assert_eq!(providers_arr.len(), 11);
         // Check all providers are listed
         let ids: Vec<_> = providers_arr
             .iter()
@@ -619,6 +629,7 @@ endpoint = "http://127.0.0.1:9001/"
         assert!(ids.contains(&"deepgram"));
         assert!(ids.contains(&"google"));
         assert!(ids.contains(&"mistral"));
+        assert!(ids.contains(&"gemini"));
         assert!(ids.contains(&"voxtral-local"));
         assert!(ids.contains(&"whisper-local"));
         assert!(ids.contains(&"whisper-cli"));

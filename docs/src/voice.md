@@ -38,6 +38,7 @@ When disabled:
 │  ├─ GoogleTts              │  ├─ DeepgramStt                │
 │  ├─ PiperTts (local)       │  ├─ GoogleStt                  │
 │  └─ CoquiTts (local)       │  ├─ MistralStt                 │
+│                            │  ├─ GeminiStt                  │
 │                            │  ├─ VoxtralLocalStt (local)    │
 │                            │  ├─ WhisperCliStt (local)      │
 │                            │  └─ SherpaOnnxStt (local)      │
@@ -445,6 +446,13 @@ api_key = "..."
 model = "voxtral-mini-latest"  # default
 language = "en"
 
+[voice.stt.gemini]
+# No api_key needed if GEMINI_API_KEY / GOOGLE_API_KEY is set or Gemini is
+# configured as an LLM provider. Google AI Studio key, not Google Cloud.
+# api_key = "..."
+model = "gemini-3.5-transcribe"  # default
+# language = "fr-FR"  # Optional BCP-47 hint; omit to auto-detect
+
 # Local providers - no API key, requires server or binary
 
 # Voxtral local via vLLM server
@@ -585,6 +593,7 @@ List available STT providers.
   { "id": "deepgram", "name": "Deepgram", "configured": false },
   { "id": "google", "name": "Google Cloud", "configured": false },
   { "id": "mistral", "name": "Mistral AI", "configured": false },
+  { "id": "gemini", "name": "Google Gemini", "configured": false },
   { "id": "voxtral-local", "name": "Voxtral (Local)", "configured": false },
   { "id": "whisper-cli", "name": "whisper.cpp", "configured": false },
   { "id": "sherpa-onnx", "name": "sherpa-onnx", "configured": false }
@@ -637,7 +646,7 @@ Change the active STT provider.
 { "provider": "groq" }
 ```
 
-Valid provider IDs: `whisper`, `groq`, `deepgram`, `google`, `mistral`, `voxtral-local`, `whisper-cli`, `sherpa-onnx`
+Valid provider IDs: `whisper`, `groq`, `deepgram`, `google`, `mistral`, `gemini`, `voxtral-local`, `whisper-cli`, `sherpa-onnx`
 
 ## Code Structure
 
@@ -661,6 +670,7 @@ src/
     ├── deepgram.rs     # Deepgram implementation
     ├── google.rs       # Google Cloud Speech-to-Text
     ├── mistral.rs      # Mistral AI Voxtral cloud implementation
+    ├── gemini.rs       # Google Gemini transcription model
     ├── voxtral_local.rs # Voxtral via local vLLM server
     ├── cli_utils.rs    # Shared utilities for CLI providers
     ├── whisper_cli.rs  # whisper.cpp CLI wrapper
