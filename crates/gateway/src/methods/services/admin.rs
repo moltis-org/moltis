@@ -599,6 +599,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                     Some(moltis_config::VoiceSttProvider::Mistral);
                                 cfg.voice.stt.enabled = true;
                             },
+                            "gemini" => {
+                                cfg.voice.stt.gemini.api_key = None;
+                                cfg.voice.stt.provider =
+                                    Some(moltis_config::VoiceSttProvider::Gemini);
+                                cfg.voice.stt.enabled = true;
+                            },
                             _ => {},
                         }
 
@@ -696,6 +702,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         },
                         "mistral" => {
                             cfg.voice.stt.mistral.api_key = None;
+                        },
+                        "gemini" => {
+                            cfg.voice.stt.gemini.api_key = None;
                         },
                         "elevenlabs-stt" => {
                             cfg.voice.tts.elevenlabs.api_key = None;

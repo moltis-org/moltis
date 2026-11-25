@@ -877,6 +877,7 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         "deepgram",
         "google",
         "mistral",
+        "gemini",
         "elevenlabs",
         "elevenlabs-stt",
         "voxtral-local",
@@ -1246,6 +1247,7 @@ fn check_plaintext_api_keys(config: &MoltisConfig, diagnostics: &mut Vec<Diagnos
             "voice.stt.mistral.api_key",
             &config.voice.stt.mistral.api_key,
         ),
+        ("voice.stt.gemini.api_key", &config.voice.stt.gemini.api_key),
         (
             "voice.stt.elevenlabs.api_key",
             &config.voice.stt.elevenlabs.api_key,

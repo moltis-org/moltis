@@ -856,6 +856,15 @@ pub(super) fn build_schema_map() -> KnownKeys {
                             ])),
                         ),
                         (
+                            "gemini",
+                            Struct(HashMap::from([
+                                ("enabled", Leaf),
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
                             "elevenlabs",
                             Struct(HashMap::from([
                                 ("enabled", Leaf),

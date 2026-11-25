@@ -4,10 +4,14 @@
 //! `SttService` traits using the moltis-voice crate's providers.
 
 #[cfg(feature = "voice")]
+mod gemini_key;
+#[cfg(feature = "voice")]
 mod stt_service;
 #[cfg(feature = "voice")]
 mod tts_service;
 
+#[cfg(feature = "voice")]
+pub(crate) use gemini_key::{gemini_llm_key, resolve_gemini_key};
 #[cfg(feature = "voice")]
 pub use stt_service::{LiveSttService, SttServiceConfig};
 #[cfg(feature = "voice")]
@@ -87,6 +91,11 @@ pub(crate) fn merge_voice_keys(cfg: &mut moltis_config::MoltisConfig) {
     if let Some(key) = store.load("voice-mistral") {
         cfg.voice.stt.mistral.api_key = Some(Secret::new(key));
     }
+
+    // Gemini STT
+    if let Some(key) = store.load("voice-gemini") {
+        cfg.voice.stt.gemini.api_key = Some(Secret::new(key));
+    }
 }
 
 /// Map a UI provider name to its credential-store key name.
@@ -103,6 +112,7 @@ pub(crate) fn voice_key_store_name(provider: &str) -> String {
         "groq" => "voice-groq".to_string(),
         "deepgram" => "voice-deepgram".to_string(),
         "mistral" => "voice-mistral".to_string(),
+        "gemini" => "voice-gemini".to_string(),
         other => format!("voice-{other}"),
     }
 }
@@ -151,6 +161,11 @@ pub(crate) fn migrate_voice_keys_to_key_store(config: &moltis_config::MoltisConf
             "voice-mistral",
             None,
             config.voice.stt.mistral.api_key.as_ref(),
+        ),
+        (
+            "voice-gemini",
+            None,
+            config.voice.stt.gemini.api_key.as_ref(),
         ),
     ];
 
@@ -206,6 +221,9 @@ pub(crate) fn migrate_voice_keys_to_key_store(config: &moltis_config::MoltisConf
                 },
                 "voice-mistral" => {
                     cfg.voice.stt.mistral.api_key = None;
+                },
+                "voice-gemini" => {
+                    cfg.voice.stt.gemini.api_key = None;
                 },
                 _ => {},
             }
@@ -416,6 +434,7 @@ mod tests {
         assert_eq!(voice_key_store_name("groq"), "voice-groq");
         assert_eq!(voice_key_store_name("deepgram"), "voice-deepgram");
         assert_eq!(voice_key_store_name("mistral"), "voice-mistral");
+        assert_eq!(voice_key_store_name("gemini"), "voice-gemini");
         assert_eq!(voice_key_store_name("custom"), "voice-custom");
     }
 
