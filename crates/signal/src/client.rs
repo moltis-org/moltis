@@ -71,9 +71,11 @@ impl SignalClient {
                 "signal-cli check failed with HTTP {status}"
             )));
         }
-        res.json::<Value>()
+        let body = res
+            .bytes()
             .await
-            .map_err(|e| moltis_channels::Error::external("signal-cli check json", e))
+            .map_err(|e| moltis_channels::Error::external("signal-cli check body", e))?;
+        parse_check_body(&body)
     }
 
     pub async fn stream_events(
@@ -164,5 +166,39 @@ impl SignalClient {
                 "signal-cli RPC {method} returned no result"
             ))
         })
+    }
+}
+
+/// signal-cli's `/api/v1/check` answers 200 with an empty body, so only a
+/// non-empty body is decoded.
+fn parse_check_body(body: &[u8]) -> moltis_channels::Result<Value> {
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Ok(Value::Null);
+    }
+    serde_json::from_slice(body)
+        .map_err(|e| moltis_channels::Error::external("signal-cli check json", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_check_body_is_healthy() {
+        assert!(matches!(parse_check_body(b""), Ok(Value::Null)));
+        assert!(matches!(parse_check_body(b" \n"), Ok(Value::Null)));
+    }
+
+    #[test]
+    fn json_check_body_is_decoded() {
+        assert_eq!(
+            parse_check_body(br#"{"version":"0.13"}"#).ok(),
+            Some(json!({ "version": "0.13" }))
+        );
+    }
+
+    #[test]
+    fn malformed_check_body_is_an_error() {
+        assert!(parse_check_body(b"not json").is_err());
     }
 }
