@@ -310,6 +310,26 @@ When a message arrives from Discord:
 6. The message is logged and dispatched to the chat engine
 7. Commands (messages starting with `/`) are dispatched to the command handler
 
+### Inbound Attachments
+
+Attachments from approved senders are handled by type. A single message can
+mix several of them, and its text is kept alongside.
+
+| Type | Handling |
+|------|----------|
+| **Voice / audio** | Transcribed with the configured speech-to-text provider. Without one, the bot replies with a hint pointing to **Settings → Voice**; documents sent with the voice note are still saved and passed to the agent. |
+| **Image** | Resized for the model and sent as a multimodal attachment. |
+| **Document** (PDF, text, Office files, archives, video, anything else) | Downloaded, saved in the session media directory and passed to the agent with its filename, MIME type and local path, so tools can open it. |
+
+The type Discord reports wins over the file extension: a `.webm` reported as
+`video/webm` is a document, while a `.webm` without a reported type is treated
+as a voice clip.
+
+Downloads are capped at **25 MB** per file. When a document is too large, its
+download fails or it cannot be saved, the bot tells the sender which file it
+could not read, and the agent is told the file was not received. A message
+made only of unreadable documents gets that notice and nothing else.
+
 ### Outbound Messages
 
 Discord enforces a **2,000-character limit** per message. Moltis automatically
@@ -346,6 +366,7 @@ crates/discord/
     ├── config.rs      # DiscordAccountConfig (token, policies, presence, OTP)
     ├── error.rs       # Error enum (Config, Gateway, Send, Channel)
     ├── handler.rs     # serenity EventHandler (inbound + OTP + interactions)
+    ├── handler/       # Attachment download, document ingestion, reactions
     ├── outbound.rs    # ChannelOutbound + ChannelStreamOutbound impls
     ├── plugin.rs      # ChannelPlugin + ChannelStatus impls
     └── state.rs       # AccountState + AccountStateMap (includes OtpState)
