@@ -9,7 +9,7 @@ capabilities that control what features are available.
 | Channel | Inbound Mode | Public URL Required | Key Capabilities |
 |---------|-------------|--------------------|--------------------|
 | Telegram | Polling | No | Streaming, voice ingest, reactions, OTP, location |
-| Discord | Gateway (WebSocket) | No | Streaming, interactive messages, threads, voice ingest, reactions |
+| Discord | Gateway (WebSocket) | No | Streaming, interactive messages, threads, voice, image and document ingest, reactions |
 | Matrix | Gateway (sync loop) | No | Streaming, voice ingest, interactive polls, threads, reactions, OTP, location, encrypted chats, device verification, ownership bootstrap |
 | Microsoft Teams | Webhook | Yes | Streaming, interactive messages, threads, reactions |
 | WhatsApp | Gateway (WebSocket) | No | Streaming, voice ingest, OTP, pairing, location |

@@ -1,6 +1,15 @@
-use moltis_channels::ChannelReplyTarget;
+use moltis_channels::{ChannelReplyTarget, Error as ChannelError, SavedChannelFile};
 
-use super::*;
+use super::{
+    super::{
+        attachments::{attachment_is_document, attachment_is_image},
+        documents::{
+            DocumentIngestion, display_name, document_media_type, ingest_discord_documents,
+            stored_filename,
+        },
+    },
+    *,
+};
 
 #[test]
 fn strip_mention_at_start() {
@@ -284,15 +293,24 @@ fn discord_message_created_ms_from_snowflake() {
 // ── Inbound media attachment tests ───────────────────────────────
 
 fn make_attachment(content_type: Option<&str>, filename: &str) -> Attachment {
+    make_sized_attachment(1, content_type, filename, 1024)
+}
+
+fn make_sized_attachment(
+    id: u64,
+    content_type: Option<&str>,
+    filename: &str,
+    size: u32,
+) -> Attachment {
     let content_type_json = match content_type {
         Some(ct) => format!("\"{ct}\""),
         None => "null".to_string(),
     };
     let json = format!(
         r#"{{
-                "id": "1",
+                "id": "{id}",
                 "filename": "{filename}",
-                "size": 1024,
+                "size": {size},
                 "url": "https://cdn.discordapp.com/attachments/1/2/{filename}",
                 "proxy_url": "https://media.discordapp.net/attachments/1/2/{filename}",
                 "content_type": {content_type_json}
@@ -694,4 +712,440 @@ async fn resolve_image_success_builds_multimodal_attachment() {
     assert!(media.voice_audio.is_none());
     assert_eq!(media.attachments[0].media_type, "image/jpeg");
     assert!(!media.attachments[0].data.is_empty());
+}
+
+// ── Document ingestion ───────────────────────────────────────────
+
+#[test]
+fn attachment_is_document_excludes_audio_and_images() {
+    assert!(attachment_is_document(&make_attachment(
+        Some("application/pdf"),
+        "spec.pdf"
+    )));
+    assert!(attachment_is_document(&make_attachment(None, "notes.txt")));
+    assert!(attachment_is_document(&make_attachment(
+        Some("video/mp4"),
+        "clip.mp4"
+    )));
+    assert!(!attachment_is_document(&make_attachment(
+        Some("audio/ogg"),
+        "v.ogg"
+    )));
+    assert!(!attachment_is_document(&make_attachment(None, "pic.png")));
+}
+
+#[test]
+fn document_media_type_normalizes_and_falls_back_to_extension() {
+    assert_eq!(
+        document_media_type(Some("text/plain; charset=utf-8"), "notes.txt"),
+        "text/plain"
+    );
+    assert_eq!(
+        document_media_type(Some("Application/PDF"), "spec.pdf"),
+        "application/pdf"
+    );
+    assert_eq!(document_media_type(None, "report.pdf"), "application/pdf");
+    assert_eq!(
+        document_media_type(Some("application/octet-stream"), "data.csv"),
+        "text/csv"
+    );
+    assert_eq!(
+        document_media_type(Some("text/plain\n[evil]"), "blob"),
+        "application/octet-stream"
+    );
+    assert_eq!(
+        document_media_type(None, "blob"),
+        "application/octet-stream"
+    );
+}
+
+#[test]
+fn stored_filename_is_unique_sanitized_and_bounded() {
+    assert_eq!(
+        stored_filename("42", "../../Q3 report.pdf", "application/pdf"),
+        "42_Q3report.pdf"
+    );
+    assert_eq!(stored_filename("7", "notes", "text/plain"), "7_notes.txt");
+    assert_eq!(
+        stored_filename("7", "日本語", "application/pdf"),
+        "7_discord-file.pdf"
+    );
+    let long = format!("{}.pdf", "a".repeat(400));
+    let stored = stored_filename("7", &long, "application/pdf");
+    assert_eq!(stored, format!("7_{}.pdf", "a".repeat(160)));
+    assert_eq!(
+        stored_filename("7", "archive.tar.gz", "application/gzip"),
+        "7_archive.tar.gz"
+    );
+    assert_eq!(stored_filename("7", ".env", "text/plain"), "7_env.txt");
+}
+
+#[test]
+fn display_name_strips_markup_and_control_characters() {
+    assert_eq!(display_name("re`port].pdf"), "report.pdf");
+    assert_eq!(display_name("a\nb.txt"), "ab.txt");
+    assert_eq!(display_name("  "), "file");
+    assert_eq!(display_name(&"x".repeat(500)).chars().count(), 120);
+}
+
+struct UrlDownloader;
+
+#[async_trait]
+impl InboundMediaDownloader for UrlDownloader {
+    async fn download_media(
+        &self,
+        source: &InboundMediaSource,
+        _max_bytes: usize,
+    ) -> ChannelsResult<Vec<u8>> {
+        match source {
+            InboundMediaSource::RemoteUrl { url } if url.contains("broken") => {
+                Err(ChannelError::unavailable("cdn error"))
+            },
+            InboundMediaSource::RemoteUrl { url } => Ok(url.as_bytes().to_vec()),
+            _ => Err(ChannelError::invalid_input("unexpected source")),
+        }
+    }
+}
+
+struct DocumentSink {
+    save_succeeds: bool,
+    saved: std::sync::Mutex<Vec<(String, Vec<u8>)>>,
+}
+
+impl DocumentSink {
+    fn new(save_succeeds: bool) -> Self {
+        Self {
+            save_succeeds,
+            saved: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn saved_filenames(&self) -> Vec<String> {
+        self.saved
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+}
+
+#[async_trait]
+impl ChannelEventSink for DocumentSink {
+    async fn emit(&self, _event: ChannelEvent) {}
+
+    async fn dispatch_to_chat(
+        &self,
+        _text: &str,
+        _reply_to: ChannelReplyTarget,
+        _meta: ChannelMessageMeta,
+    ) {
+    }
+
+    async fn dispatch_command(
+        &self,
+        _command: &str,
+        _reply_to: ChannelReplyTarget,
+        _sender_id: Option<&str>,
+    ) -> ChannelsResult<String> {
+        Ok(String::new())
+    }
+
+    async fn request_disable_account(&self, _channel_type: &str, _account_id: &str, _reason: &str) {
+    }
+
+    async fn save_channel_attachment(
+        &self,
+        file_data: &[u8],
+        filename: &str,
+        _reply_to: &ChannelReplyTarget,
+    ) -> Option<SavedChannelFile> {
+        if !self.save_succeeds {
+            return None;
+        }
+        self.saved
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((filename.to_string(), file_data.to_vec()));
+        Some(SavedChannelFile {
+            filename: filename.to_string(),
+            media_ref: format!("media/discord/{filename}"),
+            absolute_path: format!("/tmp/media/{filename}"),
+        })
+    }
+}
+
+fn document_reply_target() -> ChannelReplyTarget {
+    message_reply_target(
+        "acct",
+        serenity::all::ChannelId::new(10),
+        MessageId::new(20),
+        None,
+    )
+}
+
+#[tokio::test]
+async fn ingest_documents_saves_each_document_and_skips_media() {
+    let sink = DocumentSink::new(true);
+    let attachments = [
+        make_sized_attachment(11, Some("application/pdf"), "spec.pdf", 2048),
+        make_sized_attachment(12, Some("image/png"), "shot.png", 2048),
+        make_sized_attachment(13, None, "notes.md", 64),
+        make_sized_attachment(14, Some("audio/ogg"), "voice.ogg", 64),
+    ];
+
+    let ingestion = ingest_discord_documents(
+        &attachments,
+        &sink,
+        &document_reply_target(),
+        "acct",
+        &UrlDownloader,
+    )
+    .await;
+
+    assert!(ingestion.has_saved());
+    assert!(!ingestion.has_failures());
+    assert!(ingestion.user_notice().is_none());
+    assert_eq!(sink.saved_filenames(), vec![
+        "11_spec.pdf".to_string(),
+        "13_notes.md".to_string()
+    ]);
+
+    let documents = ingestion
+        .documents()
+        .unwrap_or_else(|| panic!("expected saved documents"));
+    assert_eq!(documents.len(), 2);
+    assert_eq!(documents[0].display_name, "spec.pdf");
+    assert_eq!(documents[0].stored_filename, "11_spec.pdf");
+    assert_eq!(documents[0].mime_type, "application/pdf");
+    let expected_size = "https://cdn.discordapp.com/attachments/1/2/spec.pdf".len() as u64;
+    assert_eq!(documents[0].size_bytes, Some(expected_size));
+    assert_eq!(documents[1].mime_type, "text/markdown");
+
+    assert_eq!(
+        ingestion.append_labels("please summarize"),
+        "please summarize\n\n[Document: spec.pdf (application/pdf)]\n\n[Document: notes.md (text/markdown)]"
+    );
+}
+
+#[tokio::test]
+async fn ingest_documents_without_caption_labels_only() {
+    let sink = DocumentSink::new(true);
+    let attachments = [make_attachment(Some("application/zip"), "bundle.zip")];
+
+    let ingestion = ingest_discord_documents(
+        &attachments,
+        &sink,
+        &document_reply_target(),
+        "acct",
+        &UrlDownloader,
+    )
+    .await;
+
+    assert_eq!(
+        ingestion.append_labels(""),
+        "[Document: bundle.zip (application/zip)]"
+    );
+}
+
+#[tokio::test]
+async fn ingest_documents_rejects_oversized_without_downloading() {
+    let sink = DocumentSink::new(true);
+    let oversized = u32::try_from(MAX_ATTACHMENT_BYTES + 1)
+        .unwrap_or_else(|error| panic!("cap should fit in u32: {error}"));
+    let attachments = [make_sized_attachment(
+        5,
+        Some("application/pdf"),
+        "huge.pdf",
+        oversized,
+    )];
+
+    let ingestion = ingest_discord_documents(
+        &attachments,
+        &sink,
+        &document_reply_target(),
+        "acct",
+        &UrlDownloader,
+    )
+    .await;
+
+    assert!(sink.saved_filenames().is_empty());
+    assert!(ingestion.documents().is_none());
+    assert!(ingestion.has_failures());
+    assert_eq!(
+        ingestion.user_notice().as_deref(),
+        Some("I couldn't read `huge.pdf`: the file exceeds the 25 MB limit.")
+    );
+    assert_eq!(
+        ingestion.append_labels("caption"),
+        "caption\n\n[Document: huge.pdf (application/pdf) - not received: the file exceeds the 25 MB limit]"
+    );
+}
+
+#[tokio::test]
+async fn ingest_documents_reports_download_and_save_failures() {
+    let attachments = [
+        make_sized_attachment(1, Some("application/pdf"), "broken.pdf", 10),
+        make_sized_attachment(2, Some("text/plain"), "ok.txt", 10),
+    ];
+
+    let sink = DocumentSink::new(true);
+    let ingestion = ingest_discord_documents(
+        &attachments,
+        &sink,
+        &document_reply_target(),
+        "acct",
+        &UrlDownloader,
+    )
+    .await;
+    assert_eq!(sink.saved_filenames(), vec!["2_ok.txt".to_string()]);
+    assert_eq!(ingestion.documents().map(|docs| docs.len()), Some(1));
+    assert_eq!(
+        ingestion.user_notice().as_deref(),
+        Some("I couldn't read `broken.pdf`: the download failed.")
+    );
+
+    let failing_sink = DocumentSink::new(false);
+    let ingestion = ingest_discord_documents(
+        &attachments,
+        &failing_sink,
+        &document_reply_target(),
+        "acct",
+        &UrlDownloader,
+    )
+    .await;
+    assert!(!ingestion.has_saved());
+    assert_eq!(
+        ingestion.user_notice().as_deref(),
+        Some(
+            "I couldn't read some of your files:\n- `broken.pdf`: the download failed\n- `ok.txt`: the file could not be saved"
+        )
+    );
+}
+
+#[tokio::test]
+async fn ingest_documents_is_empty_for_media_only_messages() {
+    let sink = DocumentSink::new(true);
+    let attachments = [make_attachment(Some("image/jpeg"), "pic.jpg")];
+
+    let ingestion = ingest_discord_documents(
+        &attachments,
+        &sink,
+        &document_reply_target(),
+        "acct",
+        &UrlDownloader,
+    )
+    .await;
+
+    assert!(!ingestion.has_saved());
+    assert!(!ingestion.has_failures());
+    assert!(ingestion.documents().is_none());
+    assert!(ingestion.user_notice().is_none());
+    assert_eq!(ingestion.append_labels("caption"), "caption");
+}
+
+#[test]
+fn webm_video_is_a_document_not_audio() {
+    let video = make_attachment(Some("video/webm"), "clip.webm");
+    assert!(!attachment_is_audio(&video));
+    assert!(attachment_is_document(&video));
+    assert!(select_media_attachment(std::slice::from_ref(&video)).is_none());
+
+    // Without a reported type the extension still means a voice clip.
+    assert!(attachment_is_audio(&make_attachment(None, "voice.webm")));
+    assert!(attachment_is_audio(&make_attachment(
+        Some("audio/webm"),
+        "voice.webm"
+    )));
+}
+
+#[tokio::test]
+async fn voice_without_stt_still_delivers_saved_documents() {
+    let sink = DocumentSink::new(true);
+    let attachments = [
+        make_sized_attachment(1, Some("audio/ogg"), "voice.ogg", 64),
+        make_sized_attachment(2, Some("application/pdf"), "spec.pdf", 64),
+    ];
+
+    let ingestion = ingest_discord_documents(
+        &attachments,
+        &sink,
+        &document_reply_target(),
+        "acct",
+        &UrlDownloader,
+    )
+    .await;
+
+    assert_eq!(sink.saved_filenames(), vec!["2_spec.pdf".to_string()]);
+    let body = voice_stt_unavailable_log_body("");
+    assert!(!ingestion.nothing_to_dispatch(&body, false, true));
+    assert_eq!(
+        ingestion.append_labels(&body),
+        "[Voice message - STT unavailable]\n\n[Document: spec.pdf (application/pdf)]"
+    );
+}
+
+#[tokio::test]
+async fn image_and_document_in_one_message_are_both_handled() {
+    let sink = DocumentSink::new(true);
+    let downloader = MockDownloader {
+        outcome: MockDownload::Success(tiny_jpeg()),
+    };
+    let attachments = [
+        make_sized_attachment(1, Some("image/jpeg"), "pic.jpg", 64),
+        make_sized_attachment(2, Some("application/pdf"), "spec.pdf", 64),
+    ];
+
+    let media =
+        match resolve_discord_inbound_media(&attachments, "look", &sink, "acct", &downloader).await
+        {
+            MediaResolveOutcome::Media(media) => media,
+            _ => panic!("expected the image to be resolved"),
+        };
+    let ingestion = ingest_discord_documents(
+        &attachments,
+        &sink,
+        &document_reply_target(),
+        "acct",
+        &downloader,
+    )
+    .await;
+
+    assert_eq!(media.attachments.len(), 1);
+    assert_eq!(sink.saved_filenames(), vec!["2_spec.pdf".to_string()]);
+    assert!(!ingestion.nothing_to_dispatch(&media.body, true, false));
+    assert_eq!(
+        ingestion.append_labels(&media.body),
+        "look\n\n[Document: spec.pdf (application/pdf)]"
+    );
+}
+
+#[test]
+fn nothing_to_dispatch_only_when_no_saved_document_and_no_content() {
+    let empty = DocumentIngestion::default();
+    // Plain text, images and transcribed voice always go to the agent.
+    assert!(!empty.nothing_to_dispatch("hello", false, false));
+    assert!(!empty.nothing_to_dispatch("", true, false));
+    // An untranscribed voice note stops at the STT hint.
+    assert!(empty.nothing_to_dispatch("[Voice message - STT unavailable]", false, true));
+}
+
+#[tokio::test]
+async fn failed_documents_alone_stop_after_the_notice() {
+    let sink = DocumentSink::new(false);
+    let attachments = [make_attachment(Some("application/pdf"), "spec.pdf")];
+
+    let ingestion = ingest_discord_documents(
+        &attachments,
+        &sink,
+        &document_reply_target(),
+        "acct",
+        &UrlDownloader,
+    )
+    .await;
+
+    assert!(ingestion.nothing_to_dispatch("", false, false));
+    // A caption still reaches the agent, with the failure label.
+    assert!(!ingestion.nothing_to_dispatch("caption", false, false));
+    assert!(ingestion.user_notice().is_some());
 }

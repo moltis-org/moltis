@@ -17,24 +17,27 @@ use crate::config::{
 
 use crate::access;
 
-use {
-    moltis_channels::{
-        ChannelEvent, ChannelType, Error as ChannelError, InboundMediaDownloader,
-        InboundMediaSource, Result as ChannelsResult,
-        gating::{DmPolicy, MentionMode},
-        message_log::MessageLogEntry,
-        otp::{
-            OtpInitResult, OtpVerifyResult, approve_sender_via_otp, emit_otp_challenge,
-            emit_otp_resolution,
-        },
-        plugin::{ChannelAttachment, ChannelEventSink, ChannelMessageKind, ChannelMessageMeta},
+use moltis_channels::{
+    ChannelEvent, ChannelType, InboundMediaDownloader, InboundMediaSource,
+    gating::{DmPolicy, MentionMode},
+    message_log::MessageLogEntry,
+    otp::{
+        OtpInitResult, OtpVerifyResult, approve_sender_via_otp, emit_otp_challenge,
+        emit_otp_resolution,
     },
-    moltis_common::{http_client::build_default_http_client, ssrf::ssrf_check},
+    plugin::{ChannelAttachment, ChannelEventSink, ChannelMessageKind, ChannelMessageMeta},
 };
 
 use crate::state::AccountStateMap;
 
-use super::reply_target::message_reply_target;
+use super::{
+    attachments::{
+        DiscordInboundMediaDownloader, MAX_ATTACHMENT_BYTES, attachment_is_audio,
+        audio_format_from_attachment, image_media_type_fallback, select_media_attachment,
+    },
+    documents::ingest_discord_documents,
+    reply_target::message_reply_target,
+};
 
 /// Required gateway intents for the Discord bot.
 pub fn required_intents() -> GatewayIntents {
@@ -190,11 +193,6 @@ fn extract_location_coordinates(text: &str) -> Option<(f64, f64)> {
     parse_map_link_coordinates(text).or_else(|| parse_plain_text_coordinates(text))
 }
 
-/// Maximum byte size for inbound Discord attachments we download. Matches the
-/// 25 MiB free-tier upload limit; anything larger is either a Discord Nitro
-/// upload we don't want to spend bandwidth on or a misbehaving client.
-const MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
-
 /// Resolved inbound media from a Discord message: the body text the LLM sees,
 /// any multimodal attachments, and — if voice — the raw audio bytes so the
 /// gateway can persist them to the session media directory.
@@ -218,113 +216,8 @@ enum MediaResolveOutcome {
     VoiceSttUnavailable,
 }
 
-#[derive(Debug, Clone)]
-struct DiscordInboundMediaDownloader {
-    client: reqwest::Client,
-}
-
-impl DiscordInboundMediaDownloader {
-    fn new() -> Self {
-        Self {
-            client: build_default_http_client(),
-        }
-    }
-}
-
-/// Returns true if the attachment looks like an audio/voice file.
-fn attachment_is_audio(a: &Attachment) -> bool {
-    if a.content_type
-        .as_deref()
-        .is_some_and(|ct| ct.starts_with("audio/"))
-    {
-        return true;
-    }
-    let name = a.filename.to_ascii_lowercase();
-    [".ogg", ".opus", ".mp3", ".wav", ".m4a", ".webm"]
-        .iter()
-        .any(|ext| name.ends_with(ext))
-}
-
-/// Returns true if the attachment looks like a still image.
-fn attachment_is_image(a: &Attachment) -> bool {
-    if a.content_type
-        .as_deref()
-        .is_some_and(|ct| ct.starts_with("image/"))
-    {
-        return true;
-    }
-    let name = a.filename.to_ascii_lowercase();
-    [".png", ".jpg", ".jpeg", ".gif", ".webp"]
-        .iter()
-        .any(|ext| name.ends_with(ext))
-}
-
-/// Pick the first handleable attachment. Audio wins over image when both are
-/// present, matching Telegram's voice-first ordering.
-fn select_media_attachment(attachments: &[Attachment]) -> Option<&Attachment> {
-    if let Some(a) = attachments.iter().find(|a| attachment_is_audio(a)) {
-        return Some(a);
-    }
-    attachments.iter().find(|a| attachment_is_image(a))
-}
-
 fn should_drop_empty_discord_message(text: &str, attachments: &[Attachment]) -> bool {
     text.is_empty() && attachments.is_empty()
-}
-
-/// Normalize an audio attachment to a short format string the STT provider
-/// understands (`ogg`, `mp3`, `wav`, `m4a`, `webm`).
-fn audio_format_from_attachment(content_type: Option<&str>, filename: &str) -> String {
-    if let Some(ct) = content_type
-        && let Some(rest) = ct.strip_prefix("audio/")
-    {
-        let first = rest.split(';').next().unwrap_or(rest).trim();
-        let first = first.strip_prefix("x-").unwrap_or(first);
-        return match first {
-            "mpeg" | "mp3" => "mp3".to_string(),
-            "mp4" | "m4a" => "m4a".to_string(),
-            "wav" | "wave" => "wav".to_string(),
-            "webm" => "webm".to_string(),
-            "ogg" | "opus" | "vorbis" => "ogg".to_string(),
-            other if !other.is_empty() => other.to_string(),
-            _ => "ogg".to_string(),
-        };
-    }
-    let lower = filename.to_ascii_lowercase();
-    for (ext, fmt) in [
-        (".mp3", "mp3"),
-        (".m4a", "m4a"),
-        (".wav", "wav"),
-        (".webm", "webm"),
-        (".opus", "ogg"),
-        (".ogg", "ogg"),
-    ] {
-        if lower.ends_with(ext) {
-            return fmt.to_string();
-        }
-    }
-    // Discord voice messages are OGG Opus; safe default.
-    "ogg".to_string()
-}
-
-/// Normalize an image attachment to a MIME media type. Used as a fallback when
-/// `optimize_for_llm` fails and we must send the original bytes anyway.
-fn image_media_type_fallback(content_type: Option<&str>, filename: &str) -> String {
-    if let Some(ct) = content_type
-        && ct.starts_with("image/")
-    {
-        return ct.split(';').next().unwrap_or(ct).trim().to_string();
-    }
-    let lower = filename.to_ascii_lowercase();
-    if lower.ends_with(".png") {
-        "image/png".to_string()
-    } else if lower.ends_with(".gif") {
-        "image/gif".to_string()
-    } else if lower.ends_with(".webp") {
-        "image/webp".to_string()
-    } else {
-        "image/jpeg".to_string()
-    }
 }
 
 fn voice_stt_unavailable_log_body(caption: &str) -> String {
@@ -332,68 +225,6 @@ fn voice_stt_unavailable_log_body(caption: &str) -> String {
         "[Voice message - STT unavailable]".to_string()
     } else {
         format!("{caption}\n\n[Voice message - STT unavailable]")
-    }
-}
-
-/// Download a Discord CDN attachment, enforcing a size cap.
-async fn download_discord_attachment(
-    client: &reqwest::Client,
-    url: &str,
-    max_bytes: usize,
-) -> ChannelsResult<Vec<u8>> {
-    let parsed_url = reqwest::Url::parse(url).map_err(|error| {
-        ChannelError::invalid_input(format!("invalid discord attachment URL: {error}"))
-    })?;
-    ssrf_check(&parsed_url, &[])
-        .await
-        .map_err(|error| ChannelError::external("discord attachment ssrf check", error))?;
-
-    let response = client
-        .get(parsed_url)
-        .send()
-        .await
-        .map_err(|e| ChannelError::external("discord attachment request", e))?;
-    if !response.status().is_success() {
-        return Err(ChannelError::unavailable(format!(
-            "discord attachment request returned HTTP {}",
-            response.status()
-        )));
-    }
-    if let Some(len) = response.content_length()
-        && len as usize > max_bytes
-    {
-        return Err(ChannelError::unavailable(format!(
-            "attachment too large: {len} bytes (cap {max_bytes})"
-        )));
-    }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| ChannelError::external("discord attachment read body", e))?;
-    if bytes.len() > max_bytes {
-        return Err(ChannelError::unavailable(format!(
-            "attachment too large: {} bytes (cap {max_bytes})",
-            bytes.len()
-        )));
-    }
-    Ok(bytes.to_vec())
-}
-
-#[async_trait]
-impl InboundMediaDownloader for DiscordInboundMediaDownloader {
-    async fn download_media(
-        &self,
-        source: &InboundMediaSource,
-        max_bytes: usize,
-    ) -> ChannelsResult<Vec<u8>> {
-        match source {
-            InboundMediaSource::RemoteUrl { url } => {
-                download_discord_attachment(&self.client, url, max_bytes).await
-            },
-            _ => Err(ChannelError::invalid_input(
-                "discord downloader received unsupported media source",
-            )),
-        }
     }
 }
 
@@ -957,6 +788,7 @@ impl EventHandler for Handler {
         // Resolve inbound media attachments (voice transcription, image
         // optimization) before further processing. This mirrors the Telegram
         // flow in `crates/telegram/src/handlers.rs`.
+        let mut voice_untranscribed = false;
         let (body, attachments, voice_audio, mut inferred_kind) =
             match resolve_discord_inbound_media(
                 &msg.attachments,
@@ -974,19 +806,7 @@ impl EventHandler for Handler {
                     (media.body, media.attachments, media.voice_audio, media.kind)
                 },
                 MediaResolveOutcome::VoiceSttUnavailable => {
-                    let body = voice_stt_unavailable_log_body(&text);
-                    log_discord_message(
-                        message_log.as_ref(),
-                        &self.account_id,
-                        &peer_id,
-                        &username,
-                        &sender_name,
-                        &chat_id,
-                        is_guild,
-                        &body,
-                        access_granted,
-                    )
-                    .await;
+                    voice_untranscribed = true;
                     if let Err(e) = send_discord_text_simple(
                         &ctx,
                         msg.channel_id,
@@ -1000,9 +820,33 @@ impl EventHandler for Handler {
                             "failed to send STT setup hint: {e}"
                         );
                     }
-                    return;
+                    (
+                        voice_stt_unavailable_log_body(&text),
+                        Vec::new(),
+                        None,
+                        ChannelMessageKind::Voice,
+                    )
                 },
             };
+
+        let documents = ingest_discord_documents(
+            &msg.attachments,
+            sink.as_ref(),
+            &reply_to,
+            &self.account_id,
+            &self.downloader,
+        )
+        .await;
+        if let Some(notice) = documents.user_notice()
+            && let Err(e) = send_discord_text_simple(&ctx, msg.channel_id, &notice).await
+        {
+            warn!(
+                account_id = %self.account_id,
+                chat_id,
+                "failed to send document failure notice: {e}"
+            );
+        }
+        let body_with_documents = documents.append_labels(&body);
 
         log_discord_message(
             message_log.as_ref(),
@@ -1012,10 +856,20 @@ impl EventHandler for Handler {
             &sender_name,
             &chat_id,
             is_guild,
-            &body,
+            &body_with_documents,
             access_granted,
         )
         .await;
+
+        // The STT hint or the document failure notice is then the whole reply.
+        if documents.nothing_to_dispatch(&body, !attachments.is_empty(), voice_untranscribed) {
+            return;
+        }
+        if documents.has_saved()
+            && (voice_untranscribed || matches!(inferred_kind, ChannelMessageKind::Text))
+        {
+            inferred_kind = ChannelMessageKind::Document;
+        }
 
         if let Some((latitude, longitude)) = extract_location_coordinates(&body) {
             let resolved = sink
@@ -1058,7 +912,7 @@ impl EventHandler for Handler {
             account_id = %self.account_id,
             chat_id,
             peer_id,
-            body_len = body.len(),
+            body_len = body_with_documents.len(),
             attachment_count = attachments.len(),
             ?inferred_kind,
             "discord dispatching to chat"
@@ -1094,14 +948,20 @@ impl EventHandler for Handler {
                 )
                 .map(String::from),
             audio_filename,
-            documents: None,
+            documents: documents.documents(),
         };
 
         if attachments.is_empty() {
-            sink.dispatch_to_chat(&body, reply_to, meta).await;
-        } else {
-            sink.dispatch_to_chat_with_attachments(&body, attachments, reply_to, meta)
+            sink.dispatch_to_chat(&body_with_documents, reply_to, meta)
                 .await;
+        } else {
+            sink.dispatch_to_chat_with_attachments(
+                &body_with_documents,
+                attachments,
+                reply_to,
+                meta,
+            )
+            .await;
         }
     }
 
